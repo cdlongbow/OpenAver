@@ -2,43 +2,10 @@
 
 module-level 路徑常數為源檔複製（CD-96c-7：源檔殘留 class 仍引用同名常數，故複製非剪走）。
 """
-import re
 from pathlib import Path
 
-from tests.unit.frontend_contracts._showcase_css import read_showcase_css_full
 
-SHOWCASE_HTML = Path(__file__).parent.parent.parent.parent / "web" / "templates" / "showcase.html"
-SHOWCASE_VIDEOS_JS   = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-videos.js"
-SHOWCASE_ACTRESS_JS  = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-actress.js"
-SHOWCASE_LIGHTBOX_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
 SHOWCASE_LIGHTBOX_PICKER_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox-picker.js"
-SHOWCASE_ANIMATIONS_JS = (
-    Path(__file__).parent.parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "animations.js"
-)
-GHOST_FLY_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "shared" / "ghost-fly.js"
-STATE_LIGHTBOX_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
-_T2_SHOWCASE_HTML = Path(__file__).parent.parent.parent.parent / "web" / "templates" / "showcase.html"
-_T2_SIMILAR_JS = (
-    Path(__file__).parent.parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
-)
-_T2_LIGHTBOX_JS = (
-    Path(__file__).parent.parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
-)
-_T2_BASE_JS = (
-    Path(__file__).parent.parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-base.js"
-)
-_T2_BURST_PICKER_JS = (
-    Path(__file__).parent.parent.parent.parent
-    / "web" / "static" / "js" / "shared" / "burst-picker.js"
-)
-_T3_GHOST_FLY_JS = (
-    Path(__file__).parent.parent.parent.parent
-    / "web" / "static" / "js" / "shared" / "ghost-fly.js"
-)
 
 
 class TestPickerIntegrationGuard:
@@ -48,16 +15,10 @@ class TestPickerIntegrationGuard:
     跟著 repoint（149a-T5 修：T3 引入的回歸，見 T5-AUDIT.md §8）。
     """
 
-    def _html(self):
-        return SHOWCASE_HTML.read_text(encoding="utf-8")
 
     def _core_js(self):
         return SHOWCASE_LIGHTBOX_PICKER_JS.read_text(encoding="utf-8")
 
-    def _css(self):
-        return read_showcase_css_full(
-            Path(__file__).parent.parent.parent.parent / "web" / "static",
-        )
 
     def test_picker_js_contains(self):
         """core.js 含 picker state、methods、params、SSE handler 等必要字串"""

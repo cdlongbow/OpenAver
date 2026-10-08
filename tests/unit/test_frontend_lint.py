@@ -2,8 +2,6 @@
 import re
 from pathlib import Path
 
-import pytest
-from tests.unit.frontend_contracts._showcase_css import read_showcase_css_full
 
 SHOWCASE_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "showcase.html"
 
@@ -11,53 +9,14 @@ SHOWCASE_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "sho
 SEARCH_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "search.html"
 
 
-SHOWCASE_BASE_JS     = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-base.js"
-SHOWCASE_VIDEOS_JS   = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-videos.js"
-SHOWCASE_ACTRESS_JS  = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-actress.js"
-SHOWCASE_LIGHTBOX_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
-SHOWCASE_MAIN_JS     = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "main.js"
-
-
-SETTINGS_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "settings.html"
 SCANNER_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "scanner.html"
-SCANNER_BATCH_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "scanner" / "state-batch.js"
-SCANNER_ALIAS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "scanner" / "state-alias.js"
-SCANNER_MAIN_JS  = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "scanner" / "main.js"
-TAILWIND_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "tailwind.css"
 
-BASE_HTML_T76 = Path(__file__).parent.parent.parent / "web" / "templates" / "base.html"
 
-APPLE_TOUCH_ICON_PNG = Path(__file__).parent.parent.parent / "web" / "static" / "apple-touch-icon.png"
 # theme-color 兩個白名單 hex，須與 CSS --color-base-100 token 換算一致
 # （dim=[data-theme=dim] base-100、light=[data-theme=light] base-100）
-THEME_COLOR_DIM = "#2a303c"
-THEME_COLOR_LIGHT = "#ffffff"
-
-
-BATCH_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "batch.js"
-SEARCH_FLOW_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "search-flow.js"
-BASE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "base.js"
-SETTINGS_CONFIG_JS    = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-config.js"
-SETTINGS_PROVIDERS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-providers.js"
-SETTINGS_UI_JS        = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-ui.js"
-
-
-MAIN_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "main.js"
-
-
-LOCALES_ROOT = Path(__file__).parent.parent.parent / "locales"
-
-
-GRID_MODE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "grid-mode.js"
 
 
 NAVIGATION_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "navigation.js"
-ANIMATIONS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "animations.js"
-
-
-RESULT_CARD_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "result-card.js"
-PATH_UTILS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "components" / "path-utils.js"
-FILE_LIST_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "file-list.js"
 
 
 # TestShowcaseActressCRUD（Phase 44a-T5，9 條）已於 117-T6 等價遷入
@@ -69,13 +28,6 @@ FILE_LIST_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "
 # T6: Scanner Alias UI v2 — 舊 token 移除 + 新 token 存在守衛
 # ---------------------------------------------------------------------------
 SCANNER_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "scanner.html"
-ZH_TW_JSON = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
-
-
-SHOWCASE_ANIMATIONS_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "animations.js"
-)
 
 
 GHOST_FLY_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "ghost-fly.js"
@@ -152,46 +104,13 @@ class TestDetailSwipeGuard:
 # === 從 tests/test_frontend_lint.py 搬移（T55e）===
 
 # --- 以下為搬移自根目錄的 module-level helpers ---
-from typing import List, Tuple
 
 # 專案根目錄（T55e: 從根目錄 tests/test_frontend_lint.py 搬移）
-PROJECT_ROOT = Path(__file__).parent.parent.parent  # /home/peace/OpenAver
-
-
-def find_pattern_in_file(file_path: Path, regex: str,
-                         exclude_lines: callable = None) -> List[Tuple[int, str]]:
-    """
-    在檔案中尋找符合 regex 的行
-
-    Args:
-        file_path: 檔案路徑
-        regex: 正則表達式 pattern
-        exclude_lines: 排除規則函數，接收 (line, line_number) 回傳 True 表示排除
-
-    Returns:
-        List of (line_number, line_content) tuples
-    """
-    violations = []
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for i, line in enumerate(f, 1):
-                if re.search(regex, line):
-                    # 套用排除規則
-                    if exclude_lines and exclude_lines(line, i):
-                        continue
-                    violations.append((i, line.rstrip()))
-    except Exception as e:
-        pytest.fail(f"無法讀取檔案 {file_path}: {e}")
-
-    return violations
 
 
 # ====================================================================
 # D1 Guards: 錯誤訊息收斂 + console.log 清理
 # ====================================================================
-
-
-PAGE_LIFECYCLE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "components" / "page-lifecycle.js"
 
 
 class TestCoverLoadingUx67Guard:
@@ -204,8 +123,6 @@ class TestCoverLoadingUx67Guard:
     def _html(self):
         return SHOWCASE_HTML.read_text(encoding="utf-8")
 
-    def _css(self):
-        return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def _grid_img(self):
         """抽出 grid 卡片封面 <img>。
@@ -233,19 +150,6 @@ class TestCoverLoadingUx67Guard:
         )
         return m.group(0)
 
-    def _hero_img(self):
-        """抽出 hero 卡片 <img>（含 _matchedActress?.photo_url 的 img tag）"""
-        html = self._html()
-        m = re.search(r"<img :src=\"_matchedActress\?\.photo_url \|\| ''\".*?>", html, re.S)
-        assert m, "showcase.html: hero <img :src=\"_matchedActress?.photo_url || ''\"> 不存在"
-        return m.group(0)
-
-    def _rails_svg(self):
-        """抽出相似 stage rails <svg class=\"similar-stage-rails\">…</svg> 區塊"""
-        html = self._html()
-        m = re.search(r'<svg class="similar-stage-rails".*?</svg>', html, re.S)
-        assert m, "showcase.html: <svg class=\"similar-stage-rails\"> 區塊不存在"
-        return m.group(0)
 
     # ---- Track B: SVG 靜態化（B1）----
 
@@ -271,22 +175,6 @@ class TestCoverLoadingUx67Guard:
 
     # ---- 71-T6: 燈箱封面 blur-up（thumb 底層秒出 → 原圖淡入）----
 
-    def _lightbox_cover_block(self):
-        """抽出影片燈箱封面 <div class="lightbox-cover" :class="{'has-cover':…}">…</div> 區塊"""
-        html = self._html()
-        # 83a modal-hug 給影片 div 加了 :class has-cover（與女優 div 區分）；
-        # 83b-T1 在 </div> 後插入說明注釋，故用 has-cover 錨點 + .*?<!-- Metadata Panel 取代 \s*
-        m = re.search(r'<div class="lightbox-cover"[^>]*has-cover[^>]*>.*?</div>.*?<!-- Metadata Panel', html, re.S)
-        assert m, "showcase.html: 影片燈箱 .lightbox-cover（has-cover :class）區塊不存在"
-        return m.group(0)
-
-    def _lb_overlay_img(self):
-        """抽出燈箱封面 overlay <img class=\"lb-full\" …>（blur-up 原圖層）"""
-        block = self._lightbox_cover_block()
-        m = re.search(r'<img class="lb-full"[^>]*>', block, re.S)
-        assert m, "showcase.html .lightbox-cover 內缺 overlay <img class=\"lb-full\">（blur-up 原圖層）"
-        return m.group(0)
-
 
 # ── TASK-141b-T10: 書籤牆封面淡入 + 骨架 + 首屏優先 + 空狀態淡入 ──
 
@@ -306,12 +194,6 @@ class TestCoverLoadingUx67Guard:
 
 # ── TASK-70-T5: JavLibrary Picker BETA 視覺 + 不可用 gate 靜態守衛 ──
 
-_BOOTSTRAP_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "_advanced_search_bootstrap.html"
-_STATE_RESCRAPE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "state-rescrape.js"
-_APP_PY = Path(__file__).parent.parent.parent / "web" / "app.py"
-_MODAL_HTML_70 = Path(__file__).parent.parent.parent / "web" / "templates" / "_rescrape_modal.html"
-_LOCALES_ROOT_70 = Path(__file__).parent.parent.parent / "locales"
-
 
 # ── TASK-70-T6: CF flow 前端靜態守衛 ──
 
@@ -329,15 +211,6 @@ _LOCALES_ROOT_70 = Path(__file__).parent.parent.parent / "locales"
 STATE_RESCRAPE_JS = (
     Path(__file__).parent.parent.parent
     / "web" / "static" / "js" / "shared" / "state-rescrape.js"
-)
-
-
-SHOWCASE_SIMILAR_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
-
-
-SOURCE_PILL_MACRO = (
-    Path(__file__).parent.parent.parent
-    / "web" / "templates" / "_macros" / "source_pill.html"
 )
 
 
@@ -382,18 +255,10 @@ STATE_RESCRAPE_JS = (
 )
 
 
-T4_STATE_SIMILAR_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
-)
-
-
 # ============================================================================
 # TASK-75b-T6：US1 搜尋詳情重排 + US5 影片卡 poster 格 守衛
 # search.html DOM 結構 / search.css + showcase.css element-bound CSS read
 # ============================================================================
-
-SEARCH_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "search.css"
 
 
 # ============================================================================
@@ -402,7 +267,6 @@ SEARCH_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "p
 # ============================================================================
 
 GHOST_FLY_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "ghost-fly.js"
-STATE_LIGHTBOX_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
 
 
 # ============================================================================
@@ -422,18 +286,12 @@ STATE_LIGHTBOX_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js
 
 # ─── 80a-T3: Server Mode toggle + info banner frontend guards ───────────────
 
-SETTINGS_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
-
 
 # ─── TASK-81a-T5: Settings + Help 窄螢幕破版 / 長字串溢出（3 點純 CSS 補丁）───
 # ── feature/81 T10 (US-10): 481–899px 影片 grid → 4-col 直式右裁 poster ────────
 # ==================== TASK-81a-T11: posterCrop JS↔CSS 門檻對齊（US-10 / CD-10）====================
 # 鎖死「posterCrop ghost-fly 門檻 == 燈箱封面貼合斷點 == CSS poster grid 斷點 == 899」跨 4+2 檔。
 # 任一處未來漂移（只改一邊）即紅。比照 v0.10.2「JS bail 門檻對齊 CSS」防漂移前例。
-T11_BREAKPOINTS_JS    = PROJECT_ROOT / "web" / "static" / "js" / "shared" / "breakpoints.js"
-T11_STATE_LIGHTBOX_JS = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
-T11_GRID_MODE_JS      = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "search" / "state" / "grid-mode.js"
-T11_SEARCH_CSS        = PROJECT_ROOT / "web" / "static" / "css" / "pages" / "search.css"
 
 
 # ---------------------------------------------------------------------------
@@ -452,24 +310,6 @@ T11_SEARCH_CSS        = PROJECT_ROOT / "web" / "static" / "css" / "pages" / "sea
 # JS drill-lock、no-desktop-close、picker-params、matchMedia、keydown intercept。
 # ============================================================================
 
-_T2_SHOWCASE_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "showcase.html"
-_T2_SIMILAR_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
-)
-_T2_LIGHTBOX_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
-)
-_T2_BASE_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-base.js"
-)
-_T2_BURST_PICKER_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "shared" / "burst-picker.js"
-)
-
 
 # ============================================================================
 # TASK-83b-T3: Mobile Similar Panel Transition Guards（6 條）
@@ -477,44 +317,4 @@ _T2_BURST_PICKER_JS = (
 # async closeMobilePanel / PRM 分支 / 桌面禁區 anchor 不被 mobile helper 引用。
 # ============================================================================
 
-_T3_GHOST_FLY_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "shared" / "ghost-fly.js"
-)
 
-
-class TestSimilarMobilePanelT4Guard:
-    """83b-T4: 行動相似面板主圖播放按鈕合約守衛"""
-
-    def _html(self):
-        return Path("web/templates/showcase.html").read_text(encoding="utf-8")
-
-    def _css(self):
-        return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
-
-class TestDirPathHelperGuard:
-    """TASK-88a-T2: dirPath helper 簽章守衛 + directory-row template 綁定守衛。
-
-    1. shared/dir-path.js 存在且 export function dirPath
-    2. state-scan.js / state-ui.js 各自 import dirPath
-    3. scanner.html directory-row 已用 dirPath(dir)（不殘留裸 x-text="dir"）
-    4. settings.html directory-row 四處已全 dirPath(dir) 化（:key/:title/@click/x-text）
-    5. 無裸 :key="dir" 殘留（settings.html）
-    """
-
-    _ROOT = Path(__file__).parent.parent.parent
-
-    def _dir_path_js(self):
-        return (self._ROOT / "web" / "static" / "js" / "shared" / "dir-path.js").read_text(encoding="utf-8")
-
-    def _state_scan(self):
-        return (self._ROOT / "web" / "static" / "js" / "pages" / "scanner" / "state-scan.js").read_text(encoding="utf-8")
-
-    def _state_ui(self):
-        return (self._ROOT / "web" / "static" / "js" / "pages" / "settings" / "state-ui.js").read_text(encoding="utf-8")
-
-    def _scanner_html(self):
-        return (self._ROOT / "web" / "templates" / "scanner.html").read_text(encoding="utf-8")
-
-    def _settings_html(self):
-        return (self._ROOT / "web" / "templates" / "settings.html").read_text(encoding="utf-8")
