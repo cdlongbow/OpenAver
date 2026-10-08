@@ -505,15 +505,17 @@ class TestWhitelistAntiRot:
     """六個具名 target 必須能在對應檔 AST 定位，否則守衛指向殭屍函式、恆綠
     假通過。找不到必須明確失敗並指名。"""
 
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_target_function_exists(self, label, py_file, func_name):
-        tree = _tree(py_file)
-        func = _find_func(tree, func_name)
-        assert func is not None, (
-            f"[{label}] {py_file.name}:{func_name} 指向不存在的函式（改名？）"
-            f" —— 守衛失去意義，須更新清單或修復函式名"
-        )
+    def test_target_function_exists(self):
+        failures = []
+        for label, py_file, func_name in REAL_TARGETS:
+            tree = _tree(py_file)
+            func = _find_func(tree, func_name)
+            if func is None:
+                failures.append(
+                    f"[{label}] {py_file.name}:{func_name} 指向不存在的函式（改名？）"
+                    f" —— 守衛失去意義，須更新清單或修復函式名"
+                )
+        assert failures == [], "\n".join(failures)
 
     def test_misnamed_function_fails_explicitly(self):
         """反假綠實測：函式名打錯，_target_ctx 必須用 pytest.fail 明確指名，
@@ -534,32 +536,44 @@ class TestWhitelistAntiRot:
 # ============================================================
 
 class TestCountReconciliation:
-    """六格用獨立 parametrize case（BE-TEST-05：表驅動守衛要逐格能單獨轉紅），
-    不是塞進單一 assert all(...)。計數用 `==`，不是 `>=`。"""
+    """每支聚合迴圈走完六個 target 才一次 assert，訊息列出全部違規 target
+    （BE-TEST-05：不得只報第一個、不得吞掉其餘）。計數用 `==`，不是 `>=`。"""
 
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_direct_mtime_read_count_equals_expected(self, label, py_file, func_name):
-        expected_reads, _expected_delegate = EXPECTED[(py_file, func_name)]
-        func, _bindings = _target_ctx(py_file, func_name)
-        nodes = _all_nodes(func)
-        actual = len(_direct_mtime_read_nodes(nodes))
-        assert actual == expected_reads, (
-            f"[{label}] {py_file.name}:{func_name}() 直接讀取 mtime 計數應恰等於"
-            f" {expected_reads}，實際 {actual}"
-        )
+    def test_direct_mtime_read_count_equals_expected(self):
+        failures = []
+        for label, py_file, func_name in REAL_TARGETS:
+            expected_reads, _expected_delegate = EXPECTED[(py_file, func_name)]
+            try:
+                func, _bindings = _target_ctx(py_file, func_name)
+            except pytest.fail.Exception as exc:
+                failures.append(str(exc))
+                continue
+            nodes = _all_nodes(func)
+            actual = len(_direct_mtime_read_nodes(nodes))
+            if actual != expected_reads:
+                failures.append(
+                    f"[{label}] {py_file.name}:{func_name}() 直接讀取 mtime 計數應恰等於"
+                    f" {expected_reads}，實際 {actual}"
+                )
+        assert failures == [], "\n".join(failures)
 
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_delegate_call_count_equals_expected(self, label, py_file, func_name):
-        _expected_reads, expected_delegate = EXPECTED[(py_file, func_name)]
-        func, bindings = _target_ctx(py_file, func_name)
-        nodes = _all_nodes(func)
-        # scope-aware：巢狀 scope 若重新綁定委派名，其內呼叫不算委派（五審 P1）
-        actual = len(_scoped_delegate_calls(func, bindings))
-        assert actual == expected_delegate, (
-            f"expected {expected_delegate}, got {actual} calls in {func_name} ({py_file})"
-        )
+    def test_delegate_call_count_equals_expected(self):
+        failures = []
+        for _label, py_file, func_name in REAL_TARGETS:
+            _expected_reads, expected_delegate = EXPECTED[(py_file, func_name)]
+            try:
+                func, bindings = _target_ctx(py_file, func_name)
+            except pytest.fail.Exception as exc:
+                failures.append(str(exc))
+                continue
+            nodes = _all_nodes(func)
+            # scope-aware：巢狀 scope 若重新綁定委派名，其內呼叫不算委派（五審 P1）
+            actual = len(_scoped_delegate_calls(func, bindings))
+            if actual != expected_delegate:
+                failures.append(
+                    f"expected {expected_delegate}, got {actual} calls in {func_name} ({py_file})"
+                )
+        assert failures == [], "\n".join(failures)
 
 
 # ============================================================
@@ -856,16 +870,23 @@ class TestDelegateNameNotRebound:
     因為它的唯一合法來源是 module 層的 import。）
     """
 
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS)
-    def test_delegate_name_never_rebound_in_function(self, label, py_file, func_name):
-        func, _bindings = _target_ctx(py_file, func_name)
-        rebinds = _all_bindings(func, "nfo_mtime_or_none")
-        assert rebinds == [], (
-            f"[{label}] {py_file.name}:{func_name}() 內把委派名 `nfo_mtime_or_none` "
-            f"重新綁定了 {len(rebinds)} 次（行 "
-            f"{[getattr(n, 'lineno', '?') for n in rebinds]}）——委派計數會把之後的"
-            f"呼叫誤算成合法委派，實際呼叫的已經不是 core.nfo_stat 的 primitive"
-        )
+    def test_delegate_name_never_rebound_in_function(self):
+        failures = []
+        for label, py_file, func_name in REAL_TARGETS:
+            try:
+                func, _bindings = _target_ctx(py_file, func_name)
+            except pytest.fail.Exception as exc:
+                failures.append(str(exc))
+                continue
+            rebinds = _all_bindings(func, "nfo_mtime_or_none")
+            if rebinds != []:
+                failures.append(
+                    f"[{label}] {py_file.name}:{func_name}() 內把委派名 `nfo_mtime_or_none` "
+                    f"重新綁定了 {len(rebinds)} 次（行 "
+                    f"{[getattr(n, 'lineno', '?') for n in rebinds]}）——委派計數會把之後的"
+                    f"呼叫誤算成合法委派，實際呼叫的已經不是 core.nfo_stat 的 primitive"
+                )
+        assert failures == [], "\n".join(failures)
 
     def test_delegate_name_as_own_parameter_is_detected(self):
         """Codex 四審 P1：`def consumer(..., nfo_mtime_or_none)` 會遮蔽 module 層
@@ -931,21 +952,28 @@ class TestPerFunctionIndependence:
     EXPECTED_POLICY 相符（真檔演示章節在回報中逐次記錄實測紅燈輸出，這裡驗證
     的是「當下工作樹（乾淨狀態）六格應該全綠」，是真檔演示的基線對照）。"""
 
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_clean_tree_all_six_green(self, label, py_file, func_name):
-        expected_reads, expected_delegate = EXPECTED[(py_file, func_name)]
-        expected_policy = EXPECTED_POLICY[(py_file, func_name)]
-        func, bindings = _target_ctx(py_file, func_name)
-        nodes = _all_nodes(func)
-        reads = len(_direct_mtime_read_nodes(nodes))
-        delegates = len(_scoped_delegate_calls(func, bindings))
-        status, _node, resolved = _policy_assignment(func, bindings)
-        assert (reads, delegates) == (expected_reads, expected_delegate), (
-            f"[{label}] 乾淨工作樹基線應為 ({expected_reads}, {expected_delegate})"
-            f"，實際 ({reads}, {delegates})"
-        )
-        assert status == "ok" and resolved == expected_policy, (
-            f"[{label}] 乾淨工作樹基線政策常數應為 {expected_policy}"
-            f"（status='ok'），實際 status={status} resolved={resolved}"
-        )
+    def test_clean_tree_all_six_green(self):
+        failures = []
+        for label, py_file, func_name in REAL_TARGETS:
+            expected_reads, expected_delegate = EXPECTED[(py_file, func_name)]
+            expected_policy = EXPECTED_POLICY[(py_file, func_name)]
+            try:
+                func, bindings = _target_ctx(py_file, func_name)
+            except pytest.fail.Exception as exc:
+                failures.append(str(exc))
+                continue
+            nodes = _all_nodes(func)
+            reads = len(_direct_mtime_read_nodes(nodes))
+            delegates = len(_scoped_delegate_calls(func, bindings))
+            status, _node, resolved = _policy_assignment(func, bindings)
+            if (reads, delegates) != (expected_reads, expected_delegate):
+                failures.append(
+                    f"[{label}] 乾淨工作樹基線應為 ({expected_reads}, {expected_delegate})"
+                    f"，實際 ({reads}, {delegates})"
+                )
+            if not (status == "ok" and resolved == expected_policy):
+                failures.append(
+                    f"[{label}] 乾淨工作樹基線政策常數應為 {expected_policy}"
+                    f"（status='ok'），實際 status={status} resolved={resolved}"
+                )
+        assert failures == [], "\n".join(failures)
