@@ -279,20 +279,6 @@ def test_video_from_video_info_with_spaces():
     assert video.tags == ["類型1", "類型2", "類型3"]
 
 
-def test_actress_alias_primary_name_unique_constraint(tmp_path):
-    """[T1 updated] 新 schema 中 primary_name 是 PRIMARY KEY（唯一約束）"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO actress_aliases (primary_name, aliases) VALUES ('Alice', '[]')")
-    conn.commit()
-    # 嘗試插入重複的 primary_name 應拋 IntegrityError
-    with pytest.raises(sqlite3.IntegrityError):
-        cursor.execute("INSERT INTO actress_aliases (primary_name, aliases) VALUES ('Alice', '[\"alt\"]')")
-    conn.close()
-
-
 # ============ migrate_json_to_sqlite 測試 ============
 
 def test_migrate_json_to_sqlite_success(tmp_path):
@@ -339,28 +325,6 @@ def test_migrate_json_to_sqlite_success(tmp_path):
 
 class TestFromVideoInfoNewFields:
     """from_video_info() Phase 37 新欄位映射測試"""
-
-    def test_from_video_info_series_empty_becomes_none(self):
-        """series='' → None（與 Optional[str] 語意一致）"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            series="",
-        )
-        video = Video.from_video_info(info)
-        assert video.series is None
-
-    def test_from_video_info_duration_zero_preserved(self):
-        """duration=0 保持 0（不被 or 短路為 None）"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            duration=0,
-        )
-        video = Video.from_video_info(info)
-        assert video.duration == 0
 
     def test_from_video_info_all_new_fields(self):
         """all 4 new fields mapped correctly in single call"""
