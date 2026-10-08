@@ -36,6 +36,7 @@ const {
     emptyKeyForCard,
     resolveDragResult,
     resolveGestureResult,
+    isTouchZrEvent,
     beginYearsDrag,
     cancelYearsDrag,
     getYearsDragState,
@@ -133,6 +134,17 @@ test('resolveDragResult: 終點在未知欄或畫布外時夾在最後一個真�
     for (const c of cases) {
         assert.deepEqual(resolveDragResult(c.start, c.end, dragCats), c.exp, 'start=' + c.start + ' end=' + c.end);
     }
+});
+
+test('isTouchZrEvent: zrByTouch 標記或 touch* 事件型別都算觸控，滑鼠事件與空值不算', () => {
+    assert.equal(isTouchZrEvent({ zrByTouch: true }), true);
+    assert.equal(isTouchZrEvent({ event: { type: 'touchstart' } }), true);
+    assert.equal(isTouchZrEvent({ event: { type: 'touchmove' } }), true);
+    assert.equal(isTouchZrEvent({ event: { type: 'mousedown', button: 0 } }), false);
+    assert.equal(isTouchZrEvent({ zrByTouch: undefined, event: { button: 0 } }), false);
+    assert.equal(isTouchZrEvent(null), false);
+    assert.equal(isTouchZrEvent(undefined), false);
+    assert.equal(isTouchZrEvent({}), false);
 });
 
 test('resolveGestureResult: 觸控拖過多欄不產生範圍，同欄 tap 仍是單點，滑鼠不受影響', () => {

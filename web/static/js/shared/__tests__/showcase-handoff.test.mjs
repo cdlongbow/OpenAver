@@ -5,11 +5,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildHandoffPills, applyHandoff } from '../showcase-handoff.js';
-import { serializePills } from '../pill-filter.js';
+import { serializePills, deserializePills } from '../pill-filter.js';
 
 const ACT = { dim: 'actress', value: '石川澪' };
 const MKR = { dim: 'maker', value: 'Moodyz' };
 const YEAR = { type: 'year', year: 2023 };
+const RANGE = { type: 'range', from: 2019, to: 2023 };
 
 const OLD = {
     sort: 'date', order: 'asc', page: 3, search: 'abc', mode: 'grid',
@@ -36,6 +37,12 @@ test('handoff: buildHandoffPills 五種組合逐鍵等於 serializePills', () =>
         { dim: 'release', value: '2023', op: '=' },
     ]);
     assert.deepStrictEqual(all, serializePills(all));
+});
+
+test('handoff: range release pill 帶 op range 與 value2', () => {
+    const out = buildHandoffPills({ period: RANGE });
+    assert.deepStrictEqual(out, [{ dim: 'release', value: '2019', op: 'range', value2: '2023' }]);
+    assert.equal(deserializePills(out).length, 1);
 });
 
 test('handoff: applyHandoff 覆寫 pills/search/page/showFavoriteActresses', () => {

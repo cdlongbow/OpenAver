@@ -132,6 +132,18 @@ test('ganttCellClick: 無片格或年齡軸且她已被選中，完全無動作�
     }
 });
 
+test('ganttCellClick: 無片格且尚未選她，呼叫 flyAndFocusActress 不帶 nextSel 並傳列元素', () => {
+    const { state, commits } = ganttClickState();
+    const row = {};
+    const calls = [];
+    state.flyAndFocusActress = (...args) => calls.push(args);
+    state.ganttCellClick('她', { year: 2022, state: 'empty', filmCount: 0 }, 'year', {
+        currentTarget: { closest: (selector) => { assert.equal(selector, '.gantt-row'); return row; } },
+    });
+    assert.deepEqual(calls, [['她', { currentTarget: row }]]);
+    assert.equal(commits(), 0);
+});
+
 test('ganttCellClick: 有片格且她已被選中，不飛行、sel 恰提交一次；再點同格只取消年份、片商不變', () => {
     const { state, commits } = ganttClickState();
     state.sel.actress = '她';
@@ -266,6 +278,39 @@ test('totalCountLabel: snapshot 未載入時回 0（不拋錯）', () => {
     globalThis.window.t = (key, params) => '全庫 ' + params.n + ' 部';
     assert.equal(state.totalCountLabel(), '全庫 0 部');
     globalThis.window.t = (key) => key;
+});
+
+test('_handleActressFocusChange: 只在女優格換人時捲回頂端（換期間／換片商／清除都不捲）', () => {
+    const scrolls = [];
+    const origScrollTo = globalThis.window.scrollTo;
+    const origOpenAver = globalThis.window.OpenAver;
+    globalThis.window.scrollTo = (opt) => scrolls.push(opt);
+    globalThis.window.OpenAver = { prefersReducedMotion: true };
+    try {
+        const run = (oldSel, newSel) => {
+            const state = libraryInsightsState();
+            state._syncCostarVisibility = () => {};
+            state.sel = newSel;
+            scrolls.length = 0;
+            state._handleActressFocusChange(oldSel, 0);
+            return scrolls.length;
+        };
+        // 沒女優 → 有女優、換成另一位：捲
+        assert.equal(run(selOf(), selOf({ actress: 'A' })), 1);
+        assert.equal(run(selOf({ actress: 'A' }), selOf({ actress: 'B' })), 1);
+        // 同一位女優只換期間、只加片商、清掉女優：不捲
+        assert.equal(
+            run(selOf({ actress: 'A' }), selOf({ actress: 'A', period: { type: 'year', year: 2020 } })),
+            0,
+        );
+        assert.equal(run(selOf({ actress: 'A' }), selOf({ actress: 'A', maker: 'S1' })), 0);
+        assert.equal(run(selOf({ actress: 'A' }), selOf()), 0);
+        // 只選片商、換片商：不捲
+        assert.equal(run(selOf({ maker: 'S1' }), selOf({ maker: 'S2' })), 0);
+    } finally {
+        globalThis.window.scrollTo = origScrollTo;
+        globalThis.window.OpenAver = origOpenAver;
+    }
 });
 
 test('ganttView: 快取鍵認整個 sel，只換片商或只換期間也必須重算', () => {

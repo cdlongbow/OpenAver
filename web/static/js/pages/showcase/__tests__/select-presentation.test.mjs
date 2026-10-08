@@ -298,6 +298,56 @@ test('契約：playShapeMorph 拋錯時，卡型仍必須切換並持久化（�
 // animations.js：captureShapeState / playShapeMorph（源碼斷言，行為由 T8 CDP 驗）
 // =====================================================================
 
+test('契約（同一工作單元）：新版面的 class 必須在 playShapeMorph 之前就切成新值', () => {
+    const events = [];
+    withAnimStub({
+        captureShapeState() {
+            events.push({ event: 'capture', classOpsLen: FAKE_GRID._classOps.length });
+            return 'SNAP';
+        },
+        playShapeMorph() {
+            events.push({
+                event: 'morph',
+                classOpsLen: FAKE_GRID._classOps.length,
+                classOpsSnapshot: FAKE_GRID._classOps.slice(),
+            });
+        },
+    }, () => {
+        // cover → poster
+        const c1 = makeComponent({ mode: 'grid', cardShape: 'cover' });
+        c1.selectPresentation('poster');
+        assert.equal(events.length, 2);
+        assert.equal(events[0].event, 'capture');
+        assert.equal(events[1].event, 'morph');
+        assert.ok(
+            events[1].classOpsLen > events[0].classOpsLen,
+            'class toggle 必須發生在 morph 之前（capture 後、morph 前）',
+        );
+        assert.deepEqual(
+            events[1].classOpsSnapshot,
+            [['shape-poster', true]],
+            'cover→poster 必須 toggle shape-poster 為 true',
+        );
+
+        // poster → cover
+        events.length = 0;
+        const c2 = makeComponent({ mode: 'grid', cardShape: 'poster' });
+        c2.selectPresentation('cover');
+        assert.equal(events.length, 2);
+        assert.equal(events[0].event, 'capture');
+        assert.equal(events[1].event, 'morph');
+        assert.ok(
+            events[1].classOpsLen > events[0].classOpsLen,
+            'class toggle 必須發生在 morph 之前（反向）',
+        );
+        assert.deepEqual(
+            events[1].classOpsSnapshot,
+            [['shape-poster', false]],
+            'poster→cover 必須 toggle shape-poster 為 false',
+        );
+    });
+});
+
 test('animations.js：captureShapeState 存在，且與 captureFlipState 刻意分立（不共用實作）', () => {
     const body = extractFnBody(ANIMATIONS_SRC, 'captureShapeState');
     assert.ok(body, 'captureShapeState 必須存在於 animations.js');

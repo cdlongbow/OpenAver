@@ -57,7 +57,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 
 const { stateVideos } = await import('../state-videos.js');
 const { stateBase } = await import('../state-base.js');
-await import('../state-base.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../../../../..');

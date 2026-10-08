@@ -115,6 +115,27 @@ function successFalseResp() {
     return { ok: true, status: 200, json: async () => ({ success: false }) };
 }
 
+// ── 並行 dedup ──────────────────────────────────────────────────────────
+
+test('並行 dedup：連續同步呼叫兩次 loadActresses()，後發的請求即使會失敗也不得清掉已載入的清單', async () => {
+    resetActresses();
+    // 第二次 fetch（若 dedup 失效才會發出）會失敗並清空清單；dedup 正常時只有第一次成功的請求
+    const mock = mockFetchSequence([
+        () => okResp([{ name: 'A', birth: '1990-01-01' }]),
+        () => notOkResp(),
+    ]);
+    try {
+        const c = makeComponent();
+        const p1 = c.loadActresses();
+        const p2 = c.loadActresses();
+        await Promise.all([p1, p2]);
+        assert.equal(_actresses.length, 1, '清單仍有 1 筆');
+        assert.equal(_actresses[0].name, 'A');
+    } finally {
+        mock.restore();
+    }
+});
+
 // ── settle 後清回 null，下一次呼叫要真的重試 ──────────────────
 
 test('loadActresses retries with a second fetch after the in-flight promise settles on failure', async () => {

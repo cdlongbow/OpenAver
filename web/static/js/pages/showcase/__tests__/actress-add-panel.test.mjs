@@ -655,6 +655,37 @@ test('INV-2a：同一列連點 5 次 → POST 1 次、_libQueue.length 不增', 
     }
 });
 
+// 4. INV-2b：出隊重檢（enqueue 檢查擋不住——B 入隊時 A 還沒回）
+test('INV-2b：A 的回應涵蓋 B → B 出隊時被丟棄（POST 總數 2）', async () => {
+    _setActresses([]);
+    const rowA = { primary_name: 'A優', names: ['A優'], video_count: 1, is_favorite: false };
+    const rowB = { primary_name: 'B優', names: ['B優'], video_count: 1, is_favorite: false };
+    const rowC = { primary_name: 'C優', names: ['C優'], video_count: 1, is_favorite: false };
+    const mock = mockFetchManual();
+    try {
+        const c = makeComponent();
+        c.libEnqueueFavorite(rowA);
+        c.libEnqueueFavorite(rowC);
+        c.libEnqueueFavorite(rowB);   // 額度已滿（2），B 排隊
+
+        assert.equal(mock.calls.length, 2);
+        assert.equal(c._libQueue.length, 1);
+
+        mock.calls[0].resolve({
+            status: 200,
+            json: async () => libFavoritePayload('A優', { covered_names: ['A優', 'B優'] }),
+        });
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        assert.equal(mock.calls.length, 2, 'B 出隊被丟棄，不應再發第 3 支 POST');
+        assert.equal(c.libRowFavorited(rowB), true);
+        assert.equal(c.libRowState(rowB), 'idle');
+    } finally {
+        mock.restore();
+    }
+});
+
 // 5. INV-3：排空保證（全失敗也要歸零）
 test('INV-3：5 列全部 reject → 皆 error、_libInFlight === 0、_libQueue.length === 0', async () => {
     const rows = makeQueueRows(5);

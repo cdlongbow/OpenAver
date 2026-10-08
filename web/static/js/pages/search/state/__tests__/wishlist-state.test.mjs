@@ -758,6 +758,13 @@ test("cardActionState: 本地沒有且未加入 → 'bookmark-add'", () => {
     );
 });
 
+test("cardActionState: 本地沒有且已加入 → 'bookmark-remove'", () => {
+    assert.equal(
+        cardActionState({ _localStatus: { exists: false }, _wishlisted: true }),
+        'bookmark-remove',
+    );
+});
+
 // ─── TASK-140-T11a：書籤燈箱狀態機（DoD 4a–4e）────────────────────────────
 
 function wishlistLightboxFixture(overrides = {}) {
