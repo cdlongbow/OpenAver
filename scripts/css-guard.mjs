@@ -3074,16 +3074,16 @@ const RULES = [
     id: 'CG-162C-FIX2-01',
     file: 'pages/search.css',
     kind: 'fn',
-    msg: '[lint-guard 162c-test_d4_error_placeholder_min_height_fallback] 使用者看無封面／封面失敗的搜尋詳情 → placeholder 與導航指示消失；:has(error) 須非零 min-height fallback（先剝 CSS 註解，註解掉的宣告不算） — 遷自 test_frontend_lint.py（Codex pre-merge P2 補回）',
+    msg: '[lint-guard 162c-test_d4_error_placeholder_min_height_fallback] 使用者看無封面／封面失敗的搜尋詳情 → placeholder 與導航指示消失；:has(error) 第一個匹配的規則須非零 min-height fallback（先剝 CSS 註解，註解掉的宣告不算） — 遷自 test_frontend_lint.py（Codex pre-merge P2 補回）',
     check(ctx) {
-      const sel = /\.search-container\s+\.av-card-full-cover-wrapper:has\([^)]*\.cover-error-placeholder(?![-\w])/;
-      const hit = ctx.blocks.filter((b) => sel.test(b.selector));
-      if (!hit.length) {
-        ctx.fail('CG-162C-FIX2-01: 找不到 .av-card-full-cover-wrapper:has(.cover-error-placeholder) block');
+      // 逐字鏡射舊 pytest：_css() 已剝註解（ctx.text）→ 第一個匹配（無 g）→ 對 group(1) 斷言
+      const m = ctx.text.match(/\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-error-placeholder[^{]*\)\s*\{([^}]*)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-FIX2-01: 找不到 wrapper:has(.cover-error-placeholder) fallback 規則');
         return;
       }
-      if (!hit.some((b) => /(?:^|[;\s])min-height\s*:\s*[1-9]\d*/.test(b.declarations))) {
-        ctx.fail('CG-162C-FIX2-01: :has(.cover-error-placeholder) block 缺非零 min-height（placeholder 會塌成零高）');
+      if (!/min-height\s*:\s*[1-9]\d*/.test(m[1])) {
+        ctx.fail('CG-162C-FIX2-01: :has(.cover-error-placeholder) 第一個匹配規則缺非零 min-height（placeholder 會塌成零高）');
       }
     },
   },
@@ -3091,16 +3091,16 @@ const RULES = [
     id: 'CG-162C-FIX2-02',
     file: 'pages/search.css',
     kind: 'fn',
-    msg: '[lint-guard 162c-test_d4b_loading_placeholder_min_height_fallback] 使用者看載入中的搜尋詳情 → shimmer 與導航指示消失；:has(loading) 須非零 min-height fallback（先剝 CSS 註解，註解掉的宣告不算） — 遷自 test_frontend_lint.py（Codex pre-merge P2 補回）',
+    msg: '[lint-guard 162c-test_d4b_loading_placeholder_min_height_fallback] 使用者看載入中的搜尋詳情 → shimmer 與導航指示消失；:has(loading) 第一個匹配的規則須非零 min-height fallback（先剝 CSS 註解，註解掉的宣告不算） — 遷自 test_frontend_lint.py（Codex pre-merge P2 補回）',
     check(ctx) {
-      const sel = /\.search-container\s+\.av-card-full-cover-wrapper:has\([^)]*\.cover-loading-placeholder(?![-\w])/;
-      const hit = ctx.blocks.filter((b) => sel.test(b.selector));
-      if (!hit.length) {
-        ctx.fail('CG-162C-FIX2-02: 找不到 .av-card-full-cover-wrapper:has(.cover-loading-placeholder) block');
+      // 逐字鏡射舊 pytest：_css() 已剝註解（ctx.text）→ 第一個匹配（無 g）→ 對 group(1) 斷言
+      const m = ctx.text.match(/\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-loading-placeholder[^{]*\)\s*\{([^}]*)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-FIX2-02: 找不到 wrapper:has(.cover-loading-placeholder) fallback 規則');
         return;
       }
-      if (!hit.some((b) => /(?:^|[;\s])min-height\s*:\s*[1-9]\d*/.test(b.declarations))) {
-        ctx.fail('CG-162C-FIX2-02: :has(.cover-loading-placeholder) block 缺非零 min-height（placeholder 會塌成零高）');
+      if (!/min-height\s*:\s*[1-9]\d*/.test(m[1])) {
+        ctx.fail('CG-162C-FIX2-02: :has(.cover-loading-placeholder) 第一個匹配規則缺非零 min-height（placeholder 會塌成零高）');
       }
     },
   },
