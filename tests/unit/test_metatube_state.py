@@ -867,6 +867,7 @@ def test_refail_within_cooldown_restarts_the_window(state, monkeypatch):
 
     # 冷卻到期後（t=560 已樂觀放行）重試又失敗 → 重新進入完整冷卻期
     state.mark_failed('metatube:FANZA')
+    assert state._failed_at['metatube:FANZA'] == 560.0
     assert state.routing_availability_map()['metatube:FANZA'] is False
 
     # 時鐘推到 t=700（距 t=560 僅 140 秒 < 300），仍處於冷卻中
