@@ -5269,7 +5269,96 @@ const RULES = [
 
   // ==== 162c：自 tests/unit/test_frontend_lint.py／frontend_contracts／散落三檔 搬入（按批分子區段）====
   // ---- 162c-B01 起 ----
-  // （162c-B01 專屬子區段：只在此兩行之間追加）
+  // 162c: TestSettingsCleanupBypassGuard
+  // units 1/3/5 與 gate 共覆蓋同一字面 → 只留 gate min=2（涵蓋 4+6；1/3/5 收據記共覆蓋）
+  { file: 'web/static/js/pages/settings/state-ui.js', kind: 'required-string', pattern: 'window.location.href', count: 2, note: '[lint-guard 162c-test_dirty_check_discard_has_location_fallback] 使用者在沒有 __leavePage 的環境按「放棄修改並離開」→ 缺 location.href fallback 就按了沒反應、離不開設定頁 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/settings/state-ui.js', kind: 'structure-count', pattern: 'if (!window.__leavePage(this.pendingNavigationUrl)) return;', min: 2, note: '[lint-guard 162c-test_dirty_check_discard_gates_on_leave_page_return] 使用者按「放棄修改並離開」／「儲存並離開」而 cleanup 回報不可離開 → 缺 !__leavePage gate 仍照跳、請求被丟 (test_dirty_check_save_gates_on_leave_page_return) — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestShowcaseKeyboardGuard
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'e.preventDefault()', scope: /\/\/ 4\. Sample Gallery 開啟時的快捷鍵[\s\S]*?return;/, note: '[lint-guard 162c-test_sample_gallery_keyboard_has_prevent_default] 使用者在劇照瀏覽按方向鍵/Esc → 沒擋預設行為時背景頁面跟著捲動、Esc/方向鍵誤作用 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'e.preventDefault()', scope: /\/\/ 5\. Lightbox 開啟時的快捷鍵[\s\S]*?return;/, note: '[lint-guard 162c-test_lightbox_keyboard_has_prevent_default] 使用者在燈箱按方向鍵/Esc → 沒擋預設行為時背景跟著捲動、Esc/方向鍵誤作用 — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestShowcaseActressState
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', pattern: [
+      'var _actresses = []',
+      'var _filteredActresses = []',
+      'showFavoriteActresses',
+      '_persistedShowcase.showFavoriteActresses = this.showFavoriteActresses',
+      '_persistedShowcase.actressSort = this.actressSort',
+      '_persistedShowcase.actressOrder = this.actressOrder',
+      'showFavoriteActresses === true',
+      'state.actressSort',
+      'state.actressOrder',
+    ], note: '[lint-guard 162c-TestShowcaseActressState.test_actress_js_contains] 使用者切到女優模式/排序後重新整理 → 缺 saveState 的 persist 寫入就回到預設、每次要重切；其餘為女優模式 state/method 識別字清單 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: [
+      'actressCount',
+      'filteredActressCount',
+      'paginatedActresses',
+      'actressSearch',
+      'actressSort',
+      'actressOrder',
+      'actressLoading',
+      'actressLightboxIndex',
+      'currentLightboxActress',
+      '_actressChipsExpanded',
+      '_addActressName',
+      '_addingActress',
+      'toggleActressMode',
+      'loadActresses',
+      'applyActressFilterAndSort',
+      'onActressSearchChange',
+      'onActressSortChange',
+      'toggleActressOrder',
+      'openActressLightbox',
+      'closeActressLightbox',
+      'prevActressLightbox',
+      'nextActressLightbox',
+      '_setActressLightboxIndex',
+      'actressCupValue',
+    ], note: '[lint-guard 162c-TestShowcaseActressState.test_actress_js_contains] 使用者切到女優模式/排序後重新整理 → 缺 saveState 的 persist 寫入就回到預設、每次要重切；其餘為女優模式 state/method 識別字清單 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: [
+      '_videoChipsExpanded',
+      'currentLightboxActress = null',
+      '_videoChipsExpanded = false',
+      'this.currentLightboxActress',
+      'this.prevActressLightbox()',
+      'this.nextActressLightbox()',
+    ], note: '[lint-guard 162c-TestShowcaseActressState.test_actress_js_contains] 使用者切到女優模式/排序後重新整理 → 缺 saveState 的 persist 寫入就回到預設、每次要重切；其餘為女優模式 state/method 識別字清單 — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestActressLightboxSourceGuard
+  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: /actressLightboxSource\s*:\s*null/, note: '[lint-guard 162c-test_source_state_init_and_html] 使用者從女優牆開女優燈箱 → 相機鈕(找此女優作品)要出現；缺 state 初值/x-show 綁定則鈕消失或在 hero 燈箱誤出現 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "actressLightboxSource === 'grid'", note: '[lint-guard 162c-test_source_state_init_and_html] 使用者從女優牆開女優燈箱 → 相機鈕(找此女優作品)要出現；缺 state 初值/x-show 綁定則鈕消失或在 hero 燈箱誤出現 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: /this\.actressLightboxSource\s*=\s*['"]hero['"]/, scope: { anchor: /openHeroCardLightbox\s*\([^)]*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_source_set_in_open_methods] 使用者從 hero 卡開燈箱後再關閉 → 進入路徑 state 沒設 \'hero\'/沒在關閉時歸 null，相機鈕顯隱會錯 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: /this\.actressLightboxSource\s*=\s*null/, scope: { anchor: /closeLightbox\s*\([^)]*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_source_set_in_open_methods] 使用者從 hero 卡開燈箱後再關閉 → 進入路徑 state 沒設 \'hero\'/沒在關閉時歸 null，相機鈕顯隱會錯 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count', pattern: /this\.actressLightboxSource\s*=\s*['"]grid['"]/, min: 2, scope: { anchor: /openActressLightbox\s*\([^)]*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_open_actress_lightbox_sets_grid] 使用者在女優牆開女優燈箱、或切換上/下一位 → 少一處設 \'grid\' 則相機鈕在該路徑消失、無法跳去搜該女優作品 — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestShowcasePreciseMatchState
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', pattern: 'var _actressesLoaded', note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: [
+      '_isPreciseActressMatch',
+      '_matchedActress',
+      '_preciseMatchSource',
+      '_favoriteHeartLoading',
+      '_checkPreciseActressMatch',
+      '_clearPreciseMatch',
+      'capturedTerm',
+      'addFavoriteFromSearch',
+    ], note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', anyOf: true, pattern: ['_actressesLoaded = true', '_setActressesLoaded(true)'], note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: '_favoriteHeartLoading', scope: { anchor: /addFavoriteFromSearch/, window: 2000 }, note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'addFavoriteFromSearch()', note: '[lint-guard 162c-test_actress_html_contains] 使用者在影片搜尋框搜出女優後按愛心 → 缺 addFavoriteFromSearch() 接線則加不了收藏 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '_isPreciseActressMatch', note: '[lint-guard 162c-test_actress_html_contains] 使用者在影片搜尋框搜出女優後按愛心 → 缺 addFavoriteFromSearch() 接線則加不了收藏 — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestLoadMoreButton
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: '@click="gridLoadMore()"', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: "t('search.button.load_more')", note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: "hasMoreResults && displayMode === 'grid'", note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: 'hasMoreResults', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: "await this.loadMore('lightbox')", note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: 'async loadMore(trigger', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: 'return { loadedCount', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: 'async gridLoadMore()', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'playAppendCascade', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
   // ---- 162c-B01 迄 ----
   //
   //
