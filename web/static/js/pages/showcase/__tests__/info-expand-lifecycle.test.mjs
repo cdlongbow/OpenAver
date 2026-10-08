@@ -384,3 +384,23 @@ test('playInfoExpand：shouldSkip() 成立時不建動畫（gsap.to 零呼叫）
 // ── I-148b-2：kill-before-measure 順序 ───────────────────────────
 
 // ── !gridEl guard（⑤⑥）──────────────────────────────────────────
+
+// 視口過濾（162a 依 branch review 補回精簡版）：使用者在上千張的大牆按眼睛 →
+// 完全離屏的卡不得被動畫（否則整面牆每張都 gsap.set/to → 卡頓）。
+test('playInfoExpand：舊或新位置在視口 ±200px 內才 animate，完全離屏的卡不碰', () => {
+    resetCalls();
+    const rect = (top) => ({ top, bottom: top + 180, left: 0, right: 100, width: 100, height: 180 });
+    const a = makeCard(rect(5000));   // 新位置離屏
+    const c = makeCard(rect(5100));   // 新位置離屏
+    const gridEl = makeGrid([a, c]);
+    const captured = [
+        { el: a, top: 100, left: 0, bottom: 280 },     // 舊在窗內
+        { el: c, top: 5000, left: 0, bottom: 5180 },   // 舊新都在窗外
+    ];
+    assert.ok(ShowcaseAnimations.playInfoExpand(captured, gridEl));
+    const toTargets = gsapCalls.to[0][0];
+    const setTargets = gsapCalls.set.map((args) => args[0]).flat();
+    assert.ok(toTargets.includes(a) && setTargets.includes(a), '舊在窗內必須 animate');
+    assert.ok(!toTargets.includes(c) && !setTargets.includes(c), '舊新都在窗外不得碰');
+    assert.ok(!c._added.includes('gsap-animating'), '窗外卡不得加 gsap-animating');
+});
