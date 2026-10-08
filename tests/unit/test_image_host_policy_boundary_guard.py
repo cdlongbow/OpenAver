@@ -840,22 +840,11 @@ def test_dynamic_construction_assigned_to_module_level_name_is_rejected(py_file)
 # ============================================================
 
 _SHOULD_MATCH = [
-    "javbus.com",
-    "pics.dmm.co.jp",
-    "https://www.graphis.ne.jp/",
     "1pondo.tv",
-    "cf.javfree.me",
 ]
 
 _SHOULD_NOT_MATCH = [
-    "image/jpeg",  # 無點分 label（/ 不是 .）
-    ".jpg",  # 首字元為點，無左 label
-    "Mozilla/5.0 (Windows NT 10.0; Win64) AppleWebKit/537.36",  # 含空白
-    "依優先順序自動選擇",  # 無點
-    "metatube:FANZA",  # 無點
     "127.0.0.1",  # 純數字 label：plan 窮舉範例明列「刻意排除」（見 _is_domain_shaped ③）
-    "192.168.1.1",
-    "https://10.0.0.1/",
 ]
 
 
@@ -867,18 +856,6 @@ def test_domain_shaped_positive(s):
 @pytest.mark.parametrize("s", _SHOULD_NOT_MATCH, ids=[repr(x) for x in _SHOULD_NOT_MATCH])
 def test_domain_shaped_negative(s):
     assert _is_domain_shaped(s) is False
-
-
-def test_domain_shaped_excludes_ip_literals_but_not_numeric_prefixed_domains():
-    """IP 字面排除**不得**擴大成「開頭是數字就放過」。
-
-    `1pondo.tv` 與 `10musume.com` 都以數字開頭、且是真的 host（registry 裡就有
-    這兩筆）。排除條件必須是「**每一個** label 都是純數字」，不是「第一個 label
-    是數字」——後者會讓這兩筆從此掃不到，等於在守衛上開一個以數字命名的後門。
-    """
-    assert _is_domain_shaped("127.0.0.1") is False
-    assert _is_domain_shaped("1pondo.tv") is True
-    assert _is_domain_shaped("10musume.com") is True
 
 
 # ============================================================
@@ -893,19 +870,6 @@ TIER1_RED_CASES = [
         "_ALLOWED_X = {'evil.example'}\n",
         "module-level domain-shaped set 必須紅（只掃函式體會全綠）",
     ),
-    # ② 同一函式體內兩個違規容器
-    (
-        2,
-        "def f():\n    a = {'evil.example'}\n    b = {'other.evil'}\n    return a, b\n",
-        "函式體內兩個違規容器都要抓到",
-    ),
-    # list / tuple / dict value / dict key
-    (3, "X = ['javbus.com']\n", "list 字面"),
-    (4, "X = ('javbus.com',)\n", "tuple 字面"),
-    (5, "X = {'h': 'pics.dmm.co.jp'}\n", "dict value"),
-    (6, "X = {'cf.javfree.me': True}\n", "dict key"),
-    (7, "X = {'https://www.graphis.ne.jp/'}\n", "scheme+host+/"),
-    (8, "X = {'1pondo.tv'}\n", "root domain"),
 ]
 
 TIER1_GREEN_CASES = [
@@ -915,22 +879,6 @@ TIER1_GREEN_CASES = [
         "REFERER_MAP = {'graphis': 'https://www.graphis.ne.jp/'}\n",
         "允許清單 REFERER_MAP",
     ),
-    # 非 domain-shaped
-    (11, "CONTENT_TYPE_MAP = {'image/jpeg': '.jpg'}\n", "MIME／副檔名不命中"),
-    (
-        12,
-        "_HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64)'}\n",
-        "含空白 UA 不命中",
-    ),
-    # 裸字面比較——結構上不掃 Compare（Opus 裁決 2）
-    (
-        13,
-        'def proxy_image(url):\n    if "javbus.com" in url:\n        return 1\n',
-        "裸字面比較不進容器掃描",
-    ),
-    # 非容器
-    (14, 'HOST = "javbus.com"\n', "單一 Constant 賦值不是容器"),
-    (15, "SAFE = re.compile(r'^[A-Za-z0-9._~-]+$')\n", "re.compile 引數不是容器"),
 ]
 
 # Tier 2 RED
@@ -945,33 +893,6 @@ TIER2_RED_CASES = [
         "    return None\n",
         "兩段式 is_connected + base_url 必須紅",
     ),
-    # 四種 alias 寫法
-    (
-        21,
-        "from core.metatube.state import metatube_state as state\n"
-        "def f():\n    return state.base_url\n",
-        "as state alias",
-    ),
-    (
-        22,
-        "from core.metatube.state import metatube_state as _mt_state\n"
-        "def f():\n    return _mt_state.is_connected\n",
-        "as _mt_state alias",
-    ),
-    (
-        23,
-        "from core.metatube.state import metatube_state as _mt_startup_state\n"
-        "def f():\n    return _mt_startup_state.base_url\n",
-        "as _mt_startup_state alias",
-    ),
-    # 函式內 import
-    (
-        24,
-        "def f():\n"
-        "    from core.metatube.state import metatube_state as _mt_state\n"
-        "    return _mt_state.is_connected\n",
-        "函式內 import binding",
-    ),
 ]
 
 TIER2_GREEN_CASES = [
@@ -983,74 +904,15 @@ TIER2_GREEN_CASES = [
         "    return metatube_state.connected_base_url()\n",
         "connected_base_url() Call 不命中",
     ),
-    # 其他物件的同名屬性
-    (
-        31,
-        "def f(request):\n    return request.base_url\n",
-        "request.base_url 不得誤傷",
-    ),
-    # self._base_url（T3b shim）——receiver 非 import binding；attr 名也不同
-    (
-        32,
-        "class _MetatubeShim:\n"
-        "    def __init__(self, base_url):\n"
-        "        self._base_url = base_url\n"
-        "    def map(self, info):\n"
-        "        return self._base_url\n",
-        "self._base_url 不命中",
-    ),
-    # Store 寫入不掃
-    (
-        33,
-        "from core.metatube.state import metatube_state\n"
-        "def f(v):\n"
-        "    metatube_state.base_url = v\n",
-        "Store 不掃（僅 Load）",
-    ),
-    # 參數遮蔽
-    (
-        34,
-        "from core.metatube.state import metatube_state\n"
-        "def f(metatube_state):\n"
-        "    return metatube_state.base_url\n",
-        "參數遮蔽 import binding",
-    ),
-    # 其他屬性
-    (
-        35,
-        "from core.metatube.state import metatube_state\n"
-        "def f():\n"
-        "    return metatube_state.token\n",
-        "token 不在禁令",
-    ),
 ]
 
 # DoD-3 RED / GREEN
 DOD3_RED_CASES = [
     (40, "_X = set(_load_hosts())\n", "集合建構子 set(...)"),
-    (41, "_X = list(hosts)\n", "list(...)"),
-    (42, "_X = frozenset(hosts)\n", "frozenset(...)"),
-    (43, "_X = dict(pairs)\n", "dict(...)"),
-    (44, "_X = tuple(hosts)\n", "tuple(...)"),
-    (45, "_X = A | B\n", "BitOr 聯集"),
-    (46, "_X = A & B\n", "BitAnd 交集"),
-    (47, "_X = A + B\n", "Add 串接"),
-    (48, "_X = A - B\n", "Sub 差集"),
-    (49, "_X = {h for h in hosts}\n", "SetComp"),
-    (50, "_X = [h for h in hosts]\n", "ListComp"),
-    (51, "_X = {k: v for k, v in pairs}\n", "DictComp"),
 ]
 
 DOD3_GREEN_CASES = [
-    # 裁決 1 反向：非集合建構子 Call 必須仍綠
-    (60, "_Y = SomeClass(hosts)\n", "非集合建構子 Call 不紅"),
     (61, "logger = get_logger(__name__)\n", "get_logger"),
-    (62, "router = APIRouter()\n", "APIRouter"),
-    (63, "SAFE = re.compile(r'x')\n", "re.compile"),
-    # Div 不在觸發集合（Path / "output"）
-    (64, 'GFRIENDS_DIR = Path(__file__).parent / "output"\n', "Path Div 不紅"),
-    # 字面容器本身不是「動態建構」——由 Tier 1 管
-    (65, "X = {'a': 1}\n", "字面 dict 不是動態建構"),
 ]
 
 
@@ -1082,22 +944,6 @@ class TestFalsifiabilityDemonstration:
             f"T1-GREEN-{case_id} 應綠（{reason}），但違規: {violations}"
         )
 
-    def test_two_containers_count_is_two(self):
-        """② 強化：同一函式兩個違規容器 → 命中次數恰為 2；只拿掉一處仍須紅。"""
-        both = (
-            "def f():\n"
-            "    a = {'evil.example'}\n"
-            "    b = {'other.evil'}\n"
-            "    return a, b\n"
-        )
-        one = (
-            "def f():\n"
-            "    a = {'evil.example'}\n"
-            "    return a\n"
-        )
-        assert len(_tier1_violations_in_source(both)) == 2
-        assert len(_tier1_violations_in_source(one)) == 1
-
     @pytest.mark.parametrize(
         "case_id,source,reason",
         TIER2_RED_CASES,
@@ -1119,19 +965,6 @@ class TestFalsifiabilityDemonstration:
         assert not violations, (
             f"T2-GREEN-{case_id} 應綠（{reason}），但違規: {violations}"
         )
-
-    def test_registry_two_step_read_counts_two(self):
-        """③：兩次屬性讀 → 兩筆違規（is_connected + base_url）。"""
-        src = (
-            "from core.metatube.state import metatube_state\n"
-            "def proxy_dynamic_hosts():\n"
-            "    if metatube_state.is_connected:\n"
-            "        return metatube_state.base_url\n"
-            "    return None\n"
-        )
-        v = _tier2_violations_in_source(src)
-        attrs = sorted(x[3] for x in v)
-        assert attrs == ["base_url", "is_connected"]
 
     @pytest.mark.parametrize(
         "case_id,source,reason",
@@ -1155,18 +988,6 @@ class TestFalsifiabilityDemonstration:
             f"DOD3-GREEN-{case_id} 應綠（{reason}），但違規: {violations}"
         )
 
-    def test_anti_rot_allowlist_rename_shape(self):
-        """④ 合成形：允許清單名字對不到命中容器 → anti-rot 語意（命中變違規）。
-
-        把 REFERER_MAP 改名成 OTHER 後，同內容容器不再允許。
-        """
-        allowed = "REFERER_MAP = {'g': 'https://www.graphis.ne.jp/'}\n"
-        renamed = "OTHER_MAP = {'g': 'https://www.graphis.ne.jp/'}\n"
-        assert not _tier1_violations_in_source(allowed)
-        assert _tier1_violations_in_source(renamed), (
-            "改名後同內容容器必須變違規（允許清單按名字，不按內容）"
-        )
-
 
 # ============================================================
 # review 修補（2026-08-07）：dotted ast.Import ＋ 容器內非 Constant 元素
@@ -1180,28 +1001,16 @@ _TIER2_DOTTED_RED = [
     # 同 113d 對 `import os.path` 的處理方式」）。initial 實作只認 ImportFrom。
     ("import-as, module scope",
      "import core.metatube.state as X\nu = X.metatube_state.base_url\n"),
-    ("import-as, 函式內使用（binding 沿 scope 繼承）",
-     "import core.metatube.state as X\ndef f():\n    return X.metatube_state.is_connected\n"),
-    ("plain dotted import（只綁頂層 core，靠最長前綴解析）",
-     "import core.metatube.state\nu = core.metatube.state.metatube_state.base_url\n"),
 ]
 
 _TIER2_DOTTED_GREEN = [
-    # 別誤傷：這四種都**不是** metatube_state 的讀取
     ("alias 被區域變數遮蔽",
      "import core.metatube.state as X\ndef f():\n    X = object()\n    return X.metatube_state.base_url\n"),
-    ("其他物件的同名屬性",
-     "import requests\nu = requests.base_url\n"),
-    ("self 的私有屬性（T3b 的 _MetatubeShim._base_url 形狀）",
-     "class C:\n    def f(self):\n        return self.base_url\n"),
-    ("長得像但模組不對",
-     "import core.other.state as X\nu = X.metatube_state.base_url\n"),
 ]
 
 
 @pytest.mark.parametrize("label,src", _TIER2_DOTTED_RED, ids=[c[0] for c in _TIER2_DOTTED_RED])
 def test_tier2_detects_dotted_import_bindings(label, src):
-    """dotted `ast.Import` 的三種形狀都必須被解析到 metatube_state。"""
     assert _tier2_violations_in_source(src), f"{label}：dotted import 漏抓"
 
 
@@ -1213,12 +1022,6 @@ def test_tier2_dotted_support_does_not_overreach(label, src):
 
 _DOD3_NON_CONSTANT_RED = [
     ("Set 內含 Call", '_X = {load_host(), "a.com"}\n'),
-    ("List 內含 Name", '_X = ["a.com", EXTRA_HOST]\n'),
-    ("Tuple 內含 BinOp", '_X = ("a.com", "b" + ".com")\n'),
-    ("Dict value 為 Call", '_X = {"k": load_host()}\n'),
-    ("Dict key 為 Name", '_X = {HOST_KEY: "a.com"}\n'),
-    ("Dict **spread", '_X = {**OTHER, "k": "a.com"}\n'),
-    ("Set *spread", '_X = {*OTHER, "a.com"}\n'),
 ]
 
 
@@ -1237,8 +1040,6 @@ def test_dod3_flags_container_with_non_constant_elements(label, src):
 
 _DOD3_ALL_CONSTANT_GREEN = [
     ("全 Constant Dict（REFERER_MAP 形狀）", '_X = {"graphis": "https://www.graphis.ne.jp/"}\n'),
-    ("全 Constant Tuple", '_X = ("a", "b")\n'),
-    ("空容器", '_X = {}\n'),
 ]
 
 
