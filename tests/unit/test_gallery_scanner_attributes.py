@@ -1,9 +1,8 @@
 """TASK-121a-T3: 掃描路徑接入 effective_tags。
 
-對應卡片「本 task 特有邊界」1–7，每條至少一條斷言。
+對應卡片「本 task 特有邊界」1–5、7（邊界 6 順序守衛已於 162b 刪除），每條至少一條斷言。
 不重複 T1 純函式單元測試；只驗掃描路徑接得對不對。
 """
-import inspect
 import textwrap
 from unittest.mock import patch
 
@@ -111,14 +110,6 @@ def test_b05_genre_none_does_not_raise(tmp_path):
         info = scanner.scan_file(str(video))
     assert info.genre is not None
     assert isinstance(info.genre, str)
-
-
-# ── 邊界 6（順序）────────────────────────────────────────────────────────────
-
-def test_b06_effective_tags_called_after_normalize_maker():
-    """effective_tags() 的呼叫發生在 normalize_maker() 之後。"""
-    src = inspect.getsource(VideoScanner.scan_file)
-    assert src.index("normalize_maker") < src.index("effective_tags")
 
 
 # ── 邊界 7（CD-10 空白合流）──────────────────────────────────────────────────
