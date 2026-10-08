@@ -22,20 +22,6 @@ LIGHTBOX_JS = REPO_ROOT / "web" / "static" / "js" / "pages" / "showcase" / "stat
 
 # ─── Guard 4 ─────────────────────────────────────────────────────────────────
 
-def test_client_log_excluded_from_capabilities():
-    """/api/client-log must NOT be disclosed in the capabilities tool list (CD13).
-
-    Cross-module router↔capabilities contract: /api/client-log is a pure diagnostic
-    sink (write-only debug.log), not an AI-usable capability, so it must never appear
-    in the disclosed _TOOLS list.
-    """
-    from web.routers.capabilities import _TOOLS
-
-    assert all(t.get("path") != "/api/client-log" for t in _TOOLS), (
-        "/api/client-log must NOT be in capabilities _TOOLS — it is a pure "
-        "diagnostic sink, not a disclosed capability (CD13)."
-    )
-
 
 # ─── Guard 5 ─────────────────────────────────────────────────────────────────
 

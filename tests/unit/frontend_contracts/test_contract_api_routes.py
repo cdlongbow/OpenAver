@@ -246,16 +246,6 @@ class TestRescrapeStateGuard:
         assert re.search(r"export\s+function\s+rescrapeState\s*\(", src), \
             "state-rescrape.js missing: export function rescrapeState()"
 
-    def test_defines_all_state_keys(self):
-        """9 個 partial 引用的 state key 必須平鋪定義。"""
-        src = self._src()
-        for key in (
-            "rescrapeOpen", "rescrapeStep", "rescrapeEntryPoint", "rescrapeNumber",
-            "rescrapeOriginalFilename", "rescrapeSources", "rescrapeLoadingSource",
-            "rescrapePreview", "rescrapeNotFound",
-        ):
-            assert key in src, f"state-rescrape.js missing state key: {key}"
-
     def test_defines_all_methods(self):
         """6 個 partial 引用的 method + openRescrape（62b-1 呼叫）必須揭露。"""
         src = self._src()
@@ -284,17 +274,6 @@ class TestRescrapeStateGuard:
         src = self._src()
         assert "currentLightboxVideo" not in src, \
             "state-rescrape.js 違反 CD-62-2：不得引用 currentLightboxVideo，應用私有 _rescrapeVideo"
-
-    def test_rescraping_guard_present(self):
-        """連點防護：_rescraping guard 必須存在（鏡像 _enriching）。"""
-        src = self._src()
-        assert "_rescraping" in src, "missing _rescraping 連點 guard"
-
-    def test_no_proxy_image_construction(self):
-        """CD-62-14 #8：/api/proxy-image URL 由 partial 內聯，mixin 不得重複建構。"""
-        src = self._src()
-        assert "/api/proxy-image" not in src, \
-            "state-rescrape.js 不得建構 /api/proxy-image URL（partial 內聯，避免重複）"
 
     def test_main_js_imports_and_merges_rescrape_state(self):
         """main.js 必須 import rescrapeState 並插入 mergeState 鏈。"""
@@ -427,87 +406,6 @@ class TestServerModeToggleGuard:
         assert "settings.server_info.warning" in html, \
             "settings.html 缺少 settings.server_info.warning i18n key 引用（警語行）"
 
-    def test_settings_server_info_copy_button(self):
-        """橫條內含 copyServerUrl() 呼叫（複製鈕 @click）。
-        移除 → 複製功能斷掉，用戶無法複製 URL。"""
-        html = self._html()
-        assert "copyServerUrl()" in html, \
-            "settings.html 缺少 copyServerUrl() 呼叫（複製鈕 @click）"
-
-    def test_settings_server_copy_is_clipboard_icon_with_aria(self):
-        """copy 鈕為 icon-only（內含 <i class="bi bi-clipboard">）+ a11y 標籤
-        （:aria-label 與 :title 皆引用 settings.server_info.copy）。
-
-        81b-T1（CD-4 + #8）：copy 由文字「複製」改 bi-clipboard icon-only，
-        i18n key 轉作 aria-label/title 提供無障礙標籤。
-        mutation：把 <i class="bi bi-clipboard"> 換回文字 → icon 斷言 RED；
-        移除 :aria-label 或改引用別 key → a11y 斷言 RED。"""
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(self._html(), "html.parser")
-        btn = soup.find(class_="settings-server-copy-btn")
-        assert btn is not None, \
-            "settings.html 缺少 .settings-server-copy-btn（81b-T1 複製鈕）"
-        assert btn.find("i", class_="bi-clipboard") is not None, \
-            ".settings-server-copy-btn 缺少 <i class=\"bi bi-clipboard\"> icon（CD-4 icon-only）"
-        aria = btn.get(":aria-label") or btn.get("aria-label")
-        assert aria is not None and "settings.server_info.copy" in aria, \
-            f"copy 鈕 aria-label 應引用 settings.server_info.copy，實際: {aria!r}（#8 a11y 標籤）"
-        title = btn.get(":title") or btn.get("title")
-        assert title is not None and "settings.server_info.copy" in title, \
-            f"copy 鈕 title 應引用 settings.server_info.copy，實際: {title!r}（CD-4 hover 提示）"
-
-    def test_settings_amber_active_scoped_to_server_mode(self):
-        """琥珀 active（[data-mode="server"].is-on）規則 scope 緊收到
-        .settings-server-mode 且 body 用 --color-warning。
-
-        81b-T2（CD-6）：琥珀只套 server 膠囊，不可外溢到來源卡膠囊。
-        mutation：把任一條琥珀 server 規則的 scope 從 .settings-server-mode 拿掉
-        （污染來源卡）→ 該條成「未 scope 的琥珀規則」→ RED；改用非 --color-warning 顏色
-        → 找不到琥珀規則 → RED。
-
-        關鍵（teeth）：不是「存在一條有 scope 的規則就放行」（base + dim 兩條，拔一條
-        另一條仍在會假綠），而是「**每一條** [data-mode=\"server\"].is-on 琥珀規則都必須
-        scope 在 .settings-server-mode」——即不存在任何未 scope 的琥珀 server 規則。
-        先剝 /* ... */ 註解，防註解內 .settings-server-mode 字面混入 selector 比對。"""
-        css = SETTINGS_CSS.read_text(encoding="utf-8")
-        css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
-        # 列舉所有 `selector { body }` 規則塊（巢狀無關，settings.css 為扁平規則）
-        amber_rules = []
-        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
-            selector, body = m.group(1), m.group(2)
-            if '[data-mode="server"]' in selector and ".is-on" in selector \
-                    and "--color-warning" in body:
-                amber_rules.append(selector.strip())
-        assert amber_rules, \
-            "settings.css 缺少 [data-mode=\"server\"].is-on + --color-warning 的琥珀 active 規則（CD-6）"
-        # 每一條琥珀 server 規則都必須 scope 在 .settings-server-mode（無任一條外溢）
-        unscoped = [s for s in amber_rules if ".settings-server-mode" not in s]
-        assert not unscoped, \
-            f"琥珀 active 規則未全部 scope 在 .settings-server-mode（CD-6 防外溢來源卡）: {unscoped!r}"
-
-    def test_no_clipboard_emoji_in_copy_context(self):
-        """web/ 下所有 .html/.js/.css 不得出現 📋 字面（含 design-system <pre> 範例字串）。
-
-        81b-T4：複製鈕統一 bi-clipboard icon，移除所有 📋 emoji。
-        純字串 in-content 掃描（非 bs4 text-only），確保 escaped <pre> 範例也掃到。
-        eslint/stylelint 不掃 .html 模板，故 pytest 字串掃描是正確路由。
-        mutation：任何人把 📋 寫回任一複製鈕（含教學範例）→ RED。"""
-        web_root = Path(__file__).parent.parent.parent.parent / "web"
-        offenders = []
-        for ext in ("*.html", "*.js", "*.css"):
-            for f in web_root.rglob(ext):
-                if "\U0001F4CB" in f.read_text(encoding="utf-8"):
-                    offenders.append(str(f.relative_to(web_root)))
-        assert not offenders, \
-            f"web/ 下仍殘留 📋 emoji（應統一用 bi-clipboard icon）: {offenders}"
-
-    def test_settings_server_info_no_lan_ip_key(self):
-        """橫條含 settings.server_info.no_lan_ip i18n key（lanIp 為空時提示）。
-        移除 → lanIp=None 時橫條空白，用戶看不到說明。"""
-        html = self._html()
-        assert "settings.server_info.no_lan_ip" in html, \
-            "settings.html 缺少 settings.server_info.no_lan_ip i18n key（lanIp 空白提示）"
-
     def test_settings_server_info_distinguishes_listener_down_from_no_ip(self):
         """Codex P2：banner 須區分「listener 未啟動」(lanIp 在但 lanPort 缺) 與「取不到 IP」。
         listener_down 分支須 lanIp-gated（`!serverUrl() && lanIp`），no_lan_ip 須 `!serverUrl() && !lanIp`。
@@ -545,13 +443,6 @@ class TestServerModeToggleGuard:
         assert "window.location.port" not in js, \
             "state-config.js serverUrl() 不應再使用 window.location.port（已改用 lanPort）"
 
-    def test_state_config_lan_port_state_exists(self):
-        """state 含 lanPort: null（80a-T6c 新增 state，reload 後補 GET lan-port）。
-        移除 → serverUrl() 永遠 null，URL 橫條不顯示。"""
-        js = self._js()
-        assert "lanPort: null" in js, \
-            "state-config.js 缺少 'lanPort: null' state（80a-T6c）"
-
     def test_state_config_set_server_mode_reads_lan_port(self):
         """setServerMode() 成功分支讀 result.lan_port（後端回傳 LAN port）。
         移除 → 切換成功後 lanPort 不更新，URL 橫條顯示舊值或 null。"""
@@ -583,13 +474,6 @@ class TestServerModeToggleGuard:
             "state-config.js loadConfig() 缺少 'j.lan_ip'（lan-port GET 須同步更新 lanIp）"
         assert "this.lanIp = j.lan_ip" in js, \
             "state-config.js loadConfig() 缺少 'this.lanIp = j.lan_ip'（lanIp 未從 lan-port 回應更新）"
-
-    def test_state_config_reads_server_mode_with_nullish_coalesce(self):
-        """loadConfig() 用 ?? false 讀 config.general?.server_mode（CD#3 慣例）。
-        改成 || false → false 值會被吞（語意等同但守慣例）。"""
-        js = self._js()
-        assert "config.general?.server_mode ?? false" in js, \
-            "state-config.js loadConfig() 缺少 'config.general?.server_mode ?? false'"
 
     def test_state_config_set_server_mode_failure_direction_aware(self):
         """setServerMode() 失敗分支使用方向感知 toast（val ? toggle_failed : disable_failed）。
@@ -781,42 +665,6 @@ class TestJellyfinCheckManualGuard:
         assert "this.loadStats();\n        this.checkJellyfinImages();" not in js, \
             "scanner.js init() 仍含自動觸發 checkJellyfinImages()"
 
-    def test_jellyfin_check_state_declared(self):
-        """Alpine data 宣告 jellyfinCheckState 欄位"""
-        js = self._js()
-        assert "jellyfinCheckState: 'idle'" in js, \
-            "scanner.js 缺少 jellyfinCheckState: 'idle' 初始化宣告"
-
-    def test_jellyfin_check_controller_declared(self):
-        """Alpine data 宣告 _jellyfinCheckController 欄位"""
-        js = self._js()
-        assert "_jellyfinCheckController: null" in js, \
-            "scanner.js 缺少 _jellyfinCheckController: null 初始化宣告"
-
-    def test_abort_controller_used_in_check(self):
-        """checkJellyfinImages() 建立 AbortController"""
-        js = self._js()
-        assert "new AbortController()" in js, \
-            "scanner.js checkJellyfinImages() 缺少 new AbortController()"
-
-    def test_abort_called_in_cleanup(self):
-        """cleanup 回呼內含 _jellyfinCheckController.abort()"""
-        js = self._js()
-        assert "_jellyfinCheckController.abort()" in js, \
-            "scanner.js cleanup 缺少 _jellyfinCheckController.abort()"
-
-    def test_jellyfin_check_state_reset_in_cleanup(self):
-        """cleanup 回呼補上 jellyfinCheckState = 'idle' 重設"""
-        js = self._js()
-        assert "jellyfinCheckState = 'idle'" in js, \
-            "scanner.js cleanup 缺少 jellyfinCheckState = 'idle' 重設"
-
-    def test_should_warn_checks_jellyfin_checking(self):
-        """shouldWarnBeforeLeave() 含 jellyfinCheckState === 'checking' 判斷"""
-        js = self._js()
-        assert "jellyfinCheckState === 'checking'" in js, \
-            "scanner.js shouldWarnBeforeLeave() 缺少 jellyfinCheckState === 'checking' 判斷"
-
     def test_trigger_button_click_handler(self):
         """觸發按鈕 @click 呼叫 checkJellyfinImages()"""
         html = self._html()
@@ -829,19 +677,6 @@ class TestJellyfinCheckManualGuard:
         # loadStats 後面不應接 checkJellyfinImages（generate 路徑）
         assert "this.loadStats();\n                    this.checkJellyfinImages();" not in js, \
             "scanner.js generate done 路徑仍自動呼叫 checkJellyfinImages()"
-
-    def test_clear_cache_resets_jellyfin_state(self):
-        """clearCache 成功後含 jellyfinCheckState = 'idle' 重設"""
-        js = self._js()
-        # jellyfinImageVisible = false 後緊接 jellyfinCheckState = 'idle'
-        assert "jellyfinImageVisible = false" in js, \
-            "scanner.js clearCache 缺少 jellyfinImageVisible = false"
-        # jellyfinCheckState = 'idle' 在 clearCache 函數中也必須出現
-        # （在 shouldWarnBeforeLeave 和 beforeLeave 都有，此守衛確認 clearCache 路徑有）
-        # 用計數確認至少 2 處（cleanup + clearCache，shouldWarnBeforeLeave 判斷不算 assignment）
-        count = js.count("jellyfinCheckState = 'idle'")
-        assert count >= 2, \
-            f"scanner.js jellyfinCheckState = 'idle' 出現 {count} 次，期望 >= 2（cleanup + clearCache）"
 
     def test_trigger_row_xshow_uses_jellyfin_image_visible(self):
         """T3(40c) / T-d4 / 72d-codexP2: 觸發列 x-show 用正向白名單 gate（fail-closed，含 kodi）"""

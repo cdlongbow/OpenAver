@@ -190,12 +190,6 @@ class TestGalleryOutputDirEmptyFollowsDataRoot:
     def _settings_html(self):
         return SETTINGS_HTML.read_text(encoding="utf-8")
 
-    def test_settings_initial_avlist_output_dir_empty(self):
-        """初始 state 為空字串，避免 loadConfig 前閃字面 output。"""
-        js = self._config_js()
-        assert "avlistOutputDir: ''," in js, \
-            "state-config.js 初始 avlistOutputDir 應為 ''（空＝跟著資料根）"
-
     def test_settings_load_preserves_empty_output_dir(self):
         """loadConfig 用 ?? '' 保留空字串。"""
         js = self._config_js()

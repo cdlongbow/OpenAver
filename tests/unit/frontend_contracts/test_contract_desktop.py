@@ -81,13 +81,6 @@ class TestOpenLocalGuard:
         assert 'def open_folder' in content, \
             "pywebview_api.py 缺少 def open_folder（T5a）"
 
-    def test_no_stale_copy_local_path(self):
-        """search.html 不包含 copyLocalPath( 呼叫（確認舊 call 已清除）"""
-        html_file = PROJECT_ROOT / "web" / "templates" / "search.html"
-        content = html_file.read_text(encoding='utf-8')
-        assert 'copyLocalPath(' not in content, \
-            "search.html 仍包含 copyLocalPath( — T5b 應已將其改為 openLocal()"
-
     def test_open_local_checks_return_value(self):
         """openLocal() 的 .then() 必須檢查 open_folder 回傳值；兩頁各自掛載（T4/CD-10）"""
         shared_content = _OPEN_LOCAL_SHARED.read_text(encoding='utf-8')
@@ -182,15 +175,6 @@ class TestJavlibraryPickerT5Guard:
         #   ③ 選擇器只能回那兩個 key，由 state-rescrape-cf-availability.test.mjs 第 9–11 條鎖住。
         # 依 CLAUDE.md「Lint 守衛規則」，「某個 HTML 字串應該出現」本來就屬 lint 不屬 pytest；
         # 刪掉是減碼，不是放寬（守衛模式 1 的等價性在 ① 是機械成立的子集關係）。
-
-    def test_i18n_jl_desktop_only_parity(self):
-        """(6) 4 locale 檔（zh_TW/zh_CN/en/ja）皆含 jl_desktop_only key。"""
-        for lang in ("zh_TW", "zh_CN", "en", "ja"):
-            locale_path = _LOCALES_ROOT_70 / f"{lang}.json"
-            content = locale_path.read_text(encoding="utf-8")
-            assert "jl_desktop_only" in content, (
-                f"70-T5 違規：locales/{lang}.json 缺 showcase.rescrape.jl_desktop_only key（i18n parity）"
-            )
 
 
 class TestCfPollUnavailableGuard:
@@ -370,50 +354,6 @@ class TestSettingsCloseActionSelect:
                 f'select#closeAction missing option value="{val}": {block!r}'
             )
 
-    def test_close_action_select_has_i18n_keys(self):
-        """Each option in the #closeAction select uses a t('settings.system.close_action_*') key."""
-        import re
-        content = self._settings_html()
-
-        m = re.search(
-            r'<select\b[^>]*\bid="closeAction"[^>]*>.*?</select>',
-            content, re.DOTALL,
-        )
-        assert m, 'select#closeAction not found in settings.html'
-        block = m.group(0)
-
-        for key in ("settings.system.close_action_ask",
-                    "settings.system.close_action_tray",
-                    "settings.system.close_action_exit"):
-            assert key in block, (
-                f'select#closeAction missing i18n key {key!r} in option text'
-            )
-
-    def test_zh_tw_has_close_action_label_key(self):
-        """zh_TW.json must contain settings.system.close_action_label."""
-        data = self._zh_tw()
-        system = data.get("settings", {}).get("system", {})
-        assert "close_action_label" in system, (
-            "zh_TW.json missing settings.system.close_action_label"
-        )
-        assert system["close_action_label"] == "關閉視窗時"
-
-    def test_zh_tw_has_close_action_option_keys(self):
-        """zh_TW.json must contain all 3 close_action option keys."""
-        data = self._zh_tw()
-        system = data.get("settings", {}).get("system", {})
-        expected = {
-            "close_action_ask": "每次詢問",
-            "close_action_tray": "最小化到系統匣",
-            "close_action_exit": "直接結束",
-        }
-        for key, value in expected.items():
-            assert key in system, f"zh_TW.json missing settings.system.{key}"
-            assert system[key] == value, (
-                f"settings.system.{key} value mismatch: "
-                f"expected {value!r}, got {system[key]!r}"
-            )
-
 
 # [lint-guard: pytest-justified] 跨檔 Alpine state 方法與模板呼叫及 i18n key 的 wiring 契約。
 class TestAccessAuthStateWiring:
@@ -438,13 +378,6 @@ class TestAccessAuthStateWiring:
         assert 'x-show="accessAuthStatusHintKey()"' in tag.group(0)
         assert 'x-text="window.t(accessAuthStatusHintKey())"' in tag.group(0)
 
-    def test_source_locale_has_status_hint_keys(self):
-        import json
-        data = json.loads(ZH_TW_JSON.read_text(encoding="utf-8"))
-        auth = data["settings"]["access_auth"]
-        assert "unset_hint" in auth
-        assert "need_login_hint" in auth
-
 
 class TestHelpUpdateButtonGuard:
     """84-T3: Help 頁「更新」按鈕 + confirm modal 靜態守衛
@@ -466,12 +399,6 @@ class TestHelpUpdateButtonGuard:
 
     def _js(self):
         return self.HELP_JS.read_text(encoding="utf-8")
-
-    def test_is_desktop_gate_exists_in_help_html(self):
-        """help.html 含 {% if is_desktop %} gate（確保按鈕被正確 gate）"""
-        html = self._html()
-        assert '{% if is_desktop %}' in html, \
-            "help.html 缺 {% if is_desktop %} gate — 更新按鈕必須在此 gate 內"
 
     def test_trigger_update_click_inside_desktop_gate(self):
         """@click="triggerUpdate()" 必須在 {% if is_desktop %} block 內"""

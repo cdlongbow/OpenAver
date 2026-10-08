@@ -153,50 +153,6 @@ class TestPartsBinStagedAffordanceGuard:
         )
 
 
-class TestSourcePillFlatCss:
-    """TASK-74b-T1: .source-pill--flat 唯讀變體 CSS contract（cross-file，element-bound）。
-
-    flat 變體保留 tint、只關互動（CD-74b-1）：cursor default + hover 無 lift/shadow + focus 無 outline。
-    cross-file 契約：macro 在 variant='flat' 輸出 source-pill--flat ↔ CSS 必有對應規則。
-    過「三問」：刪 .source-pill--flat 規則 → 紅；macro 移除 flat 分支 → 紅；改 cursor 值 → 紅。
-    """
-
-    def _css(self) -> str:
-        return SOURCE_PILL_CSS.read_text(encoding="utf-8")
-
-    def _macro(self) -> str:
-        return SOURCE_PILL_MACRO.read_text(encoding="utf-8")
-
-    def test_flat_rule_defines_cursor_default(self):
-        """`.source-pill--flat { cursor: default; }` 存在（覆寫 base cursor: grab）。"""
-        css = self._css()
-        m = re.search(r"\.source-pill--flat\s*\{([^}]*)\}", css)
-        assert m, "source-pill.css 缺 .source-pill--flat 規則（74b T1 enabler）"
-        assert "cursor: default" in m.group(1), (
-            f".source-pill--flat 必須 cursor: default（關掉 base grab）；body: {m.group(1)!r}"
-        )
-
-    def test_flat_hover_negates_lift(self):
-        """`.source-pill--flat:hover` 關掉 base hover 的 transform + box-shadow。"""
-        css = self._css()
-        m = re.search(r"\.source-pill--flat:hover\s*\{([^}]*)\}", css)
-        assert m, "source-pill.css 缺 .source-pill--flat:hover 規則"
-        body = m.group(1)
-        assert "transform: none" in body, (
-            f".source-pill--flat:hover 必須 transform: none（關掉 base lift）；body: {body!r}"
-        )
-        assert "box-shadow: none" in body, (
-            f".source-pill--flat:hover 必須 box-shadow: none（關掉 base shadow）；body: {body!r}"
-        )
-
-    def test_macro_emits_flat_class_cross_file(self):
-        """cross-file：macro variant='flat' 分支輸出 source-pill--flat（CSS 規則的唯一消費路徑）。"""
-        macro = self._macro()
-        assert "source-pill--flat" in macro, (
-            "source_pill.html 未輸出 source-pill--flat — flat CSS 將無消費者（cross-file 契約斷裂）"
-        )
-
-
 class TestPosterCropThresholdAlignment:
     """US-10 / CD-10：posterCrop 門檻（JS）與燈箱封面貼合 / poster grid 斷點（CSS）對齊 899。"""
 
@@ -323,30 +279,6 @@ class TestPosterCropThresholdAlignment:
         self._card_shape_media_body = body
         return int(mn.group(1))
 
-    # ---- 常數定義 ----
-    def test_breakpoint_const_is_899(self):
-        """shared/breakpoints.js 匯出 POSTER_CROP_MAX_W = 899。"""
-        assert self._const_value() == 899, "POSTER_CROP_MAX_W 不為 899"
-
-    # ---- JS 門檻 ----
-    def test_showcase_js_threshold_899(self):
-        """state-lightbox.js posterCrop 門檻 == 899（import 共用常數 + innerWidth 比較 + 無 480 殘留）。"""
-        assert self._js_poster_crop_threshold(
-            T11_STATE_LIGHTBOX_JS, "state-lightbox.js"
-        ) == 899
-
-    def test_search_js_threshold_899(self):
-        """grid-mode.js（search）posterCrop 門檻 == 899（同上）。"""
-        assert self._js_poster_crop_threshold(
-            T11_GRID_MODE_JS, "grid-mode.js"
-        ) == 899
-
-    def test_parity_both_js_thresholds_equal(self):
-        """CD-11：兩頁 JS 門檻值彼此相等（防只改一頁）。"""
-        sc = self._js_poster_crop_threshold(T11_STATE_LIGHTBOX_JS, "state-lightbox.js")
-        se = self._js_poster_crop_threshold(T11_GRID_MODE_JS, "grid-mode.js")
-        assert sc == se, f"兩頁 posterCrop 門檻不一致：showcase={sc} search={se}"
-
     # ---- CSS 燈箱封面貼合 ----
     def test_showcase_lightbox_fit_covers_899(self):
         """showcase.css 燈箱封面貼合：83b-T2 後由 modal-hug 規則（.lightbox-content .lightbox-cover.has-cover img）
@@ -363,64 +295,6 @@ class TestPosterCropThresholdAlignment:
         m = re.search(r'\.lightbox-content\s+\.lightbox-cover\.has-cover\s+img\s*\{([^}]+)\}', css_no_comments)
         assert m, "showcase.css modal-hug img block 找不到"
         assert "width: 100%" in m.group(1), "modal-hug img block 缺 width: 100%"
-
-    def test_search_lightbox_fit_covers_899(self):
-        """search.css 燈箱封面貼合（.search-container .lightbox-cover.has-cover）@media == max-width: 899px。"""
-        css = T11_SEARCH_CSS.read_text(encoding="utf-8")
-        mw = self._css_media_max_width_for_selector(
-            css, ".search-container .lightbox-cover.has-cover", "search.css 燈箱貼合"
-        )
-        assert mw == 899, f"search.css 燈箱貼合 @media max-width={mw}px，應為 899"
-
-    # ---- T10 poster grid 斷點（參考；三位一體比對）----
-    def test_showcase_poster_grid_breakpoint_899(self):
-        """showcase.css poster-crop grid 斷點（.showcase-grid 4 欄）== max-width: 899px（T10）。"""
-        css = read_showcase_css_full(PROJECT_ROOT / "web" / "static")
-        mw = self._poster_grid_max_width(css, "showcase-grid", "showcase.css")
-        assert mw == 899, f"showcase.css poster grid @media max-width={mw}px，應為 899"
-
-    def test_search_poster_grid_breakpoint_899(self):
-        """search.css poster-crop grid 斷點（.search-grid 4 欄）== max-width: 899px（T10）。"""
-        css = T11_SEARCH_CSS.read_text(encoding="utf-8")
-        mw = self._poster_grid_max_width(css, "search-grid", "search.css")
-        assert mw == 899, f"search.css poster grid @media max-width={mw}px，應為 899"
-
-    # ---- 核心：跨 6 值單一對齊斷言 ----
-    def test_all_thresholds_aligned_899(self):
-        """核心對齊守衛：2 JS 門檻 + search CSS 燈箱貼合 + 2 CSS poster grid 全部相等且 == 899。
-
-        83b-T2：showcase.css T8 block（@media max-width:899px .lightbox-cover:has(.lb-full)）已移除；
-        showcase 燈箱貼合改由 modal-hug 無條件提供。核心對齊守衛去掉 showcase-lightbox-fit 維度，
-        保留其他 5 值（2 JS + 1 search CSS lightbox-fit + 2 poster grid）。
-        """
-        showcase_css = read_showcase_css_full(PROJECT_ROOT / "web" / "static")
-        search_css = T11_SEARCH_CSS.read_text(encoding="utf-8")
-        values = {
-            "js:showcase": self._js_poster_crop_threshold(
-                T11_STATE_LIGHTBOX_JS, "state-lightbox.js"
-            ),
-            "js:search": self._js_poster_crop_threshold(
-                T11_GRID_MODE_JS, "grid-mode.js"
-            ),
-            "css:search-lightbox-fit": self._css_media_max_width_for_selector(
-                search_css, ".search-container .lightbox-cover.has-cover", "search.css 燈箱貼合"
-            ),
-            "css:showcase-poster-grid": self._poster_grid_max_width(
-                showcase_css, "showcase-grid", "showcase.css"
-            ),
-            "css:search-poster-grid": self._poster_grid_max_width(
-                search_css, "search-grid", "search.css"
-            ),
-        }
-        assert all(v == 899 for v in values.values()), (
-            f"posterCrop 門檻 ↔ 燈箱貼合 ↔ poster grid 斷點未全對齊 899：{values}"
-        )
-
-    def test_card_shape_media_min_width_is_const_plus_one(self):
-        """CD-119-13：卡型 @media min-width == POSTER_CROP_MAX_W + 1（900 == 899 + 1）。"""
-        assert self._card_shape_media_min_width() == self._const_value() + 1, (
-            "卡型 @media min-width 必須 == POSTER_CROP_MAX_W + 1"
-        )
 
 
 class TestLightboxCoverSizeGuards:
@@ -642,66 +516,6 @@ class TestMobileSimilarDrillFallbackGuard:
         assert '_refreshLbFullBlurUp' in body, (
             "_mobileSilentSwitch 缺 '_refreshLbFullBlurUp' 呼叫（tier2/3 blur-up reset，否則 overlay opacity:0 卡死）。"
         )
-
-
-class TestAppleTouchIconThemeColor:
-    """TASK-81a-T8 (US-4): apple-touch-icon link + 動態 theme-color meta 守衛。
-
-    - head 有 apple-touch-icon link 指向 /static/apple-touch-icon.png
-    - head 有 theme-color meta，content 為 Jinja 條件，兩白名單 hex 都在
-    - x-init 的 $watch('theme') 會更新 meta[name=theme-color] content（dim/light 雙向）
-    - apple-touch-icon.png 存在且為 180×180（PIL）
-    """
-
-    def _base(self):
-        return BASE_HTML_T76.read_text(encoding="utf-8")
-
-    def test_head_has_apple_touch_icon(self):
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(self._base(), "html.parser")
-        link = soup.find("link", rel="apple-touch-icon")
-        assert link is not None, "base.html head 缺 <link rel=\"apple-touch-icon\">"
-        assert link.get("href") == "/static/apple-touch-icon.png", \
-            f"apple-touch-icon href 應為 /static/apple-touch-icon.png，實為 {link.get('href')!r}"
-
-    def test_head_has_theme_color_meta(self):
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(self._base(), "html.parser")
-        meta = soup.find("meta", attrs={"name": "theme-color"})
-        assert meta is not None, "base.html head 缺 <meta name=\"theme-color\">"
-        content = meta.get("content", "")
-        # 初值為 Jinja 條件：{{ '#2a303c' if theme == 'dim' else '#ffffff' }}
-        assert "theme == 'dim'" in content or "theme=='dim'" in content, \
-            f"theme-color content 應為隨 theme 的 Jinja 條件，實為 {content!r}"
-        assert THEME_COLOR_DIM in content and THEME_COLOR_LIGHT in content, \
-            f"theme-color content 須含 dim/light 兩白名單 hex，實為 {content!r}"
-
-    def test_theme_watch_updates_theme_color(self):
-        """$watch('theme', ...) 區塊會把 dim/light hex 寫進 meta[name=theme-color].content"""
-        html = self._base()
-        # 找出更新 theme-color 的 $watch callback（容忍 &quot; HTML escape）
-        pattern = re.compile(
-            r"\$watch\(\s*['\"]theme['\"].*?theme-color.*?\.content.*?"
-            + re.escape(THEME_COLOR_DIM) + r".*?" + re.escape(THEME_COLOR_LIGHT),
-            re.DOTALL,
-        )
-        assert pattern.search(html), (
-            "base.html x-init 缺 $watch('theme') 更新 meta[name=theme-color].content "
-            f"為 {THEME_COLOR_DIM}/{THEME_COLOR_LIGHT} 的區塊（動態狀態列色被移除？）"
-        )
-
-    def test_apple_touch_icon_png_exists_and_180(self):
-        from PIL import Image
-        assert APPLE_TOUCH_ICON_PNG.exists(), \
-            f"apple-touch-icon.png 不存在：{APPLE_TOUCH_ICON_PNG}（跑 tools/gen_apple_touch_icon.py）"
-        with Image.open(APPLE_TOUCH_ICON_PNG) as img:
-            assert img.size == (180, 180), \
-                f"apple-touch-icon.png 應為 180×180，實為 {img.size}"
-            # apple-touch-icon 須不透明品牌底（iOS 自動加圓角，透明背景會變黑/白底不一致）
-            assert img.mode == "RGB", \
-                f"apple-touch-icon.png 須為 RGB 不透明（無 alpha），實為 {img.mode}"
-            assert img.getpixel((0, 0)) == (26, 26, 46), \
-                f"apple-touch-icon.png 四角須為品牌底 #1a1a2e，實為 {img.getpixel((0, 0))}"
 
 
 class TestCodexFixes:

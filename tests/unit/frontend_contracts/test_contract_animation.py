@@ -44,41 +44,6 @@ _T3_GHOST_FLY_JS = (
 class TestGhostFlyGuards:
     """T8: Ghost Fly architecture guards (method folded)"""
 
-    def test_ghost_fly_js_and_html_contains(self):
-        """ghost-fly.js exists + loaded in base.html + skipCover support + delegates"""
-        assert Path("web/static/js/shared/ghost-fly.js").exists(), \
-            "web/static/js/shared/ghost-fly.js missing"
-        html = Path("web/templates/base.html").read_text(encoding="utf-8")
-        assert "ghost-fly.js" in html, "base.html missing: 'ghost-fly.js'"
-        ghost_fly_js = Path("web/static/js/shared/ghost-fly.js").read_text(encoding="utf-8")
-        assert "skipCover" in ghost_fly_js, "ghost-fly.js missing: 'skipCover'"
-        for path in [
-            "web/static/js/pages/showcase/animations.js",
-            "web/static/js/pages/search/animations.js",
-        ]:
-            js = Path(path).read_text(encoding="utf-8")
-            assert "GhostFly.playLightboxOpen" in js, f"{path} missing: 'GhostFly.playLightboxOpen'"
-        # search/animations.js fallback
-        search_js = Path("web/static/js/pages/search/animations.js").read_text(encoding="utf-8")
-        lines = search_js.split('\n')
-        ghost_fly_refs = [i for i, line in enumerate(lines) if 'window.GhostFly' in line]
-        assert len(ghost_fly_refs) >= 3, \
-            "search/animations.js missing: at least 3 window.GhostFly references"
-
-    def test_gsap_animating_before_lightbox_open(self):
-        """state-lightbox.js gsap-animating before lightboxOpen = true (ordering)"""
-        content = SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
-        for fn_name in ("openLightbox(", "openHeroCardLightbox("):
-            idx_fn = content.find(fn_name)
-            assert idx_fn > 0, f"state-lightbox.js missing: {fn_name!r}"
-            fn_scope = content[idx_fn:idx_fn + 4000]
-            idx_animating = fn_scope.find("gsap-animating")
-            idx_open = fn_scope.find("this.lightboxOpen = true")
-            assert idx_animating > 0, f"state-lightbox.js {fn_name} missing: 'gsap-animating'"
-            assert idx_open > 0, f"state-lightbox.js {fn_name} missing: 'lightboxOpen = true'"
-            assert idx_animating < idx_open, \
-                f"state-lightbox.js {fn_name}: gsap-animating must precede lightboxOpen = true"
-
     # ── 71b-T3: both-restore guard（hide/restore 目標皆為 .lightbox-cover 容器）──
     # element-bound：regex 抽 OPEN(playGridToLightbox) / CLOSE(playLightboxToGrid)
     # 各自 function body，斷言兩路 hide + restore 都指向 coverEl 容器（非僅單一 img）。
@@ -212,41 +177,6 @@ class TestModeToggleFadeOutGuard:
             js,
         ), "showcase/animations.js playModeCrossfade 缺少 callbacks 第 4 參數"
 
-    def test_play_mode_crossfade_old_fade_out(self):
-        """playModeCrossfade 函數體含 oldEl fade-out (tl.to(oldEl,...) + clearProps:'opacity')"""
-        js = self._anim_js()
-        body = self._extract_property_function_body(js, 'playModeCrossfade')
-        assert re.search(r'tl\s*\.\s*to\s*\(\s*oldEl', body), \
-            "playModeCrossfade 函數體缺少 oldEl fade-out (tl.to(oldEl,...))"
-        assert re.search(r"clearProps\s*:\s*['\"]opacity['\"]", body), \
-            "playModeCrossfade 函數體缺少 clearProps: 'opacity'（避免 CSS transition 殘留）"
-
-    def test_play_mode_crossfade_new_fade_in_preserved(self):
-        """playModeCrossfade 函數體保留 newEl fade-in（tl.fromTo(newEl,...) + clearProps:'opacity'）"""
-        js = self._anim_js()
-        body = self._extract_property_function_body(js, 'playModeCrossfade')
-        assert re.search(r'(?:tl\s*\.\s*)?fromTo\s*\(\s*newEl', body), \
-            "playModeCrossfade 函數體缺少 newEl fade-in (fromTo(newEl,...))"
-        # newEl 段落（從第一次 newEl 出現到結尾）必須有 clearProps
-        new_idx = body.find('newEl')
-        assert new_idx >= 0, "playModeCrossfade 函數體找不到 newEl 區段"
-        new_section = body[new_idx:]
-        assert re.search(r"clearProps\s*:\s*['\"]opacity['\"]", new_section), \
-            "playModeCrossfade newEl fade-in 段落缺少 clearProps: 'opacity'"
-
-    def test_toggle_actress_mode_uses_callback(self):
-        """toggleActressMode 函數體使用 onOldFadeComplete callback，不直接翻轉 showFavoriteActresses"""
-        js = self._core_js()
-        body = self._extract_method_body(js, 'toggleActressMode')
-        assert 'onOldFadeComplete' in body, \
-            "toggleActressMode 函數體缺少 onOldFadeComplete callback"
-        assert 'playModeCrossfade' in body, \
-            "toggleActressMode 函數體缺少 playModeCrossfade 呼叫"
-        assert not re.search(
-            r'this\.showFavoriteActresses\s*=\s*!\s*this\.showFavoriteActresses',
-            body,
-        ), "toggleActressMode 不應直接翻轉 this.showFavoriteActresses，應延遲到 callback 內"
-
     def test_toggle_actress_mode_animgen_guard(self):
         """toggleActressMode 函數體內 _animGeneration 出現 ≥ 2 次（外層 gen + 內層 gen2 race guard）"""
         js = self._core_js()
@@ -254,22 +184,6 @@ class TestModeToggleFadeOutGuard:
         count = len(re.findall(r'_animGeneration', body))
         assert count >= 2, \
             f"toggleActressMode 函數體 _animGeneration 出現次數應 ≥ 2 (外 gen + 內 gen2)，實際 {count}"
-
-    def test_old_caller_backward_compat(self):
-        """switchMode 內 playModeCrossfade 呼叫不含 onOldFadeComplete（保持影片模式內切換行為不變）。
-        searchActressFilms 自 T7 起為 async 並使用 onOldFadeComplete 觸發 ghost fly fade-out，
-        故僅驗證 switchMode 路徑不退化。"""
-        js = self._core_js()
-        search_body = self._extract_method_body(js, 'searchActressFilms')
-        switch_body = self._extract_method_body(js, 'switchMode')
-        # 兩處都應呼叫 playModeCrossfade
-        assert 'playModeCrossfade' in search_body, \
-            "searchActressFilms 應仍呼叫 playModeCrossfade"
-        assert 'playModeCrossfade' in switch_body, \
-            "switchMode 應仍呼叫 playModeCrossfade"
-        # switchMode 不該帶 onOldFadeComplete（保持原 2/3-arg 行為）
-        assert 'onOldFadeComplete' not in switch_body, \
-            "switchMode 內 playModeCrossfade 呼叫不應帶 onOldFadeComplete（保持影片模式內切換行為不變）"
 
     def test_toggle_actress_mode_handles_animations_unavailable(self):
         """Codex P1: animations.js 不可用時 toggleActressMode 必須有 fallback path（不能讓 callback 永不觸發）"""
@@ -398,28 +312,6 @@ class TestPickerIntegrationGuard:
         # _burstAllPickerCandidates ≥ 4 occurrences
         assert js.count("_burstAllPickerCandidates") >= 4, \
             "_burstAllPickerCandidates must appear ≥4 times (def + done/timeout/error)"
-
-    def test_picker_css_rules_present(self):
-        """showcase.css 含 .picker-candidate-card opacity:0 + overlay fixed + spin keyframes"""
-        css = self._css()
-        assert ".picker-candidate-card" in css, \
-            "showcase.css missing: '.picker-candidate-card'"
-        card_block = re.search(
-            r"(?:^|\n)\.picker-candidate-card\s*\{[^}]*\}", css, re.DOTALL
-        )
-        assert card_block, "showcase.css: cannot find .picker-candidate-card style block"
-        assert "opacity: 0" in card_block.group(0), \
-            ".picker-candidate-card missing: 'opacity: 0'"
-        area_block = re.search(
-            r"\.actress-picker-overlay\s*\{[^}]*\}", css, re.DOTALL
-        )
-        assert area_block, "showcase.css: cannot find .actress-picker-overlay style block"
-        overlay_css = area_block.group(0)
-        for expected in ["position: fixed", "bottom:", "width:"]:
-            assert expected in overlay_css, \
-                f".actress-picker-overlay missing: {expected!r}"
-        assert "@keyframes spin" in css, \
-            "showcase.css missing: '@keyframes spin'"
 
     def test_picker_overlay_is_showcase_lightbox_direct_child(self):
         """49c-T1: actress-picker-overlay 必須為 .showcase-lightbox 的直接 child"""

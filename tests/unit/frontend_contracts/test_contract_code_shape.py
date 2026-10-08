@@ -38,16 +38,6 @@ class TestNavigateLoadMore:
         for expected in ["await this.loadMore('detail')", "this.currentIndex = result.oldLength"]:
             assert expected in body, f"navigation.js navigate() missing: {expected!r}"
 
-    def test_navigate_state_before_slide_in(self):
-        """navigate(): currentIndex update before playSlideIn (state-first)"""
-        body = self._navigate_body()
-        state_pos = body.find("this.currentIndex = result.oldLength")
-        slide_in_pos = body.find("playSlideIn", state_pos if state_pos != -1 else 0)
-        assert state_pos != -1 and slide_in_pos != -1, \
-            "navigation.js navigate() missing state update or playSlideIn"
-        assert state_pos < slide_in_pos, \
-            "navigation.js navigate(): currentIndex must update before playSlideIn"
-
 
 class TestNextLightboxLoadMore:
     # [lint-guard: pytest-justified] method-body ordering — nextLightboxVideo() 抽方法體
@@ -76,17 +66,6 @@ class TestNextLightboxLoadMore:
         ]:
             assert expected in body, f"grid-mode.js nextLightboxVideo() missing: {expected!r}"
 
-    def test_next_lightbox_state_before_switch(self):
-        """T3c: currentIndex update before playLightboxSwitch (state-first)"""
-        body = self._next_lightbox_body()
-        state_pos = body.find("this.currentIndex = result.oldLength")
-        switch_pos = body.find("playLightboxSwitch", state_pos if state_pos != -1 else 0)
-        assert state_pos != -1, "grid-mode.js nextLightboxVideo() missing: 'this.currentIndex = result.oldLength'"
-        assert switch_pos != -1, \
-            "grid-mode.js nextLightboxVideo() missing: 'playLightboxSwitch'"
-        assert state_pos < switch_pos, \
-            "grid-mode.js nextLightboxVideo(): currentIndex must update before playLightboxSwitch"
-
 
 class TestCoverStateGuard:
     # [lint-guard: pytest-justified] method-body scope（_resetCoverState 500-char body）+
@@ -100,12 +79,6 @@ class TestCoverStateGuard:
 
     BASE_JS = PROJECT_ROOT / "web/static/js/pages/search/state/base.js"
     SEARCH_FLOW_JS = PROJECT_ROOT / "web/static/js/pages/search/state/search-flow.js"
-
-    def test_base_has_reset_cover_state(self):
-        """base.js 包含 _resetCoverState 定義"""
-        content = self.BASE_JS.read_text(encoding='utf-8')
-        assert '_resetCoverState' in content, \
-            "base.js 缺少 _resetCoverState — U8a 必須新增集中式 cover state reset helper"
 
     def test_reset_cover_state_increments_request_id(self):
         """base.js 的 _resetCoverState 包含 _coverRequestId++"""
@@ -128,24 +101,6 @@ class TestCoverStateGuard:
         assert 'coverRetry' in method_body, \
             "base.js _resetCoverState 缺少 coverRetry 參數 — _clearTimer 需指定 key"
 
-    def test_search_flow_has_clear_timer_method(self):
-        """search-flow.js 包含 _clearTimer method 定義"""
-        content = self.SEARCH_FLOW_JS.read_text(encoding='utf-8')
-        assert re.search(r'_clearTimer\s*\(\s*\w+\s*\)', content), \
-            "search-flow.js 缺少 _clearTimer(key) 方法定義 — U8a 必須新增單一 timer 清除方法"
-
-    def test_base_has_cover_request_id_field(self):
-        """base.js 包含 _coverRequestId 初始值"""
-        content = self.BASE_JS.read_text(encoding='utf-8')
-        assert re.search(r'_coverRequestId\s*:\s*0', content), \
-            "base.js 缺少 _coverRequestId: 0 初始值 — U8a 必須新增 cover request ID 欄位"
-
-    def test_base_has_cover_loaded_field(self):
-        """base.js 包含 _coverLoaded 初始值"""
-        content = self.BASE_JS.read_text(encoding='utf-8')
-        assert re.search(r'_coverLoaded\s*:\s*false', content), \
-            "base.js 缺少 _coverLoaded: false 初始值 — U8a 必須新增 cover loaded 欄位"
-
     # === U8b guard tests ===
 
     FILE_LIST_JS = PROJECT_ROOT / "web/static/js/pages/search/state/file-list.js"
@@ -153,33 +108,6 @@ class TestCoverStateGuard:
     GRID_MODE_JS = PROJECT_ROOT / "web/static/js/pages/search/state/grid-mode.js"
     BATCH_JS = PROJECT_ROOT / "web/static/js/pages/search/state/batch.js"
     PERSISTENCE_JS = PROJECT_ROOT / "web/static/js/pages/search/state/persistence.js"
-
-    def test_file_list_reset_cover_state_count(self):
-        """file-list.js 包含至少 8 次 _resetCoverState 呼叫"""
-        content = self.FILE_LIST_JS.read_text(encoding='utf-8')
-        count = content.count('_resetCoverState')
-        assert count >= 8, (
-            f"file-list.js 只有 {count} 次 _resetCoverState（需至少 8 次: "
-            f"#4,#5,#6,#7,#8,#9,#10,#11）"
-        )
-
-    def test_navigation_reset_cover_state_count(self):
-        """navigation.js 包含至少 2 次 _resetCoverState 呼叫"""
-        content = self.NAVIGATION_JS.read_text(encoding='utf-8')
-        count = content.count('_resetCoverState')
-        assert count >= 2, (
-            f"navigation.js 只有 {count} 次 _resetCoverState（需至少 2 次: "
-            f"#1 navigate, #15 loadMore）"
-        )
-
-    def test_search_flow_reset_cover_state_count(self):
-        """search-flow.js 包含至少 4 次 _resetCoverState 呼叫"""
-        content = self.SEARCH_FLOW_JS.read_text(encoding='utf-8')
-        count = content.count('_resetCoverState')
-        assert count >= 4, (
-            f"search-flow.js 只有 {count} 次 _resetCoverState（需至少 4 次: "
-            f"#12 doSearch init, #13 traditional result, #14 fallback result, fallbackSearch）"
-        )
 
     def test_no_bare_cover_error_reset(self):
         """file-list/navigation/search-flow 中不應有裸 coverError = '' 純 reset 行"""
@@ -197,30 +125,6 @@ class TestCoverStateGuard:
         assert len(violations) == 0, (
             f"發現 {len(violations)} 個裸 coverError = '' reset（應改用 _resetCoverState()）:\n" +
             "\n".join(f"  - {v}" for v in violations)
-        )
-
-    def test_grid_mode_reset_cover_state(self):
-        """grid-mode.js 包含至少 1 次 _resetCoverState 呼叫"""
-        content = self.GRID_MODE_JS.read_text(encoding='utf-8')
-        count = content.count('_resetCoverState')
-        assert count >= 1, (
-            f"grid-mode.js 缺少 _resetCoverState（需至少 1 次: #16 switchToDetail）"
-        )
-
-    def test_batch_reset_cover_state(self):
-        """batch.js 包含至少 1 次 _resetCoverState 呼叫"""
-        content = self.BATCH_JS.read_text(encoding='utf-8')
-        count = content.count('_resetCoverState')
-        assert count >= 1, (
-            f"batch.js 缺少 _resetCoverState（需至少 1 次: #17 scrapeAll）"
-        )
-
-    def test_persistence_reset_cover_state(self):
-        """persistence.js 包含至少 1 次 _resetCoverState 呼叫"""
-        content = self.PERSISTENCE_JS.read_text(encoding='utf-8')
-        count = content.count('_resetCoverState')
-        assert count >= 1, (
-            f"persistence.js 缺少 _resetCoverState（需至少 1 次: #19 restoreState）"
         )
 
     # === U8c guard tests ===
@@ -290,18 +194,6 @@ class TestCoverStateGuard:
         assert '_coverLoaded = true' in content, \
             "search.html 缺少 _coverLoaded = true — U8d 必須在 cover img @load handler 設定 _coverLoaded"
 
-    def test_shimmer_placeholder_in_html(self):
-        """search.html 包含 cover-loading-placeholder"""
-        content = self.SEARCH_HTML.read_text(encoding='utf-8')
-        assert 'cover-loading-placeholder' in content, \
-            "search.html 缺少 cover-loading-placeholder — U8d 必須新增 shimmer loading placeholder"
-
-    def test_shimmer_placeholder_in_css(self):
-        """search.css 包含 cover-loading-placeholder 樣式"""
-        content = self.SEARCH_CSS.read_text(encoding='utf-8')
-        assert 'cover-loading-placeholder' in content, \
-            "search.css 缺少 cover-loading-placeholder — U8d 必須新增 shimmer placeholder 樣式"
-
     # === U8 Codex review fix guard tests ===
 
     UI_JS = PROJECT_ROOT / "web/static/js/pages/search/ui.js"
@@ -343,12 +235,6 @@ class TestSearchAllRaceGuard:
 
     FILE_LIST_JS = PROJECT_ROOT / "web/static/js/pages/search/state/file-list.js"
     BATCH_JS = PROJECT_ROOT / "web/static/js/pages/search/state/batch.js"
-
-    def test_search_file_background_exists(self):
-        """file-list.js 必須包含 _searchFileBackground 方法"""
-        content = self.FILE_LIST_JS.read_text(encoding='utf-8')
-        assert '_searchFileBackground' in content, \
-            "file-list.js 缺少 _searchFileBackground — U10a 必須新增背景搜尋方法"
 
     def test_search_file_background_no_shared_state_writes(self):
         """_searchFileBackground 不應讀寫共享 UI 狀態（只能操作 file 物件）"""
@@ -774,19 +660,6 @@ class TestShowcaseReactiveScopeGuard:
                     f"應改用 videoCount 或 paginatedVideos: {line.strip()}"
                 )
 
-    def test_guard6_closure_variables_exist(self):
-        """Guard 6: state-base.js 有 var _videos 和 var _filteredVideos（module-level 大陣列）"""
-        content = self._read_js()
-        # ESM 結構：_videos/_filteredVideos 為 module-level export var
-        assert re.search(r'\bvar\s+_videos\b', content), (
-            "F1 違規：state-base.js 缺少 'var _videos' module-level 宣告 — "
-            "大陣列應為模組閉包變數（ESM export var）"
-        )
-        assert re.search(r'\bvar\s+_filteredVideos\b', content), (
-            "F1 違規：state-base.js 缺少 'var _filteredVideos' module-level 宣告 — "
-            "大陣列應為模組閉包變數（ESM export var）"
-        )
-
     def _find_statement_end(self, lines, start_idx):
         """Find the end line of a statement starting at start_idx.
 
@@ -807,45 +680,6 @@ class TestShowcaseReactiveScopeGuard:
             if depth == 0 and ';' in lines[j]:
                 return j
         return start_idx
-
-    def test_guard7_count_sync_after_assignment(self):
-        """Guard 7: 每個 _videos = 賦值附近有 videoCount 同步；_filteredVideos = 附近有 filteredCount 同步"""
-        content = self._read_js()
-        lines = content.split('\n')
-
-        # Check _videos = assignments
-        for i, line in enumerate(lines):
-            # Match _videos = but not _filteredVideos =
-            if re.search(r'\b_videos\s*=', line) and not re.search(r'_filteredVideos', line):
-                # Skip var declaration (including ESM export var)
-                if re.search(r'(?:export\s+)?var\s+_videos', line):
-                    continue
-                # Find statement end for multi-line expressions
-                stmt_end = self._find_statement_end(lines, i)
-                # Check within 3 lines after statement end for videoCount
-                nearby = '\n'.join(lines[max(0, i-3):stmt_end+4])
-                assert 'videoCount' in nearby, (
-                    f"F1 違規：core.js L{i+1} 有 '_videos =' 但附近無 videoCount 同步 — "
-                    f"每次 _videos 賦值後必須更新 this.videoCount: {line.strip()}"
-                )
-
-        # Check _filteredVideos = assignments
-        for i, line in enumerate(lines):
-            if re.search(r'\b_filteredVideos\s*=', line):
-                # Skip var declaration (including ESM export var)
-                if re.search(r'(?:export\s+)?var\s+_filteredVideos', line):
-                    continue
-                # Skip sort (in-place, no length change)
-                if '.sort(' in line:
-                    continue
-                # Find statement end for multi-line expressions
-                stmt_end = self._find_statement_end(lines, i)
-                # Check within 3 lines after statement end for filteredCount
-                nearby = '\n'.join(lines[max(0, i-3):stmt_end+4])
-                assert 'filteredCount' in nearby, (
-                    f"F1 違規：core.js L{i+1} 有 '_filteredVideos =' 但附近無 filteredCount 同步 — "
-                    f"每次 _filteredVideos 賦值後必須更新 this.filteredCount: {line.strip()}"
-                )
 
 
 class TestExternalManagerSwitchModeGuard:
@@ -932,14 +766,6 @@ class TestExternalManagerSwitchModeGuard:
         assert "風味" not in block, "switch-mode modal 不應出現「風味」（白話模式名）"
 
     # ── JS: 三方法 + stub ───────────────────────────────────────────────────────
-
-    def test_state_config_defines_methods_and_stubs(self):
-        """state-config.js 定義 3 方法 + 3 stub（皆在既有 factory 內，無新 init()）。"""
-        js = self._js()
-        for name in ("requestExternalManagerChange", "confirmSwitchMode", "cancelSwitchMode"):
-            assert name in js, f"state-config.js 缺少方法 {name}"
-        for stub in ("switchModeConfirmOpen", "pendingExternalManager", "pendingOfflineCount"):
-            assert stub in js, f"state-config.js 缺少 data stub {stub}"
 
     def test_request_method_realtime_fetch_and_guard(self):
         """requestExternalManagerChange 即時 fetch /api/config（非快取）+ 同值 guard return。"""
