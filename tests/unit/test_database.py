@@ -279,6 +279,20 @@ def test_video_from_video_info_with_spaces():
     assert video.tags == ["類型1", "類型2", "類型3"]
 
 
+def test_actress_alias_primary_name_unique_constraint(tmp_path):
+    """[T1 updated] 新 schema 中 primary_name 是 PRIMARY KEY（唯一約束）"""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO actress_aliases (primary_name, aliases) VALUES ('Alice', '[]')")
+    conn.commit()
+    # 嘗試插入重複的 primary_name 應拋 IntegrityError
+    with pytest.raises(sqlite3.IntegrityError):
+        cursor.execute("INSERT INTO actress_aliases (primary_name, aliases) VALUES ('Alice', '[\"alt\"]')")
+    conn.close()
+
+
 # ============ migrate_json_to_sqlite 測試 ============
 
 def test_migrate_json_to_sqlite_success(tmp_path):
