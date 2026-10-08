@@ -5428,6 +5428,89 @@ const RULES = [
   //
   // ---- 162c-B06 起 ----
   // （162c-B06 專屬子區段：只在此兩行之間追加）
+  // 162c: TestPathContract
+  // test_no_raw_uri_strip — forbidden-string ×4（core/web/windows/tests .py；core 排除 path_utils.py）
+  {
+    file: { dir: 'core', ext: ['.py'], recursive: true, exclude: ['path_utils.py'] },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:\[8:\]|\[len\(['"]file:\/\/\/['"]\):])/m,
+    note: '[lint-guard 162c-test_no_raw_uri_strip] 使用者在 Windows／WSL 加入片庫資料夾 → 程式手動用 [8:] 砍 file:/// 前綴，遇 UNC／WSL 路徑砍錯 → 片庫路徑對不上、影片找不到或打不開 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'web', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:\[8:\]|\[len\(['"]file:\/\/\/['"]\):])/m,
+    note: '[lint-guard 162c-test_no_raw_uri_strip] 使用者在 Windows／WSL 加入片庫資料夾 → 程式手動用 [8:] 砍 file:/// 前綴，遇 UNC／WSL 路徑砍錯 → 片庫路徑對不上、影片找不到或打不開 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'windows', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:\[8:\]|\[len\(['"]file:\/\/\/['"]\):])/m,
+    note: '[lint-guard 162c-test_no_raw_uri_strip] 使用者在 Windows／WSL 加入片庫資料夾 → 程式手動用 [8:] 砍 file:/// 前綴，遇 UNC／WSL 路徑砍錯 → 片庫路徑對不上、影片找不到或打不開 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'tests', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:\[8:\]|\[len\(['"]file:\/\/\/['"]\):])/m,
+    note: '[lint-guard 162c-test_no_raw_uri_strip] 使用者在 Windows／WSL 加入片庫資料夾 → 程式手動用 [8:] 砍 file:/// 前綴，遇 UNC／WSL 路徑砍錯 → 片庫路徑對不上、影片找不到或打不開 — 遷自 test_frontend_lint.py',
+  },
+  // test_no_manual_uri_construct — forbidden-string ×4
+  {
+    file: { dir: 'core', ext: ['.py'], recursive: true, exclude: ['path_utils.py'] },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*f["']file:\/\/\//m,
+    note: '[lint-guard 162c-test_no_manual_uri_construct] 使用者的影片路徑被程式手組成 f"file:///…" → 斜線／編碼格式與 to_file_uri 不一致 → 同一部片在 DB 裡有兩種 URI，播放或比對失敗 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'web', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*f["']file:\/\/\//m,
+    note: '[lint-guard 162c-test_no_manual_uri_construct] 使用者的影片路徑被程式手組成 f"file:///…" → 斜線／編碼格式與 to_file_uri 不一致 → 同一部片在 DB 裡有兩種 URI，播放或比對失敗 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'windows', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*f["']file:\/\/\//m,
+    note: '[lint-guard 162c-test_no_manual_uri_construct] 使用者的影片路徑被程式手組成 f"file:///…" → 斜線／編碼格式與 to_file_uri 不一致 → 同一部片在 DB 裡有兩種 URI，播放或比對失敗 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'tests', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*f["']file:\/\/\//m,
+    note: '[lint-guard 162c-test_no_manual_uri_construct] 使用者的影片路徑被程式手組成 f"file:///…" → 斜線／編碼格式與 to_file_uri 不一致 → 同一部片在 DB 裡有兩種 URI，播放或比對失敗 — 遷自 test_frontend_lint.py',
+  },
+  // test_no_shadow_path_helpers — forbidden-string ×4
+  {
+    file: { dir: 'core', ext: ['.py'], recursive: true, exclude: ['path_utils.py'] },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:def wsl_to_windows_path|def to_file_uri)/m,
+    note: '[lint-guard 162c-test_no_shadow_path_helpers] 有人另寫一份 wsl_to_windows_path／to_file_uri 影子實作 → 兩份轉換規則日後分岔 → 同一路徑在不同頁面轉出不同結果（開資料夾、播放失敗） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'web', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:def wsl_to_windows_path|def to_file_uri)/m,
+    note: '[lint-guard 162c-test_no_shadow_path_helpers] 有人另寫一份 wsl_to_windows_path／to_file_uri 影子實作 → 兩份轉換規則日後分岔 → 同一路徑在不同頁面轉出不同結果（開資料夾、播放失敗） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'windows', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:def wsl_to_windows_path|def to_file_uri)/m,
+    note: '[lint-guard 162c-test_no_shadow_path_helpers] 有人另寫一份 wsl_to_windows_path／to_file_uri 影子實作 → 兩份轉換規則日後分岔 → 同一路徑在不同頁面轉出不同結果（開資料夾、播放失敗） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'tests', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: /^(?![^\n]*# path-contract-ok)[^\n]*(?:def wsl_to_windows_path|def to_file_uri)/m,
+    note: '[lint-guard 162c-test_no_shadow_path_helpers] 有人另寫一份 wsl_to_windows_path／to_file_uri 影子實作 → 兩份轉換規則日後分岔 → 同一路徑在不同頁面轉出不同結果（開資料夾、播放失敗） — 遷自 test_frontend_lint.py',
+  },
+  // test_path_to_display_js_no_optional_slash — forbidden-string ×1（現行唯一 path-utils.js）
+  {
+    file: 'web/static/js/components/path-utils.js',
+    kind: 'forbidden-string',
+    pattern: /\/\?/,
+    note: '[lint-guard 162c-test_path_to_display_js_no_optional_slash] 使用者在介面看到的（或複製出來的）路徑少了開頭斜線 → 貼到檔案總管／終端機打不開（pathToDisplay 的 /? regex 吃掉前導斜線） — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B06 迄 ----
   //
   //
