@@ -5650,6 +5650,21 @@ const RULES = [
   //
   // ---- 162c-B07 起 ----
   // （162c-B07 專屬子區段：只在此兩行之間追加）
+  // 162c: TestHelpPage
+  { file: 'web/templates/help.html', kind: 'required-string', pattern: ['helpPage', 'checkUpdate', 'hero-terminal', 'help.hero.ai_instruction'], note: '[lint-guard 162c-test_help_html_contains] 使用者開說明頁 → 「檢查更新」鈕或 AI 終端機卡不出現／說明頁整頁不初始化（helpPage 掛載點、hero-terminal 或 help.js script 被改壞，或 help.js 被載入兩次） — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/help.html', kind: 'structure-count', pattern: /<script[^>]*help\.js[^>]*>/, count: 1, note: '[lint-guard 162c-test_help_html_contains] 使用者開說明頁 → 「檢查更新」鈕或 AI 終端機卡不出現／說明頁整頁不初始化（helpPage 掛載點、hero-terminal 或 help.js script 被改壞，或 help.js 被載入兩次） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/help.js', kind: 'required-string', pattern: ['copyCurlCommand', 'execCommand'], note: '[lint-guard 162c-test_help_js_contains] 使用者在說明頁按「複製 curl 指令」鈕 → 沒有複製到東西（copyCurlCommand 或 execCommand 後備路徑被改壞） — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/help.html', kind: 'tag-scan', mode: 'class-tag', tagPattern: /<[a-z]+\b(?=[^>]*class="[^"]*(?<![\w-])hero-terminal(?![\w-])[^"]*")[^>]*>/, required: ['data-capabilities-base'], note: '[lint-guard 162c-test_help_hero_terminal_has_capabilities_base] 使用者在本機開說明頁、複製 curl 給別台裝置的 AI 用 → 複製出 127.0.0.1／localhost 網址，別台連不到（server-aware base_url 來源 data-capabilities-base 被移除） — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/help.html', kind: 'tag-scan', mode: 'class-tag', tagName: 'button', className: 'terminal-copy-btn', required: [/(?<![\w-])(?::)?aria-label="[^"]*help\.hero\.copy_curl/], note: '[lint-guard 162c-test_help_copy_button_has_aria_label] 使用螢幕閱讀器的使用者在說明頁 → curl 複製鈕只有圖示、沒有可讀名稱，唸不出它是做什麼的（aria-label 被移除或改引用別 key） — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/help.html', kind: 'required-string', pattern: 'bi-clipboard', scope: /<button[^>]*terminal-copy-btn[\s\S]*?<\/button>/, note: '[lint-guard 162c-test_help_copy_button_has_aria_label] 使用螢幕閱讀器的使用者在說明頁 → curl 複製鈕只有圖示、沒有可讀名稱，唸不出它是做什麼的（aria-label 被移除或改引用別 key） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/help.js', kind: 'required-string', pattern: ['capabilitiesBase', '${base}'], note: '[lint-guard 162c-test_help_js_copy_uses_capabilities_base_dataset] 使用者在本機開說明頁複製 curl → 複製出 window.location.origin（localhost）而不是 server 給的對外網址（help.js 不再讀 data-capabilities-base） — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestStreamState
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: ['streamSlots', 'streamComplete', 'isStreaming'], stripLineComments: true, note: '[lint-guard 162c-test_base_js_core_stream_state] 使用者搜尋番號 → 骨架格／漸進結果出不來或頁面報錯（base.js 少宣告 streamSlots／streamComplete／isStreaming，Alpine 表達式取不到） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: ['streamBuffer', 'streamBurstTimer', 'streamBurstedSlots', 'stagingVisible'], stripLineComments: true, note: '[lint-guard 162c-test_base_js_staging_buffer_state] 使用者搜尋番號 → 串流來的結果進不了暫存／分批顯示，結果卡片不出現（base.js 少宣告 streamBuffer 等批次狀態） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: ['streamBuffer', 'streamBurstTimer', 'stagingCover', 'stagingNumber'], stripLineComments: true, note: '[lint-guard 162c-test_result_item_uses_stream_buffer] 使用者搜尋番號 → 串流結果沒走分批暫存而一筆筆直接塞進結果列，卡片一次次整列重畫、可能卡頓或順序亂（result-item handler 不再推入 streamBuffer） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: ["data.type === 'seed'", "data.type === 'result-item'", "data.type === 'result-complete'"], note: '[lint-guard 162c-test_search_flow_handles_seed_event] 使用者搜尋番號 → 串流事件不被處理，骨架格不出現、結果永遠載入中（seed／result-item／result-complete 任一 handler 被改掉） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: 'this.streamComplete', note: '[lint-guard 162c-test_search_flow_has_stream_guard] 使用者搜尋番號 → 串流已逐筆顯示好的結果，最後一個總結事件把整份結果列覆蓋掉，畫面上已看的結果閃一下或被換成別筆（漸進路徑 result 缺 streamComplete 守衛） — 遷自 test_frontend_lint.py' },
   // ---- 162c-B07 迄 ----
   //
   //
