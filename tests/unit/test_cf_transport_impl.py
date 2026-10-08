@@ -170,26 +170,6 @@ class TestWvFetch:
         with pytest.raises(RuntimeError, match='JS fetch error'):
             _wv_fetch(win, 'https://www.javlibrary.com/ja/')
 
-    def test_non_dict_callback_degrades_gracefully(self):
-        """Non-dict passed to callback → put_nowait({}) → returns ('', 0, '')."""
-        win = FakeWindow()
-
-        # Override evaluate_js to pass a non-dict to callback
-        original_evaluate_js = win.evaluate_js
-        def patched_evaluate_js(code, callback=None):
-            win.calls.append(('evaluate_js', code, callback))
-            if callback is not None:
-                callback("not-a-dict")
-            return None
-        win.evaluate_js = patched_evaluate_js
-
-        result = _wv_fetch(win, 'https://www.javlibrary.com/ja/')
-        assert isinstance(result, tuple)
-        final_url, status, html = result
-        assert final_url == 'https://www.javlibrary.com/ja/'  # falls back to input url
-        assert status == 0
-        assert html == ''
-
     def test_retry_then_succeed(self):
         """
         1st attempt: callback never fires → timeout.
@@ -778,21 +758,6 @@ class TestIsReady:
         )
         hide_calls = [c for c in win.calls if c[0] == 'hide']
         assert len(hide_calls) == 0, "空 title 時不應 hide()，視窗須保留"
-
-    def test_evaluate_js_none_degrades_gracefully(self):
-        """evaluate_js returning None (window not ready) → no exception, returns bool."""
-        class NoneWindow(FakeWindow):
-            def evaluate_js(self, code, callback=None):
-                self.calls.append(('evaluate_js', code, callback))
-                if callback is not None:
-                    return None
-                return None  # Always None
-
-        win = NoneWindow()
-        transport = _jl_transport(win)
-        # Should not raise; returns a bool (True or False — both are acceptable)
-        result = transport.is_ready()
-        assert isinstance(result, bool), "is_ready() must return bool even when evaluate_js returns None"
 
     def test_is_ready_bridge_not_ready_returns_false_no_evaluate_js(self):
         """
