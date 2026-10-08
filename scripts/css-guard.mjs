@@ -3105,6 +3105,24 @@ const RULES = [
     },
   },
   // ---- 162c-FIX2 迄 ----
+  // ---- 162c-FIX6 起（本地全量實剪補回）----
+  {
+    id: 'CG-162C-FIX6-01',
+    file: 'pages/showcase/08-remainder.css',
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_picker_css_rules_present] 使用者在女優燈箱開候選挑選器 → .actress-picker-overlay 頂層規則須 position: fixed，否則浮層掉進頁面流、被裁掉或蓋不住，挑不到候選要關掉重來 — 遷自 test_frontend_lint.py（TestPickerIntegrationGuard；本地實剪驗證補回）',
+    check(ctx) {
+      const m = ctx.text.match(/(?:^|\})\s*\.actress-picker-overlay\s*\{([^}]*)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-FIX6-01: 找不到頂層 .actress-picker-overlay 規則');
+        return;
+      }
+      if (!/position\s*:\s*fixed\b/.test(m[1])) {
+        ctx.fail('CG-162C-FIX6-01: .actress-picker-overlay 頂層規則缺 position: fixed');
+      }
+    },
+  },
+  // ---- 162c-FIX6 迄 ----
   //
   //
   //
