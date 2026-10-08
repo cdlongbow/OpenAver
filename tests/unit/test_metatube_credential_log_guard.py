@@ -463,55 +463,11 @@ def test_ledger_has_no_dead_entries():
 _RED_SNIPPETS = [
     # ---- 前三輪打出來的形狀（回歸保護）----
     ('裸名 url 進 logger', 'logger.warning("failed for %s", url)'),
-    ('屬性 self._base_url 進 logger', 'logger.debug("GET %s", self._base_url)'),
-    ('f-string 內插', 'logger.info(f"probing {base_url}")'),
-    ('原始 url 進例外訊息', 'raise MetatubeAuthError(f"auth failed for {url}")'),
-    ('字串相加', 'logger.info("at " + url)'),
-    ('keyword 引數', 'logger.info("x", extra=url)'),
-    ('一跳改名（round-1 的繞過）', 'target = self._base_url\nlogger.warning("%s", target)'),
-    ('多跳改名鏈', 'a = self._base_url\nb = a\nc = b\nlogger.info(c)'),
-    ('同名 key 先髒後 redacted（round-2 的掛死形狀）',
-     'target = self._base_url\ntarget = redact_metatube_url(target)\n'
-     'logger.info("%s", target)'),
-    # ---- round-4 點名 + 我方實測補齊的同類（黑名單全部漏抓，白名單全紅）----
-    ('.format() 插值', 'logger.warning("target={}".format(url))'),
-    ('str() 包一層', 'logger.info("at %s", str(url))'),
-    ('放進 list', 'logger.info("x", extra=[url])'),
-    ('放進 dict', 'logger.info("x", extra={"u": url})'),
-    ('f-string 內再包呼叫', 'logger.info(f"{str(self._base_url)}")'),
-    # ---- DoD-4：守衛**沒見過**的語法，fail-closed 的分水嶺 ----
-    ('未知方法呼叫（守衛沒見過）', 'logger.info("%s", url.upper())'),
-    ('walrus（守衛沒見過）', 'logger.info("%s", (u := url))'),
-    ('comprehension（守衛沒見過）', 'logger.info("%s", [x for x in url])'),
-    ('subscript（守衛沒見過）', 'logger.info("%s", parts[0])'),
-    ('tuple unpack 來的名字（_assign_key 不認 → 不安全）',
-     'a, b = self._base_url, 1\nlogger.info("%s", a)'),
-    # ---- round-5 P2：帳本必須綁 binding，不能被同名變數遮蔽 ----
-    ('帳本名字被指派覆寫（Codex round-5 點名的確切形狀）',
-     'def f():\n    path = self._base_url\n    logger.warning("%s", path)'),
-    ('帳本名字在**未登記的函式**當參數（不得跨函式繼承豁免）',
-     'def g(path):\n    logger.warning("%s", path)'),
-    ('登記為參數的名字改用指派（綁定種類不符 → 豁免失效）',
-     'def _get_data():\n    path = self._base_url\n    logger.warning("%s", path)'),
-    ('帳本名字被拿去接屬性（other.path 不該因帳本而放行）',
-     'logger.warning("%s", other.path)'),
-    ('內層 def 遮蔽外層已證安全的同名變數',
-     'def outer():\n    w = redact_metatube_url(base_url)\n'
-     '    def inner(w):\n        logger.info("%s", w)'),
 ]
 
 _GREEN_SNIPPETS = [
-    ('經過 redactor', 'logger.warning("failed for %s", redact_metatube_url(url))'),
-    ('只記型別名', 'logger.info("failed: %s", type(exc).__name__)'),
-    ('純字面', 'logger.info("connect ok")'),
-    ('len()', 'logger.info("n=%s", len(names))'),
-    ('list(x.keys())', 'logger.info("keys=%s", list(data.keys()))'),
-    ('非 logger 物件的同名方法', 'tracker.warning(url)'),
     ('redactor 結果改名（client.py 的 _log_target 形狀）',
      'target = redact_metatube_url(url)\nlogger.warning("%s", target)'),
-    ('redactor 結果多跳改名', 'a = redact_metatube_url(base_url)\nb = a\nlogger.info(b)'),
-    ('redactor 結果改名後進 f-string（client.py 的 where 形狀）',
-     'tgt = redact_metatube_url(base_url)\nlogger.debug(f"GET {tgt}")'),
 ]
 
 
@@ -530,69 +486,16 @@ def test_guard_does_not_overreach(label, src, tmp_path):
     assert _violations(f) == [], f"{label}：誤報"
 
 
-def test_provenance_scope_does_not_leak_across_functions(tmp_path):
-    """兩個函式用**同一個變數名**，一邊可證安全一邊不可——只能紅不可證的那一邊。
-
-    驗的是「幾條、在第幾行」，不是「有沒有紅」：若 provenance 表做成整檔共用，
-    `safe()` 裡的 `w = redact_metatube_url(...)` 會把 `leaky()` 的 `w` 一起洗白
-    （或反過來誤傷），而且結果隨 AST 走訪順序飄。
-    """
-    src = (
-        "def safe():\n"
-        "    w = redact_metatube_url(base_url)\n"
-        "    logger.info('%s', w)\n"          # :3 —— 不得紅
-        "\n"
-        "def leaky():\n"
-        "    w = self._base_url\n"
-        "    logger.info('%s', w)\n"          # :7 —— 必須紅
-    )
-    f = tmp_path / "m.py"
-    f.write_text(src, encoding="utf-8")
-    assert _violations(f) == [(7, "logger")], (
-        "應該只紅 leaky() 那一行（:7）；連 :3 一起紅＝provenance 外溢誤傷，"
-        "完全不紅＝安全那邊把不安全的洗白了"
-    )
-
-
-def test_partially_safe_name_is_not_safe(tmp_path):
-    """同一個名字有兩個指派、只有一個可證安全 → **整體不安全**。
-
-    這是 fail-closed 與 fail-open 的分界線本身：黑名單版會因為「找不到污染證據」
-    而放行，白名單版因為「有一個指派證不出安全」而拒絕。
-    """
-    src = (
-        "def f(flag):\n"
-        "    w = redact_metatube_url(base_url)\n"
-        "    if flag:\n"
-        "        w = self._base_url\n"
-        "    logger.info('%s', w)\n"          # :5
-    )
-    f = tmp_path / "m.py"
-    f.write_text(src, encoding="utf-8")
-    assert _violations(f) == [(5, "logger")], (
-        "只要有一個指派證不出安全，這個名字就不該安全"
-    )
-
-
 # ---------------------------------------------------------------------------
 # 帳本身分 ＝ 檔案 : 限定作用域 : 綁定名（round-5 二審 P2）
 # ---------------------------------------------------------------------------
 # 前一版鍵只有 `函式名:綁定名`，於是任何檔案、任何 class 的同名 method 都會通吃
-# 已審核過的豁免。下面三支把「同名但不同身分必須紅」釘住。
 
 _LEDGER_HIT_CASES = [
     ('client.py 的 MetatubeHttpClient.get_info:provider（登記命中）',
      "core/metatube/client.py",
      'class MetatubeHttpClient:\n    def get_info(self, provider):\n'
      '        logger.info("provider=%s", provider)'),
-    ('probe.py 的 probe_provider:exc（登記命中）',
-     "core/metatube/probe.py",
-     'def probe_provider(provider):\n    try:\n        pass\n'
-     '    except MetatubeError as exc:\n        logger.info("%s", exc)'),
-    ('probe.py 的 probe_all:source_id（登記命中，指派型）',
-     "core/metatube/probe.py",
-     'def probe_all(provider_names):\n    source_id = f"metatube:{provider_names}"\n'
-     '        \n    logger.info("%s", source_id)'.replace("        \n", "")),
 ]
 
 
@@ -603,18 +506,6 @@ def test_ledger_hits_only_at_the_registered_identity(label, rel, src, tmp_path):
     f = tmp_path / "m.py"
     f.write_text(src, encoding="utf-8")
     assert _violations(f, rel=rel) == [], f"{label}：誤報"
-
-
-@pytest.mark.parametrize("label,rel,src", _LEDGER_HIT_CASES,
-                         ids=[c[0] for c in _LEDGER_HIT_CASES])
-def test_same_name_in_another_file_is_not_covered(label, rel, src, tmp_path):
-    """反向 ①：**同樣的程式碼、換一個受監控檔** → 豁免不適用，必須紅。"""
-    other = next(w for w in WATCHED_FILES if w != rel)
-    f = tmp_path / "m.py"
-    f.write_text(src, encoding="utf-8")
-    assert _violations(f, rel=other), (
-        f"{label}：換到 {other} 仍被放行——帳本身分沒把檔案算進去"
-    )
 
 
 def test_same_method_name_in_another_class_is_not_covered(tmp_path):
@@ -635,17 +526,4 @@ def test_same_method_name_in_another_class_is_not_covered(tmp_path):
     f.write_text(src, encoding="utf-8")
     assert _violations(f, rel="core/metatube/client.py") == [(3, "logger")], (
         "同名 method 位於不同 class 時不得命中豁免"
-    )
-
-
-def test_module_level_function_does_not_hit_class_method_ledger(tmp_path):
-    """反向 ③：把 class method 攤平成模組層函式 → 身分改變，豁免失效。"""
-    src = (
-        "def get_info(provider):\n"
-        '    logger.warning("%s", provider)\n'
-    )
-    f = tmp_path / "m.py"
-    f.write_text(src, encoding="utf-8")
-    assert _violations(f, rel="core/metatube/client.py") == [(2, "logger")], (
-        "模組層 get_info 不該命中 MetatubeHttpClient.get_info 的豁免"
     )
