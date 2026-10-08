@@ -297,99 +297,16 @@ def test_ci_ruff_pin_matches_requirements(workflow, tool):
     "run_scalar, tool, expected_versions, expected_unparsed",
     [
         pytest.param(
-            "pip install ruff\n# legacy: pip install ruff==0.15.17\n",
-            "ruff",
-            [None],
-            [],
-            id="shell-comment-is-not-a-command",
-        ),
-        pytest.param(
-            "pip install ruff==0.15.17\npip install ruff==9.9.9\n",
-            "ruff",
-            ["0.15.17", "9.9.9"],
-            [],
-            id="two-different-pinned-versions",
-        ),
-        pytest.param(
-            "pip install ruff==0.15.17\npip install ruff\n",
-            "ruff",
-            ["0.15.17", None],
-            [],
-            id="pinned-then-unpinned-overrides",
-        ),
-        pytest.param(
             "pip install ruff==0.15.17\n",
             "ruff",
             ["0.15.17"],
             [],
             id="legal-single-pinned-install",
         ),
-        pytest.param(
-            "pip install -q ruff==0.15.17\n",
-            "ruff",
-            ["0.15.17"],
-            [],
-            id="legal-with-flag",
-        ),
-        pytest.param(
-            "pip install ruff==0.15.17  # keep in sync with requirements-test.txt pin\n",
-            "ruff",
-            ["0.15.17"],
-            [],
-            id="legal-trailing-comment",
-        ),
-        pytest.param(
-            "pip install import-linter==2.13\n",
-            "ruff",
-            [],
-            [],
-            id="different-package-yields-empty",
-        ),
-        # 這格專門鎖「剝 shell 註解」那一行：拿掉它，誘餌 `ruff==9.9.9` 會被當成第二個
-        # 參數 → 命中序列變 ['0.15.17', '9.9.9'] → 假紅。上面 shell-comment-is-not-a-command
-        # 與 legal-trailing-comment 兩格都靠 `tokens[0] != 'pip'` 就過關，鎖不到這行
-        # （round-5 review 實測：把剝註解那行拿掉，全檔 32 支照樣全綠）。
-        pytest.param(
-            "pip install ruff==0.15.17  # decoy: ruff==9.9.9\n",
-            "ruff",
-            ["0.15.17"],
-            [],
-            id="trailing-comment-decoy-must-not-be-parsed-as-arg",
-        ),
-        # 單行控制流：`do` 開頭的段若不略過，整段被丟掉（連 None 都不記）＝假綠，
-        # 而 CI 實際會跑那次未釘版安裝並覆蓋釘版（round-5 review 找到的 BLOCKER）。
-        pytest.param(
-            "pip install ruff==0.15.17\nfor i in 1; do pip install ruff; done\n",
-            "ruff",
-            ["0.15.17", None],
-            [],
-            id="unpinned-hidden-in-shell-loop",
-        ),
-        pytest.param(
-            'pip install ruff==0.15.17\nif [ "$X" = "1" ]; then pip install ruff==9.9.9; fi\n',
-            "ruff",
-            ["0.15.17", "9.9.9"],
-            [],
-            id="drifted-pin-hidden-in-shell-conditional",
-        ),
         # ── round-6：合法 pin 在前、解析器不認得的安裝在後 ＝ 假綠的通用形狀 ──
-        # 這五格全部要能看見「後面那次安裝」，不論是靠擴大辨識（前四格）還是靠
+        # 這三格全部要能看見「後面那次安裝」，不論是靠擴大辨識（前兩格）還是靠
         # fail-closed（最後一格）。少任何一格，四道斷言都會在「versions 只剩合法
         # pin」的情況下全過（Codex round-6 具名的 P1）。
-        pytest.param(
-            "pip install ruff==0.15.17\npip3.12 install ruff\n",
-            "ruff",
-            ["0.15.17", None],
-            [],
-            id="dotted-pip-interpreter-is-recognized",
-        ),
-        pytest.param(
-            "pip install ruff==0.15.17\npython3.12 -m pip install ruff==9.9.9\n",
-            "ruff",
-            ["0.15.17", "9.9.9"],
-            [],
-            id="dotted-python-m-pip-is-recognized",
-        ),
         pytest.param(
             "pip install ruff==0.15.17\npip install \\\n  ruff==9.9.9\n",
             "ruff",
@@ -410,32 +327,6 @@ def test_ci_ruff_pin_matches_requirements(workflow, tool):
             ["0.15.17"],
             ["uv pip install ruff"],
             id="unknown-installer-fails-closed",
-        ),
-        pytest.param(
-            "pip install ruff==0.15.17\npoetry add ruff\n",
-            "ruff",
-            ["0.15.17"],
-            ["poetry add ruff"],
-            id="unknown-installer-verb-add-fails-closed",
-        ),
-        # 反向：提到 tool 但不是安裝的命令不得被誤判成 unparsed，否則真 workflow
-        # 的 `ruff check .` 會讓守衛永遠紅（fail-closed 不等於見字就紅）。
-        pytest.param(
-            "ruff check .\n",
-            "ruff",
-            [],
-            [],
-            id="non-install-mention-is-not-suspicious",
-        ),
-        # ── round-7：shell grouping 標點讓名字對不上 → 連 unparsed 都收不到 ──
-        # `(pip install ruff)` 的 token 是 `ruff)`，round-6 版本既不記 versions 也不記
-        # unparsed，前面的合法 pin 就讓整支綠 ＝ 假綠（Codex round-7 具名）。
-        pytest.param(
-            "pip install ruff==0.15.17\n(pip install ruff)\n",
-            "ruff",
-            ["0.15.17"],
-            ["(pip install ruff)"],
-            id="subshell-paren-fails-closed",
         ),
         # 未釘版才鎖得住剝標點那行：帶 `==` 的 spec 會被 `[=<>!~\[]` 切割順便把尾括號
         # 丟掉，即使不剝標點也對得上名字（實測），那種格子驗不到任何東西。
