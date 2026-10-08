@@ -6567,6 +6567,110 @@ const RULES = [
   //
   // ---- 162c-B20 起 ----
   // （162c-B20 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestDateGatingGuard
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /(?<![\w:-])@focus="startEditDate\(\)"/,
+    note: '[lint-guard 162c-test_search_html_date_input_wired_to_identity_guarded_methods] 使用者打開日曆到選好日期之間候選被換掉 → 日期被寫進錯的候選 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /(?<![\w:-])@change="confirmEditDate\(\$event\.target\.value\)"/,
+    note: '[lint-guard 162c-test_search_html_date_input_wired_to_identity_guarded_methods] 使用者打開日曆到選好日期之間候選被換掉 → 日期被寫進錯的候選 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'current().date = $event.target.value',
+    note: '[lint-guard 162c-test_search_html_date_input_wired_to_identity_guarded_methods] 使用者打開日曆到選好日期之間候選被換掉 → 日期被寫進錯的候選 — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestShowcaseAliasGuard
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: ['var _nameToGroup = {}', '/api/actress-aliases'],
+    note: '[lint-guard 162c-test_alias_js_contains] 使用者用別名搜尋女優 → 若別名表沒載入或沒展開，搜別名找不到這位女優（無聲少結果） — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: '_nameToGroup[a.name]',
+    note: '[lint-guard 162c-test_alias_js_contains] 使用者用別名搜尋女優 → 若別名表沒載入或沒展開，搜別名找不到這位女優（無聲少結果） — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string',
+    pattern: '_nameToGroup[term]',
+    note: '[lint-guard 162c-test_alias_js_contains] 使用者用別名搜尋女優 → 若別名表沒載入或沒展開，搜別名找不到這位女優（無聲少結果） — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: '_nameToGroup',
+    scope: { anchor: /async\s+_checkPreciseActressMatch\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_alias_js_contains] 使用者用別名搜尋女優 → 若別名表沒載入或沒展開，搜別名找不到這位女優（無聲少結果） — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestRescrapeStateGuard
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /export\s+function\s+rescrapeState\s*\(/,
+    note: '[lint-guard 162c-test_exports_rescrape_state_factory] 使用者開影片牆或搜尋頁 → 若 rescrapeState 沒有 export,showcase/main.js:23 與 search/main.js:10 的 ESM named import 失敗,整頁功能載不起來 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: [
+      'openRescrape',
+      'rescrapeWithSource',
+      'rescrapeConfirm',
+      'rescrapeBackToPick',
+      'closeRescrape',
+      'rescrapeBuiltinSources',
+      'rescrapeMetatubeSources',
+    ],
+    note: '[lint-guard 162c-test_defines_all_methods] 使用者在重刮彈窗預覽步驟按「回上一步」→ 若 rescrapeBackToPick 被拿掉，按鈕沒反應，只能關窗重來 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: ["'/api/enrich-single'", 'refresh_full', /overwrite_existing:\s*true/],
+    note: '[lint-guard 162c-test_commit_contract] 使用者在重刮彈窗按確認 → 若沒帶 mode=refresh_full＋overwrite_existing=true，重刮看似成功但舊資料沒被覆蓋 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: "'/api/rescrape/preview'",
+    note: '[lint-guard 162c-test_preview_contract] 使用者在重刮彈窗點來源 pill → 若預覽路徑與後端 /api/rescrape/preview 對不上，永遠看不到預覽 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'forbidden-string',
+    pattern: 'currentLightboxVideo',
+    note: '[lint-guard 162c-test_no_current_lightbox_video] 使用者在重刮彈窗只是預覽 → 若 mixin 動到 currentLightboxVideo，沒確認的預覽資料會直接顯示在燈箱上像已存檔，關窗後還殘留 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/main.js', kind: 'required-string',
+    pattern: ["from '@/shared/state-rescrape.js'", 'rescrapeState.call(this)'],
+    note: '[lint-guard 162c-test_main_js_imports_and_merges_rescrape_state] 使用者在影片牆燈箱按 ⚙ 重刮 → 若 main.js 沒接 rescrapeState，彈窗狀態不存在、按了沒反應（重刮整個不可用） — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /rescrapeNumber\s*=.*video\s*&&\s*video\.number/,
+    note: '[lint-guard 162c-test_open_rescrape_reads_video_number] 使用者修正番號後再開重刮彈窗 → 預填欄若不是 video.number，會是空白或舊值，要重打番號 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'forbidden-string',
+    pattern: 'longPressReset',
+    note: '[lint-guard 162c-test_close_rescrape_clears_longpress_flag] 無（長壓基礎設施已退役，加回 longPressReset 呼叫畫面無差） — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /rescrapeMetatubeSources\s*\(\s*\)\s*\{[^}]*\.filter\s*\([^)]*s\.type\s*===\s*['"]metatube['"][^)]*&&[^)]*s\.routable\s*===\s*true[^)]*\)/s,
+    note: '[lint-guard 162c-test_rescrape_metatube_sources_has_routable_gate] 使用者在重刮彈窗點 metatube 來源 pill → 後端沒開放路由時點下去只回「查無」，被誤導以為片子不存在 — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestServerModeToggleGuard
+  {
+    file: 'web/templates/settings.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<div\b[^>]*\bid="settings-components"[^>]*>/,
+    required: [/\bdata-lan-ip=/],
+    note: '[lint-guard 162c-test_settings_root_has_data_lan_ip] 使用者開設定頁切到伺服器模式 → 若根節點沒帶 data-lan-ip，橫條永遠說「取不到 IP」，看不到別台裝置要連的網址 — 遷自 test_contract_api_routes.py',
+  },
+
   // ---- 162c-B20 迄 ----
   //
   //
