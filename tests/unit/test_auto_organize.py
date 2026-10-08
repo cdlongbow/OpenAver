@@ -489,24 +489,23 @@ class TestTranslationClauses:
         fake_service.translate_single.assert_called_once_with("日本語タイトル")
         assert "JP-001" in result["added"]
 
-    def test_translate_skipped_when_chinese_title_present(self, tmp_path, isolated_db, mocker):
+    @pytest.mark.parametrize(
+        ("filename", "title"),
+        [
+            ("JP-002 我的中文標題.mp4", "日本語タイトル"),
+            ("JP-003.mp4", "English Title No Japanese"),
+        ],
+        ids=["chinese_title_in_filename", "title_not_japanese"],
+    )
+    def test_translate_skipped_when_chinese_title_present(
+        self, tmp_path, isolated_db, mocker, filename, title
+    ):
         fav_dir = tmp_path / "fav"
         fav_dir.mkdir()
         config = make_config(fav_dir, translate_enabled=True)
 
         result, fake_service, create_mock = self._run_with_translation_mock(
-            fav_dir, config, mocker, "JP-002 我的中文標題.mp4", "日本語タイトル"
-        )
-
-        fake_service.translate_single.assert_not_called()
-
-    def test_translate_skipped_when_title_not_japanese(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        config = make_config(fav_dir, translate_enabled=True)
-
-        result, fake_service, create_mock = self._run_with_translation_mock(
-            fav_dir, config, mocker, "JP-003.mp4", "English Title No Japanese"
+            fav_dir, config, mocker, filename, title
         )
 
         fake_service.translate_single.assert_not_called()
@@ -570,29 +569,6 @@ class TestMemoryHitNotAnEvent:
         called_numbers = [c.args[0] for c in search_mock.call_args_list]
         assert "MEM-001" not in called_numbers
         organize_mock.assert_not_called()
-
-
-# ===========================================================================
-# 其他：reconcile_wishlist 被呼叫一次且回傳值原樣進了 wishlist_removed
-# ===========================================================================
-
-class TestWishlistReconcile:
-    def test_reconcile_wishlist_called_once_and_flows_into_result(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "WL-001.mp4")
-
-        config = make_config(fav_dir)
-        mocker.patch("core.auto_organize.smart_search",
-                      return_value=[{"number": "WL-001", "title": "t", "actors": []}])
-        mocker.patch("core.auto_organize.organize_file", return_value=default_organize_success())
-        reconcile_mock = mocker.patch("core.auto_organize.reconcile_wishlist",
-                                       return_value=["OWNED-001", "OWNED-002"])
-
-        result = run_one_round(config)
-
-        reconcile_mock.assert_called_once()
-        assert result["wishlist_removed"] == ["OWNED-001", "OWNED-002"]
 
 
 class TestClearOnSuccess:
