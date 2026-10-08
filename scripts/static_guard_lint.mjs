@@ -6221,6 +6221,168 @@ const RULES = [
   //
   // ---- 162c-B12 起 ----
   // （162c-B12 專屬子區段：只在此兩行之間追加）
+  // 162c: TestJavlibraryCfFlowT6Guard
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /_pollCfThenRetry\s*\(\s*number\s*,/,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_state_rescrape_has_pollCfThenRetry] 使用者重刮 JavLibrary 遇 Cloudflare 驗證 → 若輪詢重試函式不存在，驗證解完後不會自動重跑重刮（呼叫處 TypeError）→ 必須關窗重來 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /cancelCfPoll\s*\(\s*\)\s*\{/,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_state_rescrape_has_cancelCfPoll] 使用者在 Cloudflare 驗證等待中按取消 → 若取消函式不存在，按了沒反應、無法取消等待 → 只能等逾時 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'order',
+    items: [
+      { pattern: 'data.cf_needed', occurrence: 'first' },
+      { pattern: 'rescrapeNotFound = true', occurrence: 'last' },
+    ],
+    note: '[lint-guard 162c-test_state_rescrape_cf_needed_before_notfound] 使用者重刮 JavLibrary 遇 Cloudflare 驗證 → 若 cf_needed 處理排在「找不到」之後，看到的是「找不到」而非驗證流程 → 重刮做不下去 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: 'result.cf_unavailable',
+    scope: { anchor: /rescrapeConfirm\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_rescrape_confirm_handles_cf] 使用者在 JavLibrary 重刮預覽停留太久、按下確認時 CF 驗證已過期 → 若 rescrapeConfirm 沒接 cf_unavailable，只看到模糊的「失敗」且驗證流程不啟動 → 重刮寫不進去 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: 'result.cf_needed',
+    scope: { anchor: /rescrapeConfirm\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_rescrape_confirm_handles_cf] 使用者在 JavLibrary 重刮預覽停留太久、按下確認時 CF 驗證已過期 → 若 rescrapeConfirm 沒接 cf_needed，只看到模糊的「失敗」且驗證流程不啟動 → 重刮寫不進去 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: 'clearInterval',
+    scope: { anchor: /closeRescrape\(\)\s*\{/, window: 500 },
+    note: '[lint-guard 162c-test_close_rescrape_clears_interval] 使用者在 Cloudflare 驗證等待中關掉重刮視窗 → 若輪詢沒被清掉，視窗已關但背景仍輪詢到逾時，解完驗證後可能自行重跑重刮／跳通知 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'rescrapeCfWaiting',
+    note: '[lint-guard 162c-test_modal_has_cf_waiting_block] 使用者重刮 JavLibrary 遇 Cloudflare 驗證 → 若彈窗缺等待區塊，看不到「驗證中」提示 → 不知道在等什麼 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'jl_cf_solving',
+    note: '[lint-guard 162c-test_modal_has_cf_waiting_block] 使用者重刮 JavLibrary 遇 Cloudflare 驗證 → 若彈窗缺 jl_cf_solving i18n，看不到「驗證中」文案 → 不知道在等什麼 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'cancelCfPoll',
+    note: '[lint-guard 162c-test_modal_has_cf_waiting_block] 使用者重刮 JavLibrary 遇 Cloudflare 驗證 → 若取消鈕缺 cancelCfPoll 綁定，取消不了 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'order',
+    items: [
+      { pattern: 'data.cf_needed' },
+      { pattern: "rescrapeEntryPoint === 'switch-source') {" },
+    ],
+    note: '[lint-guard 162c-test_cf_needed_before_switch_source_branch] 使用者在結果面板換源（switch-source）遇 JavLibrary Cloudflare 驗證 → 若 cf_needed 處理排在 switch-source 分支之後，驗證流程不啟動、落入「找不到」→ 換源做不下去 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'order',
+    stripLineComments: true,
+    scope: { anchor: /async\s+rescrapeWithSource\s*\(\s*sourceId\s*\)\s*\{/, braceBalanced: true },
+    items: [
+      { pattern: 'data.cf_unavailable' },
+      { pattern: "rescrapeEntryPoint === 'switch-source') {" },
+    ],
+    note: '[lint-guard 162c-test_cf_unavailable_before_switch_source_branch] 使用者在結果面板換源遇 JavLibrary Cloudflare 不可用（非桌面）→ 若 cf_unavailable 處理排在 switch-source 分支之後，看到「找不到」而非「此環境無法驗證」提示 → 以為片子不存在 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestRescrapeModalSearchHideJlPillGuard
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string',
+    pattern: "s.manual_only && s.is_beta && rescrapeEntryPoint === 'search'",
+    note: '[lint-guard 162c-test_modal_builtin_pill_search_gate_uses_isJlUnavailable] 使用者在搜尋頁開重刮選單 → 若舊的「search 入口隱藏 JL pill」條件復活，選不到 JavLibrary — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'isJlUnavailable',
+    note: '[lint-guard 162c-test_modal_builtin_pill_search_gate_uses_isJlUnavailable] 使用者在搜尋頁開重刮選單 → 若 isJlUnavailable gate 消失，非桌面也點得到做不到的 JL 驗證流程 → 按了沒結果（test_modal_builtin_pill_jl_gate_preserves_aria_disabled） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: /(?<![\w:-]):aria-disabled=/,
+    note: '[lint-guard 162c-test_modal_builtin_pill_jl_gate_preserves_aria_disabled] 使用者在非桌面環境點 JavLibrary pill → 若 aria-disabled 綁定消失，螢幕報讀不知它不可用、外觀不灰 → 以為能點卻無反應 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestRescrapeVersionSwitcherGuard
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'structure-count',
+    pattern: /(?<![\w:-])x-show="rescrapeHasVersions\(\)"/,
+    min: 2,
+    note: '[lint-guard 162c-test_version_switcher_uses_rescrapeHasVersions] 使用者重刮到 JavLibrary 多版本片 → 若 ‹ › 鈕沒綁 rescrapeHasVersions() 顯示條件，多版本時看不到切換鈕（或單版本也亂出現）→ 無法選版本 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'rescrapeVersionGo(-1)',
+    note: '[lint-guard 162c-test_version_switcher_uses_rescrapeVersionGo] 使用者在多版本預覽按 ‹ → 若沒綁 rescrapeVersionGo(-1)，按了沒反應、切不了版本 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'rescrapeVersionGo(1)',
+    note: '[lint-guard 162c-test_version_switcher_uses_rescrapeVersionGo] 使用者在多版本預覽按 › → 若沒綁 rescrapeVersionGo(1)，按了沒反應、切不了版本 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: /rescrape-caption[^>]*rescrapeEntryPoint[^>]*lightbox|rescrapeEntryPoint[^>]*lightbox[^>]*rescrape-caption/,
+    note: '[lint-guard 162c-test_overwrite_warning_gated_by_lightbox_entrypoint] 使用者在燈箱按重刮 → 若「不可逆覆蓋」警告沒綁 lightbox 入口，燈箱入口可能看不到覆蓋 NFO／封面的警告，或搜尋入口（不寫檔）被誤導出現警告 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'bi-check-lg',
+    scope: /<div[^>]*rescrape-confirm-row[^>]*rescrapeEntryPoint\s*===\s*['"]search['"][^>]*>(.*?)<\/div>/s,
+    note: '[lint-guard 162c-test_search_adopt_btn_uses_check_icon] 使用者在搜尋入口重刮預覽按「採用」→ 若採用鈕退回帶文字，文字溢出 48px 圓鈕破版 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'adopt_version',
+    scope: /<div[^>]*rescrape-confirm-row[^>]*rescrapeEntryPoint\s*===\s*['"]search['"][^>]*>(.*?)<\/div>/s,
+    note: '[lint-guard 162c-test_search_adopt_btn_uses_check_icon] 使用者在搜尋入口重刮預覽按「採用」→ 若 aria-label 缺 adopt_version，螢幕報讀唸不出鈕的作用 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string',
+    pattern: 'x-text',
+    scope: /<div[^>]*rescrape-confirm-row[^>]*rescrapeEntryPoint\s*===\s*['"]search['"][^>]*>(.*?)<\/div>/s,
+    note: '[lint-guard 162c-test_search_adopt_btn_uses_check_icon] 使用者在搜尋入口重刮預覽按「採用」→ 若採用鈕含 x-text 文字，文字溢出 48px 圓鈕破版 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/components/rescrape-modal.css', kind: 'required-string',
+    pattern: 'var(--color-warning)',
+    scope: { anchor: /\.rescrape-version-status\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_version_status_uses_warning_color] 使用者看多版本預覽撞號提示 → 若 .rescrape-version-status 色不是 var(--color-warning)，琥珀色「注意」語意消失（判定表流程句＝無；外觀 token） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/components/rescrape-modal.css', kind: 'required-string',
+    pattern: 'var(--color-warning)',
+    scope: { anchor: /\.rescrape-ver-indicator\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_version_status_uses_warning_color] 使用者看多版本預覽 N/M 指示 → 若 .rescrape-ver-indicator 色不是 var(--color-warning)，與撞號提示琥珀色不一致（判定表流程句＝無；外觀 token） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: 'bi-check-lg',
+    scope: /<div[^>]*rescrape-confirm-row[^>]*rescrapeEntryPoint\s*===\s*['"]switch-source['"][^>]*>(.*?)<\/div>/s,
+    note: '[lint-guard 162c-test_switch_source_modal_confirm_row] 使用者在結果面板換源後的預覽按採用 → 若採用鈕不在，無法完成換源 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string',
+    pattern: 'overwrite_warning',
+    scope: /<div[^>]*rescrape-confirm-row[^>]*rescrapeEntryPoint\s*===\s*['"]switch-source['"][^>]*>(.*?)<\/div>/s,
+    note: '[lint-guard 162c-test_switch_source_modal_confirm_row] 使用者在結果面板換源後的預覽按採用 → 若出現「不可逆覆蓋」警告，會被誤導以為要寫檔（其實只換結果列） — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestSearchAutoSourcePill
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /(?<![\w:-])x-show=\\?["'][^"']*isComposing\(\)/,
+    scope: /source_pill\((?:[^()]|\([^()]*\))*search-auto-pill(?:[^()]|\([^()]*\))*\)/s,
+    note: '[lint-guard 162c-test_auto_pill_xshow_is_composing] 使用者在搜尋頁輸入新番號 → 「自動」來源膠囊該在編輯態出現；若 x-show 少了 isComposing()，膠囊在不該出現的時候一直擋在搜尋列或根本不出現 — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B12 迄 ----
   //
   //
