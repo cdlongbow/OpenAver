@@ -6065,6 +6065,171 @@ const RULES = [
   //
   // ---- 162c-B14 起 ----
   // （162c-B14 專屬子區段：只在此兩行之間追加）
+  // 162c: TestMobileToolbarCss
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: [/position:\s*fixed/, /transform:\s*translateY\(-100%\)/, /pointer-events:\s*none/],
+    scope: { anchor: /@media \(max-width: 480px\) \{\s*\.showcase-toolbar \{\s*position: fixed/, window: 700 },
+    note: '[lint-guard 162c-test_toolbar_collapsed_default] 使用者在手機 showcase → 工具列預設該收起；若收合預設壞掉（沒 fixed／沒移出畫面／沒關 pointer-events），工具列常駐蓋住封面牆且擋住點擊 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: [/transform:\s*translateY\(0\)/, /pointer-events:\s*auto/],
+    scope: { anchor: /\.showcase-toolbar\.mobile-toolbar-open\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_toolbar_open_state] 使用者在手機 showcase 點 navbar 搜尋 icon → 工具列該滑出可點；若展開態缺 translateY(0)／pointer-events:auto，點了工具列仍在畫面外或點不到 → 搜尋框用不了 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: [/position:\s*fixed/, /z-index:\s*85\b/],
+    scope: { anchor: /\.mobile-toolbar-backdrop\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_backdrop_css] 使用者在手機展開工具列後點外面想收起 → 若 backdrop 不是 fixed 全屏或 z 階層錯（backdrop 85 須低於工具列 90），點外面收不起、或蓋住工具列使其點不到 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: /z-index:\s*90\b/,
+    scope: { anchor: /@media \(max-width: 480px\) \{\s*\.showcase-toolbar \{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_backdrop_css] 使用者在手機展開工具列後點外面想收起 → 若 backdrop 不是 fixed 全屏或 z 階層錯（backdrop 85 須低於工具列 90），點外面收不起、或蓋住工具列使其點不到 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'class="mobile-toolbar-backdrop"',
+    count: 1,
+    note: '[lint-guard 162c-test_backdrop_dom] 使用者在手機展開工具列後點外面 → 若 backdrop 的 x-show／@click 沒綁 store，點外面收不起來；缺 x-cloak 載入瞬間 backdrop 閃現擋住點擊 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<div\b[^>]*class="mobile-toolbar-backdrop"[^>]*>/,
+    required: [
+      /(?<![\w:-])x-show="\$store\.ui\.toolbarOpen"/,
+      /(?<![\w:-])@click="[^"]*\$store\.ui\.toolbarOpen\s*=\s*false[^"]*"/,
+      /(?<![\w:-])x-cloak(?=[\s>\/])/,
+    ],
+    note: '[lint-guard 162c-test_backdrop_dom] 使用者在手機展開工具列後點外面 → 若 backdrop 的 x-show／@click 沒綁 store，點外面收不起來；缺 x-cloak 載入瞬間 backdrop 閃現擋住點擊 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: /display:\s*none/,
+    scope: { anchor: /@media \(min-width: 481px\) \{\s*\.navbar-search-btn\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_navbar_search_btn_hidden_above_480] 使用者在 481–1023px（平板）看 showcase → 若 navbar 搜尋 icon 未在 >480px 隱藏，會看到一顆按了不會展開工具列的 icon（誤導控制） — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestMobileToolbarAutoCollapse
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<button\b[^>]*title="\{\{ t\('showcase\.action\.search'\) \}\}"[^>]*>/,
+    required: [
+      /(?<![\w:-])@click="[^"]*SearchChange\(\)[^"]*"/,
+      /(?<![\w:-])@click="[^"]*\$store\.ui\.toolbarOpen\s*=\s*false[^"]*"/,
+    ],
+    note: '[lint-guard 162c-test_submit_button_collapses_toolbar] 使用者在手機工具列按箭頭送出搜尋 → 若沒同時收合，工具列仍蓋住剛出現的搜尋結果；若丟掉送出，按了不搜尋 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: [
+      /@input[.\w]*="[^"]*SearchChange[^"]*toolbarOpen/,
+      /@input[.\w]*="[^"]*toolbarOpen[^"]*SearchChange/,
+    ],
+    note: '[lint-guard 162c-test_live_filter_input_does_not_collapse] 使用者在手機工具列打字搜尋 → 若每次輸入都觸發收合，打字途中工具列滑走，字打不完 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestLightboxModalHugContract
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: /aspect-ratio\s*:\s*var\(--lb-cover-ar/,
+    scope: { anchor: /\.lightbox-content\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_has_cover_aspect_ratio_set] 使用者開影片燈箱 → 封面盒不跟圖片比例 → 封面上下留黑邊、與圖不貼合（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: /flex-shrink\s*:\s*0/,
+    scope: { anchor: /\.lightbox-content\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_has_cover_flex_shrink_zero] 使用者開影片燈箱 → 封面盒被 flex 壓扁（T1 letterbox 主因）→ 封面上下留白（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: [/min-width\s*:\s*0/, /min-height\s*:\s*0/],
+    scope: { anchor: /\.lightbox-content\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_has_cover_floor_zeroed] 使用者開影片燈箱 → 封面盒最小寬高地板沒歸零 → 盒尺寸被內容撐住不依比例（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: '90dvh',
+    scope: { anchor: /\.lightbox-content\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_has_cover_width_formula_uses_90dvh] 使用者開影片燈箱（FHD 螢幕）→ 寬度公式用 100dvh → 燈箱比視窗高、出現整體捲動（純版面） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'forbidden-string',
+    pattern: ['100dvh', '100vh'],
+    scope: { anchor: /\.lightbox-content\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_has_cover_width_formula_uses_90dvh] 使用者開影片燈箱（FHD 螢幕）→ 寬度公式用 100dvh → 燈箱比視窗高、出現整體捲動（純版面） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: [/position\s*:\s*absolute/, /(?<![-\w])width\s*:\s*100%/, /(?<![-\w])height\s*:\s*100%/],
+    scope: { anchor: /\.lightbox-content\s+\.lightbox-cover\.has-cover\s+img\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_has_cover_img_fills_box] 使用者開影片燈箱 → 圖片沒絕對定位填滿盒 → 圖歪在盒內、留白（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: [/(?<![-\w])width\s*:\s*100%/, /(?<![-\w])height\s*:\s*100%/, /margin\s*:\s*0/],
+    scope: { anchor: /\.lightbox-content\s+\.lightbox-cover\.has-cover\s+\.lb-full\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_has_cover_lb_full_fills_box] 使用者開影片燈箱 → 高解析原圖層沒填滿盒 → 原圖層歪或留白（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: ['_setCoverAspect', "closest('.lightbox-cover')", "setProperty('--lb-cover-ar'"],
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_set_cover_aspect_js_contract] 使用者開影片燈箱 → 沒有依圖片量出比例 → 封面盒維持預設 1.5 比例、直圖/寬圖留黑邊（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: [/flex\s*:\s*1\s+1\s+auto/, /overflow-y\s*:\s*auto/],
+    scope: { anchor: /\.lightbox-metadata\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_metadata_flex_distribution] 使用者開影片燈箱、資訊很長 → 資訊欄不自己捲動 → 下半段資訊被切掉看不到／整個燈箱被撐出視窗 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestSearchLightboxModalHugContract
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /aspect-ratio\s*:\s*var\(--lb-cover-ar/,
+    scope: { anchor: /\.search-container\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_s1_has_cover_aspect_ratio] 使用者在搜尋頁開燈箱 → 封面盒不跟圖片比例 → 留黑邊（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /flex-shrink\s*:\s*0/,
+    scope: { anchor: /\.search-container\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_s2_has_cover_flex_shrink_zero] 使用者在搜尋頁開燈箱 → 封面盒被壓扁 → 留白（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: [/min-width\s*:\s*0/, /min-height\s*:\s*0/],
+    scope: { anchor: /\.search-container\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_s3_has_cover_floor_zeroed] 使用者在搜尋頁開燈箱 → 封面盒地板沒歸零 → 尺寸不依比例（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: '90dvh',
+    scope: { anchor: /\.search-container\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_s4_has_cover_width_formula_uses_90dvh] 使用者在搜尋頁開燈箱 → 寬度公式用 100dvh → 燈箱超出視窗整體捲動（純版面） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'forbidden-string',
+    pattern: ['100dvh', '100vh'],
+    scope: { anchor: /\.search-container\s+\.lightbox-cover\.has-cover\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_s4_has_cover_width_formula_uses_90dvh] 使用者在搜尋頁開燈箱 → 寬度公式用 100dvh → 燈箱超出視窗整體捲動（純版面） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: [/position\s*:\s*absolute/, /(?<![-\w])width\s*:\s*100%/, /(?<![-\w])height\s*:\s*100%/],
+    scope: { anchor: /\.search-container\s+\.lightbox-cover\.has-cover\s+img\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_s5_has_cover_img_fills_box] 使用者在搜尋頁開燈箱 → 圖沒絕對定位填滿盒 → 圖歪在盒內（純外觀） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /(?<![\w:-])@load="_setCoverAspect\(\$event\)"/,
+    note: '[lint-guard 162c-test_s6_search_html_load_handler] 使用者在搜尋頁開燈箱 → 圖載入後不量比例 → 封面盒維持預設比例留黑邊（純外觀） — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B14 迄 ----
   //
   //
