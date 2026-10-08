@@ -6071,6 +6071,89 @@ const RULES = [
   //
   // ---- 162c-B21 起 ----
   // （162c-B21 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestServerModeToggleGuard
+  { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: [
+      '@click="requestServerModeChange(false)"',
+      '@click="requestServerModeChange(true)"',
+      'class="settings-server-mode"',
+      '<h4',
+    ],
+    scope: /<div class="settings-header-left">([\s\S]*?)<div class="settings-header-actions">/,
+    note: '[lint-guard 162c-test_settings_server_mode_segmented_in_header] 使用者想切伺服器模式 → 單機|伺服器 膠囊的兩顆按鈕若沒接 requestServerModeChange(false/true)，點了沒反應，無法開關區網存取 — 遷自 test_contract_api_routes.py' },
+  { file: 'web/templates/settings.html', kind: 'structure-count',
+    pattern: 'data-mode=', count: 2,
+    scope: /<div class="settings-header-left">([\s\S]*?)<div class="settings-header-actions">/,
+    note: '[lint-guard 162c-test_settings_server_mode_segmented_in_header] 使用者想切伺服器模式 → 單機|伺服器 膠囊的兩顆按鈕若沒接 requestServerModeChange(false/true)，點了沒反應，無法開關區網存取 — 遷自 test_contract_api_routes.py' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: 'class="settings-server-mode"',
+    scope: /<div class="settings-header-actions">([\s\S]*)/,
+    note: '[lint-guard 162c-test_settings_server_mode_segmented_in_header] 使用者想切伺服器模式 → 單機|伺服器 膠囊的兩顆按鈕若沒接 requestServerModeChange(false/true)，點了沒反應，無法開關區網存取 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/templates/settings.html', kind: 'structure-count',
+    pattern: 'class="settings-server-inline"', count: 1,
+    note: '[lint-guard 162c-test_settings_server_info_banner_xshow_xcloak] 使用者在單機模式 → 若區網連線橫條沒被 x-show="serverMode" 管住，會看到不該有的區網網址（誤導成已對外開放）；少 x-cloak 則開頁瞬間閃一下 — 遷自 test_contract_api_routes.py' },
+  { file: 'web/templates/settings.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'div', className: 'settings-server-inline',
+    required: [/(?<![\w:-])x-show="serverMode"/, /(?<![\w:-])x-cloak(?=[\s>=])/],
+    note: '[lint-guard 162c-test_settings_server_info_banner_xshow_xcloak] 使用者在單機模式 → 若區網連線橫條沒被 x-show="serverMode" 管住，會看到不該有的區網網址（誤導成已對外開放）；少 x-cloak 則開頁瞬間閃一下 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: "window.t('settings.server_info.warning')",
+    note: '[lint-guard 162c-test_settings_server_info_warning_key] 使用者開啟伺服器模式 → 若安全警語被拿掉，不會被告知區網內任何裝置都連得進來 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: [
+      'settings.server_info.listener_down',
+      'x-if="!serverUrl() && lanIp"',
+      'settings.server_info.no_lan_ip_with_port',
+      'x-if="!serverUrl() && !lanIp && lanPort"',
+      'x-if="!serverUrl() && !lanIp && !lanPort"',
+    ],
+    note: '[lint-guard 162c-test_settings_server_info_distinguishes_listener_down_from_no_ip] 使用者的區網 listener 沒起來（自動啟動失敗）→ 若橫條誤報「取不到 IP」，會去查網路而不是重啟，白排查 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: '/api/config/general/server_mode',
+    note: '[lint-guard 162c-test_state_config_server_mode_put_endpoint] 使用者切單機|伺服器 → 若 PUT 路徑對不上後端 /api/config/general/server_mode，設定沒存下來，重開又變回去 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'this.lanPort',
+    note: '[lint-guard 162c-test_state_config_server_url_uses_lan_port] 使用者要在別台裝置連進來 → 顯示的網址若用桌面本機 port 而非 LAN port，別台連不上 — 遷自 test_contract_api_routes.py' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string',
+    pattern: 'window.location.port',
+    note: '[lint-guard 162c-test_state_config_server_url_uses_lan_port] 使用者要在別台裝置連進來 → 顯示的網址若用桌面本機 port 而非 LAN port，別台連不上 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'result.lan_port',
+    note: '[lint-guard 162c-test_state_config_set_server_mode_reads_lan_port] 使用者切到伺服器模式後 → 若沒讀回後端回的 lan_port，橫條不顯示網址，要重新整理才出現 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: ['result.lan_ip', 'this.lanIp = result.lan_ip'],
+    note: '[lint-guard 162c-test_state_config_set_server_mode_reads_lan_ip] 使用者切到伺服器模式後 → 若沒讀回後端回的 lan_ip，橫條網址用舊值或空白 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: '/api/config/general/lan-port',
+    note: '[lint-guard 162c-test_state_config_load_config_fetches_lan_port] 使用者重新整理設定頁 → 若不再補抓 lan-port，橫條網址消失，要重切模式才恢復 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: ['j.lan_ip', 'this.lanIp = j.lan_ip'],
+    note: '[lint-guard 162c-test_state_config_load_config_reads_lan_ip_from_lan_port_endpoint] 使用者重新整理設定頁 → 若沒讀 lan-port 回應的 lan_ip，橫條 IP 空白或舊值 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: [
+      'settings.server_info.disable_failed',
+      'settings.server_info.toggle_failed',
+      "val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed'",
+      'remote_forbidden',
+      'settings.server_info.remote_only',
+    ],
+    note: '[lint-guard 162c-test_state_config_set_server_mode_failure_direction_aware] 使用者關閉伺服器模式失敗 → 若 toast 仍說「無法啟動」會被誤導；遠端裝置嘗試切換時只看到「請稍後再試」，不知道只有本機能切 — 遷自 test_contract_api_routes.py' },
+
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'value: !!val',
+    note: '[lint-guard 162c-test_state_config_set_server_mode_sends_boolean] 使用者切伺服器模式 → 若送字串而非布林，後端嚴格布林 gate 回 400，開關切不動 — 遷自 test_contract_api_routes.py' },
+
   // ---- 162c-B21 迄 ----
   //
   //
