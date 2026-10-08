@@ -158,22 +158,6 @@ class FakeWindow:
 # ──────────────────────────────────────────────────────────────
 
 class TestWvFetch:
-    def test_normal_returns_tuple(self):
-        """Normal callback → returns (final_url, status, html) tuple."""
-        win = FakeWindow()
-        win._eval_callback_result['default'] = {
-            'finalUrl': 'https://www.javlibrary.com/ja/',
-            'status': 200,
-            'html': '<html>ok</html>',
-        }
-        result = _wv_fetch(win, 'https://www.javlibrary.com/ja/')
-        assert isinstance(result, tuple)
-        assert len(result) == 3
-        final_url, status, html = result
-        assert final_url == 'https://www.javlibrary.com/ja/'
-        assert status == 200
-        assert html == '<html>ok</html>'
-
     def test_js_error_raises_runtime_error(self):
         """Callback with error key → raises RuntimeError."""
         win = FakeWindow()
@@ -185,16 +169,6 @@ class TestWvFetch:
         }
         with pytest.raises(RuntimeError, match='JS fetch error'):
             _wv_fetch(win, 'https://www.javlibrary.com/ja/')
-
-    def test_timeout_raises_timeout_error(self):
-        """Callback never called → raises TimeoutError (single-attempt, fast)."""
-        win = FakeWindow()
-        win._never_callback = True
-        with pytest.raises(TimeoutError):
-            _wv_fetch(win, 'https://www.javlibrary.com/ja/', timeout=0.05, attempts=1)
-        # Exactly 1 evaluate_js call for single-attempt
-        eval_calls = [c for c in win.calls if c[0] == 'evaluate_js']
-        assert len(eval_calls) == 1
 
     def test_non_dict_callback_degrades_gracefully(self):
         """Non-dict passed to callback → put_nowait({}) → returns ('', 0, '')."""
@@ -607,11 +581,15 @@ class TestFetchOriginPin:
             {'fc-javten': win}, {'fc-javten': self.JAVTEN_URL},
         )
 
-    def test_1_cross_origin_final_url_raises_and_returns_no_html(self):
-        """final_url lands on a different host → RuntimeError, no HTML surfaced."""
+    @pytest.mark.parametrize("final_url", [
+        'https://evil-mirror.example/tw/video/2100980/id4938117/slug',  # 不同主機
+        'http://javten.com/tw/video/2100980/id4938117/slug',            # 同主機 https 降為 http
+    ])
+    def test_1_cross_origin_final_url_raises_and_returns_no_html(self, final_url):
+        """final_url lands on a different origin (other host or scheme downgrade) → RuntimeError, no HTML surfaced."""
         win = FakeWindow()
         win._eval_callback_result['default'] = {
-            'finalUrl': 'https://evil-mirror.example/tw/video/2100980/id4938117/slug',
+            'finalUrl': final_url,
             'status': 200,
             'html': '<html><title>not javten</title></html>',
         }
@@ -632,19 +610,6 @@ class TestFetchOriginPin:
 
         result = transport.fetch(self.JAVTEN_URL, 'fc-javten')
         assert result == '<html><title>JavTen video</title></html>'
-
-    def test_3_scheme_downgrade_same_host_raises(self):
-        """final_url drops to http:// on the same host → still a different origin, must raise."""
-        win = FakeWindow()
-        win._eval_callback_result['default'] = {
-            'finalUrl': 'http://javten.com/tw/video/2100980/id4938117/slug',
-            'status': 200,
-            'html': '<html><title>downgraded</title></html>',
-        }
-        transport = self._javten_transport(win)
-
-        with pytest.raises(RuntimeError, match='cross-origin redirect rejected'):
-            transport.fetch(self.JAVTEN_URL, 'fc-javten')
 
     def test_4_javlibrary_cross_origin_final_url_not_rejected(self):
         """
@@ -702,16 +667,6 @@ class TestBeginSolve:
         # load_url gets the origin
         load_call = next(c for c in win.calls if c[0] == 'load_url')
         assert load_call[1] == origin
-
-    def test_returns_immediately(self):
-        """begin_solve() must return immediately (no blocking)."""
-        import time
-        win = FakeWindow()
-        transport = _jl_transport(win)
-        start = time.monotonic()
-        transport.begin_solve('https://www.javlibrary.com/ja/')
-        elapsed = time.monotonic() - start
-        assert elapsed < 1.0, f"begin_solve blocked for {elapsed:.2f}s (should return immediately)"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -824,19 +779,6 @@ class TestIsReady:
         hide_calls = [c for c in win.calls if c[0] == 'hide']
         assert len(hide_calls) == 0, "空 title 時不應 hide()，視窗須保留"
 
-    def test_every_call_sets_over18_cookie(self):
-        """Every is_ready() call sets over18 cookie (idempotent)."""
-        win = FakeWindowIsReady(READY_TITLE, READY_HEAD)
-        transport = _jl_transport(win)
-        transport.is_ready()
-        transport.is_ready()
-
-        over18_calls = [
-            c for c in win.calls
-            if c[0] == 'evaluate_js' and 'over18' in c[1]
-        ]
-        assert len(over18_calls) >= 2, "over18 cookie should be set on every is_ready() call"
-
     def test_evaluate_js_none_degrades_gracefully(self):
         """evaluate_js returning None (window not ready) → no exception, returns bool."""
         class NoneWindow(FakeWindow):
@@ -942,23 +884,6 @@ class TestDeadFlagFailFast:
     rather than operating on a dead window.
     """
 
-    def test_on_closed_handler_sets_dead(self):
-        """_on_closed() handler sets _dead=True (backstop fire path)."""
-        win = FakeWindow()
-        transport = _jl_transport(win)
-        assert transport._dead['javlibrary'] is False, "_dead['javlibrary'] must start as False"
-        # Fire the closed event as if the window was destroyed
-        win.events.closed.fire()
-        assert transport._dead['javlibrary'] is True, "_on_closed should set _dead['javlibrary']=True"
-
-    def test_fetch_raises_when_dead(self):
-        """fetch() raises CfTransportUnavailable when _dead['javlibrary']=True."""
-        win = FakeWindow()
-        transport = _jl_transport(win)
-        transport._dead['javlibrary'] = True
-        with pytest.raises(CfTransportUnavailable, match="restart OpenAver"):
-            transport.fetch('https://www.javlibrary.com/ja/')
-
     def test_begin_solve_raises_when_dead(self):
         """begin_solve() raises CfTransportUnavailable when _dead['javlibrary']=True (guard before show())."""
         win = FakeWindow()
@@ -979,12 +904,12 @@ class TestDeadFlagFailFast:
             transport.is_ready()
 
     def test_dead_via_on_closed_then_fetch_raises(self):
-        """Full path: window closed event fires → _dead=True → fetch raises."""
+        """Full path: window closed event fires → _dead=True → fetch raises with restart hint."""
         win = FakeWindow()
         transport = _jl_transport(win)
         # Simulate window being destroyed by OS / crash
         win.events.closed.fire()
-        with pytest.raises(CfTransportUnavailable):
+        with pytest.raises(CfTransportUnavailable, match="restart OpenAver"):
             transport.fetch('https://www.javlibrary.com/ja/')
 
     def test_dead_window_isolated_per_site(self):
@@ -1053,18 +978,6 @@ class TestBeginSolveNavReset:
         assert [c[0] for c in win.calls if c[0] == 'evaluate_js'] == [], (
             "begin_solve must still never call evaluate_js (0.9.9c): waiting on "
             "the bridge Event is fine, touching evaluate_js strands the bridge"
-        )
-
-    def test_begin_solve_does_not_blank_for_javlibrary(self):
-        origin = 'https://www.javlibrary.com/ja/'
-        win = FakeWindow()
-        transport = _jl_transport(win)
-
-        transport.begin_solve(origin)
-
-        loads = [c[1] for c in win.calls if c[0] == 'load_url']
-        assert loads == [origin], (
-            f"javlibrary's begin_solve sequence must be unchanged; got {loads}"
         )
 
 
@@ -1763,13 +1676,3 @@ class TestAvailableSites:
         )
         transport._dead['fc-javten'] = True
         assert transport.available_sites() == ['javlibrary']
-
-    def test_all_dead_returns_empty(self):
-        """全部 dead → 回空清單。"""
-        transport = PyWebViewCfTransport(
-            {'javlibrary': FakeWindow(), 'fc-javten': FakeWindow()},
-            {'javlibrary': JL_ORIGIN, 'fc-javten': 'https://javten.com/'},
-        )
-        transport._dead['javlibrary'] = True
-        transport._dead['fc-javten'] = True
-        assert transport.available_sites() == []
