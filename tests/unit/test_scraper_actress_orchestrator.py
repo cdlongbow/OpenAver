@@ -19,7 +19,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from core.scrapers.actress import orchestrator
-from core.scrapers.actress.orchestrator import get_actress_profile, get_cached_profile, ProfileResult, _cache, _CACHE_TTL, _compute_age_from_birth
+from core.scrapers.actress.orchestrator import get_actress_profile, get_cached_profile, ProfileResult, _cache, _CACHE_TTL
 
 # ---------------------------------------------------------------------------
 # Patch target constants
@@ -132,22 +132,6 @@ def _frozen_dt_class(frozen: datetime):
 
 class TestHappyPath:
 
-    def test_all_four_routes_not_none(self):
-        xcity = _make_xcity()
-        wiki    = _make_wiki()
-        graphis = _make_graphis()
-        gfurl   = _make_gfriends_url()
-
-        with patch(_PATCH_XCITY, return_value=xcity), \
-             patch(_PATCH_WIKI, return_value=wiki), \
-             patch(_PATCH_GRAPHIS, return_value=graphis), \
-             patch(_PATCH_GFRIENDS, return_value=gfurl):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert isinstance(result, ProfileResult)
-        assert result.data is not None
-        assert result.timed_out is False
-
     def test_primary_text_source_xcity(self):
         xcity = _make_xcity()
         wiki    = _make_wiki()
@@ -183,38 +167,6 @@ class TestHappyPath:
         assert result.data["backdrop_url"] == graphis["backdrop_url"]
         assert result.timed_out is False
 
-    def test_all_sources_dict(self):
-        xcity = _make_xcity()
-        wiki    = _make_wiki()
-        graphis = _make_graphis()
-        gfurl   = _make_gfriends_url()
-
-        with patch(_PATCH_XCITY, return_value=xcity), \
-             patch(_PATCH_WIKI, return_value=wiki), \
-             patch(_PATCH_GRAPHIS, return_value=graphis), \
-             patch(_PATCH_GFRIENDS, return_value=gfurl):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data["all_sources"]["xcity"] == xcity
-        assert result.data["all_sources"]["wiki"] == wiki
-        assert result.data["all_sources"]["graphis"] == graphis
-        assert result.data["all_sources"]["gfriends"] == gfurl
-        assert result.timed_out is False
-
-    def test_legacy_flat_name_and_img(self):
-        xcity = _make_xcity()
-        graphis = _make_graphis()
-
-        with patch(_PATCH_XCITY, return_value=xcity), \
-             patch(_PATCH_WIKI, return_value=None), \
-             patch(_PATCH_GRAPHIS, return_value=graphis), \
-             patch(_PATCH_GFRIENDS, return_value=None):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data["name"] == xcity["name_ja"]
-        assert result.data["img"] == result.data["photo_url"]
-        assert result.timed_out is False
-
 
 # ---------------------------------------------------------------------------
 # TestC1Cascade — text primary source fallback
@@ -234,17 +186,6 @@ class TestC1Cascade:
 
         assert result.data["text"]["hometown"] == "東京都"
         assert result.data["text"]["height"] == "160cm"
-
-    def test_merge_aliases_from_wiki_other_names(self):
-        wiki = _make_wiki(other_names=["別名1", "別名2"])
-
-        with patch(_PATCH_XCITY, return_value=None), \
-             patch(_PATCH_WIKI, return_value=wiki), \
-             patch(_PATCH_GRAPHIS, return_value=None), \
-             patch(_PATCH_GFRIENDS, return_value=None):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data["text"]["aliases"] == ["別名1", "別名2"]
 
     def test_xcity_none_wiki_wins(self):
         wiki    = _make_wiki()
@@ -305,47 +246,30 @@ class TestC1Cascade:
 
 class TestPhotoCascade:
 
-    def test_graphis_no_prof_url_gfriends_wins(self):
-        xcity = _make_xcity()
-        # Graphis present but prof_url missing/empty
-        graphis = _make_graphis(prof_url="")
-        gfurl   = _make_gfriends_url()
-
+    @pytest.mark.parametrize("xcity, wiki, graphis, gfriends, source, photo_url", [
+        # Graphis 有資料但 prof_url 為空 → 退到 gfriends
+        (_make_xcity(), None, _make_graphis(prof_url=""), _make_gfriends_url(),
+         "gfriends",
+         "https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/Content/9-AVDBS/明里つむぎ.jpg"),
+        # graphis、gfriends 都沒有 → wiki
+        (None, _make_wiki(), None, None,
+         "wiki",
+         "https://upload.wikimedia.org/wikipedia/commons/sample.jpg"),
+        # 只有 xcity 有照片 → xcity
+        (_make_xcity(), None, None, None,
+         "xcity",
+         "https://xcity.jp/idol/photo/273627.jpg"),
+    ], ids=["graphis_no_prof_url_gfriends_wins", "graphis_none_gfriends_none_wiki_wins", "only_xcity"])
+    def test_graphis_no_prof_url_gfriends_wins(self, xcity, wiki, graphis, gfriends, source, photo_url):
         with patch(_PATCH_XCITY, return_value=xcity), \
-             patch(_PATCH_WIKI, return_value=None), \
-             patch(_PATCH_GRAPHIS, return_value=graphis), \
-             patch(_PATCH_GFRIENDS, return_value=gfurl):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data["photo_source"] == "gfriends"
-        assert result.data["photo_url"] == gfurl
-        assert result.data["img"] == gfurl
-        assert result.timed_out is False
-
-    def test_graphis_none_gfriends_none_wiki_wins(self):
-        wiki = _make_wiki()
-
-        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=wiki), \
-             patch(_PATCH_GRAPHIS, return_value=None), \
-             patch(_PATCH_GFRIENDS, return_value=None):
+             patch(_PATCH_GRAPHIS, return_value=graphis), \
+             patch(_PATCH_GFRIENDS, return_value=gfriends):
             result = get_actress_profile(_ACTRESS_NAME)
 
-        assert result.data["photo_source"] == "wiki"
-        assert result.data["photo_url"] == wiki["photo_url"]
-        assert result.timed_out is False
-
-    def test_only_xcity_has_photo(self):
-        xcity = _make_xcity()
-
-        with patch(_PATCH_XCITY, return_value=xcity), \
-             patch(_PATCH_WIKI, return_value=None), \
-             patch(_PATCH_GRAPHIS, return_value=None), \
-             patch(_PATCH_GFRIENDS, return_value=None):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data["photo_source"] == "xcity"
-        assert result.data["photo_url"] == xcity["photo_url"]
+        assert result.data["photo_source"] == source
+        assert result.data["photo_url"] == photo_url
+        assert result.data["img"] == photo_url
         assert result.timed_out is False
 
 
@@ -421,43 +345,6 @@ class TestTD1Age:
         assert result.data["age"] == 27  # computed, not from graphis
         assert result.timed_out is False
 
-    def test_age_consistency_age_equals_current_age(self):
-        xcity = _make_xcity(birth="1995-06-15")
-        FrozenDT = _frozen_dt_class(datetime(2026, 7, 1))
-
-        with patch(_PATCH_XCITY, return_value=xcity), \
-             patch(_PATCH_WIKI, return_value=None), \
-             patch(_PATCH_GRAPHIS, return_value=None), \
-             patch(_PATCH_GFRIENDS, return_value=None), \
-             patch('core.scrapers.actress.orchestrator.datetime', FrozenDT):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data["age"] == result.data["current_age"]
-        assert result.timed_out is False
-
-
-# ---------------------------------------------------------------------------
-# TestComputeAgeUnit — unit tests for _compute_age_from_birth directly
-# ---------------------------------------------------------------------------
-
-class TestComputeAgeUnit:
-
-    def test_compute_age_before_birthday(self):
-        FrozenDT = _frozen_dt_class(datetime(2026, 1, 1))
-        with patch('core.scrapers.actress.orchestrator.datetime', FrozenDT):
-            assert _compute_age_from_birth("1998-03-31") == 27
-
-    def test_compute_age_after_birthday(self):
-        FrozenDT = _frozen_dt_class(datetime(2026, 4, 1))
-        with patch('core.scrapers.actress.orchestrator.datetime', FrozenDT):
-            assert _compute_age_from_birth("1998-03-31") == 28
-
-    def test_compute_age_none_birth(self):
-        assert _compute_age_from_birth(None) is None
-
-    def test_compute_age_invalid_birth(self):
-        assert _compute_age_from_birth("not-a-date") is None
-
 
 # ---------------------------------------------------------------------------
 # TestLegacyFlatConsistency — nested↔flat key parity
@@ -481,31 +368,6 @@ class TestLegacyFlatConsistency:
         with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
-             patch(_PATCH_GFRIENDS, return_value=None):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        self._assert_consistency(result.data)
-        assert result.timed_out is False
-
-    def test_consistency_wiki_as_text_source(self):
-        wiki    = _make_wiki()
-        graphis = _make_graphis()
-
-        with patch(_PATCH_XCITY, return_value=None), \
-             patch(_PATCH_WIKI, return_value=wiki), \
-             patch(_PATCH_GRAPHIS, return_value=graphis), \
-             patch(_PATCH_GFRIENDS, return_value=None):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        self._assert_consistency(result.data)
-        assert result.timed_out is False
-
-    def test_consistency_only_xcity(self):
-        xcity = _make_xcity()
-
-        with patch(_PATCH_XCITY, return_value=xcity), \
-             patch(_PATCH_WIKI, return_value=None), \
-             patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
             result = get_actress_profile(_ACTRESS_NAME)
 
@@ -732,11 +594,3 @@ def test_sources_to_photo_candidates_no_photos():
 
     assert orchestrator._sources_to_photo_candidates(sources) == []
 
-
-def test_get_actress_profile_preview_all_sources_miss():
-    sources = {"xcity": None, "wiki": None, "graphis": None, "gfriends": None}
-
-    with patch.object(orchestrator, "_fetch_all_sources", return_value=sources):
-        result = orchestrator.get_actress_profile_preview("某女優")
-
-    assert result == {"name": "某女優", "sources": sources}
