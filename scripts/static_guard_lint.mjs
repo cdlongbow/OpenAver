@@ -5364,7 +5364,42 @@ const RULES = [
   //
   //
   // ---- 162c-B02 起 ----
-  // （162c-B02 專屬子區段：只在此兩行之間追加）
+  // 162c: TestShowcaseActressTemplate
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'toggleActressMode()', note: '[lint-guard 162c-TestShowcaseActressTemplate.test_showcase_html_contains] 使用者在女優牆點女優卡 → 缺 openActressLightbox(index) 接線則開不了燈箱 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'openActressLightbox(index)', note: '[lint-guard 162c-TestShowcaseActressTemplate.test_showcase_html_contains] 使用者在女優牆點女優卡 → 缺 openActressLightbox(index) 接線則開不了燈箱 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'paginatedActresses', note: '[lint-guard 162c-TestShowcaseActressTemplate.test_showcase_html_contains] 使用者在女優牆點女優卡 → 缺 openActressLightbox(index) 接線則開不了燈箱 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'actressLoading', note: '[lint-guard 162c-TestShowcaseActressTemplate.test_showcase_html_contains] 使用者在女優牆點女優卡 → 缺 openActressLightbox(index) 接線則開不了燈箱 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'actressCount === 0', note: '[lint-guard 162c-TestShowcaseActressTemplate.test_showcase_html_contains] 使用者在女優牆點女優卡 → 缺 openActressLightbox(index) 接線則開不了燈箱 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '!showFavoriteActresses', note: '[lint-guard 162c-TestShowcaseActressTemplate.test_showcase_html_contains] 使用者在女優牆點女優卡 → 缺 openActressLightbox(index) 接線則開不了燈箱 — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestShowcaseLightboxSentinel
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: ['lightboxIndex = -1', 'this.currentLightboxActress'], scope: { anchor: /openHeroCardLightbox\s*\(\s*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_showcase_lightbox_js_contains] 使用者在 hero 卡燈箱(index -1)按上一部 → 缺 sentinel 擋索引則看到錯內容/越界 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: ['lightboxIndex === -1', 'is_favorite'], scope: { anchor: /prevLightboxVideo\s*\(\s*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_showcase_lightbox_js_contains] 使用者在 hero 卡燈箱(index -1)按上一部 → 缺 sentinel 擋索引則看到錯內容/越界 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: ['lightboxIndex === -1', '_setLightboxIndex'], scope: { anchor: /nextLightboxVideo\s*\(\s*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_showcase_lightbox_js_contains] 使用者在 hero 卡燈箱(index -1)按上一部 → 缺 sentinel 擋索引則看到錯內容/越界 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'showFavoriteActresses', scope: { anchor: /\/\/ 5\. Lightbox/, window: 1000 }, note: '[lint-guard 162c-test_showcase_lightbox_js_contains] 使用者在 hero 卡燈箱(index -1)按上一部 → 缺 sentinel 擋索引則看到錯內容/越界 — 遷自 test_frontend_lint.py' },
+
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'showFavoriteActresses', scope: /<button\b[^>]*openRemoveActressModal\(\)[^>]*>/, note: '[lint-guard 162c-TestShowcaseLightboxSentinel.test_showcase_html_contains] 使用者在影片模式(非女優模式)開燈箱 → 「移除女優」破壞性鈕不該露出；缺 showFavoriteActresses gate 則影片燈箱出現移除女優入口 — 遷自 test_frontend_lint.py' },
+
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: ['lb-delete-btn', 'bi-trash', "t('showcase.video.delete')"], scope: /<div class="lb-details">(?:(?!<\/div>)[\s\S])*?(<button\b[^>]*openDeleteVideoModal\(\)[^>]*>[\s\S]*?<\/button>)/, note: '[lint-guard 162c-test_t7_delete_trash_button_in_lightbox_details_row] 使用者在影片燈箱找刪除鈕 → 垃圾桶鈕必須在 .lb-details 行末(綁 openDeleteVideoModal，含 icon/i18n)；漂走則找不到刪除鈕 — 遷自 test_frontend_lint.py' },
+
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: ['showcase.video.delete_modal.title', 'confirmDeleteVideo()', 'cancelDeleteVideo()'], scope: /<dialog\b[^>]*deleteVideoModalOpen[^>]*>([\s\S]*?)<\/dialog>/, note: '[lint-guard 162c-test_t7_delete_modal_contract] 使用者按垃圾桶 → 刪除確認視窗必須有標題/確認/取消 handler；缺了則無法完成或放棄刪除 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'fluent-modal', scope: /<dialog\b[^>]*deleteVideoModalOpen[^>]*>/, note: '[lint-guard 162c-test_t7_delete_modal_contract] 使用者按垃圾桶 → 刪除確認視窗必須有標題/確認/取消 handler；缺了則無法完成或放棄刪除 — 遷自 test_frontend_lint.py' },
+
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /x-trap\.inert="lightboxOpen[^"]*deleteVideoModalOpen[^"]*"/, note: '[lint-guard 162c-test_t7_xtrap_releases_on_delete_modal] 使用者在燈箱按垃圾桶開刪除視窗 → 燈箱 x-trap 必須釋放給 modal；否則焦點被拉回燈箱、modal 按鈕按不到 — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestTutorialSkipPersistsGuard
+  { file: 'web/static/js/components/tutorial.js', kind: 'forbidden-string', pattern: /complete\(\s*false\s*\)/, scope: /\bskip\s*\(\s*\)\s*\{([\s\S]*?)\}/, note: '[lint-guard 162c-test_skip_persists_and_shares_entry] 使用者按教學「跳過」→ 下次進 /scanner 又彈教學、必須重按(issue #63) — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/components/tutorial.js', kind: 'required-string', anyOf: true, pattern: [/complete\(\s*true\s*\)/, 'localStorage.setItem', '/api/tutorial-completed'], scope: /\bskip\s*\(\s*\)\s*\{([\s\S]*?)\}/, note: '[lint-guard 162c-test_skip_persists_and_shares_entry] 使用者按教學「跳過」→ 下次進 /scanner 又彈教學、必須重按(issue #63) — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/components/tutorial.js', kind: 'structure-count', pattern: 'this.skip()', min: 3, note: '[lint-guard 162c-test_skip_persists_and_shares_entry] 使用者按教學「跳過」→ 下次進 /scanner 又彈教學、必須重按(issue #63) — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestMissingEnrichConfirmGuard
+  { file: 'web/static/js/pages/scanner/state-batch.js', kind: 'required-string', pattern: 'missingConfirmModalOpen', count: 4, note: '[lint-guard 162c-test_js_has_missing_confirm_modal_open_state] 使用者按一鍵補完且筆數>500 → 缺確認視窗開關 state 就不會跳確認、直接開跑大批量補完 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/scanner/state-batch.js', kind: 'required-string', pattern: ['skipConfirm', '> 500', 'missingConfirmModalOpen'], scope: { anchor: /async\s+runMissingEnrich\s*\([^)]*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_js_run_missing_enrich_has_threshold_check] 使用者按一鍵補完且筆數>500 → runMissingEnrich 缺 >500 門檻檢查/觸發 modal 則不經確認直接補完數百筆 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/scanner/state-batch.js', kind: 'forbidden-string', pattern: ["localStorage.removeItem('avlist_enrich_pending')", 'localStorage.removeItem("avlist_enrich_pending")'], scope: { anchor: /resumeMissingEnrich\s*\([^)]*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_js_resume_missing_enrich_uses_skip_confirm] 使用者續跑中斷的補完 → resume 若清掉 localStorage 恢復點就丟進度、或未帶 skipConfirm 又重新彈確認 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/scanner/state-batch.js', kind: 'required-string', pattern: 'skipConfirm: true', scope: { anchor: /resumeMissingEnrich\s*\([^)]*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_js_resume_missing_enrich_uses_skip_confirm] 使用者續跑中斷的補完 → resume 若清掉 localStorage 恢復點就丟進度、或未帶 skipConfirm 又重新彈確認 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'missingConfirmModalOpen', note: '[lint-guard 162c-test_html_has_missing_confirm_modal] 使用者在>500 筆確認視窗 → 取消/確認鈕必須接 cancelLargeMissingEnrich/confirmLargeMissingEnrich；缺綁定則按鈕無反應、視窗關不掉 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'cancelLargeMissingEnrich', note: '[lint-guard 162c-test_html_has_missing_confirm_modal] 使用者在>500 筆確認視窗 → 取消/確認鈕必須接 cancelLargeMissingEnrich/confirmLargeMissingEnrich；缺綁定則按鈕無反應、視窗關不掉 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'confirmLargeMissingEnrich', note: '[lint-guard 162c-test_html_has_missing_confirm_modal] 使用者在>500 筆確認視窗 → 取消/確認鈕必須接 cancelLargeMissingEnrich/confirmLargeMissingEnrich；缺綁定則按鈕無反應、視窗關不掉 — 遷自 test_frontend_lint.py' },
   // ---- 162c-B02 迄 ----
   //
   //

@@ -61,151 +61,9 @@ PATH_UTILS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / 
 FILE_LIST_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "file-list.js"
 
 
-class TestShowcaseActressTemplate:
-    """Phase 44a-T3: 守衛 showcase.html 含有女優模式 UI 結構（method folded）"""
-
-    def _html(self):
-        return SHOWCASE_HTML.read_text(encoding="utf-8")
-
-    def test_showcase_html_contains(self):
-        """showcase.html 含女優模式所有必要 UI 結構字串"""
-        html = self._html()
-        for expected in [
-            "toggleActressMode()",
-            "showFavoriteActresses",
-            "actressSearch",
-            "paginatedActresses",
-            "actress-card",
-            "\'actress:\'",
-            "openActressLightbox(index)",
-            "actressLoading",
-            "actressCount === 0",
-            "actress.photo_url",
-            "actress-no-photo",
-            "actress-card-footer",
-            "actressSort",
-            "!showFavoriteActresses",
-        ]:
-            assert expected in html, f"showcase.html missing: {expected!r}"
-
-
 # TestShowcaseActressCRUD（Phase 44a-T5，9 條）已於 117-T6 等價遷入
 # scripts/static_guard_lint.mjs [117-T6] R1–R9；#10/#11 由 [117-T4] R3/R4 承接。
 # 對帳表見 feature/117-actress-add-panel/TASK-117-T6.md。
-
-
-class TestShowcaseLightboxSentinel:
-    """Phase 44b-T4: Lightbox -1 sentinel nav guards (method folded)"""
-
-    CORE_JS = SHOWCASE_LIGHTBOX_JS
-    SHOWCASE_HTML = Path(__file__).parents[2] / 'web' / 'templates' / 'showcase.html'
-
-    def _js(self):
-        return self.CORE_JS.read_text(encoding='utf-8')
-
-    def _html(self):
-        return self.SHOWCASE_HTML.read_text(encoding='utf-8')
-
-    def test_showcase_lightbox_js_contains(self):
-        """state-lightbox.js 含 sentinel nav 所有必要方法與邏輯"""
-        js = self._js()
-        for expected in ["hasVisiblePrev", "hasVisibleNext", "openHeroCardLightbox"]:
-            assert expected in js, f"state-lightbox.js missing: {expected!r}"
-        # openHeroCardLightbox block checks
-        idx = js.find("openHeroCardLightbox")
-        block = js[idx:idx + 2000]
-        assert "lightboxIndex = -1" in block, \
-            "state-lightbox.js openHeroCardLightbox missing: 'lightboxIndex = -1'"
-        assert "this.currentLightboxActress" in block, \
-            "state-lightbox.js openHeroCardLightbox missing: 'this.currentLightboxActress'"
-        # prevLightboxVideo sentinel guard
-        prev_idx = js.find("prevLightboxVideo()")
-        assert prev_idx != -1, "state-lightbox.js missing: 'prevLightboxVideo()'"
-        prev_block = js[prev_idx:prev_idx + 1500]
-        assert "lightboxIndex === -1" in prev_block, \
-            "state-lightbox.js prevLightboxVideo missing: 'lightboxIndex === -1'"
-        assert "is_favorite" in prev_block, \
-            "state-lightbox.js prevLightboxVideo missing: 'is_favorite'"
-        # nextLightboxVideo -1 transition
-        next_idx = js.find("nextLightboxVideo()")
-        assert next_idx != -1, "state-lightbox.js missing: 'nextLightboxVideo()'"
-        next_block = js[next_idx:next_idx + 1500]
-        assert "lightboxIndex === -1" in next_block, \
-            "state-lightbox.js nextLightboxVideo missing: 'lightboxIndex === -1'"
-        assert "_setLightboxIndex" in next_block, \
-            "state-lightbox.js nextLightboxVideo missing: '_setLightboxIndex'"
-        # handleKeydown uses showFavoriteActresses
-        hkd_idx = js.find("// 5. Lightbox")
-        assert hkd_idx != -1, "state-lightbox.js handleKeydown section anchor not found"
-        assert "showFavoriteActresses" in js[hkd_idx:hkd_idx + 1000], \
-            "state-lightbox.js handleKeydown missing: 'showFavoriteActresses'"
-
-    def test_showcase_html_contains(self):
-        """showcase.html removeActress button gated by showFavoriteActresses"""
-        html = self._html()
-        idx = html.find("openRemoveActressModal()")
-        assert idx != -1, "showcase.html missing: 'openRemoveActressModal()'"
-        surrounding = html[max(0, idx - 300):idx + 100]
-        assert "showFavoriteActresses" in surrounding, \
-            "showcase.html removeActress button missing: 'showFavoriteActresses' guard"
-
-    # ----- 71-T7: video delete trash button + delete modal + x-trap（element-bound）-----
-
-    def test_t7_delete_trash_button_in_lightbox_details_row(self):
-        """垃圾桶鈕在 info panel 的 `.lb-details`（番號·片商·日期·size 那一行）行末，靠右常駐
-        muted icon，綁 openDeleteVideoModal()。
-
-        原為 71b-T1 的過渡期標記（搬位／relayout 是一次性，舊斷言失效屬預期）。
-        位置自 v0.10.11 起三個 milestone 未再變動，標記於 v0.13.8 milestone 拔除、升格常規守衛
-        （SA-mile-5 連續三輪判定「到期可拔」）。守的是「刪除鈕不會漂回 .cover-actions／
-        .lb-delete-strip」——破了的後果是使用者在燈箱找不到刪除鈕。"""
-        html = self._html()
-        # 抽 .lb-details 區塊（內部僅 span/a/button，無巢狀 div → 第一個 </div> 即其收尾）
-        m = re.search(
-            r'<div class="lb-details">(.*?)</div>',
-            html, re.DOTALL,
-        )
-        assert m, '.lb-details（metadata 行）區塊不存在'
-        block = m.group(1)
-        # 垃圾桶 button：抽出綁 openDeleteVideoModal() 的 <button> tag，三要素同 tag
-        btn = re.search(r'<button\b[^>]*openDeleteVideoModal\(\)[^>]*>.*?</button>',
-                        block, re.DOTALL)
-        assert btn, '.lb-details 行末缺綁 openDeleteVideoModal() 的垃圾桶 button'
-        btn_html = btn.group(0)
-        assert 'lb-delete-btn' in btn_html, \
-            f'垃圾桶 button 缺 .lb-delete-btn class（muted info-panel 樣式）: {btn_html!r}'
-        assert 'bi-trash' in btn_html, f'垃圾桶 button 缺 bi-trash icon: {btn_html!r}'
-        assert "t('showcase.video.delete')" in btn_html, \
-            f'垃圾桶 button 缺 i18n showcase.video.delete: {btn_html!r}'
-
-    def test_t7_delete_modal_contract(self):
-        """delete-video modal：deleteVideoModalOpen + 標題 i18n + confirm/cancel handler 綁同一 dialog。"""
-        html = self._html()
-        # 抽 deleteVideoModalOpen 綁定的 <dialog> ... </dialog>
-        m = re.search(
-            r'<dialog\b[^>]*deleteVideoModalOpen[^>]*>(.*?)</dialog>',
-            html, re.DOTALL,
-        )
-        assert m, 'delete-video <dialog>（綁 deleteVideoModalOpen）不存在'
-        dialog_open_tag = m.group(0)[:m.group(0).find('>') + 1]
-        block = m.group(1)
-        assert 'fluent-modal' in dialog_open_tag, \
-            f'delete modal 缺 fluent-modal class: {dialog_open_tag!r}'
-        assert "showcase.video.delete_modal.title" in block, \
-            'delete modal 缺 i18n delete_modal.title'
-        assert 'confirmDeleteVideo()' in block, 'delete modal 缺 confirmDeleteVideo() 確認 handler'
-        assert 'cancelDeleteVideo()' in block, 'delete modal 缺 cancelDeleteVideo() 取消 handler'
-
-    def test_t7_xtrap_releases_on_delete_modal(self):
-        """燈箱 x-trap 行必須含 deleteVideoModalOpen（modal 開時釋放 trap 給 modal）。
-        錨定 lightbox 已知條件字串（非 re.search 第一個 match），防面板 x-trap 混淆。
-        """
-        html = self._html()
-        m = re.search(r'x-trap\.inert="([^"]*deleteVideoModalOpen[^"]*)"', html)
-        assert m, 'showcase.html 缺含 deleteVideoModalOpen 的 x-trap.inert 行'
-        expr = m.group(1)
-        assert 'deleteVideoModalOpen' in expr, \
-            f'x-trap.inert 未含 deleteVideoModalOpen（delete modal 開時 trap 未釋放）: {expr!r}'
 
 
 # ---------------------------------------------------------------------------
@@ -213,40 +71,6 @@ class TestShowcaseLightboxSentinel:
 # ---------------------------------------------------------------------------
 SCANNER_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "scanner.html"
 ZH_TW_JSON = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
-
-
-class TestTutorialSkipPersistsGuard:
-    """TASK-79-T7 (issue #63): 教學「跳過」必須視為看完並持久化。
-
-    bug 根因：skip() 呼叫 complete(false) → 不持久化 → 重進 /scanner 又彈。
-    修法：skip() 改走 complete(true)（持久化路徑，含 API 失敗的 localStorage fallback）。
-    三個 dismiss 入口（跳過 / X / 背景遮罩）共用 skip()，一改全到位。
-
-    Mutation 忠實度：把 skip() 改回 complete(false) 必須讓本守衛 RED。
-    """
-
-    def test_skip_persists_and_shares_entry(self):
-        js = Path("web/static/js/components/tutorial.js").read_text(encoding="utf-8")
-
-        # 抓 skip() 方法體（容忍空白）
-        m = re.search(r"\bskip\s*\(\s*\)\s*\{(.*?)\}", js, re.DOTALL)
-        assert m, "tutorial.js 找不到 skip() 方法"
-        body = m.group(1)
-
-        # 1a) bug pattern 消失：skip() 不再呼叫 complete(false)
-        assert not re.search(r"complete\(\s*false\s*\)", body), \
-            "skip() 不得呼叫 complete(false)（issue #63：跳過必須持久化，否則重進 /scanner 又彈）"
-
-        # 1b) 確有寫入動作：complete(true) 或 localStorage.setItem 或 POST /api/tutorial-completed
-        assert (
-            re.search(r"complete\(\s*true\s*\)", body)
-            or "localStorage.setItem" in body
-            or "/api/tutorial-completed" in body
-        ), "skip() 必須走持久化路徑（complete(true) / localStorage.setItem / POST /api/tutorial-completed 其一）"
-
-        # 2) 三個 dismiss 入口仍共用 skip()（tutorialSkip / tutorialClose / overlay 背景 click）
-        assert js.count("this.skip()") >= 3, \
-            "三個 dismiss 入口（跳過 / X / 背景遮罩）必須仍共用 this.skip()（≥3 處綁定）"
 
 
 class TestMissingEnrichConfirmGuard:
@@ -285,43 +109,6 @@ class TestMissingEnrichConfirmGuard:
                 depth -= 1
             i += 1
         return js[start:i - 1]
-
-    def test_js_has_missing_confirm_modal_open_state(self):
-        """scanner.js 含 missingConfirmModalOpen state 欄位宣告"""
-        js = self._js()
-        assert "missingConfirmModalOpen" in js, \
-            "scanner.js 缺少 missingConfirmModalOpen state（confirm modal 綁定用）"
-
-    def test_js_run_missing_enrich_has_threshold_check(self):
-        """runMissingEnrich 函式體含 skipConfirm 參數 + > 500 threshold 檢查 + missingConfirmModalOpen"""
-        js = self._js()
-        body = self._extract_function_body(js, "runMissingEnrich")
-        assert "skipConfirm" in body, \
-            "runMissingEnrich 函式體缺少 skipConfirm 參數處理"
-        assert "> 500" in body, \
-            "runMissingEnrich 函式體缺少 > 500 threshold 檢查"
-        assert "missingConfirmModalOpen" in body, \
-            "runMissingEnrich 函式體缺少 missingConfirmModalOpen 觸發"
-
-    def test_js_resume_missing_enrich_uses_skip_confirm(self):
-        """resumeMissingEnrich 不清 localStorage.avlist_enrich_pending 且用 skipConfirm: true 呼叫 runMissingEnrich"""
-        js = self._js()
-        body = self._extract_function_body(js, "resumeMissingEnrich")
-        assert "localStorage.removeItem('avlist_enrich_pending')" not in body and \
-               'localStorage.removeItem("avlist_enrich_pending")' not in body, \
-            "resumeMissingEnrich 不應 localStorage.removeItem('avlist_enrich_pending')（會丟恢復點）"
-        assert "skipConfirm: true" in body, \
-            "resumeMissingEnrich 應呼叫 runMissingEnrich({ skipConfirm: true })"
-
-    def test_html_has_missing_confirm_modal(self):
-        """scanner.html 含 missingConfirmModalOpen 綁定 + cancel/confirm 方法"""
-        html = self._html()
-        assert "missingConfirmModalOpen" in html, \
-            "scanner.html 缺少 missingConfirmModalOpen 綁定（confirm modal）"
-        assert "cancelLargeMissingEnrich" in html, \
-            "scanner.html 缺少 cancelLargeMissingEnrich 綁定"
-        assert "confirmLargeMissingEnrich" in html, \
-            "scanner.html 缺少 confirmLargeMissingEnrich 綁定"
 
     def test_all_locales_have_missing_enrich_confirm_keys(self):
         """四語系都有 6 個 missing_enrich_confirm_* keys（純文字）"""
