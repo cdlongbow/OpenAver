@@ -73,64 +73,6 @@ SCANNER_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "scan
 ZH_TW_JSON = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
 
 
-class TestMissingEnrichConfirmGuard:
-    """TASK-13 (0.7.6 hotfix): 守衛 Scanner 一鍵補完 > 500 confirm dialog 的實作"""
-
-    def _js(self):
-        return SCANNER_BATCH_JS.read_text(encoding="utf-8")
-
-    def _html(self):
-        return SCANNER_HTML.read_text(encoding="utf-8")
-
-    def _extract_function_body(self, js, fn_name):
-        """抓取具名 function（async fn_name(...) { ... }）函式主體（大括號平衡匹配）。
-        也涵蓋 `async runMissingEnrich({ skipConfirm = false } = {})` 這類 options pattern。"""
-        pattern = re.compile(
-            r'async\s+' + re.escape(fn_name) + r'\s*\([^)]*\)\s*\{',
-            re.DOTALL,
-        )
-        m = pattern.search(js)
-        if not m:
-            # 非 async 版本（例如 resumeMissingEnrich）
-            pattern_sync = re.compile(
-                re.escape(fn_name) + r'\s*\([^)]*\)\s*\{',
-                re.DOTALL,
-            )
-            m = pattern_sync.search(js)
-        assert m is not None, f"scanner.js 找不到 {fn_name} 函式"
-        start = m.end()  # 位於 { 之後
-        depth = 1
-        i = start
-        while i < len(js) and depth > 0:
-            c = js[i]
-            if c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-            i += 1
-        return js[start:i - 1]
-
-    def test_all_locales_have_missing_enrich_confirm_keys(self):
-        """四語系都有 6 個 missing_enrich_confirm_* keys（純文字）"""
-        required = [
-            "missing_enrich_confirm_title",
-            "missing_enrich_confirm_body_prefix",
-            "missing_enrich_confirm_body_middle",
-            "missing_enrich_confirm_body_suffix",
-            "missing_enrich_confirm_cancel",
-            "missing_enrich_confirm_confirm",
-        ]
-        for locale in ["zh_TW", "zh_CN", "ja", "en"]:
-            data = json.loads((LOCALES_ROOT / f"{locale}.json").read_text(encoding="utf-8"))
-            stats = data.get("scanner", {}).get("stats", {})
-            for key in required:
-                assert key in stats and stats[key], \
-                    f"{locale}.json missing or empty: scanner.stats.{key!r}"
-                value = stats[key]
-                assert "<" not in value and ">" not in value, \
-                    f"{locale}.json scanner.stats.{key!r} should not contain HTML tags: {value!r}"
-
-
 SHOWCASE_ANIMATIONS_JS = (
     Path(__file__).parent.parent.parent
     / "web" / "static" / "js" / "pages" / "showcase" / "animations.js"

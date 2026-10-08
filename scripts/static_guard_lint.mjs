@@ -5406,6 +5406,45 @@ const RULES = [
   //
   // ---- 162c-B03 起 ----
   // （162c-B03 專屬子區段：只在此兩行之間追加）
+  // 162c: TestMissingEnrichConfirmGuard
+  // W-1：判定表自承全檔正則弱於 scanner.stats 樹；以 scope anchor `"stats": {` + window
+  // 鎖在 stats 區塊內（braceBalanced 不可用：stats 值含 `{count}` 等 placeholder）。
+  { file: 'locales/zh_TW.json', kind: 'required-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: [
+      /"missing_enrich_confirm_title"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_prefix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_middle"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_suffix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_cancel"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_confirm"\s*:\s*"[^"]+"/,
+    ], note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
+  { file: 'locales/zh_CN.json', kind: 'required-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: [
+      /"missing_enrich_confirm_title"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_prefix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_middle"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_suffix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_cancel"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_confirm"\s*:\s*"[^"]+"/,
+    ], note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
+  { file: 'locales/ja.json', kind: 'required-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: [
+      /"missing_enrich_confirm_title"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_prefix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_middle"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_suffix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_cancel"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_confirm"\s*:\s*"[^"]+"/,
+    ], note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
+  { file: 'locales/en.json', kind: 'required-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: [
+      /"missing_enrich_confirm_title"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_prefix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_middle"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_body_suffix"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_cancel"\s*:\s*"[^"]+"/,
+      /"missing_enrich_confirm_confirm"\s*:\s*"[^"]+"/,
+    ], note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
+  { file: 'locales/zh_TW.json', kind: 'forbidden-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: /"missing_enrich_confirm_[a-z_]+"\s*:\s*"[^"]*[<>]/, note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
+  { file: 'locales/zh_CN.json', kind: 'forbidden-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: /"missing_enrich_confirm_[a-z_]+"\s*:\s*"[^"]*[<>]/, note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
+  { file: 'locales/ja.json', kind: 'forbidden-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: /"missing_enrich_confirm_[a-z_]+"\s*:\s*"[^"]*[<>]/, note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
+  { file: 'locales/en.json', kind: 'forbidden-string', scope: { anchor: /"stats"\s*:\s*\{/, window: 5000 }, pattern: /"missing_enrich_confirm_[a-z_]+"\s*:\s*"[^"]*[<>]/, note: '[lint-guard 162c-test_all_locales_have_missing_enrich_confirm_keys] 四語系補完確認視窗文字缺鍵/含 HTML 標籤則視窗顯示原始鍵名或標籤字樣 — 遷自 test_frontend_lint.py' },
   // ---- 162c-B03 迄 ----
   //
   //
