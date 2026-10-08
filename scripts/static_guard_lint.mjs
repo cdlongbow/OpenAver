@@ -6219,6 +6219,129 @@ const RULES = [
   //
   // ---- 162c-B25 起 ----
   // （162c-B25 專屬子區段：只在此兩行之間追加）
+  // 162c: TestPartsBinStagedAffordanceGuard
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ['bi-plus-circle', 'plus-icn'],
+    scope: /<template x-for="src in partsBinSources"[^>]*>.*?<\/template>/s,
+    note: '[lint-guard 162c-test_settings_partsbin_pill_has_plus_icn] Parts Bin pill 可加入 affordance 須含 bi-plus-circle／plus-icn — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: ['settings-mt-probe-hint', 'mt_probe_hint_title'],
+    note: '[lint-guard 162c-test_settings_no_probe_hint_details] settings 不得殘留三因摺疊 probe-hint（mt_probe_hint_title 僅此守；settings-mt-probe-hint 另有 TestMetatubeB4Guard） — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ['slash-icn', 'bi-slash-circle'],
+    scope: /<template x-for="src in partsBinSources"[^>]*>.*?<\/template>/s,
+    note: '[lint-guard 162c-test_settings_partsbin_pill_slash_icn_retained] Parts Bin pill 不可達態須保留 slash-icn／bi-slash-circle — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/css/components/source-pill.css', kind: 'required-string',
+    pattern: 'text-decoration: none',
+    scope: /\.source-pill\.is-partsbin\[data-available="true"\]\s+\.pill-name\s*\{([^}]+)\}/,
+    note: '[lint-guard 162c-test_css_partsbin_available_true_removes_line_through] partsbin available=true 須取消 pill-name 刪除線 — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/css/components/source-pill.css', kind: 'required-string',
+    pattern: 'cursor: pointer',
+    scope: /\.source-pill\.is-partsbin\s*\{([^}]+)\}/,
+    note: '[lint-guard 162c-test_css_partsbin_cursor_pointer] partsbin pill 須 cursor:pointer 以支援 click-to-promote — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/templates/design_system/settings-components.html', kind: 'forbidden-string',
+    pattern: ['rec-star', 'data-rec'],
+    note: '[lint-guard 162c-test_ds_d13_no_rec_star_and_has_both_available_states] design-system D.13 不得殘留 rec-star／data-rec — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/templates/design_system/settings-components.html', kind: 'required-string',
+    pattern: ['data-available="true"', 'data-available="false"'],
+    count: 2,
+    note: '[lint-guard 162c-test_ds_d13_no_rec_star_and_has_both_available_states] design-system D.13 須含 available true／false 兩態 demo（各 ≥2；HTML+code 雙份） — 遷自 test_contract_layout.py',
+  },
+
+  // 162c: TestPosterCropThresholdAlignment
+  // test_showcase_lightbox_fit_covers_899 → M-3 併入 CG-PC-04（同失敗原因：modal-hug 缺 width:100%；不另寫 rule）
+
+  // 162c: TestLightboxCoverSizeGuards
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: /^\s*height\s*:[^;\n]*;/m,
+    scope: /\.lightbox-cover\s+img\s*\{([^}]+)\}/,
+    note: '[lint-guard 162c-test_lightbox_cover_img_has_explicit_height] .lightbox-cover img 須有明確 height 宣告（行首錨排除註解餵飽） — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
+    pattern: /^\s*height\s*:[^;\n]*;/m,
+    scope: /\.lb-full\s*\{([^}]+)\}/,
+    note: '[lint-guard 162c-test_lb_full_has_explicit_height] .lb-full 須有明確 height 宣告 — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: ['lightboxCoverFull', 'fullImg.complete', 'fullImg.naturalWidth', '_lbFullLoaded'],
+    scope: { anchor: /_refreshLbFullBlurUp\(\) \{/, window: 600 },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_lightbox_js_has_sameurl_complete_check] 同 URL 快取不重觸發 load → 封面透明：helper 須含 complete-check 四要素 — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: '_refreshLbFullBlurUp',
+    scope: { anchor: /_setLightboxIndex\(idx\) \{/, window: 1200 },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_lightbox_js_has_sameurl_complete_check] 同 URL 快取不重觸發 load → 封面透明：_setLightboxIndex 須委託 helper — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: '_refreshLbFullBlurUp',
+    scope: { anchor: /this\.currentLightboxVideo = this\.similarExitVideo/, window: 300 },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_lightbox_js_has_sameurl_complete_check] 同 URL 快取不重觸發 load → 封面透明：slip-through 後須呼叫 helper — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: 'cover_full_url',
+    scope: { anchor: /this\.similarExitVideo = \{/, window: 600 },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_similar_exit_video_has_cover_full_url] 相似探索退出到篩選外片 → 原圖網址缺失封面透明：similarExitVideo 須含 cover_full_url — 遷自 test_contract_layout.py',
+  },
+
+  // 162c: TestMobileSimilarDrillFallbackGuard
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: /similarExitVideo\s*=\s*null/,
+    scope: { anchor: /_setLightboxIndex\s*\(idx\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_set_lightbox_index_clears_similar_exit_video] 手機相似卡切回牆內片 → 獨立旗標殘留禁用上下片：_setLightboxIndex 須清 similarExitVideo — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: [/_videos\s*\.\s*findIndex/, '_similarLastDrilledItem'],
+    scope: { anchor: /async\s+closeSimilarMode\s*\(\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_close_similar_mode_fallback_has_videos_tier] 關閉相似探索 → 退場降級丟 metadata：closeSimilarMode 須含 _videos.findIndex 與 _similarLastDrilledItem — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: ['_silentSwitchLightboxByNumber', /_videos\s*\.\s*findIndex/, /similarExitVideo\s*=/, '_mobileLastDrilledItem', '_refreshLbFullBlurUp'],
+    scope: { anchor: /\n\s*_mobileSilentSwitch\s*\(item\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_silent_switch_three_tier] 手機點相似卡 → 主圖／metadata 不更新：_mobileSilentSwitch 須含三層 silent-switch 與 blur-up — 遷自 test_contract_layout.py',
+  },
+
+  // 162c: TestCodexFixes
+  {
+    file: 'web/static/js/pages/search/state/navigation.js', kind: 'forbidden-string',
+    pattern: 'this.currentIndex =',
+    scope: { anchor: /async\s+loadMore\s*\(trigger[^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_loadmore_no_currentindex_assignment] 搜尋載入更多 → 目前那片被跳走：loadMore 不得賦值 this.currentIndex — 遷自 test_contract_layout.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-providers.js', kind: 'required-string',
+    pattern: 'includes(this.form.geminiModel)',
+    note: '[lint-guard 162c-test_gemini_model_fallback_includes_check] 測試 Gemini 連線而舊 model 已下架 → 無聲失敗：須 includes(this.form.geminiModel) allowlist 檢查 — 遷自 test_contract_layout.py',
+  },
   // ---- 162c-B25 迄 ----
   //
   //
