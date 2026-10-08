@@ -5385,7 +5385,7 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: ['showcase.video.delete_modal.title', 'confirmDeleteVideo()', 'cancelDeleteVideo()'], scope: /<dialog\b[^>]*deleteVideoModalOpen[^>]*>([\s\S]*?)<\/dialog>/, note: '[lint-guard 162c-test_t7_delete_modal_contract] 使用者按垃圾桶 → 刪除確認視窗必須有標題/確認/取消 handler；缺了則無法完成或放棄刪除 — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'fluent-modal', scope: /<dialog\b[^>]*deleteVideoModalOpen[^>]*>/, note: '[lint-guard 162c-test_t7_delete_modal_contract] 使用者按垃圾桶 → 刪除確認視窗必須有標題/確認/取消 handler；缺了則無法完成或放棄刪除 — 遷自 test_frontend_lint.py' },
 
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])x-trap\.inert="lightboxOpen[^"]*deleteVideoModalOpen[^"]*"/, note: '[lint-guard 162c-test_t7_xtrap_releases_on_delete_modal] 使用者在燈箱按垃圾桶開刪除視窗 → 燈箱 x-trap 必須釋放給 modal；否則焦點被拉回燈箱、modal 按鈕按不到 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])x-trap\.inert="(?=[^"]*\blightboxOpen\b)(?=[^"]*\bdeleteVideoModalOpen\b)[^"]*"/, note: '[lint-guard 162c-test_t7_xtrap_releases_on_delete_modal] 使用者在燈箱按垃圾桶開刪除視窗 → 燈箱 x-trap 必須釋放給 modal；否則焦點被拉回燈箱、modal 按鈕按不到 — 遷自 test_frontend_lint.py' },
 
   // 162c: TestTutorialSkipPersistsGuard
   { file: 'web/static/js/components/tutorial.js', kind: 'forbidden-string', pattern: /complete\(\s*false\s*\)/, scope: /\bskip\s*\(\s*\)\s*\{([\s\S]*?)\}/, note: '[lint-guard 162c-test_skip_persists_and_shares_entry] 使用者按教學「跳過」→ 下次進 /scanner 又彈教學、必須重按(issue #63) — 遷自 test_frontend_lint.py' },
@@ -5463,14 +5463,14 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: ['similarModeOpen', 'similarModeMobileOpen', 'removeActressModalOpen', '_pickerOpen', 'rescrapeOpen', 'deleteVideoModalOpen', 'sampleGalleryOpen', 'lightboxOpen'], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestShowcaseSwipeGuard.test_lb_touch_end_intercept_chain] 手機使用者開著刪除/重刮/相似等視窗時橫滑 → 缺攔截短路則滑動會誤換燈箱背後的片 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: ['showFavoriteActresses', 'prevActressLightbox', 'nextActressLightbox', 'prevLightboxVideo', 'nextLightboxVideo'], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestShowcaseSwipeGuard.test_lb_touch_end_branch_split] 手機使用者在女優模式 vs 影片模式滑動 → 缺分流則女優燈箱滑動換到影片 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: "import { detectSwipe } from '@/shared/swipe.js';", note: '[lint-guard 162c-TestShowcaseSwipeGuard.test_lb_touch_end_uses_detect_swipe_with_threshold] 手機使用者在燈箱滑動 → 沒呼叫 detectSwipe(或門檻非 50)則滑動不換片/太敏感 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: ['detectSwipe(', /detectSwipe\([^)]*,\s*50\)/], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestShowcaseSwipeGuard.test_lb_touch_end_uses_detect_swipe_with_threshold] 手機使用者在燈箱滑動 → 沒呼叫 detectSwipe(或門檻非 50)則滑動不換片/太敏感 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: ['detectSwipe(', /detectSwipe\([^)]*,\s*50\s*(?:\/\*[^*]*\*\/\s*)?\)/], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestShowcaseSwipeGuard.test_lb_touch_end_uses_detect_swipe_with_threshold] 手機使用者在燈箱滑動 → 沒呼叫 detectSwipe(或門檻非 50)則滑動不換片/太敏感 — 遷自 test_frontend_lint.py' },
 
   // 162c: TestSearchSwipeGuard
   { file: 'web/templates/search.html', kind: 'tag-scan', mode: 'class-tag', tagName: 'div', className: 'showcase-lightbox', required: [/(?:@|x-on:)touchstart\.passive="[^"]*_lbTouchStart/, /(?:@|x-on:)touchend\.passive="[^"]*_lbTouchEnd/], note: '[lint-guard 162c-TestSearchSwipeGuard.test_container_has_touch_bindings] 手機使用者在搜尋頁燈箱左右滑 → 容器沒掛 touch 綁定就滑不動、無法換片 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: ['rescrapeOpen', 'sampleGalleryOpen', 'lightboxOpen'], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestSearchSwipeGuard.test_lb_touch_end_intercept_chain] 手機使用者在搜尋頁開著重刮/劇照視窗時橫滑 → 缺攔截短路則誤換燈箱背後的片 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: ['prevLightboxVideo', 'nextLightboxVideo'], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestSearchSwipeGuard.test_lb_touch_end_direct_dispatch] 手機使用者在搜尋頁燈箱滑動 → 沒直呼 prev/nextLightboxVideo 則滑動不換片 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: "import { detectSwipe } from '@/shared/swipe.js';", note: '[lint-guard 162c-TestSearchSwipeGuard.test_lb_touch_end_uses_detect_swipe_with_threshold] 手機使用者在搜尋頁燈箱滑動 → 沒呼叫 detectSwipe(或門檻非 50)則滑動不換片/太敏感 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: ['detectSwipe(', /detectSwipe\([^)]*,\s*50\)/], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestSearchSwipeGuard.test_lb_touch_end_uses_detect_swipe_with_threshold] 手機使用者在搜尋頁燈箱滑動 → 沒呼叫 detectSwipe(或門檻非 50)則滑動不換片/太敏感 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: ['detectSwipe(', /detectSwipe\([^)]*,\s*50\s*(?:\/\*[^*]*\*\/\s*)?\)/], scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-TestSearchSwipeGuard.test_lb_touch_end_uses_detect_swipe_with_threshold] 手機使用者在搜尋頁燈箱滑動 → 沒呼叫 detectSwipe(或門檻非 50)則滑動不換片/太敏感 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'forbidden-string', pattern: 'showFavoriteActresses', scope: { anchor: /_lbTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_lb_touch_end_no_actress_gate] 手機使用者在搜尋頁燈箱滑動 → 若把 showcase 的 showFavoriteActresses gate 複製進來，search 無此 state 會讓滑動靜默失效 — 遷自 test_frontend_lint.py' },
 
   // 162c: TestDetailSwipeGuard
@@ -5482,7 +5482,7 @@ const RULES = [
   { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: ['rescrapeOpen', 'sampleGalleryOpen', 'displayMode'], scope: { anchor: /_dtTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_dt_touch_end_intercept_chain] 使用者開著重新刮削視窗或劇照圖庫時在封面上滑動 → 背景詳情被切到另一部 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: ['navigate(1)', 'navigate(-1)'], scope: { anchor: /_dtTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_dt_touch_end_direct_dispatch] 使用者在詳情頁封面左滑／右滑 → 沒有切到下一部／上一部 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: "import { detectSwipe } from '@/shared/swipe.js';", note: '[lint-guard 162c-test_dt_touch_end_uses_detect_swipe_with_threshold] 使用者在詳情頁封面滑動 → 手勢方向判斷不運作 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: ['detectSwipe(', /detectSwipe\([^)]*,\s*50\)/], scope: { anchor: /_dtTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_dt_touch_end_uses_detect_swipe_with_threshold] 使用者在詳情頁封面滑動 → 手勢方向判斷不運作 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: ['detectSwipe(', /detectSwipe\([^)]*,\s*50\s*(?:\/\*[^*]*\*\/\s*)?\)/], scope: { anchor: /_dtTouchEnd\(e\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_dt_touch_end_uses_detect_swipe_with_threshold] 使用者在詳情頁封面滑動 → 手勢方向判斷不運作 — 遷自 test_frontend_lint.py' },
 
   // 162c: TestTranslateAll
   { file: 'web/templates/search.html', kind: 'required-string', pattern: ['translateAll()', "listMode === 'search'"], note: '[lint-guard 162c-test_translate_all_infra_contains] 使用者先載入過檔案清單、之後改做番號搜尋 → 搜尋結果頁的「翻譯全部」鈕不顯示或按了沒反應 — 遷自 test_frontend_lint.py' },
@@ -5695,8 +5695,9 @@ const RULES = [
   { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: /if\s*\(\s*!this\.actressProfile\s*\)\s*return/, scope: { anchor: /openActressLightbox\s*\(\s*\)/, window: 300 }, note: '[lint-guard 162c-test_lightbox_mode_normalization_contains] 使用者在女優（hero）搜尋頁重新整理 → 還原後燈箱殘留開著，或打開女優燈箱時沒有女優資料（空白燈箱、關不掉或內容錯） — 遷自 test_frontend_lint.py' },
 
   // 162c: TestShowcaseAnimationsGuard
-  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', pattern: 'gsap.getById(', count: 2, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外直接呼叫 gsap.getById（整檔 exact 2＝函式體內兩處） — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', pattern: 'gsap.getById(', count: 2, scope: { anchor: /export function _killLightboxTimelines\s*\(options\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外直接呼叫 gsap.getById（函式體內 exact 2） — 遷自 test_frontend_lint.py' },
+  // FIX6：原「整檔 exact 2 ＋ 函式體 exact 2」會把函式內合法增減 timeline 誤報；改為「函式體前」「函式體後」兩段各 forbidden（函式外零容忍不變；函式體內不再計數）
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'forbidden-string', pattern: 'gsap.getById(', scope: /^([\s\S]*?)export function _killLightboxTimelines\s*\(/, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外（函式體前）直接呼叫 gsap.getById — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'forbidden-string', pattern: 'gsap.getById(', scope: /export function _killLightboxTimelines\s*\([^)]*\)\s*\{[\s\S]*?\n\}\n([\s\S]*)$/, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外（函式體後，含 stateBase）直接呼叫 gsap.getById — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string', pattern: 'gsap.getById(', note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase state-videos.js 不得直接呼叫 gsap.getById( — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'gsap.getById(', note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase state-lightbox.js 不得直接呼叫 gsap.getById( — 遷自 test_frontend_lint.py' },
 
@@ -5833,7 +5834,6 @@ const RULES = [
       'sg-open-btn',
       'openSampleGallery(',
       'lb-header',
-      "'sg-thumb-active': idx === sampleGalleryIndex",
     ],
     note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] showcase 劇照集 bindings／lb-header／縮圖高亮須存在 — 遷自 test_frontend_lint.py',
   },
@@ -5851,8 +5851,13 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: 'sg-open-btn',
-    scope: { anchor: /<div class="lb-header">/, window: 1800 },
-    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] sg-open-btn 須在 lb-header 窗內 — 遷自 test_frontend_lint.py',
+    scope: { anchor: /<div class="lb-header">/, window: 5000 },
+    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] sg-open-btn 須在 lb-header 窗內（FIX6：窗由 1800 放寬到 5000，避免按鈕前合法加標記/註解誤報） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: /(?<![\w-])sg-thumb-active(?![\w-])[^\n]{0,80}sampleGalleryIndex|sampleGalleryIndex[^\n]{0,80}(?<![\w-])sg-thumb-active(?![\w-])/,
+    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] 劇照縮圖高亮須綁 sg-thumb-active 與 sampleGalleryIndex（FIX6：放寬運算元順序／=== 與 ==） — 遷自 test_frontend_lint.py',
   },
 
   // 162c: TestScannerMissingPillGuard
@@ -6225,13 +6230,13 @@ const RULES = [
   // 162c: TestJavlibraryCfFlowT6Guard
   {
     file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
-    pattern: /_pollCfThenRetry\s*\(\s*number\s*,/,
+    pattern: /^[ \t]*_pollCfThenRetry\s*\([^)]*\)\s*\{/m,
     stripLineComments: true,
     note: '[lint-guard 162c-test_state_rescrape_has_pollCfThenRetry] 使用者重刮 JavLibrary 遇 Cloudflare 驗證 → 若輪詢重試函式不存在，驗證解完後不會自動重跑重刮（呼叫處 TypeError）→ 必須關窗重來 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
-    pattern: /cancelCfPoll\s*\(\s*\)\s*\{/,
+    pattern: /^[ \t]*cancelCfPoll\s*(?:\(\s*\)\s*\{|:\s*(?:async\s*)?(?:function\b|\())/m,
     stripLineComments: true,
     note: '[lint-guard 162c-test_state_rescrape_has_cancelCfPoll] 使用者在 Cloudflare 驗證等待中按取消 → 若取消函式不存在，按了沒反應、無法取消等待 → 只能等逾時 — 遷自 test_frontend_lint.py',
   },
@@ -6515,7 +6520,7 @@ const RULES = [
   {
     file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
     pattern: [/position:\s*fixed/, /transform:\s*translateY\(-100%\)/, /pointer-events:\s*none/],
-    scope: { anchor: /@media \(max-width: 480px\) \{\s*\.showcase-toolbar \{\s*position: fixed/, window: 700 },
+    scope: { anchor: /@media[^{]*max-width:\s*480px[^{]*\{\s*(?:\/\*[\s\S]*?\*\/\s*)*\.showcase-toolbar\s*\{/, braceBalanced: true },
     note: '[lint-guard 162c-test_toolbar_collapsed_default] 使用者在手機 showcase → 工具列預設該收起；若收合預設壞掉（沒 fixed／沒移出畫面／沒關 pointer-events），工具列常駐蓋住封面牆且擋住點擊 — 遷自 test_frontend_lint.py',
   },
   {
@@ -6789,12 +6794,12 @@ const RULES = [
   },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
-    pattern: /^\s+dirPath,\s*$/m,
+    pattern: /^[ \t]+dirPath\s*(?::\s*dirPath\s*)?,/m,
     note: '[lint-guard 162c-test_state_scan_exposes_dir_path_on_state] state-scan.js 須把 dirPath 揭露成 state 屬性 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/static/js/pages/settings/state-ui.js', kind: 'required-string',
-    pattern: /^\s+dirPath,\s*$/m,
+    pattern: /^[ \t]+dirPath\s*(?::\s*dirPath\s*)?,/m,
     note: '[lint-guard 162c-test_state_ui_exposes_dir_path_on_state] state-ui.js 須把 dirPath 揭露成 state 屬性 — 遷自 test_frontend_lint.py',
   },
   {
@@ -7017,7 +7022,7 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-candidates-grid', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-source-badge', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-loading', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])class="picker-empty">/, note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])class="(?:[^"]*\s)?picker-empty(?:\s[^"]*)?"/, note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'actress-picker-area', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'nested-count',
@@ -7463,7 +7468,7 @@ const RULES = [
     note: '[lint-guard 162c-test_settings_server_info_banner_xshow_xcloak] 使用者在單機模式 → 若區網連線橫條沒被 x-show="serverMode" 管住，會看到不該有的區網網址（誤導成已對外開放）；少 x-cloak 則開頁瞬間閃一下 — 遷自 test_contract_api_routes.py' },
 
   { file: 'web/templates/settings.html', kind: 'required-string',
-    pattern: "window.t('settings.server_info.warning')",
+    pattern: /(?<![\w.])settings\.server_info\.warning(?![\w.])/,
     note: '[lint-guard 162c-test_settings_server_info_warning_key] 使用者開啟伺服器模式 → 若安全警語被拿掉，不會被告知區網內任何裝置都連得進來 — 遷自 test_contract_api_routes.py' },
 
   { file: 'web/templates/settings.html', kind: 'required-string',
@@ -7677,7 +7682,7 @@ const RULES = [
       'this.jellyfinImageCount = 0',
       "this.jellyfinCheckState = 'idle'",
     ],
-    scope: { anchor: /T3\(40c\) Codex fix: update 完成後重設/, window: 300 },
+    scope: { anchor: /async\s+runJellyfinImageUpdate\s*\(\s*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
     note: '[lint-guard 162c-test_jellyfin_update_done_resets_check_state] 補圖完成後重設待補數量與檢查狀態 — 遷自 test_contract_api_routes.py' },
 
   // 162c: TestNavigateLoadMore
@@ -8004,8 +8009,11 @@ const RULES = [
     note: '[lint-guard 162c-test_lightbox_close_increments_generation] 使用者關燈箱／離開頁面／點 metadata 搜尋 → 必須讓排隊中的動畫 callback 失效，否則殘留 callback 之後把燈箱鎖死 — 遷自 test_contract_code_shape.py' },
 
   // 162c: TestShowcaseReactiveScopeGuard
-  { file: { dir: 'web/static/js/pages/showcase', ext: ['.js'] }, kind: 'forbidden-string',
+  // FIX6：改為只掃各 state 模組「頂層 return {…}」物件本體（原整檔掃會把 helper 內合法的 videos: 欄位誤報）；
+  // animations.js／main.js 非 state 模組（無 state return 物件）排除
+  { file: { dir: 'web/static/js/pages/showcase', ext: ['.js'], exclude: ['animations.js', 'main.js'] }, kind: 'forbidden-string',
     pattern: /^\s*(?:videos|filteredVideos)\s*:/m,
+    scope: { anchor: /^[ \t]*return\s*\{(?=[ \t]*$)/m, braceBalanced: true },
     stripLineComments: true,
     note: '[lint-guard 162c-test_guard1_no_videos_in_return_object] 使用者開影片牆（數千部片的片庫）→ 大陣列若放進 Alpine 響應式物件，載入與篩選明顯變慢甚至卡頓 — 遷自 test_contract_code_shape.py' },
   { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
@@ -8044,10 +8052,10 @@ const RULES = [
     scope: /settings-form-row--external-manager[\s\S]*?(?<![\w:-])class="settings-sources-segmented" role="group"([\s\S]*?)<\/div>/,
     note: '[lint-guard 162c-test_segmented_buttons_call_request_method] 使用者在設定頁切換 Jellyfin／Emby／Kodi／預設模式 → 按鈕必須走攔截方法跳確認；若直接寫 form，有離線來源時不經警告就移除唯讀來源與其媒體卡 — 遷自 test_contract_code_shape.py' },
   { file: 'web/templates/settings.html', kind: 'required-string',
-    pattern: /<dialog[^>]*?(?<![\w:-])@keydown\.escape\.window="[^"]*switchModeConfirmOpen[^"]*cancelSwitchMode\(\)[^"]*"/,
+    pattern: /<dialog[^>]*?(?<![\w:-])@keydown\.escape\.window="(?=[^"]*\bswitchModeConfirmOpen\b)(?=[^"]*\bcancelSwitchMode\(\))[^"]*"/,
     note: '[lint-guard 162c-test_switch_mode_confirm_modal_exists] 使用者切換模式時跳出的破壞性確認框 → 缺確認／取消接線就無法確認或取消，缺 count 插值就不知道會移除幾個來源 — 遷自 test_contract_code_shape.py' },
   { file: 'web/templates/settings.html', kind: 'required-string',
-    pattern: /<dialog[^>]*?(?<![\w:-]):class="[^"]*'modal-open'\s*:\s*switchModeConfirmOpen[^"]*"/,
+    pattern: /<dialog[^>]*?(?<![\w:-]):class="(?=[^"]*'modal-open')(?=[^"]*\bswitchModeConfirmOpen\b)[^"]*"/,
     note: '[lint-guard 162c-test_switch_mode_confirm_modal_exists] 使用者切換模式時跳出的破壞性確認框 → 缺確認／取消接線就無法確認或取消，缺 count 插值就不知道會移除幾個來源 — 遷自 test_contract_code_shape.py' },
   { file: 'web/templates/settings.html', kind: 'required-string',
     pattern: ['btn-error', 'confirmSwitchMode()', 'cancelSwitchMode()', 'settings.switch_mode_confirm.body', 'pendingOfflineCount'],
@@ -8096,7 +8104,7 @@ const RULES = [
 
   // 162c: TestVideoApiSafetyStrings
   { file: 'web/routers/scanner.py', kind: 'required-string',
-    pattern: 'is_path_under_dir(p, normalized_dir_uri)',
+    pattern: /is_path_under_dir\(\s*\w+\s*,\s*normalized_dir_uri\s*\)/,
     note: '[lint-guard 162c-test_scanner_py_safety_strings] 使用者移除某媒體資料夾後重掃 → 該資料夾的影片應從牆上消失；scanner.py 的 is_path_under_dir 判斷是這條行為的一環 — 遷自 test_contract_code_shape.py' },
   { file: 'web/routers/gallery_media.py', kind: 'required-string',
     pattern: [
@@ -8201,7 +8209,7 @@ const RULES = [
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
     pattern: '_refreshLbFullBlurUp',
-    scope: { anchor: /_setLightboxIndex\(idx\) \{/, window: 1200 },
+    scope: { anchor: /_setLightboxIndex\s*\([^)]*\)\s*\{/, window: 1200 },
     stripLineComments: true,
     note: '[lint-guard 162c-test_lightbox_js_has_sameurl_complete_check] 同 URL 快取不重觸發 load → 封面透明：_setLightboxIndex 須委託 helper — 遷自 test_contract_layout.py',
   },
@@ -8424,8 +8432,7 @@ const RULES = [
 
   // 162c: TestSettingsCloseActionSelect
   { file: 'web/templates/settings.html', kind: 'required-string',
-    pattern: /(?<![\w:-])id="closeAction"/,
-    scope: /\{%-?\s*if\s+is_windows_desktop\s*-?%\}([\s\S]*?)\{%-?\s*endif\s*-?%\}/,
+    pattern: /\{%-?\s*if\s+is_windows_desktop\s*-?%\}(?:(?!\{%-?\s*endif\b)[\s\S])*?(?<![\w:-])id="closeAction"/,
     note: '[lint-guard 162c-test_close_action_select_inside_jinja_gate] #closeAction 須在 is_windows_desktop gate 內 — 遷自 test_contract_desktop.py' },
   { file: 'web/templates/settings.html', kind: 'structure-count',
     pattern: /(?<![\w:-])id="closeAction"/,
@@ -8630,7 +8637,7 @@ const RULES = [
     note: '[lint-guard 162c-test_scroll_listener_registered] 手機往下捲須登記 passive scroll listener 才能自動收合工具列 — 遷自 test_showcase_mobile_search.py' },
   {
     file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
-    pattern: "const isOpen = Alpine.store('ui').toolbarOpen",
+    pattern: /Alpine\.store\('ui'\)\.toolbarOpen\b(?!\s*=(?!=))/,
     scope: { anchor: /const _scrollHandler = \(\) => \{/, braceBalanced: true },
     note: '[lint-guard 162c-test_scroll_collapse_checks_toolbar_open] scroll handler 須讀 toolbarOpen 才能在未展開時提早 return — 遷自 test_showcase_mobile_search.py',
   },
@@ -8648,7 +8655,7 @@ const RULES = [
   },
   {
     file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
-    pattern: 'window.scrollY - _toolbarOpenY',
+    pattern: /window\.scrollY\s*-\s*_toolbarOpenY|_toolbarOpenY\s*-\s*window\.scrollY/,
     scope: { anchor: /const _scrollHandler = \(\) => \{/, braceBalanced: true },
     note: '[lint-guard 162c-test_scroll_collapse_uses_relative_threshold] 使用者已捲到下方才展開工具列 → handler 須用相對基準 _toolbarOpenY，否則一展開就被收回 — 遷自 test_showcase_mobile_search.py',
   },
@@ -8659,7 +8666,7 @@ const RULES = [
     note: '[lint-guard 162c-test_scroll_collapse_resets_baseline_on_auto_close] 自動收合後再點開 → 基準 Y 須立即重置，否則剛展開就用舊基準再度被收 — 遷自 test_showcase_mobile_search.py',
   },
   { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
-    pattern: "window.removeEventListener('scroll', this._scrollHideHandler)",
+    pattern: /removeEventListener\(\s*['"]scroll['"]\s*,\s*this\._scrollHideHandler/,
     note: '[lint-guard 162c-test_scroll_listener_cleanup] 離開 showcase 頁須移除 scroll 監聽，否則舊 handler 仍改 toolbarOpen — 遷自 test_showcase_mobile_search.py' },
 
   // 162c: TestShowcaseHeaderSearchIcon
@@ -8699,7 +8706,7 @@ const RULES = [
   {
     file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
     pattern: "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();",
-    scope: { anchor: /T2 init sync/, window: 260 },
+    scope: /\$watch\('showFavoriteActresses'[\s\S]*?\}\)([\s\S]{0,400})/, stripLineComments: true,
     note: '[lint-guard 162c-test_init_sync_showcase_has_search_after_watchers] init 須同步 showcaseHasSearch 初始值，否則只靠 $watch 會漏掉 restoreState 後的清除鈕 — 遷自 test_showcase_mobile_search.py',
   },
 
