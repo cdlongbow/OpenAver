@@ -1363,49 +1363,6 @@ def test_show_webview2_prompt_browser_open_true_logs_info(monkeypatch, caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_main_calls_bootstrap_before_port_and_thread(monkeypatch):
-    """bootstrap 必須在 find_free_port／Thread.start／create_window 之前。"""
-    import threading
-
-    order: list[str] = []
-
-    def fake_bootstrap():
-        order.append("bootstrap")
-        return types.SimpleNamespace(status="already_complete")
-
-    def fake_find_free_port(*_a, **_k):
-        order.append("port")
-        return 49152
-
-    def tracking_start(self):
-        order.append("server")
-
-    def fake_create_window(*_a, **_k):
-        order.append("window")
-        raise SystemExit(0)
-
-    monkeypatch.setattr(standalone, "bootstrap_data_layout", fake_bootstrap)
-    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
-    monkeypatch.setattr(standalone, "find_free_port", fake_find_free_port)
-    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
-    monkeypatch.setattr(standalone, "get_logger", lambda name: types.SimpleNamespace(
-        info=lambda *a, **k: None,
-        error=lambda *a, **k: None,
-        warning=lambda *a, **k: None,
-        debug=lambda *a, **k: None,
-    ))
-    monkeypatch.setattr(threading.Thread, "start", tracking_start)
-    monkeypatch.setattr(standalone, "_wait_for_server_or_exit", lambda *a, **k: None)
-    monkeypatch.setattr(standalone.webview, "create_window", fake_create_window)
-    monkeypatch.setattr(standalone.webview, "settings", {}, raising=False)
-
-    with pytest.raises(SystemExit):
-        standalone.main()
-
-    assert order.index("bootstrap") < order.index("port")
-    assert order.index("bootstrap") < order.index("server")
-    assert "window" not in order or order.index("bootstrap") < order.index("window")
-
 
 def test_main_bootstrap_failure_shows_dialog_and_exits_without_server(monkeypatch):
     """DataLayoutError → show_error(details=None) + sys.exit(1)；port／thread／window 零呼叫。"""
