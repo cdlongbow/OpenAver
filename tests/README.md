@@ -17,7 +17,7 @@ tests/
 │
 ├── unit/                    # 單元測試（不需網路）
 │   ├── conftest.py
-│   ├── test_frontend_lint.py    # 前端靜態檔案跨檔 contract 守衛
+│   ├── test_frontend_lint.py    # 前端字串守衛已搬 lint（scripts/static_guard_lint.mjs），僅剩 2 支「模糊留」
 │   ├── test_database.py
 │   ├── test_gallery_scanner.py
 │   ├── test_local_status_api.py
@@ -90,7 +90,7 @@ npm run lint:css    # 僅跑 stylelint（web/static/css/）
 **守衛分工原則（CLAUDE.md「Lint 守衛規則」段為唯一真理來源）**：
 - JS 語法規則（禁用 API、no-console 等）→ eslint rule，不寫 pytest
 - CSS token 規則（hardcoded hex/rgba 等）→ stylelint rule，不寫 pytest
-- 跨檔 contract、Alpine lifecycle、ESM wiring → `tests/unit/test_frontend_lint.py`（pytest）
+- 跨檔 contract、Alpine lifecycle、ESM wiring 等前端靜態字串守衛 → `scripts/static_guard_lint.mjs`（在 lint 規則表新增一列，不是新 pytest class）
 
 ## 執行測試
 
@@ -160,7 +160,7 @@ pytest tests/smoke/test_source_canary.py tests/smoke/test_extra_paths_live.py -v
 | `test_database.py` | 資料庫操作 |
 | `test_organizer.py` | 檔案整理邏輯 |
 | `test_video_repository.py` | 影片資料存取層 |
-| `test_frontend_lint.py` | 前端跨檔 contract（Alpine lifecycle、ESM wiring、HTML/JS 結構守衛）|
+| `test_frontend_lint.py` | 僅剩 2 支「162c 模糊留」；前端靜態守衛已在 `scripts/static_guard_lint.mjs` |
 
 ### 整合測試 (`integration/`)
 

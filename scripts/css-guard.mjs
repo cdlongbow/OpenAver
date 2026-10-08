@@ -2844,6 +2844,289 @@ const RULES = [
       }
     },
   },
+  // ==== 162c：自 frontend_contracts／test_frontend_lint.py 搬入（按批分子區段）====
+  // ---- 162c-B11 起 ----
+  // （162c-B11 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestCoverLoadingUx67Guard — fade / PRM / lb-full CSS
+  {
+    id: 'CG-162C-B11-01',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const pat = /([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}/g;
+      const scNc = ctx.text;
+      const scMatches = [...scNc.matchAll(pat)];
+      if (!scMatches.length) {
+        ctx.fail('CG-162C-B11-01: showcase 找不到 opacity:0 的 .av-card-preview-img img 淡入規則 — 遷自 test_fade_rule_scoped_to_showcase_container');
+        return;
+      }
+      for (const m of scMatches) {
+        if (!m[1].includes('.showcase-container')) {
+          ctx.fail(`CG-162C-B11-01: showcase 淡入規則未 compound .showcase-container：${m[1].trim()} — 遷自 test_fade_rule_scoped_to_showcase_container`);
+        }
+      }
+      const searchNc = ctx.load('pages/search.css').text;
+      const seMatches = [...searchNc.matchAll(pat)];
+      if (!seMatches.length) {
+        ctx.fail('CG-162C-B11-01: search.css 找不到書籤封面 opacity:0 淡入規則 — 遷自 test_fade_rule_scoped_to_showcase_container');
+        return;
+      }
+      for (const m of seMatches) {
+        if (!m[1].includes('.wishlist-grid')) {
+          ctx.fail(`CG-162C-B11-01: search.css 書籤淡入規則未 compound .wishlist-grid：${m[1].trim()} — 遷自 test_fade_rule_scoped_to_showcase_container`);
+        }
+        if (!m[1].includes(':is(#ds-gallery-components')) {
+          ctx.fail(`CG-162C-B11-01: search.css 書籤淡入規則未 compound :is(#ds-gallery-components)：${m[1].trim()} — 遷自 test_fade_rule_scoped_to_showcase_container`);
+        }
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B11-02',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw;
+      if (!css.includes('prefers-reduced-motion: reduce')) {
+        ctx.fail('CG-162C-B11-02: showcase.css 缺 @media (prefers-reduced-motion: reduce) — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+      const shimmerRules = [...css.matchAll(/(?<![\w-])\.shimmer\s*\{([^}]*)\}/g)].map((m) => m[1]);
+      if (!shimmerRules.some((b) => b.includes('animation: shimmer'))) {
+        ctx.fail('CG-162C-B11-02: showcase.css 缺 .shimmer 基礎 animation — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+      if (!shimmerRules.some((b) => b.includes('animation: none'))) {
+        ctx.fail('CG-162C-B11-02: showcase.css PRM 缺 .shimmer { animation: none } — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+      const fadeRules = [...css.matchAll(/\.av-card-preview-img img\s*\{([^}]*)\}/g)].map((m) => m[1]);
+      if (!fadeRules.some((b) => b.includes('transition: none') && b.includes('opacity: 1'))) {
+        ctx.fail('CG-162C-B11-02: showcase.css PRM 缺淡入退化（transition: none; opacity: 1） — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B11-03',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw;
+      const m = css.match(/\.lb-full\s*\{([^}]*)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B11-03: showcase.css 缺 .lb-full 規則 — 遷自 test_lb_full_css_opacity_transition_with_token');
+        return;
+      }
+      const body = m[1];
+      if (!body.includes('position: absolute') || !body.includes('opacity: 0')) {
+        ctx.fail('CG-162C-B11-03: .lb-full 須 position:absolute + opacity:0 — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      if (!body.includes('pointer-events: none')) {
+        ctx.fail('CG-162C-B11-03: .lb-full 須 pointer-events:none — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      if (!/transition:\s*opacity\s+var\(--fluent-duration-/.test(body)) {
+        ctx.fail('CG-162C-B11-03: .lb-full transition 須用 fluent duration token — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      if (!/var\(--fluent-ease-(decel|standard)\)/.test(body)) {
+        ctx.fail('CG-162C-B11-03: .lb-full transition 須用 fluent ease token — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      const shown = css.match(/\.lb-full-shown\s*\{([^}]*)\}/);
+      if (!shown || !shown[1].includes('opacity: 1')) {
+        ctx.fail('CG-162C-B11-03: showcase.css 缺 .lb-full-shown { opacity: 1 } — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B11-04',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw;
+      const prmBlocks = [...css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{(.*?)\n\}/gs)].map((m) => m[1]);
+      if (!prmBlocks.some((b) => /\.lb-full\s*\{[^}]*transition:\s*none/.test(b))) {
+        ctx.fail('CG-162C-B11-04: PRM 缺 .lb-full { transition: none } — 遷自 test_lb_full_reduced_motion_no_transition');
+      }
+    },
+  },
+  // ---- 162c-B11 迄 ----
+  //
+  //
+  //
+  // ---- 162c-B17 起 ----
+  // （162c-B17 專屬子區段：只在此兩行之間追加）
+  // 162c: TestMobileSimilarPanelContractGuard
+  {
+    id: 'CG-162C-B17-01',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_panel_default_hidden] 手機開燈箱 → 相似面板預設蓋住且擋住點擊 — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const mPanel = css.match(/\.similar-mobile-panel\s*\{([^}]+)\}/);
+      if (!mPanel) {
+        ctx.fail('CG-162C-B17-01: 找不到 .similar-mobile-panel default-hidden block');
+        return;
+      }
+      const block = mPanel[1];
+      if (!block.includes('opacity: 0')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel block 缺 opacity: 0');
+      if (!block.includes('visibility: hidden')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel block 缺 visibility: hidden');
+      if (!block.includes('pointer-events: none')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel block 缺 pointer-events: none');
+      const mShow = css.match(/\.similar-mobile-panel\.show\s*\{([^}]+)\}/);
+      if (!mShow) {
+        ctx.fail('CG-162C-B17-01: 找不到 .similar-mobile-panel.show block');
+        return;
+      }
+      const showBlock = mShow[1];
+      if (!showBlock.includes('opacity: 1')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel.show 缺 opacity: 1');
+      if (!showBlock.includes('visibility: visible')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel.show 缺 visibility: visible');
+      if (!showBlock.includes('pointer-events: auto')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel.show 缺 pointer-events: auto');
+    },
+  },
+  {
+    id: 'CG-162C-B17-02',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_panel_desktop_safety_net] 桌面 @media(min-width:960px) 須含 similar-mobile-panel + display:none 安全網 — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.raw;
+      let found = false;
+      for (const m of css.matchAll(/@media\s*\(\s*min-width\s*:\s*960px\s*\)/g)) {
+        const window = css.slice(m.index, m.index + 500);
+        if (window.includes('similar-mobile-panel') && window.includes('display: none')) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        ctx.fail('CG-162C-B17-02: 視窗缺 display: none（@media min-width:960px 含 similar-mobile-panel 的桌面安全網）');
+      }
+    },
+  },
+  // ---- 162c-B17 迄 ----
+  //
+  //
+  //
+  // ---- 162c-B18 起 ----
+  // （162c-B18 專屬子區段：只在此兩行之間追加）
+  // 162c: TestMobileSimilarPanelContractGuard
+  {
+    id: 'CG-162C-B18-01',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_burst_card_class_exists] .similar-mobile-burst-card 須含 opacity:0／position:relative／transition:none — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const m = css.match(/\.similar-mobile-burst-card\s*\{([^}]+)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B18-01: 找不到 .similar-mobile-burst-card block');
+        return;
+      }
+      const block = m[1];
+      if (!block.includes('opacity: 0')) ctx.fail('CG-162C-B18-01: block 缺 opacity: 0');
+      if (!block.includes('position: relative')) ctx.fail('CG-162C-B18-01: block 缺 position: relative');
+      if (!block.includes('transition: none')) ctx.fail('CG-162C-B18-01: block 缺 transition: none');
+    },
+  },
+  {
+    id: 'CG-162C-B18-02',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_burst_card_img_poster_crop] .similar-mobile-burst-card img 須用 var(--poster-crop-ratio)＋右裁，禁硬編碼 4/5 — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const m = css.match(/\.similar-mobile-burst-card\s+img\s*\{([^}]+)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B18-02: 找不到 .similar-mobile-burst-card img block');
+        return;
+      }
+      const block = m[1];
+      if (!block.includes('aspect-ratio: var(--poster-crop-ratio)')) {
+        ctx.fail('CG-162C-B18-02: img block 缺 aspect-ratio');
+      }
+      if (block.includes('4/5')) ctx.fail('CG-162C-B18-02: img block 不得含硬編碼 4/5');
+      if (!block.includes('object-position: right center')) {
+        ctx.fail('CG-162C-B18-02: img block 缺 object-position: right center');
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B18-03',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_panel_scrim_blur_token] .similar-mobile-scrim 須用 var(--fluent-blur) 並含 -webkit-backdrop-filter — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const m = css.match(/\.similar-mobile-scrim\s*\{([^}]+)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B18-03: 找不到 .similar-mobile-scrim block');
+        return;
+      }
+      const block = m[1];
+      if (!block.includes('var(--fluent-blur)')) {
+        ctx.fail('CG-162C-B18-03: scrim block 缺 var(--fluent-blur)');
+      }
+      if (!block.includes('-webkit-backdrop-filter')) {
+        ctx.fail('CG-162C-B18-03: scrim block 缺 -webkit-backdrop-filter');
+      }
+    },
+  },
+  // ---- 162c-B18 迄 ----
+  // ---- 162c-FIX2 起（Codex branch review P2）----
+  {
+    id: 'CG-162C-FIX2-01',
+    file: 'pages/search.css',
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_d4_error_placeholder_min_height_fallback] 使用者看無封面／封面失敗的搜尋詳情 → placeholder 與導航指示消失；:has(error) 第一個匹配的規則須非零 min-height fallback（先剝 CSS 註解，註解掉的宣告不算） — 遷自 test_frontend_lint.py（Codex pre-merge P2 補回）',
+    check(ctx) {
+      // 逐字鏡射舊 pytest：_css() 已剝註解（ctx.text）→ 第一個匹配（無 g）→ 對 group(1) 斷言
+      const m = ctx.text.match(/\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-error-placeholder[^{]*\)\s*\{([^}]*)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-FIX2-01: 找不到 wrapper:has(.cover-error-placeholder) fallback 規則');
+        return;
+      }
+      if (!/min-height\s*:\s*[1-9]\d*/.test(m[1])) {
+        ctx.fail('CG-162C-FIX2-01: :has(.cover-error-placeholder) 第一個匹配規則缺非零 min-height（placeholder 會塌成零高）');
+      }
+    },
+  },
+  {
+    id: 'CG-162C-FIX2-02',
+    file: 'pages/search.css',
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_d4b_loading_placeholder_min_height_fallback] 使用者看載入中的搜尋詳情 → shimmer 與導航指示消失；:has(loading) 第一個匹配的規則須非零 min-height fallback（先剝 CSS 註解，註解掉的宣告不算） — 遷自 test_frontend_lint.py（Codex pre-merge P2 補回）',
+    check(ctx) {
+      // 逐字鏡射舊 pytest：_css() 已剝註解（ctx.text）→ 第一個匹配（無 g）→ 對 group(1) 斷言
+      const m = ctx.text.match(/\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-loading-placeholder[^{]*\)\s*\{([^}]*)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-FIX2-02: 找不到 wrapper:has(.cover-loading-placeholder) fallback 規則');
+        return;
+      }
+      if (!/min-height\s*:\s*[1-9]\d*/.test(m[1])) {
+        ctx.fail('CG-162C-FIX2-02: :has(.cover-loading-placeholder) 第一個匹配規則缺非零 min-height（placeholder 會塌成零高）');
+      }
+    },
+  },
+  // ---- 162c-FIX2 迄 ----
+  // ---- 162c-FIX6 起（本地全量實剪補回）----
+  {
+    id: 'CG-162C-FIX6-01',
+    file: 'pages/showcase/08-remainder.css',
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_picker_css_rules_present] 使用者在女優燈箱開候選挑選器 → .actress-picker-overlay 頂層規則須 position: fixed，否則浮層掉進頁面流、被裁掉或蓋不住，挑不到候選要關掉重來 — 遷自 test_frontend_lint.py（TestPickerIntegrationGuard；本地實剪驗證補回）',
+    check(ctx) {
+      // 逐字鏡射舊 pytest（同 FIX2 作法）：_css() 已剝註解（ctx.text）→ \.actress-picker-overlay\s*\{[^}]*\} 第一個匹配 → 含 position: fixed
+      const m = ctx.text.match(/\.actress-picker-overlay\s*\{[^}]*\}/);
+      if (!m) {
+        ctx.fail('CG-162C-FIX6-01: 找不到 .actress-picker-overlay 規則');
+        return;
+      }
+      if (!m[0].includes('position: fixed')) {
+        ctx.fail('CG-162C-FIX6-01: .actress-picker-overlay 第一個匹配規則缺 position: fixed');
+      }
+    },
+  },
+  // ---- 162c-FIX6 迄 ----
+  //
+  //
+  //
 ];
 
 // 解析 _showcase_css.html 的 <link href> 出現順序——單一來源＝ CD-148a-3 的 template，

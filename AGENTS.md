@@ -94,9 +94,16 @@ line what category — do not expand them.
   - `f"file:///{...}"` (manual URI construction)
   - `replace('/', '\\')` for path conversion
   - `startswith('file:///')` + manual handling
-- These patterns are already enforced mechanically by `TestPathContract` in
-  `tests/unit/test_frontend_lint.py` (4 guards, scanning every `.py` under
-  `core/ web/ windows/ tests/`). **Do not re-run that check by hand, and do not assign a
+- These patterns are already enforced mechanically by
+  `scripts/static_guard_lint.mjs` rules tagged
+  `[lint-guard 162c-test_no_raw_uri_strip]` /
+  `[lint-guard 162c-test_no_manual_uri_construct]` /
+  `[lint-guard 162c-test_no_shadow_path_helpers]` /
+  `[lint-guard 162c-test_path_to_display_js_no_optional_slash]`
+  (scanning every `.py` under `core/ web/ windows/ tests/` with
+  `core/path_utils.py` excluded, plus
+  `web/static/js/components/path-utils.js` for the `/?` display regex).
+  **Do not re-run that check by hand, and do not assign a
   severity by pattern match** — if a violation reaches review at all, grade it by the
   product impact of what the wrong path actually writes to.
 
@@ -201,17 +208,16 @@ of truth:
   `F`, `E722`, `B` (incl. `B904`/`B905`/`B023`), `T201`, `S110`/`S112`.
 
 **Still enforced by pytest** (deliberate KEEPs — flag these in review if violated):
-- **`tests/unit/frontend_contracts/`** — true cross-file / cross-language contracts: API
-  route pairing, layout/lifecycle/animation contracts, and code-shape guards (method-body
-  ordering, call-counts, brace-scoped semantics) that string-scan lint cannot faithfully
-  express.
-- **`[lint-guard: pytest-justified]`-tagged classes** in `tests/unit/test_frontend_lint.py`
-  (each tag states its reason), incl. `TestPathContract` — the path_utils contract
-  (manual `file:///` strip/construct bans; Python source semantics ruff cannot express).
-- The remaining untagged classes in `test_frontend_lint.py` are the **E2E-block**
-  (user-journey guards — swipe/keyboard/lightbox/actress flows). They stay as pytest until
-  a future E2E branch replaces them with browser journeys; do not request their migration
-  to lint, and do not add new classes to this bucket.
+- **`tests/unit/frontend_contracts/`** — now only `test_contract_animation.py` (1 test): a
+  code-shape guard that string-scan lint cannot faithfully express.
+- **`tests/unit/test_frontend_lint.py`** — only 2 tests remain. Together with the 1 above,
+  these are the three "162c 模糊留" tests (each carries an in-file reason line); the
+  second-review verdict was undecided, so they were kept rather than moved or deleted.
+- Front-end static string guards (formerly the classes in `test_frontend_lint.py`, incl.
+  `TestPathContract`) now live in `scripts/static_guard_lint.mjs` (and `css-guard.mjs`).
+  New front-end guards go there, not into a new pytest class.
+- **`[lint-guard: pytest-justified]`-tagged tests** elsewhere keep their tag with the reason
+  stated; the tag rule below still applies.
 
 Only read a KEEP test when the changed hunk touches the contract's producer, consumer, or
 the contract test itself — do not routinely sweep all KEEPs.
