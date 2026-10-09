@@ -8832,11 +8832,6 @@ const RULES = [
     note: '[lint-guard 162e-發售日浮層標籤屬性] 使用者在發售日浮層外點一下 → 浮層應收起（click.outside）、浮層內點擊不得外洩（click.stop）、鍵盤焦點應留在浮層內（x-trap）；掉了則點外面不收、或焦點跑出浮層 — 遷自 release-pill-shell.test.mjs' },
 
   // ---- 162e：actress-pill-popover-shell ----
-  { file: 'web/templates/showcase.html', kind: 'forbidden-string',
-    pattern: [/filter-pill-value[\s\S]{0,200}:disabled/, /filter-pill-value[\s\S]{0,200}pointer-events/],
-    note: '[lint-guard 162e-女優pill不得:disabled停用] 使用者在手機寬度用鍵盤 Tab 操作女優 pill → 若改用 :disabled／pointer-events 停用，數值仍被 Tab 到、進讀屏樹卻點不動 → 得改用別的方式操作 — 遷自 actress-pill-popover-shell.test.mjs' },
-  { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'x-model.number',
-    note: '[lint-guard 162e-浮層不得x-model.number] 使用者在自訂區間框打數字 → 邊界值必須維持字串才不被轉型；若任一欄用 x-model.number，輸入被轉成數字／NaN，套用條件時無聲變成別的值 — 遷自 actress-pill-popover-shell.test.mjs' },
   { file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: /(?<![\w:-])class="pill-editor-popover"[^>]*(?<![\w:-])x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"|(?<![\w:-])x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"[^>]*(?<![\w:-])class="pill-editor-popover"/,
     note: '[lint-guard 162e-浮層x-show三合取] 使用者開著女優浮層時切到影片分頁，或把視窗縮到手機寬度 → 三合取 x-show 讓浮層立刻隱藏；少一項則浮層殘留在影片模式或手機畫面上、蓋住搜尋列 — 遷自 actress-pill-popover-shell.test.mjs' },

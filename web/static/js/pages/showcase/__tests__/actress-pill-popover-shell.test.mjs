@@ -82,6 +82,18 @@ test('pill 本體用兩個互斥 <template x-if> 分流成 button（啟用）／
     );
 });
 
+// [lint-guard: node-justified] 162e 暫留：T4 實剪回復——舊斷言限 ACTRESS_GROUP depth-aware 區塊，lint 無此 scope；全檔 forbidden 會誤擋區塊外合法 :disabled／pointer-events
+test('pill 本體不得用 :disabled 或 pointer-events 做手機不可點（結構層換元素型別）', () => {
+    assert.ok(
+        !/filter-pill-value[\s\S]{0,200}:disabled/.test(ACTRESS_GROUP),
+        '.filter-pill-value 不應綁 :disabled',
+    );
+    assert.ok(
+        !/filter-pill-value[\s\S]{0,200}pointer-events/.test(ACTRESS_GROUP),
+        '.filter-pill-value 不應靠 pointer-events 停用',
+    );
+});
+
 // [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（ACTRESS_GROUP 內 first-match 鄰近 required），全檔掃＝子區塊放寬為全檔
 test('pill 本體的 button 分支綁 @click.stop="_togglePillEditor(pill)"（CD-116b-7 承重）', () => {
     assert.ok(
@@ -209,6 +221,14 @@ test('兩個 range input 都綁 @input，把 $event.target.validity.badInput 寫
     assert.ok(
         /@input="_pillEditor\.badHi\s*=\s*\$event\.target\.validity\.badInput"/.test(inputs[1]),
         `上限 input 應綁 @input 寫入 _pillEditor.badHi＝$event.target.validity.badInput：${inputs[1]}`,
+    );
+});
+
+// [lint-guard: node-justified] 162e 暫留：T4 實剪回復——舊斷言限女優 POPOVER depth-aware 區塊，lint 無此 scope；全檔 forbidden 會誤擋區塊外合法 x-model.number
+test('整個浮層（含 range input 之外）不含任何 x-model.number（CD-116b-1 反面先例）', () => {
+    assert.ok(
+        !POPOVER.includes('x-model.number'),
+        '.pill-editor-popover 內任何欄位都不得用 x-model.number',
     );
 });
 
