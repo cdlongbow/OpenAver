@@ -8852,8 +8852,13 @@ const RULES = [
     tagPattern: /<button\b(?<=^(?:(?!<!-- 資訊顯示開關)[\s\S])*<button)[^>]*?(?<![\w:-])x-show="[^"]*showTableList[^"]*"[^>]*>/,
     required: [/(?<![\w:-])(?:@|x-on:)click(?:\.[\w.]+)*="[^"]*selectPresentation\(/],
     note: '[lint-guard 162e-新鈕click接selectPres] 使用者在旗標關的桌面按右上角卡型切換鈕 → 若 @click 沒接到 selectPresentation( 則按了沒反應 → 封面／海報切換不了（旗標關時沒有其他入口） — 遷自 presentation-wiring.test.mjs' },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '<!-- 資訊顯示開關',
-    note: '[lint-guard 162e-新鈕click接selectPres] 新鈕搜尋區塊的終點註解「資訊顯示開關」須存在，否則區塊邊界失效、新鈕 @click 守衛失去範圍 — 遷自 presentation-wiring.test.mjs（extractModeMenu 終點 throw）' },
+  { file: 'web/templates/showcase.html', kind: 'order',
+    scope: /<!-- 顯示模式 -->[\s\S]*/,
+    items: [
+      { pattern: '<!-- 顯示模式 -->' },
+      { pattern: '<!-- 資訊顯示開關' },
+    ],
+    note: '[lint-guard 162e-新鈕click接selectPres] 新鈕搜尋區塊的終點註解「資訊顯示開關」須存在於起點「顯示模式」之後（scope 自起點起算＝逐字承接舊 indexOf(end, start)），否則區塊邊界失效、新鈕 @click 守衛失去範圍 — 遷自 presentation-wiring.test.mjs（extractModeMenu 終點 throw）' },
 
   // ---- 162e：select-presentation ----
   { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string',
@@ -8878,7 +8883,7 @@ const RULES = [
     note: '[lint-guard 162e-playShapeMorph不absolute] 使用者在整頁 ~90 張卡的瀏覽頁切換封面／海報 → Flip 的 absolute 須顯式寫 false，否則動畫期間 grid 容器高度歸零、捲動位置被夾回 — 遷自 select-presentation.test.mjs' },
 
   // ---- 162e：pill-match ----
-  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'order', stripLineComments: true,
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'order',
     items: [
       { pattern: 'await _loadAliasMap()' },
       { pattern: 'await _loadTagAliasMap()' },
@@ -8916,7 +8921,7 @@ const RULES = [
 
   // ---- 162e：pill-hero ----
   { file: 'web/static/js/pages/showcase/state-base.js', kind: 'order',
-    scope: { anchor: /async init\(\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    scope: { anchor: /async init\(\)\s*\{/, braceBalanced: true },
     items: [
       { pattern: 'this.restoreState()' },
       { pattern: '_reconcileHeroCard()' },
