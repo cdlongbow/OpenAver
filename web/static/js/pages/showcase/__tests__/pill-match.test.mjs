@@ -209,16 +209,6 @@ test('video.maker 為 null 的影片，對任何非空片商 pill 皆不 match�
     });
 });
 
-test('CD-7 regression lock：state-base.js init() 的 alias map await 必須排在 applyFilterAndSort(true) 之前', () => {
-    const src = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
-    const idxAlias = src.indexOf('await _loadAliasMap()');
-    const idxTagAlias = src.indexOf('await _loadTagAliasMap()');
-    const idxApply = src.indexOf('applyFilterAndSort(true)');
-    assert.ok(idxAlias !== -1 && idxTagAlias !== -1 && idxApply !== -1, '三個錨點字面必須存在');
-    assert.ok(idxAlias < idxApply, 'alias map 必須在第一次 applyFilterAndSort 之前載入');
-    assert.ok(idxTagAlias < idxApply, 'tag alias map 必須在第一次 applyFilterAndSort 之前載入');
-});
-
 test('TASK-124a-T1：release pill 與既有維度混用取交集（AND）', () => {
     const predicate = buildPillPredicate(
         [{ dim: 'release', op: '=', value: '2024-09' }, { dim: 'maker', value: 'S1' }],

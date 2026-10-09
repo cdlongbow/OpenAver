@@ -8877,6 +8877,16 @@ const RULES = [
     scope: { anchor: /playShapeMorph\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
     note: '[lint-guard 162e-playShapeMorph不absolute] 使用者在整頁 ~90 張卡的瀏覽頁切換封面／海報 → Flip 的 absolute 須顯式寫 false，否則動畫期間 grid 容器高度歸零、捲動位置被夾回 — 遷自 select-presentation.test.mjs' },
 
+  // ---- 162e：pill-match ----
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'order', stripLineComments: true,
+    items: [
+      { pattern: 'await _loadAliasMap()' },
+      { pattern: 'await _loadTagAliasMap()' },
+      { pattern: 'applyFilterAndSort(true)' },
+    ],
+    pairs: [[0, 2], [1, 2]],
+    note: '[lint-guard 162e-CD7_alias_before_apply] 使用者重新進入影片牆（上次掛著別名比對的 pill）→ 若第一次篩選早於別名表載入，pill 以未展開的別名比對 → 牆上少片或空牆且沒有任何錯誤提示 → 必須手動重整 — 遷自 pill-match.test.mjs' },
+
 ];
 
 // ---- helpers ----
