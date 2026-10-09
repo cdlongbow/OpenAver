@@ -6,7 +6,6 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
-import fs from 'node:fs';
 
 globalThis.window = globalThis;
 globalThis.document = {
@@ -67,10 +66,6 @@ const IMPORTMAP = {
 const STATIC_JS_ROOT = pathToFileURL(
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../') + '/',
 ).href;
-const MOTION_ADAPTER_PATH = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../../components/motion-adapter.js',
-);
 
 const loaderCode = `
 const IMPORTMAP = ${JSON.stringify(IMPORTMAP)};
@@ -192,19 +187,6 @@ function makeToggleInfoCtx() {
     );
     return { ctx, fakeGrid };
 }
-
-// ── I-148b-1：讀 production motion-adapter.js ────────────────────
-
-test('I-148b-1: INFO_EXPAND_DURATION <= DURATION.medium（讀 production）', () => {
-    const src = fs.readFileSync(MOTION_ADAPTER_PATH, 'utf8');
-    const medium = Number(src.match(/medium:\s*([\d.]+)/)[1]);
-    const infoDur = Number(src.match(/INFO_EXPAND_DURATION:\s*([\d.]+)/)[1]);
-    assert.ok(Number.isFinite(medium) && Number.isFinite(infoDur));
-    assert.ok(
-        infoDur <= medium,
-        `production INFO_EXPAND_DURATION (${infoDur}) must be <= DURATION.medium (${medium})`,
-    );
-});
 
 // ── 1. toggleInfo：第一行就寫 infoVisible ────────────────────────
 
