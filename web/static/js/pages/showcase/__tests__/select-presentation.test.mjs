@@ -233,23 +233,6 @@ test('§0.2 行6（v2 P2 的洞）：table ＋ perPage=0 點「直式海報」�
 // 契約
 // =====================================================================
 
-test('契約：selectPresentation() body 內零 this.mode = 賦值（CD-119-14，源碼斷言）', () => {
-    const body = extractFnBody(STATE_VIDEOS_SRC, 'selectPresentation');
-    assert.ok(body, 'selectPresentation 必須存在於 state-videos.js');
-    assert.equal(
-        /this\.mode\s*=(?!=)/.test(body),
-        false,
-        `不得出現 this.mode = 賦值（換模式一律委派 switchMode()），實際 body：${body}`,
-    );
-});
-
-test('契約：selectPresentation() body 不含 scrollTo / scrollIntoView（AC-8.4，源碼斷言）', () => {
-    const body = extractFnBody(STATE_VIDEOS_SRC, 'selectPresentation');
-    assert.ok(body);
-    assert.equal(body.includes('scrollTo'), false);
-    assert.equal(body.includes('scrollIntoView'), false);
-});
-
 test('契約：selectPresentation() body 內零 $nextTick（CD-133a-2，源碼斷言）', () => {
     const body = extractFnBody(STATE_VIDEOS_SRC, 'selectPresentation');
     assert.ok(body);
@@ -355,28 +338,5 @@ test('animations.js：captureShapeState 存在，且與 captureFlipState 刻意�
         /captureFlipState/.test(body),
         false,
         'captureShapeState 必須與 captureFlipState 分立，不共用實作（技術要點②：共用會讓兩個用途互相綁架）',
-    );
-});
-
-test('animations.js 契約：playShapeMorph 在 shouldSkip() 為 true 時回 null（AC-8.2，源碼斷言）', () => {
-    const body = extractFnBody(ANIMATIONS_SRC, 'playShapeMorph');
-    assert.ok(body, 'playShapeMorph 必須存在於 animations.js');
-    assert.ok(
-        /shouldSkip\(\)\s*\)\s*return null/.test(body),
-        `必須有 shouldSkip() 早退回 null，實際 body：${body}`,
-    );
-});
-
-test('animations.js 契約：playShapeMorph 的 absolute 未被設成 true（CD-119-8，源碼斷言）', () => {
-    const body = extractFnBody(ANIMATIONS_SRC, 'playShapeMorph');
-    assert.ok(body);
-    assert.equal(
-        /absolute\s*:\s*true/.test(body),
-        false,
-        'absolute 不得設成 true（CD-119-8：一次 morph 整頁卡片，全開會讓 grid 容器高度在動畫期間歸零）',
-    );
-    assert.ok(
-        /absolute\s*:\s*false/.test(body),
-        'absolute 應顯式寫成 false（CD-119-8：依賴預設值但不寫死會失去這條契約的可讀性）',
     );
 });

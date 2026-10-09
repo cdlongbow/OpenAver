@@ -8855,6 +8855,28 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '<!-- 資訊顯示開關',
     note: '[lint-guard 162e-新鈕click接selectPres] 新鈕搜尋區塊的終點註解「資訊顯示開關」須存在，否則區塊邊界失效、新鈕 @click 守衛失去範圍 — 遷自 presentation-wiring.test.mjs（extractModeMenu 終點 throw）' },
 
+  // ---- 162e：select-presentation ----
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string',
+    pattern: /this\.mode\s*=(?!=)/,
+    scope: { anchor: /selectPresentation\s*\(\s*target\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162e-selectPres零mode賦值] 使用者在格狀按「表格」或在表格按「直式海報」→ 若 selectPresentation 自己賦值 this.mode 而繞過 switchMode，每頁筆數不會降級／分頁不重算 → 格狀一次畫出整個片庫（perPage=0）而卡頓、或頁碼超出範圍看到空白頁 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string',
+    pattern: ['scrollTo', 'scrollIntoView'],
+    scope: { anchor: /selectPresentation\s*\(\s*target\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162e-selectPres不捲動] 使用者在瀏覽頁往下捲到某處後按右上角卡型切換 → 若切換時呼叫 scrollTo／scrollIntoView，畫面會被拉回頂端或跳位 → 使用者找不到剛看的那排片、得重新捲 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
+    pattern: /shouldSkip\(\)\s*\)\s*return null/,
+    scope: { anchor: /playShapeMorph\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    note: '[lint-guard 162e-playShapeMorph減動態早退] 使用者在作業系統開啟「減少動態效果」（prefers-reduced-motion）後切換封面／海報 → 若 playShapeMorph 不在 shouldSkip() 時早退，仍會播卡片 morph 動畫 → 違反使用者的無障礙設定、對動態敏感的人會不舒服 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'forbidden-string',
+    pattern: /absolute\s*:\s*true/,
+    scope: { anchor: /playShapeMorph\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162e-playShapeMorph不absolute] 使用者在整頁 ~90 張卡的瀏覽頁切換封面／海報 → 若 Flip 的 absolute 被設成 true，動畫期間 grid 容器高度歸零，頁面瞬間縮短、捲動位置被瀏覽器夾回 → 看完動畫後落在跟剛才不同的位置 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
+    pattern: /absolute\s*:\s*false/,
+    scope: { anchor: /playShapeMorph\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    note: '[lint-guard 162e-playShapeMorph不absolute] 使用者在整頁 ~90 張卡的瀏覽頁切換封面／海報 → Flip 的 absolute 須顯式寫 false，否則動畫期間 grid 容器高度歸零、捲動位置被夾回 — 遷自 select-presentation.test.mjs' },
+
 ];
 
 // ---- helpers ----
