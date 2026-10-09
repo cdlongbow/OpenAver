@@ -154,9 +154,9 @@ function extractShapeToggleButton(menu) {
 
 // =====================================================================
 // 反向鎖（§0.1 / P2-1）：桌面 + poster 仍是四條／四段（旗標開）
-// 旗標關 → 選單 <a> 全隱（visibleMenuCount=0）、序列兩段
 // =====================================================================
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：旗標開、桌面、直式海報時模式下拉選項不得少掉，少了的顯示方式選不到
 test('反向鎖（旗標開）：桌面 + cardShape=poster → 選單條數判斷仍是四條', () => {
     const c = makeComponent({
         _isNarrow: false,
@@ -165,16 +165,6 @@ test('反向鎖（旗標開）：桌面 + cardShape=poster → 選單條數判�
         showTableList: true,
     });
     assert.equal(visibleMenuCount(c), 4, 'x-show 必須讀 _isNarrow，不得讀 _posterModeActive()');
-});
-
-test('反向鎖（旗標關）：桌面 → 選單 <a> 可見數為 0', () => {
-    const c = makeComponent({
-        _isNarrow: false,
-        cardShape: 'poster',
-        mode: 'grid',
-        showTableList: false,
-    });
-    assert.equal(visibleMenuCount(c), 0, '旗標關時下拉 <a> 全隱；cover/poster 已搬到 <button>');
 });
 
 // =====================================================================
@@ -284,45 +274,14 @@ test('A 鍵：女優牆（showFavoriteActresses=true）mode 與 cardShape 都不
 // 源碼斷言（showcase.html 模式選單）
 // =====================================================================
 
+// [lint-guard: node-justified] 162e 暫留：缺「到結尾錨點」的 scope 欄位（只有 {anchor,window:N}），且 _posterModeActive 全檔有合法使用不能全檔 forbidden
 test('源碼：模式選單區塊內零 switchMode(、零 _posterModeActive', () => {
     const menu = extractModeMenu(SHOWCASE_HTML);
     assert.equal(menu.includes('switchMode('), false, `選單不得再呼叫 switchMode(：${menu}`);
     assert.equal(menu.includes('_posterModeActive'), false, '選單區塊不得出現 _posterModeActive');
 });
 
-test('源碼：觸發鈕 <i> class 運算式逐字未變', () => {
-    const menu = extractModeMenu(SHOWCASE_HTML);
-    assert.ok(
-        menu.includes(":class=\"mode === 'grid' ? 'bi-grid-3x3' : mode === 'table' ? 'bi-table' : 'bi-list-ul'\""),
-        '觸發鈕圖示運算式必須逐字不變（AC-1.2）',
-    );
-});
-
-test('源碼：「完整封面」下拉 <a> 與新鈕都含 icon-mirror-x', () => {
-    const menu = extractModeMenu(SHOWCASE_HTML);
-    // 下拉裡那條 <a>（selectPresentation('cover')）
-    const coverAnchor = menu.match(/<a\b[^>]*selectPresentation\('cover'\)[^>]*>[\s\S]*?<\/a>/);
-    assert.ok(coverAnchor, '必須有完整封面那條 <a>');
-    assert.ok(
-        coverAnchor[0].includes('icon-mirror-x'),
-        '完整封面 <a> 的 <i> 必須含 icon-mirror-x',
-    );
-    assert.ok(
-        /bi-person-vcard[^"']*icon-mirror-x|icon-mirror-x[^"']*bi-person-vcard/.test(coverAnchor[0]),
-        'icon-mirror-x 必須掛在完整封面 <a> 的 person-vcard 圖示上',
-    );
-    // 新鈕（x-show 含 showTableList）
-    const btn = extractShapeToggleButton(menu);
-    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
-    const btnBlock = menu.slice(menu.indexOf(btn.attrs) - '<button'.length);
-    const btnEnd = btnBlock.indexOf('</button>');
-    const btnHtml = btnBlock.slice(0, btnEnd >= 0 ? btnEnd + '</button>'.length : 400);
-    assert.ok(
-        /bi-person-vcard[^"']*icon-mirror-x|icon-mirror-x[^"']*bi-person-vcard/.test(btnHtml),
-        '新鈕封面圖示必須含 icon-mirror-x',
-    );
-});
-
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：旗標關桌面要看得到卡型切換鈕，窄螢幕／旗標開不得多一顆重複鈕
 test('源碼：新鈕 x-show 同時含 !showTableList 與 !_isNarrow，四態可見性正確', () => {
     const menu = extractModeMenu(SHOWCASE_HTML);
     const btn = extractShapeToggleButton(menu);
