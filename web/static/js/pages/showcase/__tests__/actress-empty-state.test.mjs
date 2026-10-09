@@ -145,6 +145,7 @@ const LOADING_SHOW = STATE_PAGE_SHOWS[0];
 const EMPTY_SHOW = STATE_PAGE_SHOWS[1];
 const SEARCH_EMPTY_SHOW = STATE_PAGE_SHOWS[2];
 
+// [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（ACTRESS_BLOCK 到 grid 配對 </div>）與 class-token 語意，exact 3 state-page 計數會漏數 grid 內多出的
 test('女優區塊恰有三個 state-page，條件字面符合 loading / empty / searchEmpty', () => {
     assert.equal(STATE_PAGE_SHOWS.length, 3, `預期 3 個 state-page，實際：${JSON.stringify(STATE_PAGE_SHOWS)}`);
     assert.equal(LOADING_SHOW, LOADING_SHOW_EXPECTED);
@@ -153,6 +154,7 @@ test('女優區塊恰有三個 state-page，條件字面符合 loading / empty /
     assert.equal(GRID_SHOW, GRID_SHOW_EXPECTED);
 });
 
+// [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（searchEmpty x-show 定位後配對 </div> 取內容），lazy capture 只到首個 </div>
 test('新 searchEmpty 分支引用 showcase.actress.searchEmpty 且 icon 為 bi-search', () => {
     // 以第三個 state-page 的實際 x-show 定位，再取到匹配的 </div>
     const showNeedle = `x-show="${SEARCH_EMPTY_SHOW}"`;
@@ -238,6 +240,7 @@ const EMPTY_STATE_CASES = [
 ];
 
 for (const tc of EMPTY_STATE_CASES) {
+    // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：女優牆載入中／空收藏／篩選零結果／有結果切換時每刻恰好一種畫面
     test(`空狀態互斥：${tc.name}`, () => {
         // 求值用 HTML 實際抽出的條件（非硬編碼期望字面）
         const hits = {
@@ -255,6 +258,7 @@ for (const tc of EMPTY_STATE_CASES) {
 
 // 額外：對整張表再做一次「任意合法組合不得同時命中兩個 state-page」的總掃描
 // （用 HTML 實際條件——拿掉 actressCount > 0 後 #2 會同時命中 empty + searchEmpty）
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：任何載入／數量／篩選組合下三種 state-page 至多出現一個
 test('空狀態：任意合法 (loading, count, filtered) 組合 state-page 分支至多命中 1 個', () => {
     const loadings = [true, false];
     const counts = [0, 1, 5];
@@ -334,6 +338,7 @@ const FOOTER_TOTAL = '!actressSearch && !actressPills.length';
 const FOOTER_SEARCH = 'actressSearch && filteredActressCount > 0 && !actressPills.length';
 const FOOTER_PILL = 'actressPills.length > 0';
 
+// [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（footer <span> 巢狀配對）與 exact 3 內層 x-if 計數＋INNER_CONDS 索引順序 order
 test('女優 footer 恰有三個內層 x-if，條件字面符合 total / search / pill', () => {
     assert.equal(INNER_CONDS.length, 3, `實際：${JSON.stringify(INNER_CONDS)}`);
     assert.equal(INNER_CONDS[0], FOOTER_TOTAL);
@@ -341,6 +346,7 @@ test('女優 footer 恰有三個內層 x-if，條件字面符合 total / search 
     assert.equal(INNER_CONDS[2], FOOTER_PILL);
 });
 
+// [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（footer span 內 actressPills.length > 0 分支 body），5 條 required 無法限縮在該分支
 test('女優 footer pill 分支渲染三個 pill_actresses_* key 並綁 N/M', () => {
     const branchRe = /<template\s+x-if="actressPills\.length\s*>\s*0">([\s\S]*?)<\/template>/;
     const m = ACTRESS_FOOTER.match(branchRe);
@@ -404,6 +410,7 @@ function footerEvalCtx(ctx) {
 }
 
 for (const tc of FOOTER_CASES) {
+    // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：女優牆狀態列恰好顯示一種計數句，查無結果時整個計數隱藏
     test(`footer 互斥：${tc.name}`, () => {
         const ctx = footerEvalCtx(tc.ctx);
         const outer = evalExpr(OUTER_IF, ctx);
@@ -444,6 +451,7 @@ const I18N_KEYS = [
 ];
 
 for (const { key, value } of I18N_KEYS) {
+    // [lint-guard: node-justified] 162e 暫留：缺 JSON 路徑取值 kind／欄位（lookupNested 依 key 路徑查值再比對），全檔字面不維持路徑粒度
     test(`zh_TW.json 含 ${key} = "${value}"`, () => {
         const actual = lookupNested(ZH_TW, key);
         assert.equal(actual, value, `預期 "${value}"，實際 ${JSON.stringify(actual)}`);
