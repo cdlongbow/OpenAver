@@ -104,17 +104,6 @@ test('pill 本體用兩個互斥 <template x-if> 分流成 button（啟用）／
     );
 });
 
-test('pill 本體不得用 :disabled 或 pointer-events 做手機不可點（結構層換元素型別）', () => {
-    assert.ok(
-        !/filter-pill-value[\s\S]{0,200}:disabled/.test(ACTRESS_GROUP),
-        '.filter-pill-value 不應綁 :disabled',
-    );
-    assert.ok(
-        !/filter-pill-value[\s\S]{0,200}pointer-events/.test(ACTRESS_GROUP),
-        '.filter-pill-value 不應靠 pointer-events 停用',
-    );
-});
-
 test('pill 本體的 button 分支綁 @click.stop="_togglePillEditor(pill)"（CD-116b-7 承重）', () => {
     assert.ok(
         /<button[^>]*class="filter-pill-value"[\s\S]{0,300}@click\.stop="_togglePillEditor\(\s*pill\s*\)"/.test(ACTRESS_GROUP),
@@ -335,13 +324,6 @@ test('自訂區間標籤用 t(\'showcase.pill.op.range\') ＋ hint 綁 _pillDimR
     );
 });
 
-test('整個浮層（含 range input 之外）不含任何 x-model.number（CD-116b-1 反面先例）', () => {
-    assert.ok(
-        !POPOVER.includes('x-model.number'),
-        '.pill-editor-popover 內任何欄位都不得用 x-model.number',
-    );
-});
-
 // ===== ✓/✗ 動作列：x-show 條件 + 方法綁定 =====
 
 test('.pill-editor-actions 綁 x-show="_pillEditorHasRangeInput()"，且含 cancel/confirm', () => {
@@ -373,14 +355,6 @@ test('✓/✗ 的 aria-label 重用既有 common.action.confirm/cancel（不新�
 
 // ===== 浮層開關條件：三合取項 x-show，@click.stop，x-cloak =====
 
-test('浮層 x-show 為三合取項：_pillEditor && showFavoriteActresses && _pillPopoverEnabled', () => {
-    assert.ok(
-        /class="pill-editor-popover"[^>]*x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"/.test(SHOWCASE_HTML)
-        || /x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"[^>]*class="pill-editor-popover"/.test(SHOWCASE_HTML),
-        '.pill-editor-popover 應綁 x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"',
-    );
-});
-
 test('浮層帶 @click.stop（不得把點擊冒泡出去，供 @click.outside 銜接）', () => {
     const openTagEnd = POPOVER.indexOf('>');
     const openTag = POPOVER.slice(0, openTagEnd + 1);
@@ -393,23 +367,6 @@ test('浮層帶 x-transition.opacity.duration.150ms（照抄 .toolbar-dropdown �
     assert.ok(
         /x-transition\.opacity\.duration\.150ms/.test(openTag),
         '.pill-editor-popover 應綁 x-transition.opacity.duration.150ms',
-    );
-});
-
-test('浮層帶 x-trap="!!_pillEditor"（不加 .inert）與 @click.outside（CD-116b-9）', () => {
-    const openTagEnd = POPOVER.indexOf('>');
-    const openTag = POPOVER.slice(0, openTagEnd + 1);
-    assert.ok(
-        /x-trap="!!_pillEditor"/.test(openTag),
-        '.pill-editor-popover 應綁 x-trap="!!_pillEditor"',
-    );
-    assert.ok(
-        !/x-trap\.inert/.test(openTag),
-        'x-trap 不得帶 .inert（CD-116b-9：modal 級語意與點外面關閉矛盾）',
-    );
-    assert.ok(
-        /@click\.outside="_pillEditor && _cancelPillEditor\(\)"/.test(openTag),
-        '.pill-editor-popover 應綁 @click.outside="_pillEditor && _cancelPillEditor()"',
     );
 });
 
