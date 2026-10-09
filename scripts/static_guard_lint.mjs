@@ -8914,6 +8914,36 @@ const RULES = [
     pattern: /^(?=[\s\S]*onActressSearchChange\(\))(?=[\s\S]*actressSearch = '')/,
     note: '[lint-guard 162e-ClearBtn_clearAllFilters] 使用者按搜尋列清除 ✕ → 不得再 inline 分流清 actressSearch（onActressSearchChange() 與 actressSearch = \'\' 同時存在即違規），否則 pill 與文字清不乾淨 — 遷自 pill-clear.test.mjs' },
 
+  // ---- 162e：pill-hero ----
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'order',
+    scope: { anchor: /async init\(\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    items: [
+      { pattern: 'this.restoreState()' },
+      { pattern: '_reconcileHeroCard()' },
+      { pattern: 'await this.fetchVideos()' },
+      { pattern: '_awaitHeroCardWithTimeout' },
+      { pattern: 'this.applyFilterAndSort(true)' },
+      { pattern: 'this.page = savedPage' },
+    ],
+    pairs: [[0, 1], [1, 2], [3, 4], [4, 5]],
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    scope: { anchor: /async init\(\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    pattern: /this\.showFavoriteActresses\s*\?[^\n]*:\s*this\._reconcileHeroCard\(\)/,
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 1,
+    scope: { anchor: /async init\(\)\s*\{/, braceBalanced: true },
+    pattern: 'this.applyFilterAndSort(true)',
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 applyFilterAndSort(true) 恰一次；不剝註解，鏡射舊 raw count）' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 1,
+    scope: { anchor: /async init\(\)\s*\{/, braceBalanced: true },
+    pattern: 'this.page = savedPage',
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 page = savedPage 恰一次；不剝註解）' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 1,
+    scope: { anchor: /async init\(\)\s*\{/, braceBalanced: true },
+    pattern: '_reconcileHeroCard()',
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 _reconcileHeroCard() 恰一次；不剝註解）' },
+
 ];
 
 // ---- helpers ----

@@ -83,16 +83,6 @@ function extractFnBody(code, sig, label) {
     throw new Error(`${label} 大括號未閉合（brace-match 失敗）`);
 }
 
-function countOccurrences(haystack, needle) {
-    let count = 0;
-    let idx = 0;
-    while ((idx = haystack.indexOf(needle, idx)) !== -1) {
-        count++;
-        idx += needle.length;
-    }
-    return count;
-}
-
 /**
  * CD-1 新契約：兩個錨點——
  *   1. 「提前啟動」：restoreState() 之後、fetchVideos() 之前含 _reconcileHeroCard
@@ -266,37 +256,6 @@ test('call site 9/9 — _setReleasePill() 後 hero 狀態依規則重算（女�
 });
 
 // ===== 129-T3：call site 8/9 — init() 回頁重算大卡（S2）=====
-
-test('init() 源碼形狀：_reconcileHeroCard 以 showFavoriteActresses 三元閘門提前啟動，await 在 applyFilterAndSort(true) 之前', () => {
-    const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
-    const applyLit = 'this.applyFilterAndSort(true)';
-    const pageLit = 'this.page = savedPage';
-    const reconcileLit = '_reconcileHeroCard()';
-    // countOccurrences 三條原封不動（CD-C1 之後仍是唯一呼叫點）
-    assert.equal(countOccurrences(body, applyLit), 1, 'init() 體內 applyFilterAndSort(true) 應恰好一次');
-    assert.equal(countOccurrences(body, pageLit), 1, 'init() 體內 page = savedPage 應恰好一次');
-    assert.equal(countOccurrences(body, reconcileLit), 1, 'init() 體內 _reconcileHeroCard() 應恰好一次');
-    // guard regex 重新指向三元形狀；「女優牆不呼叫」不變式不得消失
-    assert.ok(
-        /this\.showFavoriteActresses\s*\?[^\n]*:\s*this\._reconcileHeroCard\(\)/.test(body),
-        'init() 的 _reconcileHeroCard 呼叫必須以 showFavoriteActresses 三元為閘（女優牆走 Promise.resolve）',
-    );
-    // 六點鏈：restoreIdx < reconcileIdx < fetchIdx 且 awaitIdx < applyIdx < pageIdx
-    const restoreIdx = body.indexOf('this.restoreState()');
-    const fetchIdx = body.indexOf('await this.fetchVideos()');
-    const reconcileIdx = body.indexOf(reconcileLit);
-    const awaitIdx = body.indexOf('_awaitHeroCardWithTimeout');
-    const applyIdx = body.indexOf(applyLit);
-    const pageIdx = body.indexOf(pageLit);
-    assert.ok(restoreIdx >= 0, 'init() 應含 restoreState()');
-    assert.ok(fetchIdx >= 0, 'init() 應含 await this.fetchVideos()');
-    assert.ok(awaitIdx >= 0, 'init() 應含 _awaitHeroCardWithTimeout');
-    assert.ok(
-        restoreIdx < reconcileIdx && reconcileIdx < fetchIdx
-            && awaitIdx < applyIdx && applyIdx < pageIdx,
-        '六點鏈：restoreState < _reconcileHeroCard < fetchVideos 且 _awaitHeroCardWithTimeout < applyFilterAndSort < page=savedPage',
-    );
-});
 
 test('call site 8/9 — init() 回頁重算大卡（S2）：影片牆＋女優 pill 觸發 _reconcileHeroCard（真身）', async () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
