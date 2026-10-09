@@ -8811,6 +8811,26 @@ const RULES = [
     note: '[lint-guard 162c-test_is_composing_three_conditions] 使用者改打字後與上次查詢比較 → isComposing 須讀 currentQuery，否則採用結果後仍誤判為輸入中 — 遷自 tests/unit/test_frontend_lint.py（TestIsComposingGetter；本地實剪驗證補回）' },
   // ---- 162c-FIX6 迄 ----
 
+  // ==== 162e：自 web/static/js/**/__tests__ 搬入 ====
+  // ---- 162e：release-pill-shell ----
+  { file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'anchor-first-tag',
+    anchor: /(?=<div\b[^>]*?(?<![\w:-])class="pill-editor-popover")(?<=class="pill-editor-popover"[\s\S]*)/, tagPattern: /<div\b[^>]*>/,
+    required: [/(?<![\w:-])x-show="_releaseEditor && !showFavoriteActresses && _pillPopoverEnabled"/],
+    note: '[lint-guard 162e-發售日浮層x-show三合取] 使用者開發售日浮層 → 浮層只該在「正在編輯發售日、影片模式、非窄螢幕」時出現；x-show 條件掉了則浮層一直蓋在搜尋列上，或在女優模式殘留 — 遷自 release-pill-shell.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'anchor-first-tag',
+    anchor: /(?=<div\b[^>]*?(?<![\w:-])class="pill-editor-popover")(?<=class="pill-editor-popover"[\s\S]*)/, tagPattern: /<div\b[^>]*>/,
+    required: [
+      /(?<![\w:-])x-cloak/,
+      /(?<![\w:-])x-transition\.opacity\.duration\.150ms/,
+      /(?<![\w:-])x-trap="!!_releaseEditor"/,
+      /(?<![\w:-])@click\.outside="_releaseEditor && _cancelReleaseEditor\(\)"/,
+      /(?<![\w:-])@click\.stop/,
+      /(?<![\w:-])role="dialog"/,
+      /(?<![\w:-])aria-modal="false"/,
+      /(?<![\w:-])aria-labelledby="release-editor-title"/,
+    ],
+    note: '[lint-guard 162e-發售日浮層標籤屬性] 使用者在發售日浮層外點一下 → 浮層應收起（click.outside）、浮層內點擊不得外洩（click.stop）、鍵盤焦點應留在浮層內（x-trap）；掉了則點外面不收、或焦點跑出浮層 — 遷自 release-pill-shell.test.mjs' },
+
 ];
 
 // ---- helpers ----

@@ -282,31 +282,6 @@ test('release 浮層恰有一個 id="release-editor-title"', () => {
     assert.equal(matches.length, 1, `預期恰好 1 個 id="release-editor-title"，實際 ${matches.length}`);
 });
 
-test('release 浮層 x-show 三合取項字面：_releaseEditor && !showFavoriteActresses && _pillPopoverEnabled', () => {
-    const openTagEnd = RELEASE_POPOVER.indexOf('>');
-    const openTag = RELEASE_POPOVER.slice(0, openTagEnd + 1);
-    assert.ok(
-        /x-show="_releaseEditor && !showFavoriteActresses && _pillPopoverEnabled"/.test(openTag),
-        `.pill-editor-popover（release）應綁三合取項 x-show，實際開始標籤：${openTag}`,
-    );
-});
-
-test('release 浮層：x-trap="!!_releaseEditor"、@click.outside、@click.stop、role/aria 齊備', () => {
-    const openTagEnd = RELEASE_POPOVER.indexOf('>');
-    const openTag = RELEASE_POPOVER.slice(0, openTagEnd + 1);
-    assert.ok(/x-cloak/.test(openTag), '應有 x-cloak');
-    assert.ok(/x-transition\.opacity\.duration\.150ms/.test(openTag), '應有 x-transition.opacity.duration.150ms');
-    assert.ok(/x-trap="!!_releaseEditor"/.test(openTag), '應有 x-trap="!!_releaseEditor"');
-    assert.ok(
-        /@click\.outside="_releaseEditor && _cancelReleaseEditor\(\)"/.test(openTag),
-        '應有 @click.outside="_releaseEditor && _cancelReleaseEditor()"',
-    );
-    assert.ok(/@click\.stop/.test(openTag), '應有 @click.stop');
-    assert.ok(/role="dialog"/.test(openTag), '應有 role="dialog"');
-    assert.ok(/aria-modal="false"/.test(openTag), '應有 aria-modal="false"');
-    assert.ok(/aria-labelledby="release-editor-title"/.test(openTag), '應有 aria-labelledby="release-editor-title"');
-});
-
 test('release 浮層標題綁 t(\'showcase.pill.dim_label.release\')，id="release-editor-title"', () => {
     assert.ok(
         /class="pill-editor-title" id="release-editor-title" x-text="t\('showcase\.pill\.dim_label\.release'\)"/.test(RELEASE_POPOVER),
