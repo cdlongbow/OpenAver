@@ -536,33 +536,33 @@ def test_same_method_name_in_another_class_is_not_covered(tmp_path):
 # 一條分支一格；一次跑完收集漏網的 label，不在第一個失敗就中斷。
 
 _BRANCH_RED_TABLE = (
-    ('屬性 self._base_url 進 logger', None,                     # Attribute 不在 SAFE_ATTRS
+    ('test_guard_flags_everything_not_provably_safe[屬性 self._base_url 進 logger]', None,                     # Attribute 不在 SAFE_ATTRS
      'logger.debug("GET %s", self._base_url)'),
-    ('f-string 內插', None,                                    # JoinedStr
+    ('test_guard_flags_everything_not_provably_safe[f-string 內插]', None,                                    # JoinedStr
      'logger.info(f"probing {base_url}")'),
-    ('原始 url 進例外訊息', None,                              # _is_exception_call sink
+    ('test_guard_flags_everything_not_provably_safe[原始 url 進例外訊息]', None,                              # _is_exception_call sink
      'raise MetatubeAuthError(f"auth failed for {url}")'),
-    ('字串相加', None,                                         # BinOp
+    ('test_guard_flags_everything_not_provably_safe[字串相加]', None,                                         # BinOp
      'logger.info("at " + url)'),
-    ('keyword 引數', None,                                     # keyword 掃描路徑
+    ('test_guard_flags_everything_not_provably_safe[keyword 引數]', None,                                     # keyword 掃描路徑
      'logger.info("x", extra=url)'),
-    ('一跳改名（round-1 的繞過）', None,                       # provenance：RHS 不安全
+    ('test_guard_flags_everything_not_provably_safe[一跳改名（round-1 的繞過）]', None,                       # provenance：RHS 不安全
      'target = self._base_url\nlogger.warning("%s", target)'),
-    ('多跳改名鏈', None,                                       # provenance 多跳收斂迴圈
+    ('test_guard_flags_everything_not_provably_safe[多跳改名鏈]', None,                                       # provenance 多跳收斂迴圈
      'a = self._base_url\nb = a\nc = b\nlogger.info(c)'),
-    ('.format() 插值', None,                                   # Call 其餘分支
+    ('test_guard_flags_everything_not_provably_safe[.format() 插值]', None,                                   # Call 其餘分支
      'logger.warning("target={}".format(url))'),
-    ('放進 list', None,                                        # 容器落到最終 return False
+    ('test_guard_flags_everything_not_provably_safe[放進 list]', None,                                        # 容器落到最終 return False
      'logger.info("x", extra=[url])'),
-    ('tuple unpack 來的名字（_assign_key 不認 → 不安全）', None,   # _local_bindings "other"
+    ('test_guard_flags_everything_not_provably_safe[tuple unpack 來的名字（_assign_key 不認 → 不安全）]', None,   # _local_bindings "other"
      'a, b = self._base_url, 1\nlogger.info("%s", a)'),
     ('登記為參數的名字改用指派（綁定種類不符 → 豁免失效）',    # entry[0] == kind
      "core/metatube/client.py",
      'class MetatubeHttpClient:\n    def _get_data(self):\n'
      '        path = self._base_url\n        logger.warning("%s", path)'),
-    ('帳本名字被拿去接屬性（other.path 不該因帳本而放行）', None,  # Attribute 獨立 SAFE_ATTRS
+    ('test_guard_flags_everything_not_provably_safe[帳本名字被拿去接屬性（other.path 不該因帳本而放行）]', None,  # Attribute 獨立 SAFE_ATTRS
      'logger.warning("%s", other.path)'),
-    ('內層 def 遮蔽外層已證安全的同名變數', None,              # inherited 遮蔽
+    ('test_guard_flags_everything_not_provably_safe[內層 def 遮蔽外層已證安全的同名變數]', None,              # inherited 遮蔽
      'def outer():\n    w = redact_metatube_url(base_url)\n'
      '    def inner(w):\n        logger.info("%s", w)'),
 )
@@ -570,9 +570,143 @@ _BRANCH_RED_TABLE = (
 _BRANCH_GREEN_TABLE = (
     # 其餘放行分支（Constant／SAFE_ATTRS／list keys／f-string）被真掃描 4 檔承接，
     # 改壞即紅（證偽實測），不重複補；此格是真掃描碰不到的 sink 判定。
-    ('非 logger 物件的同名方法', None,                         # _is_log_call False
+    ('test_guard_does_not_overreach[非 logger 物件的同名方法]', None,                         # _is_log_call False
      'tracker.warning(url)'),
 )
+
+
+# ---------------------------------------------------------------------------
+# PR#220 第 2 輪：基準版（437025cd）被刪的合成案例逐字放回（對帳鍵＝原測試名[原 id]）
+# ---------------------------------------------------------------------------
+# 與上面兩張分支表同源者已把 label 改成對帳鍵（不重複放）；其餘在這張表。
+# mode：red ＝ 必須有違規；green ＝ 必須 == []；exact ＝ 必須 == expected；
+# other ＝ 同一份程式碼換成「另一個」受監控檔（rel 欄是它原本登記的檔）仍必須紅。
+
+_RESTORED_CASES = (
+    ('test_guard_does_not_overreach[只記型別名]',
+     'green', None,
+     'logger.info("failed: %s", type(exc).__name__)',
+     None),
+    ('test_guard_does_not_overreach[純字面]',
+     'green', None,
+     'logger.info("connect ok")',
+     None),
+    ('test_guard_does_not_overreach[經過 redactor]',
+     'green', None,
+     'logger.warning("failed for %s", redact_metatube_url(url))',
+     None),
+    ('test_guard_does_not_overreach[len()]',
+     'green', None,
+     'logger.info("n=%s", len(names))',
+     None),
+    ('test_guard_does_not_overreach[list(x.keys())]',
+     'green', None,
+     'logger.info("keys=%s", list(data.keys()))',
+     None),
+    ('test_guard_does_not_overreach[redactor 結果多跳改名]',
+     'green', None,
+     'a = redact_metatube_url(base_url)\nb = a\nlogger.info(b)',
+     None),
+    ('test_guard_does_not_overreach[redactor 結果改名後進 f-string（client.py 的 where 形狀）]',
+     'green', None,
+     'tgt = redact_metatube_url(base_url)\nlogger.debug(f"GET {tgt}")',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[同名 key 先髒後 redacted（round-2 的掛死形狀）]',
+     'red', None,
+     'target = self._base_url\ntarget = redact_metatube_url(target)\nlogger.info("%s", target)',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[帳本名字在**未登記的函式**當參數（不得跨函式繼承豁免）]',
+     'red', None,
+     'def g(path):\n    logger.warning("%s", path)',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[帳本名字被指派覆寫（Codex round-5 點名的確切形狀）]',
+     'red', None,
+     'def f():\n    path = self._base_url\n    logger.warning("%s", path)',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[放進 dict]',
+     'red', None,
+     'logger.info("x", extra={"u": url})',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[未知方法呼叫（守衛沒見過）]',
+     'red', None,
+     'logger.info("%s", url.upper())',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[登記為參數的名字改用指派（綁定種類不符 → 豁免失效）]',
+     'red', None,
+     'def _get_data():\n    path = self._base_url\n    logger.warning("%s", path)',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[comprehension（守衛沒見過）]',
+     'red', None,
+     'logger.info("%s", [x for x in url])',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[f-string 內再包呼叫]',
+     'red', None,
+     'logger.info(f"{str(self._base_url)}")',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[str() 包一層]',
+     'red', None,
+     'logger.info("at %s", str(url))',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[subscript（守衛沒見過）]',
+     'red', None,
+     'logger.info("%s", parts[0])',
+     None),
+    ('test_guard_flags_everything_not_provably_safe[walrus（守衛沒見過）]',
+     'red', None,
+     'logger.info("%s", (u := url))',
+     None),
+    ('test_ledger_hits_only_at_the_registered_identity[probe.py 的 probe_all:source_id（登記命中，指派型）]',
+     'green', 'core/metatube/probe.py',
+     'def probe_all(provider_names):\n    source_id = f"metatube:{provider_names}"\n    logger.info("%s", source_id)',
+     None),
+    ('test_ledger_hits_only_at_the_registered_identity[probe.py 的 probe_provider:exc（登記命中）]',
+     'green', 'core/metatube/probe.py',
+     'def probe_provider(provider):\n    try:\n        pass\n    except MetatubeError as exc:\n        logger.info("%s", exc)',
+     None),
+    ('test_module_level_function_does_not_hit_class_method_ledger',
+     'exact', 'core/metatube/client.py',
+     'def get_info(provider):\n    logger.warning("%s", provider)\n',
+     [(2, 'logger')]),
+    ('test_same_name_in_another_file_is_not_covered[client.py 的 MetatubeHttpClient.get_info:provider（登記命中）]',
+     'other', 'core/metatube/client.py',
+     'class MetatubeHttpClient:\n    def get_info(self, provider):\n        logger.info("provider=%s", provider)',
+     None),
+    ('test_same_name_in_another_file_is_not_covered[probe.py 的 probe_all:source_id（登記命中，指派型）]',
+     'other', 'core/metatube/probe.py',
+     'def probe_all(provider_names):\n    source_id = f"metatube:{provider_names}"\n    logger.info("%s", source_id)',
+     None),
+    ('test_same_name_in_another_file_is_not_covered[probe.py 的 probe_provider:exc（登記命中）]',
+     'other', 'core/metatube/probe.py',
+     'def probe_provider(provider):\n    try:\n        pass\n    except MetatubeError as exc:\n        logger.info("%s", exc)',
+     None),
+)
+
+
+def _restored_case_failure(mode, rel, src, expected, workdir):
+    """跑一列；回傳失敗訊息或 None（例外交給呼叫端記成該列失敗）。"""
+    workdir.mkdir()
+    f = workdir / "m.py"
+    f.write_text(src, encoding="utf-8")
+    if mode == "other":
+        rel = next(w for w in WATCHED_FILES if w != rel)
+    hits = _violations(f, rel=rel)
+    if mode in ("red", "other"):
+        return None if hits else "應紅卻沒抓到（fail-closed 破功／帳本身分沒把檔案算進去）"
+    want = [] if mode == "green" else expected
+    return None if hits == want else f"誤報或結果不符：{hits} != {want}"
+
+
+def test_credential_log_restored_cases_table(tmp_path):
+    """逐列各自隔離（tmp 子目錄）、例外記成該列失敗、一次列出全部失敗列。"""
+    failures = []
+    for n, (label, mode, rel, src, expected) in enumerate(_RESTORED_CASES):
+        try:
+            msg = _restored_case_failure(mode, rel, src, expected, tmp_path / f"c{n}")
+        except Exception as exc:  # noqa: BLE001 — 記成該列失敗，不吞成綠
+            msg = f"{type(exc).__name__} {exc}"
+        if msg:
+            failures.append(f"{label}: {msg}")
+    assert not failures, "\n".join(failures)
 
 
 def test_credential_log_branch_red_table(tmp_path):

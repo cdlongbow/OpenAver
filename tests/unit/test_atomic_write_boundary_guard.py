@@ -736,14 +736,14 @@ def test_matrix_green_cases(case_id, source):
 # 原始碼逐字取自基準版；label 沿用基準版 case id。
 _BRANCH_RED_TABLE = (
     # ImportFrom 裸名（callable_bindings 分支）
-    ("RED-5", "from os import replace\nreplace(a, b)\n"),
+    ("test_matrix_red_cases[RED-5]", "from os import replace\nreplace(a, b)\n"),
     # ImportFrom asname（`a.asname or a.name` 的 asname 側）
-    ("RED-6", "from os import replace as atomic_replace\natomic_replace(a, b)\n"),
+    ("test_matrix_red_cases[RED-6]", "from os import replace as atomic_replace\natomic_replace(a, b)\n"),
     # dotted import 取頂層（split(".", 1)[0] 分支）
-    ("RED-13", "import os.path\nos.replace(a, b)\n"),
+    ("test_matrix_red_cases[RED-13]", "import os.path\nos.replace(a, b)\n"),
     # global 宣告：跳過中間層回 module（root 解析）
     (
-        "RED-26",
+        "test_matrix_red_cases[RED-26]",
         "import tempfile as x\n"
         "def outer():\n"
         "    import os as x\n"
@@ -754,7 +754,7 @@ _BRANCH_RED_TABLE = (
     ),
     # nonlocal 解析到最近 enclosing function（不是 root）
     (
-        "RED-28",
+        "test_matrix_red_cases[RED-28]",
         "import json as x\n"
         "def outer():\n"
         "    import tempfile as x\n"
@@ -765,7 +765,7 @@ _BRANCH_RED_TABLE = (
     ),
     # comprehension for-target 不外洩（ListComp / SetComp / DictComp / GeneratorExp）
     (
-        "RED-30",
+        "test_matrix_red_cases[RED-30]",
         "import os as x\n"
         "def f(a, b):\n"
         "    values = [x for x in ()]\n"
@@ -773,21 +773,21 @@ _BRANCH_RED_TABLE = (
         "    return values\n",
     ),
     (
-        "RED-32",
+        "test_matrix_red_cases[RED-32]",
         "import tempfile as x\n"
         "def f():\n"
         "    s = {x for x in ()}\n"
         "    return x.mkstemp()\n",
     ),
     (
-        "RED-33",
+        "test_matrix_red_cases[RED-33]",
         "import tempfile as x\n"
         "def f():\n"
         "    d = {x: 1 for x in ()}\n"
         "    return x.mkstemp()\n",
     ),
     (
-        "RED-34",
+        "test_matrix_red_cases[RED-34]",
         "import tempfile as x\n"
         "def f():\n"
         "    g = (x for x in ())\n"
@@ -795,14 +795,14 @@ _BRANCH_RED_TABLE = (
     ),
     # comprehension 第一個 iter 在外層求值
     (
-        "RED-35",
+        "test_matrix_red_cases[RED-35]",
         "import os as x\n"
         "def f(a, b):\n"
         "    return [x for x in x.replace(a, b)]\n",
     ),
     # comprehension 內 lambda 的 walrus 不外洩
     (
-        "RED-37",
+        "test_matrix_red_cases[RED-37]",
         "import os as x\n"
         "def f(items, a, b):\n"
         "    callbacks = [lambda value: (x := value) for _ in items]\n"
@@ -810,7 +810,7 @@ _BRANCH_RED_TABLE = (
     ),
     # lambda 參數預設值在外層求值
     (
-        "RED-40",
+        "test_matrix_red_cases[RED-40]",
         "import os as x\n"
         "def f(a, b):\n"
         "    callback = lambda x=x.replace(a, b): x\n"
@@ -818,7 +818,7 @@ _BRANCH_RED_TABLE = (
     ),
     # FunctionDef 參數預設值在外層求值
     (
-        "RED-41",
+        "test_matrix_red_cases[RED-41]",
         "import os\n"
         "def f(a, b):\n"
         "    def callback(os=os.replace(a, b)):\n"
@@ -827,30 +827,59 @@ _BRANCH_RED_TABLE = (
     ),
     # 參數 annotation 在外層求值
     (
-        "RED-43",
+        "test_matrix_red_cases[RED-43]",
         "import os\n"
         "def f(a, b):\n"
         "    def inner(os: os.replace(a, b)):\n"
         "        return os\n"
         "    return inner\n",
     ),
+    # 以下為基準版被刪、尚未入表的 RED 格（逐字取自基準版，label＝對帳鍵）
+    ("test_matrix_red_cases[RED-1]", "import os\nos.replace(a, b)\n"),
+    ("test_matrix_red_cases[RED-2]", "import os as platform_os\nplatform_os.replace(a, b)\n"),
+    ("test_matrix_red_cases[RED-3]", "import tempfile\ntempfile.mkstemp()\n"),
+    ("test_matrix_red_cases[RED-4]", "import tempfile as tmp\ntmp.mkstemp()\n"),
+    ("test_matrix_red_cases[RED-7]", "from tempfile import mkstemp\nmkstemp()\n"),
+    ("test_matrix_red_cases[RED-8]", "from tempfile import mkstemp as create_temp\ncreate_temp()\n"),
+    ("test_matrix_red_cases[RED-14]", "import tempfile\nimport os.path\ntempfile.mkstemp()\n"),
+    (
+        "test_matrix_red_cases[RED-21]",
+        "def outer():\n    import os\n    def inner():\n        os.replace(a, b)\n    return inner\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-22]",
+        "import os\ndef f(a, b):\n    global os\n    os.replace(a, b)\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-23]",
+        "def outer():\n    import os\n    def inner(a, b):\n        nonlocal os\n        os.replace(a, b)\n    return inner\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-24]",
+        "import tempfile as tf\ndef f():\n    global tf\n    return tf.mkstemp()\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-25]",
+        "import os\ndef f(a, b):\n    global os\n    unrelated_local = 1\n    os.replace(a, b)\n    return unrelated_local\n",
+    ),
+    ("test_matrix_red_cases[RED-44]", "import os as x\ncb = lambda x=x.replace('a', 'b'): x\n"),
 )
 
 _BRANCH_GREEN_TABLE = (
     # receiver 解析為 os 但 (os, mkstemp) 不在 PAIRS
-    ("GREEN-11", "import os as tmp\ntmp.mkstemp()\n"),
+    ("test_matrix_green_cases[GREEN-11]", "import os as tmp\ntmp.mkstemp()\n"),
     # import os.path as p：p 綁完整 dotted module，不進 module_bindings
-    ("GREEN-15", "import os.path as p\np.replace(a, b)\n"),
+    ("test_matrix_green_cases[GREEN-15]", "import os.path as p\np.replace(a, b)\n"),
     # 參數遮蔽模組層 alias
-    ("GREEN-17", "import os as tmp\ndef unrelated(tmp): return tmp.replace('a','b')\n"),
+    ("test_matrix_green_cases[GREEN-17]", "import os as tmp\ndef unrelated(tmp): return tmp.replace('a','b')\n"),
     # 區域變數賦值遮蔽模組層 import
     (
-        "GREEN-19",
+        "test_matrix_green_cases[GREEN-19]",
         "import os\ndef f(s):\n    os = s.strip()\n    return os.replace('a','b')\n",
     ),
     # global 宣告但 module 無該名：視為無 binding，不退回 inherited
     (
-        "GREEN-29",
+        "test_matrix_green_cases[GREEN-29]",
         "def outer():\n"
         "    import os as x\n"
         "    def inner():\n"
@@ -860,28 +889,28 @@ _BRANCH_GREEN_TABLE = (
     ),
     # comprehension 內使用自己的 target
     (
-        "GREEN-31",
+        "test_matrix_green_cases[GREEN-31]",
         "import os as x\n"
         "def f(items):\n"
         "    return [x.replace('a','b') for x in items]\n",
     ),
     # PEP 572：comprehension 內 walrus 綁外層（單層／巢狀穿越／lambda 預設值）
     (
-        "GREEN-36",
+        "test_matrix_green_cases[GREEN-36]",
         "import os as x\n"
         "def f(items):\n"
         "    vals = [(x := i) for i in items]\n"
         "    return vals and x.replace('a', 'b')\n",
     ),
     (
-        "GREEN-38",
+        "test_matrix_green_cases[GREEN-38]",
         "import os as x\n"
         "def f(rows):\n"
         "    v = [[(x := c) for c in r] for r in rows]\n"
         "    return v and x.replace('a', 'b')\n",
     ),
     (
-        "GREEN-39",
+        "test_matrix_green_cases[GREEN-39]",
         "import os as x\n"
         "def f(items):\n"
         "    cbs = [lambda v=(x := c): v for c in items]\n"
@@ -889,24 +918,54 @@ _BRANCH_GREEN_TABLE = (
     ),
     # lambda body 內同名參數不得被拉到外層
     (
-        "GREEN-42",
+        "test_matrix_green_cases[GREEN-42]",
         "import os as x\n"
         "def f(a, b):\n"
         "    return lambda x: x.replace(a, b)\n",
     ),
+    # 以下為基準版被刪、尚未入表的 GREEN 格（逐字取自基準版，label＝對帳鍵）
+    ("test_matrix_green_cases[GREEN-9]", '"abc".replace(x, y)\n'),
+    ("test_matrix_green_cases[GREEN-10]", "import tempfile as tmp\ntmp.TemporaryDirectory()\n"),
+    ("test_matrix_green_cases[GREEN-18]", "import os\ndef f(os): return os.replace('a','b')\n"),
+    (
+        "test_matrix_green_cases[GREEN-27]",
+        "import os as x\n"
+        "def outer():\n"
+        "    import tempfile as x\n"
+        "    def inner():\n"
+        "        global x\n"
+        "        x.mkstemp()\n"
+        "    return inner\n",
+    ),
 )
 
 
+def _run_table(table, want_violation):
+    """逐列各自 try/except，不短路；回傳失敗訊息清單（label: 原因）。"""
+    failures = []
+    for label, src in table:
+        try:
+            got = _violations_in_source(src)
+        except Exception as exc:  # noqa: BLE001 - 例外記成該列失敗，不吞成綠
+            failures.append(f"{label}: {type(exc).__name__} {exc}")
+            continue
+        if want_violation and got == []:
+            failures.append(f"{label}: 應偵測為違規，但守衛判為合法")
+        elif not want_violation and got != []:
+            failures.append(f"{label}: 應為合法，但守衛誤報為違規 {got}")
+    return failures
+
+
 def test_branch_red_table():
-    """每個獨立偵測分支至少一個紅案例：全部跑完再一次 assert（不在第一個漏網就中斷）。"""
-    missed = [label for label, src in _BRANCH_RED_TABLE if _violations_in_source(src) == []]
-    assert not missed, f"下列 RED 案例應偵測為違規，但守衛判為合法：{missed}"
+    """每個基準版被刪 RED 格一列（label＝原測試名[原 id]）：全部跑完再一次 assert。"""
+    failures = _run_table(_BRANCH_RED_TABLE, want_violation=True)
+    assert not failures, "\n".join(failures)
 
 
 def test_branch_green_table():
-    """每個『合法寫法放行』分支至少一個綠案例：全部跑完再一次 assert。"""
-    false_pos = [label for label, src in _BRANCH_GREEN_TABLE if _violations_in_source(src) != []]
-    assert not false_pos, f"下列 GREEN 案例應為合法，但守衛誤報為違規：{false_pos}"
+    """每個基準版被刪 GREEN 格一列（label＝原測試名[原 id]）：全部跑完再一次 assert。"""
+    failures = _run_table(_BRANCH_GREEN_TABLE, want_violation=False)
+    assert not failures, "\n".join(failures)
 
 
 # 16: 兩個不相關的函式各自用同一個 alias 名（tmp）匯入不同模組——初版扁平 dict

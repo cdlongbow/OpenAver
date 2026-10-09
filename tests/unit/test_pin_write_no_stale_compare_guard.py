@@ -340,7 +340,56 @@ def test_watched_functions_cover_exactly_the_two_named_functions():
 # 元素 = (label, 合成原始碼, 掃描函式)
 # ---------------------------------------------------------------------------
 
+_RED_BRANCH_TABLE = (
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[2_local_alias_of_global]",
+        "_cur = _snapshot\nif _cur.pin == pin:\n    return",
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[3_direct_snapshot_call]",
+        "if snapshot().pin == pin:\n    return",
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[4_subscript_get_auth_settings]",
+        'if get_auth_settings(True)["pin"] == pin:\n    return',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[6_walrus_wrapped]",
+        'if (masked := pin) == "0000":\n    return',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[7_generator_comprehension]",
+        'if any(c == pin for c in ("0000", "1111")):\n    return',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[8_tuple_literal_and_ne_operator]",
+        "if (pin,) != (stored_pin,):\n    return",
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_update_access_settings[10_request_pin_str_wrapped_in_container]",
+        'if str(request.pin) in (str(get_auth_settings(True)["pin"]),):\n    return',
+        _violations_update_access_settings,
+    ),
+)
+
 _GREEN_BRANCH_TABLE = (
+    (
+        "test_guard_does_not_flag_legitimate_shapes_set_auth[1_format_validation_only_no_compare]",
+        'if not _is_valid_pin_format(pin):\n'
+        '    raise ValueError("pin must be exactly 4 ASCII digits")',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_does_not_flag_legitimate_shapes_set_auth[2_ifexp_no_compare_node_at_all]",
+        'stored_pin = pin if enabled else ""',
+        _violations_set_auth,
+    ),
     (
         "test_nested_def_boundary_is_not_scanned",
         "def _helper():\n"
@@ -356,11 +405,27 @@ _GREEN_BRANCH_TABLE = (
 )
 
 
+def _branch_failures(table, want_flagged: bool) -> list:
+    """每列各自 try/except：例外記成該列失敗，不吞成綠、不短路後列。"""
+    failures = []
+    for label, src, scan in table:
+        try:
+            hits = scan(src)
+        except Exception as exc:
+            failures.append(f"{label}: {type(exc).__name__} {exc}")
+            continue
+        if bool(hits) != want_flagged:
+            failures.append(f"{label}: " + ("應紅卻沒抓到" if want_flagged else f"被誤抓 {hits}"))
+    return failures
+
+
+def test_pin_write_branch_red_table():
+    """紅表：每個包裝寫法一格，必須全部被抓到；一次列出所有漏抓的 label。"""
+    failures = _branch_failures(_RED_BRANCH_TABLE, True)
+    assert not failures, "\n".join(failures)
+
+
 def test_pin_write_branch_green_table():
     """綠表：每個放行分支一格，不得被誤抓；一次列出被誤抓的 label。"""
-    flagged = [
-        f"{label}: {hits}"
-        for label, src, scan in _GREEN_BRANCH_TABLE
-        if (hits := scan(src))
-    ]
-    assert not flagged, f"被誤抓的綠案例：{flagged}"
+    failures = _branch_failures(_GREEN_BRANCH_TABLE, False)
+    assert not failures, "\n".join(failures)

@@ -980,35 +980,96 @@ class TestPerFunctionIndependence:
 
 
 # ============================================================
-# 分支補回（PR #220）：獨立偵測分支各一格的表驅動聚合紅表
-# 元素 = (label, 合成原始碼, 期望 (reads, delegates, policy status))；
-# 原始碼逐字取自 437025cd 被刪的 case。
+# A 類補回（PR #220）：基準 437025cd 被刪的合成自我測試案例，表驅動聚合
+# 元素 = (對帳鍵 `原測試名[原 parametrize id]`, 合成原始碼, 期望 dict)；
+# 期望 dict 只列「原 case 斷言過的欄位」：reads / delegates（計數）、
+# status / resolved / nodes（_policy_assignment 回傳；nodes=None 表示 node 必須為
+# None，nodes=int 表示必須是該長度的 list）。原始碼逐字取自 437025cd。
+# 模組層只放字串／tuple；ast.parse 在測試執行期做。
 # ============================================================
 
+_DUP_IMPORTS = _SYNTH_IMPORTS.replace("NFO_MTIME_REFRESH", "NFO_MTIME_REFRESH, NFO_MTIME_ON_UPSERT")
+
 _BRANCH_RED_TABLE = (
-    ("getmtime Attribute 分支：os.path.getmtime(...) 繞過", _SYNTH_IMPORTS + """
+    ("TestSyntheticCountFingerprints::test_getmtime_bypass_is_counted_as_direct_read", _SYNTH_IMPORTS + """
 import os
 
 
 def consumer(entry):
     _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
     return os.path.getmtime(entry)
-""", (1, 0, "ok")),
-    ("getmtime Name 分支：裸名 getmtime(...) 繞過", _SYNTH_IMPORTS + """
+""", {"reads": 1, "delegates": 0, "status": "ok"}),
+    ("TestSyntheticCountFingerprints::test_bare_getmtime_bypass_is_counted_as_direct_read", _SYNTH_IMPORTS + """
 from os.path import getmtime
 
 
 def consumer(entry):
     _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
     return getmtime(entry)
-""", (1, 0, "ok")),
-    ("import 別名（alias.asname）", _SYNTH_IMPORTS + """
+""", {"reads": 1, "delegates": 0, "status": "ok"}),
+    ("TestSyntheticCountFingerprints::test_st_mtime_ns_bypass_is_counted_as_direct_read", _SYNTH_IMPORTS + """
+def consumer(some_path):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    stat = some_path.stat()
+    return stat.st_mtime_ns
+""", {"reads": 1, "delegates": 0}),
+    ("TestSyntheticCountFingerprints::test_minimal_shell_counts_zero_one", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    return nfo_mtime_or_none(entry)
+""", {"reads": 0, "delegates": 1}),
+    ("TestSyntheticPolicyFingerprints::test_wrong_policy_resolves_to_different_constant", _DUP_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_ON_UPSERT
+    return nfo_mtime_or_none(entry)
+""", {"status": "ok", "resolved": "NFO_MTIME_ON_UPSERT"}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_illegal_rhs_second_assignment_is_flagged_as_multiple", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    x = nfo_mtime_or_none(entry)
+    _NFO_MTIME_POLICY = "refresh"
+    return x
+""", {"status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_annassign_second_declaration_is_flagged_as_multiple", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    x = nfo_mtime_or_none(entry)
+    _NFO_MTIME_POLICY: str = NFO_MTIME_ON_UPSERT
+    return x
+""", {"status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[AugAssign（`+=` 就地改值）]", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    _NFO_MTIME_POLICY += "_changed"
+    return nfo_mtime_or_none(entry)
+""", {"status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[NamedExpr（海象 `:=` 重設）]", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    if (_NFO_MTIME_POLICY := NFO_MTIME_ON_UPSERT):
+        pass
+    return nfo_mtime_or_none(entry)
+""", {"status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[tuple 拆包重新綁定]", _SYNTH_IMPORTS + """
+def consumer(entry, pair):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    _NFO_MTIME_POLICY, _other = pair
+    return nfo_mtime_or_none(entry)
+""", {"status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[for-target 重新綁定]", _SYNTH_IMPORTS + """
+def consumer(entry, seq):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    for _NFO_MTIME_POLICY in seq:
+        pass
+    return nfo_mtime_or_none(entry)
+""", {"status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[import 別名（alias.asname）]", _SYNTH_IMPORTS + """
 def consumer(entry):
     _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
     from os import sep as _NFO_MTIME_POLICY
     return nfo_mtime_or_none(entry)
-""", (0, 1, "multiple")),
-    ("except 別名（ExceptHandler.name）", _SYNTH_IMPORTS + """
+""", {"reads": 0, "delegates": 1, "status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[except 別名（ExceptHandler.name）]", _SYNTH_IMPORTS + """
 def consumer(entry):
     _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
     try:
@@ -1016,16 +1077,16 @@ def consumer(entry):
     except OSError as _NFO_MTIME_POLICY:
         pass
     return nfo_mtime_or_none(entry)
-""", (0, 1, "multiple")),
-    ("match capture（MatchAs.name）", _SYNTH_IMPORTS + """
+""", {"reads": 0, "delegates": 1, "status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[match capture（MatchAs.name）]", _SYNTH_IMPORTS + """
 def consumer(entry, subject):
     _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
     match subject:
         case _NFO_MTIME_POLICY:
             pass
     return nfo_mtime_or_none(entry)
-""", (0, 1, "multiple")),
-    ("巢狀 def 同名遮蔽（FunctionDef.name）", _SYNTH_IMPORTS + """
+""", {"reads": 0, "delegates": 1, "status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_rebinding_after_valid_declaration_is_flagged_as_multiple[巢狀 def 同名遮蔽（FunctionDef.name）]", _SYNTH_IMPORTS + """
 def consumer(entry):
     _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
 
@@ -1033,20 +1094,52 @@ def consumer(entry):
         return None
 
     return nfo_mtime_or_none(entry)
-""", (0, 1, "multiple")),
-    ("零宣告（status=none）", _SYNTH_IMPORTS + """
+""", {"reads": 0, "delegates": 1, "status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_policy_name_as_own_parameter_alone_is_not_a_valid_declaration", _SYNTH_IMPORTS + """
+def consumer(entry, _NFO_MTIME_POLICY):
+    return nfo_mtime_or_none(entry)
+""", {"status": "illegal_rhs", "resolved": None}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_policy_name_as_parameter_plus_assignment_is_multiple", _SYNTH_IMPORTS + """
+def consumer(entry, _NFO_MTIME_POLICY):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    return nfo_mtime_or_none(entry)
+""", {"status": "multiple", "resolved": None, "nodes": 2}),
+    ("TestSyntheticPolicyUniquenessFingerprints::test_zero_assignments_is_flagged_as_none", _SYNTH_IMPORTS + """
 def consumer(entry):
     return nfo_mtime_or_none(entry)
-""", (0, 1, "none")),
+""", {"reads": 0, "delegates": 1, "status": "none", "resolved": None, "nodes": None}),
 )
 
 
+def _check_branch_row(src: str, expected: dict) -> list:
+    reads, delegates, policy = _counts_for_source(src)
+    status, node, resolved = policy
+    actual = {"reads": reads, "delegates": delegates, "status": status, "resolved": resolved}
+    problems = [
+        f"{k}: expected {expected[k]!r}, got {actual[k]!r}"
+        for k in ("reads", "delegates", "status", "resolved")
+        if k in expected and actual[k] != expected[k]
+    ]
+    if "nodes" in expected:
+        want = expected["nodes"]
+        if want is None:
+            ok = node is None
+        else:
+            ok = isinstance(node, list) and len(node) == want
+        if not ok:
+            problems.append(f"nodes: expected {'None' if want is None else f'list[{want}]'}, got {node!r}")
+    return problems
+
+
 def test_nfo_stat_branch_red_table():
-    """每個獨立偵測分支至少一格；跑完全部案例，一次列出所有沒被抓到的 label。"""
-    missed = []
+    """A 類合成案例（對帳鍵逐格）：跑完全部案例，一次列出所有沒被抓到的 label。"""
+    failures = []
     for label, src, expected in _BRANCH_RED_TABLE:
-        reads, delegates, policy = _counts_for_source(src)
-        actual = (reads, delegates, policy[0])
-        if actual != expected:
-            missed.append(f"{label}: expected {expected}, got {actual}")
-    assert not missed, f"未被偵測到的分支：{missed}"
+        try:
+            problems = _check_branch_row(src, expected)
+        except Exception as exc:  # 例外記成該列失敗，不吞成綠
+            failures.append(f"{label}: {type(exc).__name__} {exc}")
+            continue
+        if problems:
+            failures.append(f"{label}: " + "; ".join(problems))
+    assert not failures, "\n".join(failures)

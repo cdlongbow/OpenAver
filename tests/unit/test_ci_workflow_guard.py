@@ -356,38 +356,55 @@ def test_pip_installs_command_level_parsing(run_scalar, tool, expected_versions,
     assert installs.unparsed == expected_unparsed
 
 
-# ── 分支補回（PR #220）：`_pip_installs` 各獨立分支一格的表驅動聚合 ───────────────
-# 元素 = (label, run_scalar, tool, expected_versions, expected_unparsed)，
-# 內容逐字取自 437025cd 被刪的 param（label = 原 pytest.param id）。
+# ── A 類補回（PR #220）：`_pip_installs` 被刪 param 的表驅動聚合 ───────────────
+# 元素 = (對帳鍵 `原測試名[原 pytest.param id]`, run_scalar, tool, expected_versions,
+# expected_unparsed)，內容逐字取自 437025cd 被刪的 param。
 _PIP_INSTALLS_BRANCH_TABLE = (
-    ("shell-comment-is-not-a-command",
+    ("test_pip_installs_command_level_parsing[shell-comment-is-not-a-command]",
      "pip install ruff\n# legacy: pip install ruff==0.15.17\n", "ruff", [None], []),
-    ("trailing-comment-decoy-must-not-be-parsed-as-arg",
+    ("test_pip_installs_command_level_parsing[trailing-comment-decoy-must-not-be-parsed-as-arg]",
      "pip install ruff==0.15.17  # decoy: ruff==9.9.9\n", "ruff", ["0.15.17"], []),
-    ("pinned-then-unpinned-overrides",
+    ("test_pip_installs_command_level_parsing[two-different-pinned-versions]",
+     "pip install ruff==0.15.17\npip install ruff==9.9.9\n", "ruff", ["0.15.17", "9.9.9"], []),
+    ("test_pip_installs_command_level_parsing[pinned-then-unpinned-overrides]",
      "pip install ruff==0.15.17\npip install ruff\n", "ruff", ["0.15.17", None], []),
-    ("unpinned-hidden-in-shell-loop",
-     "pip install ruff==0.15.17\nfor i in 1; do pip install ruff; done\n",
-     "ruff", ["0.15.17", None], []),
-    ("drifted-pin-hidden-in-shell-conditional",
-     'pip install ruff==0.15.17\nif [ "$X" = "1" ]; then pip install ruff==9.9.9; fi\n',
-     "ruff", ["0.15.17", "9.9.9"], []),
-    ("dotted-pip-interpreter-is-recognized",
+    ("test_pip_installs_command_level_parsing[legal-with-flag]",
+     "pip install -q ruff==0.15.17\n", "ruff", ["0.15.17"], []),
+    ("test_pip_installs_command_level_parsing[legal-trailing-comment]",
+     "pip install ruff==0.15.17  # keep in sync with requirements-test.txt pin\n", "ruff", ["0.15.17"], []),
+    ("test_pip_installs_command_level_parsing[different-package-yields-empty]",
+     "pip install import-linter==2.13\n", "ruff", [], []),
+    ("test_pip_installs_command_level_parsing[unpinned-hidden-in-shell-loop]",
+     "pip install ruff==0.15.17\nfor i in 1; do pip install ruff; done\n", "ruff", ["0.15.17", None], []),
+    ("test_pip_installs_command_level_parsing[drifted-pin-hidden-in-shell-conditional]",
+     'pip install ruff==0.15.17\nif [ "$X" = "1" ]; then pip install ruff==9.9.9; fi\n', "ruff", ["0.15.17", "9.9.9"], []),
+    ("test_pip_installs_command_level_parsing[dotted-pip-interpreter-is-recognized]",
      "pip install ruff==0.15.17\npip3.12 install ruff\n", "ruff", ["0.15.17", None], []),
-    ("dotted-python-m-pip-is-recognized",
-     "pip install ruff==0.15.17\npython3.12 -m pip install ruff==9.9.9\n",
-     "ruff", ["0.15.17", "9.9.9"], []),
+    ("test_pip_installs_command_level_parsing[dotted-python-m-pip-is-recognized]",
+     "pip install ruff==0.15.17\npython3.12 -m pip install ruff==9.9.9\n", "ruff", ["0.15.17", "9.9.9"], []),
+    ("test_pip_installs_command_level_parsing[unknown-installer-verb-add-fails-closed]",
+     "pip install ruff==0.15.17\npoetry add ruff\n", "ruff", ["0.15.17"], ["poetry add ruff"]),
+    ("test_pip_installs_command_level_parsing[non-install-mention-is-not-suspicious]",
+     "ruff check .\n", "ruff", [], []),
+    ("test_pip_installs_command_level_parsing[subshell-paren-fails-closed]",
+     "pip install ruff==0.15.17\n(pip install ruff)\n", "ruff", ["0.15.17"], ["(pip install ruff)"]),
 )
 
 
 def test_pip_installs_branch_table():
-    """每個獨立解析分支一格；跑完全部案例，一次列出所有結果不符期望的 label。"""
-    missed = []
+    """每格走真正的呼叫路徑 `_pip_installs(job, tool)`，同時比對 versions 與 unparsed；
+    例外記成該列失敗，跑完全部列後一次列出所有不符的對帳鍵。"""
+    failures = []
     for label, run_scalar, tool, expected_versions, expected_unparsed in _PIP_INSTALLS_BRANCH_TABLE:
-        installs = _pip_installs({"steps": [{"run": run_scalar}]}, tool)
-        if installs.versions != expected_versions or installs.unparsed != expected_unparsed:
-            missed.append(label)
-    assert not missed, f"解析結果不符的分支：{missed}"
+        try:
+            installs = _pip_installs({"steps": [{"run": run_scalar}]}, tool)
+            if installs.versions != expected_versions:
+                failures.append(f"{label}: versions expected {expected_versions!r}, got {installs.versions!r}")
+            if installs.unparsed != expected_unparsed:
+                failures.append(f"{label}: unparsed expected {expected_unparsed!r}, got {installs.unparsed!r}")
+        except Exception as exc:
+            failures.append(f"{label}: {type(exc).__name__} {exc}")
+    assert not failures, "\n".join(failures)
 
 
 # ── exact-pin 守衛（TASK-79-T6）─────────────────────────────────────────────
