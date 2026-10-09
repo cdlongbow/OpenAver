@@ -5,7 +5,7 @@
 // harness 照抄 select-presentation.test.mjs（importmap hook、
 // Object.assign({}, stateVideos(), …)），並把 stateLightbox() 併進元件以測 A 鍵。
 //
-// TASK-133b-T2：選單／序列／A 鍵三組各拆旗標開／關兩態；新鈕 x-show 四態鎖（@click 接線已搬 lint）。
+// TASK-133b-T2：選單／序列／A 鍵三組各拆旗標開／關兩態；新鈕 x-show 四態鎖（新鈕 @click 接線守衛 162e 回復暫留，仍由本檔 Node 測試守著）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
