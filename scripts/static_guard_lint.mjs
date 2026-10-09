@@ -8811,6 +8811,127 @@ const RULES = [
     note: '[lint-guard 162c-test_is_composing_three_conditions] 使用者改打字後與上次查詢比較 → isComposing 須讀 currentQuery，否則採用結果後仍誤判為輸入中 — 遷自 tests/unit/test_frontend_lint.py（TestIsComposingGetter；本地實剪驗證補回）' },
   // ---- 162c-FIX6 迄 ----
 
+  // ==== 162e：自 web/static/js/**/__tests__ 搬入 ====
+  // ---- 162e：release-pill-shell ----
+  { file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'anchor-first-tag',
+    anchor: /(?=<div\b[^>]*?(?<![\w:-])class="pill-editor-popover")(?<=class="pill-editor-popover"[\s\S]*)/, tagPattern: /<div\b[^>]*>/,
+    required: [/(?<![\w:-])x-show="_releaseEditor && !showFavoriteActresses && _pillPopoverEnabled"/],
+    note: '[lint-guard 162e-發售日浮層x-show三合取] 使用者開發售日浮層 → 浮層只該在「正在編輯發售日、影片模式、非窄螢幕」時出現；x-show 條件掉了則浮層一直蓋在搜尋列上，或在女優模式殘留 — 遷自 release-pill-shell.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'anchor-first-tag',
+    anchor: /(?=<div\b[^>]*?(?<![\w:-])class="pill-editor-popover")(?<=class="pill-editor-popover"[\s\S]*)/, tagPattern: /<div\b[^>]*>/,
+    required: [
+      /(?<![\w:-])x-cloak/,
+      /(?<![\w:-])x-transition\.opacity\.duration\.150ms/,
+      /(?<![\w:-])x-trap="!!_releaseEditor"/,
+      /(?<![\w:-])@click\.outside="_releaseEditor && _cancelReleaseEditor\(\)"/,
+      /(?<![\w:-])@click\.stop/,
+      /(?<![\w:-])role="dialog"/,
+      /(?<![\w:-])aria-modal="false"/,
+      /(?<![\w:-])aria-labelledby="release-editor-title"/,
+    ],
+    note: '[lint-guard 162e-發售日浮層標籤屬性] 使用者在發售日浮層外點一下 → 浮層應收起（click.outside）、浮層內點擊不得外洩（click.stop）、鍵盤焦點應留在浮層內（x-trap）；掉了則點外面不收、或焦點跑出浮層 — 遷自 release-pill-shell.test.mjs' },
+
+  // ---- 162e：actress-pill-popover-shell ----
+  { file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: /(?<![\w:-])class="pill-editor-popover"[^>]*(?<![\w:-])x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"|(?<![\w:-])x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"[^>]*(?<![\w:-])class="pill-editor-popover"/,
+    note: '[lint-guard 162e-浮層x-show三合取] 使用者開著女優浮層時切到影片分頁，或把視窗縮到手機寬度 → 三合取 x-show 讓浮層立刻隱藏；少一項則浮層殘留在影片模式或手機畫面上、蓋住搜尋列 — 遷自 actress-pill-popover-shell.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<div\b(?=[^>]*(?<![\w:-])aria-labelledby="pill-editor-title")[^>]*>/,
+    required: [/(?<![\w:-])x-trap="!!_pillEditor"/, /(?<![\w:-])@click\.outside="_pillEditor && _cancelPillEditor\(\)"/],
+    forbidden: [/x-trap\.inert/],
+    note: '[lint-guard 162e-浮層x-trap與click.outside] 使用者按 Tab 或點浮層外面 → 浮層鎖住焦點(x-trap 不帶 .inert)且點外面取消編輯；缺 x-trap 焦點跑出浮層、缺 @click.outside 點外面關不掉；誤加 .inert 則背景整片不可點、點外面也關不掉 — 遷自 actress-pill-popover-shell.test.mjs' },
+
+  // ---- 162e：presentation-wiring ----
+
+  // ---- 162e：select-presentation ----
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string',
+    pattern: /this\.mode\s*=(?!=)/,
+    scope: { anchor: /selectPresentation\s*(?::\s*function)?\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162e-selectPres零mode賦值] 使用者在格狀按「表格」或在表格按「直式海報」→ 若 selectPresentation 自己賦值 this.mode 而繞過 switchMode，每頁筆數不會降級／分頁不重算 → 格狀一次畫出整個片庫（perPage=0）而卡頓、或頁碼超出範圍看到空白頁 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string',
+    pattern: ['scrollTo', 'scrollIntoView'],
+    scope: { anchor: /selectPresentation\s*(?::\s*function)?\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162e-selectPres不捲動] 使用者在瀏覽頁往下捲到某處後按右上角卡型切換 → 若切換時呼叫 scrollTo／scrollIntoView，畫面會被拉回頂端或跳位 → 使用者找不到剛看的那排片、得重新捲 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
+    pattern: /shouldSkip\(\)\s*\)\s*return null/,
+    scope: { anchor: /playShapeMorph\s*(?::\s*function)?\s*\([^)]*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    note: '[lint-guard 162e-playShapeMorph減動態早退] 使用者在作業系統開啟「減少動態效果」（prefers-reduced-motion）後切換封面／海報 → 若 playShapeMorph 不在 shouldSkip() 時早退，仍會播卡片 morph 動畫 → 違反使用者的無障礙設定、對動態敏感的人會不舒服 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'forbidden-string',
+    pattern: /absolute\s*:\s*true/,
+    scope: { anchor: /playShapeMorph\s*(?::\s*function)?\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162e-playShapeMorph不absolute] 使用者在整頁 ~90 張卡的瀏覽頁切換封面／海報 → 若 Flip 的 absolute 被設成 true，動畫期間 grid 容器高度歸零，頁面瞬間縮短、捲動位置被瀏覽器夾回 → 看完動畫後落在跟剛才不同的位置 — 遷自 select-presentation.test.mjs' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
+    pattern: /absolute\s*:\s*false/,
+    scope: { anchor: /playShapeMorph\s*(?::\s*function)?\s*\([^)]*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    note: '[lint-guard 162e-playShapeMorph不absolute] 使用者在整頁 ~90 張卡的瀏覽頁切換封面／海報 → Flip 的 absolute 須顯式寫 false，否則動畫期間 grid 容器高度歸零、捲動位置被夾回 — 遷自 select-presentation.test.mjs' },
+
+  // ---- 162e：pill-match ----
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'order',
+    items: [
+      { pattern: 'await _loadAliasMap()' },
+      { pattern: 'await _loadTagAliasMap()' },
+      { pattern: 'applyFilterAndSort(true)' },
+    ],
+    pairs: [[0, 2], [1, 2]],
+    note: '[lint-guard 162e-CD7_alias_before_apply] 使用者重新進入影片牆（上次掛著別名比對的 pill）→ 若第一次篩選早於別名表載入，pill 以未展開的別名比對 → 牆上少片或空牆且沒有任何錯誤提示 → 必須手動重整 — 遷自 pill-match.test.mjs' },
+
+  // ---- 162e：pill-clear ----
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', stripLineComments: true,
+    pattern: [
+      /\$watch\(\s*['"]search['"]/,
+      /\$watch\(\s*['"]actressSearch['"]/,
+      /\$watch\(\s*['"]pills['"]/,
+      /\$watch\(\s*['"]actressPills['"]/,
+      /\$watch\(\s*['"]showFavoriteActresses['"]/,
+    ],
+    note: '[lint-guard 162e-ClearBtn_watch_wiring] 使用者（手機）只加 pill、或在影片／女優分頁間切換 → navbar 的清除 ✕ 沒有跟著出現或消失 → 想一鍵清掉做不到，或按了 ✕ 什麼都沒清，只能逐枚點掉 pill — 遷自 pill-clear.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 6,
+    pattern: /Alpine\.store\('ui'\)\.showcaseHasSearch\s*=\s*this\._hasActiveFilterForCurrentTab\(\)/,
+    note: '[lint-guard 162e-ClearBtn_watch_wiring] 使用者（手機）只加 pill、或在影片／女優分頁間切換 → navbar 的清除 ✕ 沒有跟著出現或消失（五個 $watch＋init sync 共 6 次寫入須恰 6 次；逐字鏡射舊 raw count，不剝註解） — 遷自 pill-clear.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'forbidden-string',
+    pattern: "Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')",
+    note: '[lint-guard 162e-ClearBtn_watch_wiring] 使用者只加 pill 時 navbar 清除 ✕ 不出現 — init sync 不得再用舊兩欄位算式（漏掉 pills） — 遷自 pill-clear.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      /(?<![\w:-])(?:@|x-on:)showcase:clear-search\.window="clearAllFilters\(\)"/,
+      /(?<![\w:-])@click="clearAllFilters\(\)"/,
+      /(?<![\w:-])x-show="\$store\.ui\.showcaseHasSearch"/,
+    ],
+    note: '[lint-guard 162e-ClearBtn_clearAllFilters] 使用者按搜尋列或 navbar 的清除 ✕ → 沒有任何反應（事件沒人接或鈕沒接到 clearAllFilters）→ 只能逐枚點掉 pill、手動清字 — 遷自 pill-clear.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: /^(?=[\s\S]*onActressSearchChange\(\))(?=[\s\S]*actressSearch = '')/,
+    note: '[lint-guard 162e-ClearBtn_clearAllFilters] 使用者按搜尋列清除 ✕ → 不得再 inline 分流清 actressSearch（onActressSearchChange() 與 actressSearch = \'\' 同時存在即違規），否則 pill 與文字清不乾淨 — 遷自 pill-clear.test.mjs' },
+
+  // ---- 162e：pill-hero ----
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'order',
+    scope: { anchor: /async init\(\)[^{]*\{/, braceBalanced: true },
+    items: [
+      { pattern: 'this.restoreState()' },
+      { pattern: '_reconcileHeroCard()' },
+      { pattern: 'await this.fetchVideos()' },
+      { pattern: '_awaitHeroCardWithTimeout' },
+      { pattern: 'this.applyFilterAndSort(true)' },
+      { pattern: 'this.page = savedPage' },
+    ],
+    pairs: [[0, 1], [1, 2], [3, 4], [4, 5]],
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    scope: { anchor: /async init\(\)[^{]*\{/, braceBalanced: true }, stripLineComments: true,
+    pattern: /this\.showFavoriteActresses\s*\?[^\n]*:\s*this\._reconcileHeroCard\(\)/,
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 1,
+    scope: { anchor: /async init\(\)[^{]*\{/, braceBalanced: true },
+    pattern: 'this.applyFilterAndSort(true)',
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 applyFilterAndSort(true) 恰一次；不剝註解，鏡射舊 raw count）' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 1,
+    scope: { anchor: /async init\(\)[^{]*\{/, braceBalanced: true },
+    pattern: 'this.page = savedPage',
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 page = savedPage 恰一次；不剝註解）' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 1,
+    scope: { anchor: /async init\(\)[^{]*\{/, braceBalanced: true },
+    pattern: '_reconcileHeroCard()',
+    note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 _reconcileHeroCard() 恰一次；不剝註解）' },
+
 ];
 
 // ---- helpers ----

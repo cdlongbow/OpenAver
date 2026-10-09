@@ -83,16 +83,6 @@ function extractFnBody(code, sig, label) {
     throw new Error(`${label} 大括號未閉合（brace-match 失敗）`);
 }
 
-function countOccurrences(haystack, needle) {
-    let count = 0;
-    let idx = 0;
-    while ((idx = haystack.indexOf(needle, idx)) !== -1) {
-        count++;
-        idx += needle.length;
-    }
-    return count;
-}
-
 /**
  * CD-1 新契約：兩個錨點——
  *   1. 「提前啟動」：restoreState() 之後、fetchVideos() 之前含 _reconcileHeroCard
@@ -267,37 +257,7 @@ test('call site 9/9 — _setReleasePill() 後 hero 狀態依規則重算（女�
 
 // ===== 129-T3：call site 8/9 — init() 回頁重算大卡（S2）=====
 
-test('init() 源碼形狀：_reconcileHeroCard 以 showFavoriteActresses 三元閘門提前啟動，await 在 applyFilterAndSort(true) 之前', () => {
-    const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
-    const applyLit = 'this.applyFilterAndSort(true)';
-    const pageLit = 'this.page = savedPage';
-    const reconcileLit = '_reconcileHeroCard()';
-    // countOccurrences 三條原封不動（CD-C1 之後仍是唯一呼叫點）
-    assert.equal(countOccurrences(body, applyLit), 1, 'init() 體內 applyFilterAndSort(true) 應恰好一次');
-    assert.equal(countOccurrences(body, pageLit), 1, 'init() 體內 page = savedPage 應恰好一次');
-    assert.equal(countOccurrences(body, reconcileLit), 1, 'init() 體內 _reconcileHeroCard() 應恰好一次');
-    // guard regex 重新指向三元形狀；「女優牆不呼叫」不變式不得消失
-    assert.ok(
-        /this\.showFavoriteActresses\s*\?[^\n]*:\s*this\._reconcileHeroCard\(\)/.test(body),
-        'init() 的 _reconcileHeroCard 呼叫必須以 showFavoriteActresses 三元為閘（女優牆走 Promise.resolve）',
-    );
-    // 六點鏈：restoreIdx < reconcileIdx < fetchIdx 且 awaitIdx < applyIdx < pageIdx
-    const restoreIdx = body.indexOf('this.restoreState()');
-    const fetchIdx = body.indexOf('await this.fetchVideos()');
-    const reconcileIdx = body.indexOf(reconcileLit);
-    const awaitIdx = body.indexOf('_awaitHeroCardWithTimeout');
-    const applyIdx = body.indexOf(applyLit);
-    const pageIdx = body.indexOf(pageLit);
-    assert.ok(restoreIdx >= 0, 'init() 應含 restoreState()');
-    assert.ok(fetchIdx >= 0, 'init() 應含 await this.fetchVideos()');
-    assert.ok(awaitIdx >= 0, 'init() 應含 _awaitHeroCardWithTimeout');
-    assert.ok(
-        restoreIdx < reconcileIdx && reconcileIdx < fetchIdx
-            && awaitIdx < applyIdx && applyIdx < pageIdx,
-        '六點鏈：restoreState < _reconcileHeroCard < fetchVideos 且 _awaitHeroCardWithTimeout < applyFilterAndSort < page=savedPage',
-    );
-});
-
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：切回影片牆掛著收藏女優 pill 時大卡要重新出現，不必再點一次
 test('call site 8/9 — init() 回頁重算大卡（S2）：影片牆＋女優 pill 觸發 _reconcileHeroCard（真身）', async () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
     const c = makeComponent({
@@ -315,27 +275,6 @@ test('call site 8/9 — init() 回頁重算大卡（S2）：影片牆＋女優 p
     assert.equal(calls, 1);
     assert.equal(c._isPreciseActressMatch, true);
     assert.equal(c._matchedActress?.name, 'Foo');
-});
-
-test('女優牆：init() 回頁不得呼叫 _reconcileHeroCard，狀態不得被污染', async () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({
-        showFavoriteActresses: true,
-        pills: [{ dim: 'actress', value: 'Foo' }],
-        search: '',
-        _isPreciseActressMatch: false,
-        _matchedActress: null,
-    });
-    let calls = 0;
-    const real = c._reconcileHeroCard.bind(c);
-    c._reconcileHeroCard = function (...args) {
-        calls++;
-        return real(...args);
-    };
-    await runInitReconcileLine(c);
-    assert.equal(calls, 0, '女優牆不得呼叫 _reconcileHeroCard');
-    assert.equal(c._isPreciseActressMatch, false, '女優牆不得污染 _isPreciseActressMatch');
-    assert.equal(c._matchedActress, null, '女優牆不得污染 _matchedActress');
 });
 
 // ===== RULING 1：searchActressFilms() 必須尊重「有 pill」的 gating 規則 =====
@@ -381,6 +320,7 @@ test('spec §4.10：切到女優模式再切回，pills 內容不變、hero card
 
 // ===== staleness guard 修復（本 task 最容易漏掉的一步；沒修好會是靜默 no-op，call-count 斷言驗不到）=====
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：大小寫／全半形不同的女優 pill 加入後大卡不得被當過期丟掉
 test('_isExpectedHeroCardTerm：pill 分支用 normalizePillValue 比對（大小寫/半形差異也算符合）', () => {
     const c = makeComponent({ pills: [{ dim: 'actress', value: 'FOO' }], search: '' });
     assert.equal(c._isExpectedHeroCardTerm('foo', 'pill'), true);
@@ -388,6 +328,7 @@ test('_isExpectedHeroCardTerm：pill 分支用 normalizePillValue 比對（大�
 
 // ===== source === 'pill' 找不到本地收藏記錄仍放行（與 'metadata' 行為等價）=====
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：尚未收藏的女優加 pill 後大卡仍要顯示以保留收藏入口
 test("source === 'pill' 找不到本地收藏記錄仍放行，_matchedActress 為非收藏最小物件", () => {
     _setActresses([{ name: 'SomeoneElse', is_favorite: true }]);
     const c = makeComponent({ pills: [{ dim: 'actress', value: 'NotFavorited' }], search: '' });

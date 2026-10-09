@@ -7,13 +7,10 @@
 //   - addToWishlist I3 回滾（M3）
 //   - switchToWishlist 設 displayMode='grid'
 //   - membership hydration 三條
-//   - wishlist.js 不定義 init()；main.js init() 呼叫 loadWishlistCount()
+//   - main.js init() 呼叫 loadWishlistCount()
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { register } from 'node:module';
 
 globalThis.window = globalThis;
@@ -32,9 +29,6 @@ const { searchStateNavigation } = await import('../navigation.js');
 const { searchStateBase } = await import('../base.js');
 const { searchStateSearchFlow } = await import('../search-flow.js');
 const { searchPage } = await import('../../main.js');
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const WISHLIST_JS = resolve(__dirname, '../wishlist.js');
 
 function mockFetch(handler) {
     const calls = [];
@@ -354,15 +348,6 @@ test("restoreState: 讀到 (null,'grid') 這種沒有渲染器命中的組合時
         'detail',
         'restoreState 必須經 resolveVisibleDisplayMode 把 (null, grid) 修正成 detail',
     );
-});
-
-// ─── wishlist.js 不定義 init() ─────────────────────────────────────────────
-
-test('wishlist.js 不定義 init()', () => {
-    const src = readFileSync(WISHLIST_JS, 'utf8');
-    assert.equal(src.includes('init()'), false, 'wishlist.js 不得出現 init()');
-    const shard = searchStateWishlist();
-    assert.equal(Object.hasOwn(shard, 'init'), false);
 });
 
 // ─── hydration ①：init() 呼叫 loadWishlistCount ───────────────────────────

@@ -209,16 +209,6 @@ test('video.maker 為 null 的影片，對任何非空片商 pill 皆不 match�
     });
 });
 
-test('CD-7 regression lock：state-base.js init() 的 alias map await 必須排在 applyFilterAndSort(true) 之前', () => {
-    const src = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
-    const idxAlias = src.indexOf('await _loadAliasMap()');
-    const idxTagAlias = src.indexOf('await _loadTagAliasMap()');
-    const idxApply = src.indexOf('applyFilterAndSort(true)');
-    assert.ok(idxAlias !== -1 && idxTagAlias !== -1 && idxApply !== -1, '三個錨點字面必須存在');
-    assert.ok(idxAlias < idxApply, 'alias map 必須在第一次 applyFilterAndSort 之前載入');
-    assert.ok(idxTagAlias < idxApply, 'tag alias map 必須在第一次 applyFilterAndSort 之前載入');
-});
-
 test('TASK-124a-T1：release pill 與既有維度混用取交集（AND）', () => {
     const predicate = buildPillPredicate(
         [{ dim: 'release', op: '=', value: '2024-09' }, { dim: 'maker', value: 'S1' }],
@@ -504,6 +494,7 @@ test('CoverBadgeManifest cold/warm：pill 中文字幕 vs user_tags 中字（B1�
     assert.equal(warm.length, 1);
 });
 
+// [lint-guard: node-justified] 162e 暫留：缺 block-comment 剝除欄位（order 只有 stripLineComments 不剝 /* */），被區塊註解餵飽時 fail-open
 test('CoverBadgeManifest 順序錨點：await _loadCoverBadgeManifest 早於 applyFilterAndSort(true)', () => {
     const src = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
     // 剝註解：mutation A 把 await 整行註解掉時必須轉 RED（裸 indexOf 會命中註解）。

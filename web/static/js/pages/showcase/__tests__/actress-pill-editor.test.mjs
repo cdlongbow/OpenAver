@@ -10,7 +10,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -678,21 +677,4 @@ test('提示絕不參與比對：掛 ≤100cm 超出庫內範圍的 pill → 結
     const c = makeComponent();
     c._setActressPill({ dim: 'height', op: '<=', value: '100', value2: null });
     assert.equal(c.filteredActressCount, 0, '若提示值偷偷被拿去夾回，這裡會篩出 146cm 那群人');
-});
-
-// ── 刪除的東西真的不在了（允許字面比對——驗死碼，不是契約）─────────────────
-
-test('刪除的東西真的不在了：6 常數 ＋ _setEditorMode ＋ _pillRangeBounds 在 state-actress.js 全檔零出現', () => {
-    const src = readFileSync(
-        path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../state-actress.js'),
-        'utf8',
-    );
-    const deletedTokens = [
-        'AGE_MIN', 'AGE_MAX', 'AGE_SEED_WIDTH',
-        'HEIGHT_MIN', 'HEIGHT_MAX', 'HEIGHT_SEED_WIDTH',
-        '_setEditorMode', '_pillRangeBounds',
-    ];
-    for (const token of deletedTokens) {
-        assert.ok(!src.includes(token), `${token} 不得殘留在 state-actress.js`);
-    }
 });
