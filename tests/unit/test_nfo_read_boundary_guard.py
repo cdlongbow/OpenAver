@@ -542,6 +542,138 @@ class VideoScanner:
 ]
 
 
+# 基準版 437025cd 中已不在 SYNTHETIC_ROUNDS 的七組（maker/release_date/tag_genre/series/
+# runtime/num/simple_fields），逐字放回；由 TestSyntheticRestoredAggregate 聚合執行。
+# 代表函式在 A/B/C 間輪替，確保三個檔名都至少被驗過一次。
+_SYNTHETIC_RESTORED_ROUNDS = [
+    (
+        "maker", "_nfo_to_meta",
+        _SYNTH_IMPORTS + """
+def _nfo_to_meta(root):
+    return {
+        "maker": nfo_first_text(root, ("maker", "studio")),
+    }
+""",
+        _SYNTH_IMPORTS + """
+def _nfo_to_meta(root):
+    return {
+        "maker": (root.find("maker").text or "").strip() if root.find("maker") is not None else "",
+    }
+""",
+    ),
+    (
+        "release_date", "_nfo_to_producer_meta",
+        _SYNTH_IMPORTS + """
+def _nfo_to_producer_meta(root):
+    return {
+        'date': nfo_first_text(root, ('release', 'premiered', 'year')),
+    }
+""",
+        _SYNTH_IMPORTS + """
+def _nfo_to_producer_meta(root):
+    return {
+        'date': (root.find('release').text or "").strip() if root.find('release') is not None else "",
+    }
+""",
+    ),
+    (
+        "tag_genre", "parse_nfo",
+        _SYNTH_IMPORTS + """
+class _Info:
+    pass
+
+
+class VideoScanner:
+    def parse_nfo(self, root):
+        info = _Info()
+        info.genre = ','.join(nfo_merged_tags(root))
+        return info
+""",
+        _SYNTH_IMPORTS + """
+class _Info:
+    pass
+
+
+class VideoScanner:
+    def parse_nfo(self, root):
+        info = _Info()
+        info.genre = ','.join(g.text.strip() for g in root.findall('genre') if g.text)
+        return info
+""",
+    ),
+    (
+        "series", "_nfo_to_meta",
+        _SYNTH_IMPORTS + """
+def _nfo_to_meta(root):
+    return {
+        "series": nfo_series_name(root),
+    }
+""",
+        _SYNTH_IMPORTS + """
+def _nfo_to_meta(root):
+    return {
+        "series": (root.find('set/name').text or "").strip() if root.find('set/name') is not None else "",
+    }
+""",
+    ),
+    (
+        "runtime", "_nfo_to_producer_meta",
+        _SYNTH_IMPORTS + """
+def _nfo_to_producer_meta(root):
+    return {
+        'duration': nfo_runtime_minutes(root),
+    }
+""",
+        _SYNTH_IMPORTS + """
+def _nfo_to_producer_meta(root):
+    return {
+        'duration': int(root.find('runtime').text) if root.find('runtime') is not None else None,
+    }
+""",
+    ),
+    (
+        "num", "parse_nfo",
+        _SYNTH_IMPORTS + """
+class _Info:
+    pass
+
+
+class VideoScanner:
+    def parse_nfo(self, root):
+        info = _Info()
+        info.num = nfo_first_text(root, ('num', 'id'))
+        return info
+""",
+        _SYNTH_IMPORTS + """
+class _Info:
+    pass
+
+
+class VideoScanner:
+    def parse_nfo(self, root):
+        info = _Info()
+        info.num = (root.find('num').text or "").strip() if root.find('num') is not None else ""
+        return info
+""",
+    ),
+    (
+        "simple_fields", "_nfo_to_producer_meta",
+        _SYNTH_IMPORTS + """
+def _nfo_to_producer_meta(root):
+    return {
+        'title': nfo_text(root, 'title'),
+    }
+""",
+        _SYNTH_IMPORTS + """
+def _nfo_to_producer_meta(root):
+    return {
+        'title': (root.find('title').text or "").strip() if root.find('title') is not None else "",
+    }
+""",
+    ),
+]
+
+
 class TestSyntheticRedGreenPairs:
     """合成片段（紅／綠對照），永久留在測試檔的 parametrize case
     ——比「跑一次記錄輸出後只剩文字紀錄」更強：每次 CI 都持續驗證同一段違規
@@ -618,12 +750,13 @@ _FULL_PARSE_NFO_LINES = {
 }
 
 
-def _build_full_parse_nfo(e3_tag: str = "user_tag") -> str:
-    """組出涵蓋全部八類 + E3 的合成 `parse_nfo` 殼（八類皆委派版）；
-    `e3_tag` 覆蓋 E3 的字面引數，用於白名單精確度 mutation。"""
+def _build_full_parse_nfo(red_category: str = None, e3_tag: str = "user_tag") -> str:
+    """組出涵蓋全部八類 + E3 的合成 `parse_nfo` 殼。`red_category` 給定時，
+    該類換成手寫紅版，其餘七類維持委派版；`e3_tag` 覆蓋 E3 的字面引數，
+    用於白名單精確度 mutation。"""
     lines = []
-    for green_lines, _red_lines in _FULL_PARSE_NFO_LINES.values():
-        lines.extend(green_lines)
+    for category, (green_lines, red_lines) in _FULL_PARSE_NFO_LINES.items():
+        lines.extend(red_lines if category == red_category else green_lines)
     e3_line = f"info.user_tags = [t.text.strip() for t in root.findall('{e3_tag}') if t.text]"
     lines.append(e3_line)
     body = "\n".join(f"        {line}" for line in lines)
@@ -670,3 +803,86 @@ class TestWhitelistPrecisionMutation:
             f"E3 引數為正確字面 'user_tag' 時不應有違規:\n"
             f"{_violation_report(src, violations)}"
         )
+
+
+# ============================================================
+# 被刪合成案例聚合（PR#220 round 3）：基準版每格逐字放回，label＝原測試名[原 id]
+# ============================================================
+
+def _chk_green(category, func_name, green_src):
+    tree = ast.parse(green_src)
+    func = _find_func(tree, func_name)
+    assert func is not None, f"[{category}] 綠版合成片段定位不到 {func_name}"
+    violations = _violations(func, func_name)
+    assert not violations, (
+        f"[{category}] 綠版合成片段（委派寫法）不應有違規:\n"
+        f"{_violation_report(green_src, violations)}"
+    )
+
+
+def _chk_red(category, func_name, red_src):
+    tree = ast.parse(red_src)
+    func = _find_func(tree, func_name)
+    assert func is not None, f"[{category}] 紅版合成片段定位不到 {func_name}"
+    violations = _violations(func, func_name)
+    assert violations, (
+        f"[{category}] 紅版合成片段（手寫 ET 讀取）應被判為違規，實際 0 筆"
+        f" —— 守衛假綠"
+    )
+    report = _violation_report(red_src, violations)
+    assert violations[0].lineno > 0
+    assert report.strip()
+
+
+def _chk_shell_zero():
+    tree = ast.parse(_build_full_parse_nfo())
+    func = _find_func(tree, "parse_nfo")
+    assert func is not None
+    violations = _violations(func, "parse_nfo")
+    assert not violations, (
+        f"全委派殼（八類 + E3 皆合法）不應有違規:\n"
+        f"{_violation_report(_build_full_parse_nfo(), violations)}"
+    )
+
+
+def _chk_flip(category):
+    src = _build_full_parse_nfo(red_category=category)
+    tree = ast.parse(src)
+    func = _find_func(tree, "parse_nfo")
+    assert func is not None
+    violations = _violations(func, "parse_nfo")
+    assert len(violations) == 1, (
+        f"[{category}] 只換回一類、其餘七類維持委派，應恰有一筆違規，"
+        f"實際 {len(violations)}:\n{_violation_report(src, violations)}"
+    )
+    red_text = "\n".join(_FULL_PARSE_NFO_LINES[category][1])
+    seg = ast.get_source_segment(src, violations[0])
+    assert seg and seg in red_text, (
+        f"[{category}] 違規應指向該類手寫紅版的呼叫，實際指向: {seg!r}"
+        f"（紅版原文: {red_text!r}）"
+    )
+
+
+class TestSyntheticRestoredAggregate:
+    """基準版 437025cd 被刪的 23 格（七組 SYNTHETIC_ROUNDS 紅綠 ×2 ＋
+    TestFalseGreenCheck 九格）聚合執行；每列獨立 try/except，不短路。"""
+
+    def test_restored_synthetic_cases(self):
+        cases = []
+        for category, func_name, green_src, red_src in _SYNTHETIC_RESTORED_ROUNDS:
+            cases.append((f"TestSyntheticRedGreenPairs.test_green_has_zero_violations[{category}]",
+                          _chk_green, (category, func_name, green_src)))
+            cases.append((f"TestSyntheticRedGreenPairs.test_red_has_violations[{category}]",
+                          _chk_red, (category, func_name, red_src)))
+        cases.append(("TestFalseGreenCheck.test_full_delegation_shell_is_zero_violations",
+                      _chk_shell_zero, ()))
+        for category in _FULL_PARSE_NFO_LINES:
+            cases.append((f"TestFalseGreenCheck.test_single_category_flip_is_exactly_one_violation[{category}]",
+                          _chk_flip, (category,)))
+        failures = []
+        for label, fn, args in cases:
+            try:
+                fn(*args)
+            except BaseException as e:  # noqa: BLE001 — 記成該列失敗，不吞成綠
+                failures.append(f"{label}: {type(e).__name__} {e}")
+        assert not failures, "\n".join(failures)
