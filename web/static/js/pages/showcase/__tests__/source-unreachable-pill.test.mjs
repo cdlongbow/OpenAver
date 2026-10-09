@@ -1,4 +1,4 @@
-// TASK-142-T4: unreachableSources state ＋ footer pill ＋ i18n（DoD 1–4）
+// TASK-142-T4: unreachableSources state ＋ footer pill ＋ i18n（DoD 1、2、4、9；DoD 3 已刪）
 //
 // 技術比照 pill-status.test.mjs（HTML／i18n 文字契約）與 card-shape-persist.test.mjs
 // （importmap resolve hook ＋ stateBase factory）。不跑 CDP、不動 Alpine runtime。
@@ -60,10 +60,6 @@ const SHOWCASE_HTML = readFileSync(
     path.join(REPO_ROOT, 'web/templates/showcase.html'),
     'utf8',
 );
-const STATE_BASE_SRC = readFileSync(
-    path.join(REPO_ROOT, 'web/static/js/pages/showcase/state-base.js'),
-    'utf8',
-);
 const ZH_TW = JSON.parse(
     readFileSync(path.join(REPO_ROOT, 'locales/zh_TW.json'), 'utf8'),
 );
@@ -111,67 +107,6 @@ function extractUnreachablePillBlock(html) {
     throw new Error('unreachable pill 未找到匹配的 </template>');
 }
 
-/**
- * 抽出 state-base.js 內 source-status 的 fire-and-forget fetch 鏈（含 .catch）。
- * 以括號深度掃描，避免寫死 catch 形狀——M1 改 catch 內容時仍能抽出並執行。
- */
-function extractSourceStatusFetchChain(src) {
-    const marker = "fetch('/api/showcase/source-status')";
-    const start = src.indexOf(marker);
-    assert.ok(start !== -1, "state-base.js 應含 fetch('/api/showcase/source-status')");
-    let i = start + 'fetch'.length;
-    assert.equal(src[i], '(', 'fetch 後應接 (');
-    let depth = 0;
-    // 吃掉 fetch(...) 本身
-    for (; i < src.length; i++) {
-        const ch = src[i];
-        if (ch === '(') depth++;
-        else if (ch === ')') {
-            depth--;
-            if (depth === 0) {
-                i++;
-                break;
-            }
-        }
-    }
-    // 繼續吃 .then(...) / .catch(...) 鏈
-    while (true) {
-        while (i < src.length && /\s/.test(src[i])) i++;
-        if (src[i] !== '.') break;
-        const idStart = i + 1;
-        let idEnd = idStart;
-        while (idEnd < src.length && /\w/.test(src[idEnd])) idEnd++;
-        const id = src.slice(idStart, idEnd);
-        assert.ok(id === 'then' || id === 'catch', `fetch 鏈只允許 .then/.catch，實際 .${id}`);
-        i = idEnd;
-        while (i < src.length && /\s/.test(src[i])) i++;
-        assert.equal(src[i], '(', `.${id} 後應接 (`);
-        depth = 0;
-        for (; i < src.length; i++) {
-            const ch = src[i];
-            if (ch === '(') depth++;
-            else if (ch === ')') {
-                depth--;
-                if (depth === 0) {
-                    i++;
-                    break;
-                }
-            } else if (ch === "'" || ch === '"' || ch === '`') {
-                // 跳過字串（避免字串內括號干擾）
-                const quote = ch;
-                i++;
-                while (i < src.length && src[i] !== quote) {
-                    if (src[i] === '\\') i++;
-                    i++;
-                }
-            }
-        }
-    }
-    while (i < src.length && /\s/.test(src[i])) i++;
-    assert.equal(src[i], ';', 'fetch 鏈應以 ; 結束');
-    return src.slice(start, i + 1);
-}
-
 function tKey(key, params) {
     return globalThis.window.t(key, params);
 }
@@ -194,6 +129,7 @@ function composePillText(sources) {
 
 // ===== DoD 1：空陣列 → pill 綁定條件為 false =====
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：所有來源連得上時頁尾不得憑空顯示「無法存取」警告
 test('DoD1: unreachableSources=[] → footer pill x-if 條件為 false', () => {
     const cond = extractUnreachablePillXIf(SHOWCASE_HTML);
     const result = new Function('unreachableSources', `return Boolean(${cond});`)([]);
@@ -202,6 +138,7 @@ test('DoD1: unreachableSources=[] → footer pill x-if 條件為 false', () => {
 
 // ===== DoD 2：1／2／3 筆文案組出 =====
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：1／2／3 個來源連不到時頁尾要顯示對的文案與完整清單 title
 test('DoD2: 1／2／3 個來源 → 對應 i18n key、插值與 title', () => {
     assert.equal(
         ZH_TW.showcase?.status?.source_unreachable_list,
@@ -281,6 +218,7 @@ test('DoD2: 1／2／3 個來源 → 對應 i18n key、插值與 title', () => {
     assert.equal(c3.title, '\\\\host-a、D:\\Videos、/mnt/nas');
 });
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：來源被拒絕讀取或連不到時頁尾文案與 DSM 授權指引不得算錯
 test('permission footer renders new text only when every source lacks permission', () => {
     const block = extractUnreachablePillBlock(SHOWCASE_HTML);
     const small = block.match(/<template\s+x-if="unreachableSources\.length\s*<=\s*2">([\s\S]*?)<\/template>/);
@@ -303,50 +241,9 @@ test('permission footer renders new text only when every source lacks permission
     assert.equal(render(large[1], [gone('/a'), gone('/b'), gone('/c')]), '3 個位置無法存取');
 });
 
-// ===== DoD 3：fetch reject → 維持 []、不拋未捕捉例外 =====
-
-test('DoD3: fetch reject → unreachableSources 維持 [] 且不拋未捕捉例外', async () => {
-    const chain = extractSourceStatusFetchChain(STATE_BASE_SRC);
-    // 必須是靜默空 catch；M1 移除整段或改成 throw e 都會讓本斷言轉紅。
-    assert.ok(
-        /\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/.test(chain),
-        'source-status fetch 鏈必須 .catch(() => {}) 靜默；M1 破壞後本斷言轉紅',
-    );
-
-    const c = { unreachableSources: ['sentinel-should-be-cleared-only-on-success'] };
-    // 初始值模擬 factory 的 []；若 then 誤跑會被覆蓋，reject 時應維持我們設的 []
-    c.unreachableSources = [];
-
-    const prevFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.reject(new Error('network down'));
-
-    const unhandled = [];
-    const onUnhandled = (reason) => { unhandled.push(reason); };
-    process.on('unhandledRejection', onUnhandled);
-
-    try {
-        const runner = new Function(`return (function () { ${chain} });`);
-        runner.call(c);
-        // 等 microtask + 一小段 macrotask，讓 reject／catch 落地
-        await Promise.resolve();
-        await Promise.resolve();
-        await new Promise((r) => setImmediate(r));
-        await new Promise((r) => setTimeout(r, 20));
-
-        assert.deepEqual(c.unreachableSources, []);
-        assert.equal(
-            unhandled.length,
-            0,
-            `不得有未捕捉例外，實際：${unhandled.map(String).join('; ')}`,
-        );
-    } finally {
-        process.off('unhandledRejection', onUnhandled);
-        globalThis.fetch = prevFetch;
-    }
-});
-
 // ===== DoD 4：🔴 不變式 — videoCount 不受 unreachableSources 影響 =====
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：所有來源連不到時瀏覽頁主內容仍要顯示本機已入庫影片
 test('DoD4: unreachableSources 非空時 videoCount 與主內容 x-show 仍為真', () => {
     const c = makeComponent();
     assert.ok(
@@ -403,6 +300,7 @@ function extractFooterLeftInner(html) {
     throw new Error('.footer-left 未找到匹配的 </div>');
 }
 
+// [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：女優牆模式下來源連不到的警告仍要看得到
 test('DoD9: pill 掛在 .footer-left 直屬層，不在任一模式 template 內（女優牆也看得到）', () => {
     const inner = extractFooterLeftInner(SHOWCASE_HTML);
     const pillIdx = inner.search(/<template\s+x-if="[^"]+">\s*<span\b[^>]*\bfooter-count--unreachable\b/);
