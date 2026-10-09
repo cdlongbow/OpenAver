@@ -273,51 +273,6 @@ test('全庫產品碼無 clearSearch 字面殘留（state-base / state-videos / 
 
 // ===== 結構：五個 $watch + init 共用 _hasActiveFilterForCurrentTab；$watch('showFavoriteActresses') 存在 =====
 
-test('state-base.js：$watch(search/actressSearch/pills/actressPills/showFavoriteActresses) 與 init sync 皆呼叫 _hasActiveFilterForCurrentTab', () => {
-    assert.ok(
-        /\$watch\(\s*['"]search['"]/.test(STATE_BASE_SRC),
-        "必須有 $watch('search')",
-    );
-    assert.ok(
-        /\$watch\(\s*['"]actressSearch['"]/.test(STATE_BASE_SRC),
-        "必須有 $watch('actressSearch')",
-    );
-    // 突變自驗 #3 的錨點：僅 pills 變更時也要更新 showcaseHasSearch
-    assert.ok(
-        /\$watch\(\s*['"]pills['"]/.test(STATE_BASE_SRC),
-        "必須有 $watch('pills')（僅 pills 變更時 predicate 才會更新）",
-    );
-    // 116a-T2：actressPills watcher（CD-116a-2d）
-    assert.ok(
-        /\$watch\(\s*['"]actressPills['"]/.test(STATE_BASE_SRC),
-        "必須有 $watch('actressPills')",
-    );
-    // 129-T1a：切分頁本身也要重算（切分頁不會改動四個搜尋欄位）
-    assert.ok(
-        /\$watch\(\s*['"]showFavoriteActresses['"]/.test(STATE_BASE_SRC),
-        "必須有 $watch('showFavoriteActresses')",
-    );
-
-    // 六次寫入 store 都必須經 _hasActiveFilterForCurrentTab（不是各自重寫兩欄位算式）
-    const storeAssigns = STATE_BASE_SRC.match(
-        /Alpine\.store\('ui'\)\.showcaseHasSearch\s*=\s*this\._hasActiveFilterForCurrentTab\(\)/g,
-    ) || [];
-    assert.equal(
-        storeAssigns.length,
-        6,
-        `預期 5 個 $watch + 1 次 init sync = 6 次，實際 ${storeAssigns.length}`,
-    );
-
-    // 舊兩欄位字面不得再出現於 showcaseHasSearch 賦值（scroll handler 的不同語意不在此鎖）
-    assert.equal(
-        STATE_BASE_SRC.includes(
-            "Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')",
-        ),
-        false,
-        'init sync 不得再使用舊兩欄位字面',
-    );
-});
-
 test('_hasActiveFilterForCurrentTab 函式體含 pills.length 與 showFavoriteActresses（分頁化真的落地）', () => {
     // 錨定方法定義（不是 this._hasActiveFilterForCurrentTab() 呼叫點）
     const defRe = /_hasActiveFilterForCurrentTab\s*\(\s*\)\s*\{/;
@@ -378,33 +333,5 @@ test('行動版捲動自動收合守衛用 _hasActiveFilterForCurrentTab()，不
         /this\.search\s*!==\s*''\s*\|\|\s*this\.actressSearch\s*!==\s*''/.test(code),
         false,
         '_scrollHandler 不得再用舊的兩欄位字面（漏掉 pills）',
-    );
-});
-
-// ===== showcase.html 接線 =====
-
-test('showcase.html：window listener 與搜尋列清除鈕皆呼叫 clearAllFilters', () => {
-    assert.ok(
-        /x-on:showcase:clear-search\.window="clearAllFilters\(\)"/.test(SHOWCASE_HTML)
-            || /@showcase:clear-search\.window="clearAllFilters\(\)"/.test(SHOWCASE_HTML),
-        'window listener 必須呼叫 clearAllFilters()',
-    );
-    assert.ok(
-        /showcase:clear-search/.test(SHOWCASE_HTML),
-        '事件名 showcase:clear-search 必須維持（base.html dispatch 端不改）',
-    );
-    assert.ok(
-        /x-show="\$store\.ui\.showcaseHasSearch"/.test(SHOWCASE_HTML),
-        '搜尋列清除鈕 x-show 必須讀 $store.ui.showcaseHasSearch',
-    );
-    assert.ok(
-        /@click="clearAllFilters\(\)"/.test(SHOWCASE_HTML),
-        '搜尋列清除鈕 @click 必須呼叫 clearAllFilters()',
-    );
-    // 舊的模式分流 inline 邏輯不得殘留
-    assert.equal(
-        SHOWCASE_HTML.includes('onActressSearchChange()') && SHOWCASE_HTML.includes("actressSearch = ''"),
-        false,
-        '搜尋列清除鈕不得再 inline 分流清 actressSearch',
     );
 });

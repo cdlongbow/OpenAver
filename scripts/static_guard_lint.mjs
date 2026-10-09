@@ -8887,6 +8887,33 @@ const RULES = [
     pairs: [[0, 2], [1, 2]],
     note: '[lint-guard 162e-CD7_alias_before_apply] 使用者重新進入影片牆（上次掛著別名比對的 pill）→ 若第一次篩選早於別名表載入，pill 以未展開的別名比對 → 牆上少片或空牆且沒有任何錯誤提示 → 必須手動重整 — 遷自 pill-match.test.mjs' },
 
+  // ---- 162e：pill-clear ----
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', stripLineComments: true,
+    pattern: [
+      /\$watch\(\s*['"]search['"]/,
+      /\$watch\(\s*['"]actressSearch['"]/,
+      /\$watch\(\s*['"]pills['"]/,
+      /\$watch\(\s*['"]actressPills['"]/,
+      /\$watch\(\s*['"]showFavoriteActresses['"]/,
+    ],
+    note: '[lint-guard 162e-ClearBtn_watch_wiring] 使用者（手機）只加 pill、或在影片／女優分頁間切換 → navbar 的清除 ✕ 沒有跟著出現或消失 → 想一鍵清掉做不到，或按了 ✕ 什麼都沒清，只能逐枚點掉 pill — 遷自 pill-clear.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', count: 6,
+    pattern: /Alpine\.store\('ui'\)\.showcaseHasSearch\s*=\s*this\._hasActiveFilterForCurrentTab\(\)/,
+    note: '[lint-guard 162e-ClearBtn_watch_wiring] 使用者（手機）只加 pill、或在影片／女優分頁間切換 → navbar 的清除 ✕ 沒有跟著出現或消失（五個 $watch＋init sync 共 6 次寫入須恰 6 次；逐字鏡射舊 raw count，不剝註解） — 遷自 pill-clear.test.mjs' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'forbidden-string',
+    pattern: "Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')",
+    note: '[lint-guard 162e-ClearBtn_watch_wiring] 使用者只加 pill 時 navbar 清除 ✕ 不出現 — init sync 不得再用舊兩欄位算式（漏掉 pills） — 遷自 pill-clear.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      /(?<![\w:-])(?:@|x-on:)showcase:clear-search\.window="clearAllFilters\(\)"/,
+      /(?<![\w:-])@click="clearAllFilters\(\)"/,
+      /(?<![\w:-])x-show="\$store\.ui\.showcaseHasSearch"/,
+    ],
+    note: '[lint-guard 162e-ClearBtn_clearAllFilters] 使用者按搜尋列或 navbar 的清除 ✕ → 沒有任何反應（事件沒人接或鈕沒接到 clearAllFilters）→ 只能逐枚點掉 pill、手動清字 — 遷自 pill-clear.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: /^(?=[\s\S]*onActressSearchChange\(\))(?=[\s\S]*actressSearch = '')/,
+    note: '[lint-guard 162e-ClearBtn_clearAllFilters] 使用者按搜尋列清除 ✕ → 不得再 inline 分流清 actressSearch（onActressSearchChange() 與 actressSearch = \'\' 同時存在即違規），否則 pill 與文字清不乾淨 — 遷自 pill-clear.test.mjs' },
+
 ];
 
 // ---- helpers ----
