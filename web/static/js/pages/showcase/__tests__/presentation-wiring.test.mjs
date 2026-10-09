@@ -310,3 +310,14 @@ test('源碼：新鈕 x-show 同時含 !showTableList 與 !_isNarrow，四態可
         '窄＋旗標開 → 新鈕不可見',
     );
 });
+
+// [lint-guard: node-justified] 162e 暫留：T4 實剪回復——舊斷言以 attrs.includes 接受任一引號形式，required regex 只認雙引號會誤擋合法單引號 @click；同單位已修一輪，依 CD-162e-17 回復
+test('源碼：新鈕 @click 落到 selectPresentation(', () => {
+    const menu = extractModeMenu(SHOWCASE_HTML);
+    const btn = extractShapeToggleButton(menu);
+    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
+    assert.ok(
+        /@click="[^"]*selectPresentation\(/.test(btn.attrs) || btn.attrs.includes('selectPresentation('),
+        '新鈕 @click 必須落到 selectPresentation(',
+    );
+});
