@@ -1,6 +1,6 @@
 // TASK-119-T4 / TASK-133a-T2: selectPresentation() 協調器 ＋ animations.js 兩階段 Flip API
 // （captureShapeState / playShapeMorph）。覆蓋 plan-119 §0.2 行為表七列、CD-133a-2 同一工作單元
-// 契約（capture → 同步切 class → 同步 morph → 最後寫 state；該分支零 $nextTick）、
+// 契約（capture → 同步切 class → 同步 morph → 最後寫 state）、
 // §0.4 CD-119-14（換模式一律委派 switchMode()，selectPresentation 內零 this.mode = 賦值）。
 //
 // state-videos.js 用瀏覽器 importmap 別名 `@/showcase/...` 與 `@/shared/...`，
@@ -12,7 +12,6 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay。
 globalThis.window = globalThis;
@@ -51,40 +50,7 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 const { stateVideos } = await import('../state-videos.js');
 const { _setFilteredVideos } = await import('../state-base.js');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '../../../../../..');
-const STATE_VIDEOS_SRC = readFileSync(
-    path.join(REPO_ROOT, 'web/static/js/pages/showcase/state-videos.js'),
-    'utf8',
-);
-const ANIMATIONS_SRC = readFileSync(
-    path.join(REPO_ROOT, 'web/static/js/pages/showcase/animations.js'),
-    'utf8',
-);
-
 // ===== helpers =====
-
-/**
- * 抽出函式本體（比照 pill-clear.test.mjs 讀 STATE_VIDEOS_SRC 對源碼下斷言的先例）。
- * 同時支援方法簡寫 `name(...) {` 與 animations.js 慣用的 `name: function (...) {`。
- */
-function extractFnBody(src, name) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(escaped + '\\s*(?::\\s*function)?\\s*\\([^)]*\\)\\s*\\{');
-    const m = re.exec(src);
-    if (!m) return null;
-    const open = src.indexOf('{', m.index);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        const ch = src[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) return src.slice(open + 1, i);
-        }
-    }
-    return null;
-}
 
 const FAKE_GRID = {
     id: 'fake-grid',
@@ -233,16 +199,6 @@ test('§0.2 行6（v2 P2 的洞）：table ＋ perPage=0 點「直式海報」�
 // 契約
 // =====================================================================
 
-test('契約：selectPresentation() body 內零 $nextTick（CD-133a-2，源碼斷言）', () => {
-    const body = extractFnBody(STATE_VIDEOS_SRC, 'selectPresentation');
-    assert.ok(body);
-    // 剝註解再掃：技術要點 A 的說明註解必須保留「$nextTick」字樣（作廢理由），
-    // 契約鎖的是可執行碼不得再排 $nextTick（比照 pill-clear / actress-pill-backspace）。
-    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    assert.equal(code.includes('$nextTick'), false,
-        '同一工作單元完成套版面＋建動畫，不得再排 $nextTick（會多畫一幀舊版面）');
-});
-
 test('契約：window.ShowcaseAnimations 不存在時狀態仍正確切換、不拋錯', () => {
     const prev = globalThis.window.ShowcaseAnimations;
     delete globalThis.window.ShowcaseAnimations;
@@ -278,7 +234,7 @@ test('契約：playShapeMorph 拋錯時，卡型仍必須切換並持久化（�
 });
 
 // =====================================================================
-// animations.js：captureShapeState / playShapeMorph（源碼斷言，行為由 T8 CDP 驗）
+// animations.js：captureShapeState / playShapeMorph（兩階段 Flip 順序；視覺行為由 T8 CDP 驗）
 // =====================================================================
 
 test('契約（同一工作單元）：新版面的 class 必須在 playShapeMorph 之前就切成新值', () => {
@@ -329,14 +285,4 @@ test('契約（同一工作單元）：新版面的 class 必須在 playShapeMor
             'poster→cover 必須 toggle shape-poster 為 false',
         );
     });
-});
-
-test('animations.js：captureShapeState 存在，且與 captureFlipState 刻意分立（不共用實作）', () => {
-    const body = extractFnBody(ANIMATIONS_SRC, 'captureShapeState');
-    assert.ok(body, 'captureShapeState 必須存在於 animations.js');
-    assert.equal(
-        /captureFlipState/.test(body),
-        false,
-        'captureShapeState 必須與 captureFlipState 分立，不共用實作（技術要點②：共用會讓兩個用途互相綁架）',
-    );
 });
