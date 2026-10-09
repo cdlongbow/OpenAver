@@ -497,3 +497,22 @@ def test_guard_wrapper_direct_call_keyword_arg_marker_exempts():
         "    _db_upsert(repo, number, fs_path=fs_path_for_db, meta=meta)\n"
     )
     assert _scan_source(source) == []
+
+
+# --- 分支補回（PR #220）：獨立偵測分支各一格的表驅動聚合（原始碼逐字取自 437025cd 被刪 case） ---
+
+_BRANCH_RED_TABLE = (
+    (
+        "test_guard_catches_planted_violation_asyncio_to_thread_keyword_arg",
+        "async def bad():\n"
+        "    bad_var = uri_to_local_fs_path(uri, path_mappings)\n"
+        "    allowed = await asyncio.to_thread(_check_cover_path, fs_path=bad_var)\n",
+    ),
+)
+
+
+def test_db_key_branch_red_table():
+    """紅表：每個獨立偵測分支一格，必須全部被 _scan_source 抓到；一次列出漏網 label。"""
+    missed = [label for label, source in _BRANCH_RED_TABLE if _scan_source(source) == []]
+    assert not missed, f"未被偵測到的紅案例：{missed}"
+

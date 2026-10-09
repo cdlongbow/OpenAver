@@ -527,3 +527,106 @@ def test_same_method_name_in_another_class_is_not_covered(tmp_path):
     assert _violations(f, rel="core/metatube/client.py") == [(3, "logger")], (
         "同名 method 位於不同 class 時不得命中豁免"
     )
+
+
+# ---------------------------------------------------------------------------
+# 偵測分支聚合表（PR#220：A 類瘦身後，每個獨立偵測分支至少留一個紅／綠案例）
+# ---------------------------------------------------------------------------
+# 逐字取自 437025cd 被刪的 case；`rel=None` ＝ 合成檔（帳本不命中）。
+# 一條分支一格；一次跑完收集漏網的 label，不在第一個失敗就中斷。
+
+_BRANCH_RED_TABLE = (
+    ('屬性 self._base_url 進 logger', None,                     # Attribute 不在 SAFE_ATTRS
+     'logger.debug("GET %s", self._base_url)'),
+    ('f-string 內插', None,                                    # JoinedStr
+     'logger.info(f"probing {base_url}")'),
+    ('原始 url 進例外訊息', None,                              # _is_exception_call sink
+     'raise MetatubeAuthError(f"auth failed for {url}")'),
+    ('字串相加', None,                                         # BinOp
+     'logger.info("at " + url)'),
+    ('keyword 引數', None,                                     # keyword 掃描路徑
+     'logger.info("x", extra=url)'),
+    ('一跳改名（round-1 的繞過）', None,                       # provenance：RHS 不安全
+     'target = self._base_url\nlogger.warning("%s", target)'),
+    ('多跳改名鏈', None,                                       # provenance 多跳收斂迴圈
+     'a = self._base_url\nb = a\nc = b\nlogger.info(c)'),
+    ('.format() 插值', None,                                   # Call 其餘分支
+     'logger.warning("target={}".format(url))'),
+    ('放進 list', None,                                        # 容器落到最終 return False
+     'logger.info("x", extra=[url])'),
+    ('tuple unpack 來的名字（_assign_key 不認 → 不安全）', None,   # _local_bindings "other"
+     'a, b = self._base_url, 1\nlogger.info("%s", a)'),
+    ('登記為參數的名字改用指派（綁定種類不符 → 豁免失效）',    # entry[0] == kind
+     "core/metatube/client.py",
+     'class MetatubeHttpClient:\n    def _get_data(self):\n'
+     '        path = self._base_url\n        logger.warning("%s", path)'),
+    ('帳本名字被拿去接屬性（other.path 不該因帳本而放行）', None,  # Attribute 獨立 SAFE_ATTRS
+     'logger.warning("%s", other.path)'),
+    ('內層 def 遮蔽外層已證安全的同名變數', None,              # inherited 遮蔽
+     'def outer():\n    w = redact_metatube_url(base_url)\n'
+     '    def inner(w):\n        logger.info("%s", w)'),
+)
+
+_BRANCH_GREEN_TABLE = (
+    # 其餘放行分支（Constant／SAFE_ATTRS／list keys／f-string）被真掃描 4 檔承接，
+    # 改壞即紅（證偽實測），不重複補；此格是真掃描碰不到的 sink 判定。
+    ('非 logger 物件的同名方法', None,                         # _is_log_call False
+     'tracker.warning(url)'),
+)
+
+
+def test_credential_log_branch_red_table(tmp_path):
+    """每個獨立「判紅」分支至少一格；漏網者一次列出。"""
+    missed = []
+    for label, rel, src in _BRANCH_RED_TABLE:
+        f = tmp_path / "m.py"
+        f.write_text(src, encoding="utf-8")
+        if not _violations(f, rel=rel):
+            missed.append(label)
+    assert not missed, f"應紅卻沒抓到（fail-closed 破功）：{missed}"
+
+
+def test_credential_log_branch_green_table(tmp_path):
+    """每個獨立「放行」分支至少一格；誤報者一次列出。"""
+    overreached = []
+    for label, rel, src in _BRANCH_GREEN_TABLE:
+        f = tmp_path / "m.py"
+        f.write_text(src, encoding="utf-8")
+        if _violations(f, rel=rel):
+            overreached.append(label)
+    assert not overreached, f"合法寫法被誤報：{overreached}"
+
+
+def test_provenance_scope_does_not_leak_across_functions(tmp_path):
+    """兩個函式用同一個變數名，一邊可證安全一邊不可——只能紅不可證的那一邊（:7）。"""
+    src = (
+        "def safe():\n"
+        "    w = redact_metatube_url(base_url)\n"
+        "    logger.info('%s', w)\n"          # :3 —— 不得紅
+        "\n"
+        "def leaky():\n"
+        "    w = self._base_url\n"
+        "    logger.info('%s', w)\n"          # :7 —— 必須紅
+    )
+    f = tmp_path / "m.py"
+    f.write_text(src, encoding="utf-8")
+    assert _violations(f) == [(7, "logger")], (
+        "應該只紅 leaky() 那一行（:7）；連 :3 一起紅＝provenance 外溢誤傷，"
+        "完全不紅＝安全那邊把不安全的洗白了"
+    )
+
+
+def test_partially_safe_name_is_not_safe(tmp_path):
+    """同一個名字有兩個指派、只有一個可證安全 → 整體不安全（all，不是 any）。"""
+    src = (
+        "def f(flag):\n"
+        "    w = redact_metatube_url(base_url)\n"
+        "    if flag:\n"
+        "        w = self._base_url\n"
+        "    logger.info('%s', w)\n"          # :5
+    )
+    f = tmp_path / "m.py"
+    f.write_text(src, encoding="utf-8")
+    assert _violations(f) == [(5, "logger")], (
+        "只要有一個指派證不出安全，這個名字就不該安全"
+    )

@@ -977,3 +977,76 @@ class TestPerFunctionIndependence:
                     f"（status='ok'），實際 status={status} resolved={resolved}"
                 )
         assert failures == [], "\n".join(failures)
+
+
+# ============================================================
+# 分支補回（PR #220）：獨立偵測分支各一格的表驅動聚合紅表
+# 元素 = (label, 合成原始碼, 期望 (reads, delegates, policy status))；
+# 原始碼逐字取自 437025cd 被刪的 case。
+# ============================================================
+
+_BRANCH_RED_TABLE = (
+    ("getmtime Attribute 分支：os.path.getmtime(...) 繞過", _SYNTH_IMPORTS + """
+import os
+
+
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    return os.path.getmtime(entry)
+""", (1, 0, "ok")),
+    ("getmtime Name 分支：裸名 getmtime(...) 繞過", _SYNTH_IMPORTS + """
+from os.path import getmtime
+
+
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    return getmtime(entry)
+""", (1, 0, "ok")),
+    ("import 別名（alias.asname）", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    from os import sep as _NFO_MTIME_POLICY
+    return nfo_mtime_or_none(entry)
+""", (0, 1, "multiple")),
+    ("except 別名（ExceptHandler.name）", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    try:
+        pass
+    except OSError as _NFO_MTIME_POLICY:
+        pass
+    return nfo_mtime_or_none(entry)
+""", (0, 1, "multiple")),
+    ("match capture（MatchAs.name）", _SYNTH_IMPORTS + """
+def consumer(entry, subject):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    match subject:
+        case _NFO_MTIME_POLICY:
+            pass
+    return nfo_mtime_or_none(entry)
+""", (0, 1, "multiple")),
+    ("巢狀 def 同名遮蔽（FunctionDef.name）", _SYNTH_IMPORTS + """
+def consumer(entry):
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+
+    def _NFO_MTIME_POLICY():
+        return None
+
+    return nfo_mtime_or_none(entry)
+""", (0, 1, "multiple")),
+    ("零宣告（status=none）", _SYNTH_IMPORTS + """
+def consumer(entry):
+    return nfo_mtime_or_none(entry)
+""", (0, 1, "none")),
+)
+
+
+def test_nfo_stat_branch_red_table():
+    """每個獨立偵測分支至少一格；跑完全部案例，一次列出所有沒被抓到的 label。"""
+    missed = []
+    for label, src, expected in _BRANCH_RED_TABLE:
+        reads, delegates, policy = _counts_for_source(src)
+        actual = (reads, delegates, policy[0])
+        if actual != expected:
+            missed.append(f"{label}: expected {expected}, got {actual}")
+    assert not missed, f"未被偵測到的分支：{missed}"

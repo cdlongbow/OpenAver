@@ -356,6 +356,40 @@ def test_pip_installs_command_level_parsing(run_scalar, tool, expected_versions,
     assert installs.unparsed == expected_unparsed
 
 
+# ── 分支補回（PR #220）：`_pip_installs` 各獨立分支一格的表驅動聚合 ───────────────
+# 元素 = (label, run_scalar, tool, expected_versions, expected_unparsed)，
+# 內容逐字取自 437025cd 被刪的 param（label = 原 pytest.param id）。
+_PIP_INSTALLS_BRANCH_TABLE = (
+    ("shell-comment-is-not-a-command",
+     "pip install ruff\n# legacy: pip install ruff==0.15.17\n", "ruff", [None], []),
+    ("trailing-comment-decoy-must-not-be-parsed-as-arg",
+     "pip install ruff==0.15.17  # decoy: ruff==9.9.9\n", "ruff", ["0.15.17"], []),
+    ("pinned-then-unpinned-overrides",
+     "pip install ruff==0.15.17\npip install ruff\n", "ruff", ["0.15.17", None], []),
+    ("unpinned-hidden-in-shell-loop",
+     "pip install ruff==0.15.17\nfor i in 1; do pip install ruff; done\n",
+     "ruff", ["0.15.17", None], []),
+    ("drifted-pin-hidden-in-shell-conditional",
+     'pip install ruff==0.15.17\nif [ "$X" = "1" ]; then pip install ruff==9.9.9; fi\n',
+     "ruff", ["0.15.17", "9.9.9"], []),
+    ("dotted-pip-interpreter-is-recognized",
+     "pip install ruff==0.15.17\npip3.12 install ruff\n", "ruff", ["0.15.17", None], []),
+    ("dotted-python-m-pip-is-recognized",
+     "pip install ruff==0.15.17\npython3.12 -m pip install ruff==9.9.9\n",
+     "ruff", ["0.15.17", "9.9.9"], []),
+)
+
+
+def test_pip_installs_branch_table():
+    """每個獨立解析分支一格；跑完全部案例，一次列出所有結果不符期望的 label。"""
+    missed = []
+    for label, run_scalar, tool, expected_versions, expected_unparsed in _PIP_INSTALLS_BRANCH_TABLE:
+        installs = _pip_installs({"steps": [{"run": run_scalar}]}, tool)
+        if installs.versions != expected_versions or installs.unparsed != expected_unparsed:
+            missed.append(label)
+    assert not missed, f"解析結果不符的分支：{missed}"
+
+
 # ── exact-pin 守衛（TASK-79-T6）─────────────────────────────────────────────
 # 兩份 requirements 必須 exact `==` pin（綠色軟體可重現 build：同 git tag = 同 ZIP）。
 # float floor（`>=` 等）→ pip 抓最新 → 不同機器/時間建出不同依賴樹。

@@ -332,3 +332,35 @@ def test_watched_functions_cover_exactly_the_two_named_functions():
         ("core/access_auth.py", "set_auth"),
         ("web/routers/access.py", "update_access_settings"),
     }
+
+
+# ---------------------------------------------------------------------------
+# 分支補回（PR #220）：表驅動聚合。原始碼逐字取自 437025cd 被刪 case；
+# 標 [新增] 者為基準版沒有的 `request.pin` matcher 放行格。
+# 元素 = (label, 合成原始碼, 掃描函式)
+# ---------------------------------------------------------------------------
+
+_GREEN_BRANCH_TABLE = (
+    (
+        "test_nested_def_boundary_is_not_scanned",
+        "def _helper():\n"
+        "    return snapshot().pin == pin\n"
+        "_helper()\n",
+        _violations_set_auth,
+    ),
+    (
+        "[新增] request_pin_matcher_ignores_other_receiver",
+        "if stored.pin == stored_pin:\n    return",
+        _violations_update_access_settings,
+    ),
+)
+
+
+def test_pin_write_branch_green_table():
+    """綠表：每個放行分支一格，不得被誤抓；一次列出被誤抓的 label。"""
+    flagged = [
+        f"{label}: {hits}"
+        for label, src, scan in _GREEN_BRANCH_TABLE
+        if (hits := scan(src))
+    ]
+    assert not flagged, f"被誤抓的綠案例：{flagged}"

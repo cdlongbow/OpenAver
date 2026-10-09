@@ -731,6 +731,184 @@ def test_matrix_green_cases(case_id, source):
     )
 
 
+# 162d PR#220：基準版（437025cd）被刪的 RED/GREEN 表中，現存單例測試走不到的
+# 獨立偵測分支，改為表驅動聚合（不 parametrize，收集全部漏網／誤報 label 後一次 assert）。
+# 原始碼逐字取自基準版；label 沿用基準版 case id。
+_BRANCH_RED_TABLE = (
+    # ImportFrom 裸名（callable_bindings 分支）
+    ("RED-5", "from os import replace\nreplace(a, b)\n"),
+    # ImportFrom asname（`a.asname or a.name` 的 asname 側）
+    ("RED-6", "from os import replace as atomic_replace\natomic_replace(a, b)\n"),
+    # dotted import 取頂層（split(".", 1)[0] 分支）
+    ("RED-13", "import os.path\nos.replace(a, b)\n"),
+    # global 宣告：跳過中間層回 module（root 解析）
+    (
+        "RED-26",
+        "import tempfile as x\n"
+        "def outer():\n"
+        "    import os as x\n"
+        "    def inner():\n"
+        "        global x\n"
+        "        x.mkstemp()\n"
+        "    return inner\n",
+    ),
+    # nonlocal 解析到最近 enclosing function（不是 root）
+    (
+        "RED-28",
+        "import json as x\n"
+        "def outer():\n"
+        "    import tempfile as x\n"
+        "    def inner():\n"
+        "        nonlocal x\n"
+        "        x.mkstemp()\n"
+        "    return inner\n",
+    ),
+    # comprehension for-target 不外洩（ListComp / SetComp / DictComp / GeneratorExp）
+    (
+        "RED-30",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    values = [x for x in ()]\n"
+        "    x.replace(a, b)\n"
+        "    return values\n",
+    ),
+    (
+        "RED-32",
+        "import tempfile as x\n"
+        "def f():\n"
+        "    s = {x for x in ()}\n"
+        "    return x.mkstemp()\n",
+    ),
+    (
+        "RED-33",
+        "import tempfile as x\n"
+        "def f():\n"
+        "    d = {x: 1 for x in ()}\n"
+        "    return x.mkstemp()\n",
+    ),
+    (
+        "RED-34",
+        "import tempfile as x\n"
+        "def f():\n"
+        "    g = (x for x in ())\n"
+        "    return x.mkstemp()\n",
+    ),
+    # comprehension 第一個 iter 在外層求值
+    (
+        "RED-35",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    return [x for x in x.replace(a, b)]\n",
+    ),
+    # comprehension 內 lambda 的 walrus 不外洩
+    (
+        "RED-37",
+        "import os as x\n"
+        "def f(items, a, b):\n"
+        "    callbacks = [lambda value: (x := value) for _ in items]\n"
+        "    return x.replace(a, b)\n",
+    ),
+    # lambda 參數預設值在外層求值
+    (
+        "RED-40",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    callback = lambda x=x.replace(a, b): x\n"
+        "    return callback\n",
+    ),
+    # FunctionDef 參數預設值在外層求值
+    (
+        "RED-41",
+        "import os\n"
+        "def f(a, b):\n"
+        "    def callback(os=os.replace(a, b)):\n"
+        "        return os\n"
+        "    return callback\n",
+    ),
+    # 參數 annotation 在外層求值
+    (
+        "RED-43",
+        "import os\n"
+        "def f(a, b):\n"
+        "    def inner(os: os.replace(a, b)):\n"
+        "        return os\n"
+        "    return inner\n",
+    ),
+)
+
+_BRANCH_GREEN_TABLE = (
+    # receiver 解析為 os 但 (os, mkstemp) 不在 PAIRS
+    ("GREEN-11", "import os as tmp\ntmp.mkstemp()\n"),
+    # import os.path as p：p 綁完整 dotted module，不進 module_bindings
+    ("GREEN-15", "import os.path as p\np.replace(a, b)\n"),
+    # 參數遮蔽模組層 alias
+    ("GREEN-17", "import os as tmp\ndef unrelated(tmp): return tmp.replace('a','b')\n"),
+    # 區域變數賦值遮蔽模組層 import
+    (
+        "GREEN-19",
+        "import os\ndef f(s):\n    os = s.strip()\n    return os.replace('a','b')\n",
+    ),
+    # global 宣告但 module 無該名：視為無 binding，不退回 inherited
+    (
+        "GREEN-29",
+        "def outer():\n"
+        "    import os as x\n"
+        "    def inner():\n"
+        "        global x\n"
+        "        x.replace(a, b)\n"
+        "    return inner\n",
+    ),
+    # comprehension 內使用自己的 target
+    (
+        "GREEN-31",
+        "import os as x\n"
+        "def f(items):\n"
+        "    return [x.replace('a','b') for x in items]\n",
+    ),
+    # PEP 572：comprehension 內 walrus 綁外層（單層／巢狀穿越／lambda 預設值）
+    (
+        "GREEN-36",
+        "import os as x\n"
+        "def f(items):\n"
+        "    vals = [(x := i) for i in items]\n"
+        "    return vals and x.replace('a', 'b')\n",
+    ),
+    (
+        "GREEN-38",
+        "import os as x\n"
+        "def f(rows):\n"
+        "    v = [[(x := c) for c in r] for r in rows]\n"
+        "    return v and x.replace('a', 'b')\n",
+    ),
+    (
+        "GREEN-39",
+        "import os as x\n"
+        "def f(items):\n"
+        "    cbs = [lambda v=(x := c): v for c in items]\n"
+        "    return cbs and x.replace('a', 'b')\n",
+    ),
+    # lambda body 內同名參數不得被拉到外層
+    (
+        "GREEN-42",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    return lambda x: x.replace(a, b)\n",
+    ),
+)
+
+
+def test_branch_red_table():
+    """每個獨立偵測分支至少一個紅案例：全部跑完再一次 assert（不在第一個漏網就中斷）。"""
+    missed = [label for label, src in _BRANCH_RED_TABLE if _violations_in_source(src) == []]
+    assert not missed, f"下列 RED 案例應偵測為違規，但守衛判為合法：{missed}"
+
+
+def test_branch_green_table():
+    """每個『合法寫法放行』分支至少一個綠案例：全部跑完再一次 assert。"""
+    false_pos = [label for label, src in _BRANCH_GREEN_TABLE if _violations_in_source(src) != []]
+    assert not false_pos, f"下列 GREEN 案例應為合法，但守衛誤報為違規：{false_pos}"
+
+
 # 16: 兩個不相關的函式各自用同一個 alias 名（tmp）匯入不同模組——初版扁平 dict
 #     版本會讓後定義的函式（helper）的 binding 覆蓋掉前一個（bad）的，導致 bad
 #     裡的違規被靜默吃掉、只剩 helper 那筆（review P1 復現形狀②，本卡最重要的

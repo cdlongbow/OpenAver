@@ -1050,3 +1050,92 @@ def test_dod3_does_not_flag_all_constant_containers(label, src):
     沒有這一組，上面那組「全部轉紅」用 `return True` 就能造假。
     """
     assert _dynamic_violations_in_source(src) == [], f"{label}：誤報"
+
+
+# ============================================================
+# 偵測分支聚合表（PR#220：A 類瘦身後，每個獨立偵測分支至少留一個紅／綠案例）
+# ============================================================
+# 逐字取自 437025cd 被刪的 case（label 沿用原 case id）；一次跑完收集漏網者，
+# 不在第一個失敗就中斷。只收「真掃描與保留案例都碰不到」的分支（證偽實測：
+# 改壞該分支後，改動前的測試檔仍全綠）；真掃描會抓到的分支不重複補。
+
+_T1_BRANCH_RED = (
+    ("T1-RED-3 list 字面", "X = ['javbus.com']\n"),
+    ("T1-RED-4 tuple 字面", "X = ('javbus.com',)\n"),
+    ("T1-RED-6 dict key", "X = {'cf.javfree.me': True}\n"),
+)
+
+_T2_BRANCH_RED = (
+    ("dotted 函式內使用（binding 沿 scope 繼承）",
+     "import core.metatube.state as X\ndef f():\n    return X.metatube_state.is_connected\n"),
+    ("dotted plain import（只綁頂層 core，靠最長前綴解析）",
+     "import core.metatube.state\nu = core.metatube.state.metatube_state.base_url\n"),
+)
+
+_T2_BRANCH_GREEN = (
+    ("T2-GREEN-33 Store 不掃（僅 Load）",
+     "from core.metatube.state import metatube_state\n"
+     "def f(v):\n"
+     "    metatube_state.base_url = v\n"),
+    ("T2-GREEN-34 參數遮蔽 import binding",
+     "from core.metatube.state import metatube_state\n"
+     "def f(metatube_state):\n"
+     "    return metatube_state.base_url\n"),
+    ("dotted 長得像但模組不對",
+     "import core.other.state as X\nu = X.metatube_state.base_url\n"),
+)
+
+_DOD3_BRANCH_RED = (
+    ("DOD3-RED-45 BitOr 聯集", "_X = A | B\n"),
+    ("DOD3-RED-46 BitAnd 交集", "_X = A & B\n"),
+    ("DOD3-RED-47 Add 串接", "_X = A + B\n"),
+    ("DOD3-RED-48 Sub 差集", "_X = A - B\n"),
+    ("DOD3-RED-49 SetComp", "_X = {h for h in hosts}\n"),
+    ("DOD3-RED-50 ListComp", "_X = [h for h in hosts]\n"),
+    ("DOD3-RED-51 DictComp", "_X = {k: v for k, v in pairs}\n"),
+    ("Dict value 為 Call", '_X = {"k": load_host()}\n'),
+    ("Dict key 為 Name", '_X = {HOST_KEY: "a.com"}\n'),
+)
+
+_DOD3_BRANCH_GREEN = (
+    ("空容器", '_X = {}\n'),
+)
+
+_DOMAIN_BRANCH_FALSE = (
+    "https://10.0.0.1/",   # scheme 包 IP 字面：bare 剝 scheme 後全數字
+)
+
+
+def test_tier1_branch_red_table():
+    missed = [label for label, src in _T1_BRANCH_RED
+              if not _tier1_violations_in_source(src)]
+    assert not missed, f"Tier 1 應紅卻沒抓到：{missed}"
+
+
+def test_tier2_branch_red_table():
+    missed = [label for label, src in _T2_BRANCH_RED
+              if not _tier2_violations_in_source(src)]
+    assert not missed, f"Tier 2 應紅卻沒抓到：{missed}"
+
+
+def test_tier2_branch_green_table():
+    overreached = [label for label, src in _T2_BRANCH_GREEN
+                   if _tier2_violations_in_source(src)]
+    assert not overreached, f"Tier 2 合法寫法被誤報：{overreached}"
+
+
+def test_dod3_branch_red_table():
+    missed = [label for label, src in _DOD3_BRANCH_RED
+              if not _dynamic_violations_in_source(src)]
+    assert not missed, f"DoD-3 應紅卻沒抓到：{missed}"
+
+
+def test_dod3_branch_green_table():
+    overreached = [label for label, src in _DOD3_BRANCH_GREEN
+                   if _dynamic_violations_in_source(src)]
+    assert not overreached, f"DoD-3 合法寫法被誤報：{overreached}"
+
+
+def test_domain_shaped_branch_table():
+    wrong = [v for v in _DOMAIN_BRANCH_FALSE if _is_domain_shaped(v) is not False]
+    assert not wrong, f"應判非 domain-shaped 卻判成 domain-shaped：{wrong}"
