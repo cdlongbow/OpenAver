@@ -863,6 +863,17 @@ _BRANCH_RED_TABLE = (
         "import os\ndef f(a, b):\n    global os\n    unrelated_local = 1\n    os.replace(a, b)\n    return unrelated_local\n",
     ),
     ("test_matrix_red_cases[RED-44]", "import os as x\ncb = lambda x=x.replace('a', 'b'): x\n"),
+    # global 宣告的裸名呼叫（call_map）：中間層把 replace 重綁成無害物，內層 global 後仍指 module 層 os.replace
+    (
+        "global_call_map[RED]",
+        "from os import replace\n"
+        "def outer():\n"
+        "    replace = print\n"
+        "    def inner(a, b):\n"
+        "        global replace\n"
+        "        replace(a, b)\n"
+        "    return inner\n",
+    ),
 )
 
 _BRANCH_GREEN_TABLE = (
@@ -935,6 +946,16 @@ _BRANCH_GREEN_TABLE = (
         "    def inner():\n"
         "        global x\n"
         "        x.mkstemp()\n"
+        "    return inner\n",
+    ),
+    # global 裸名呼叫：module 無該名，中間層的 os.replace 不可漏進內層
+    (
+        "global_call_map[GREEN]",
+        "def outer():\n"
+        "    from os import replace\n"
+        "    def inner(a, b):\n"
+        "        global replace\n"
+        "        replace(a, b)\n"
         "    return inner\n",
     ),
 )
