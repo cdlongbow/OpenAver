@@ -458,6 +458,7 @@ for (const { key, value } of I18N_KEYS) {
     });
 }
 
+// [lint-guard: node-justified] 162e 暫留：模糊二審未定（A：R1 不寫、處置留；B：R1 不寫、處置留；修 bug 來源 9d9986b0 不得刪，lint 無 JSON key 集查詢 kind 不搬）
 test('女優 footer / 空狀態模板引用的 showcase.* key 皆存在於 zh_TW', () => {
     // 從女優 footer + searchEmpty 分支抽出 t('showcase...')
     const chunks = [ACTRESS_FOOTER, ACTRESS_BLOCK];
