@@ -137,7 +137,7 @@ Comprehension 不可能包含 `import`/`global`/`nonlocal` 陳述式（Python �
 `async for` 沒有獨立的 `AsyncComprehension` 節點型別——`comprehension.
 is_async` 只是既有 `ListComp`/`SetComp`/`DictComp`/`GeneratorExp` 節點上
 `ast.comprehension` 的一個旗標，本節所有規則對 `async for` 一體適用，不需要
-額外分支（實測驗證見 RED-32~34 同族案例與自我複查案例，`async for` 的行為
+額外分支（曾以 `async for` 合成案例實測，`async for` 的行為
 與 `for` 完全一致）。class body 內的 comprehension 同理不需特殊處理：實測
 `class C: vals = [x for x in x.replace(1,2)]`（`x` 是模組層 alias）確實會
 呼叫到 `x.replace`，與本守衛判定一致，不屬於既有「class body import 對

@@ -618,13 +618,12 @@ _FULL_PARSE_NFO_LINES = {
 }
 
 
-def _build_full_parse_nfo(red_category: str = None, e3_tag: str = "user_tag") -> str:
-    """組出涵蓋全部八類 + E3 的合成 `parse_nfo` 殼。`red_category` 給定時，
-    該類換成手寫紅版，其餘七類維持委派版；`e3_tag` 覆蓋 E3 的字面引數，
-    用於白名單精確度 mutation。"""
+def _build_full_parse_nfo(e3_tag: str = "user_tag") -> str:
+    """組出涵蓋全部八類 + E3 的合成 `parse_nfo` 殼（八類皆委派版）；
+    `e3_tag` 覆蓋 E3 的字面引數，用於白名單精確度 mutation。"""
     lines = []
-    for category, (green_lines, red_lines) in _FULL_PARSE_NFO_LINES.items():
-        lines.extend(red_lines if category == red_category else green_lines)
+    for green_lines, _red_lines in _FULL_PARSE_NFO_LINES.values():
+        lines.extend(green_lines)
     e3_line = f"info.user_tags = [t.text.strip() for t in root.findall('{e3_tag}') if t.text]"
     lines.append(e3_line)
     body = "\n".join(f"        {line}" for line in lines)
