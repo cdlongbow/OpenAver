@@ -840,22 +840,11 @@ def test_dynamic_construction_assigned_to_module_level_name_is_rejected(py_file)
 # ============================================================
 
 _SHOULD_MATCH = [
-    "javbus.com",
-    "pics.dmm.co.jp",
-    "https://www.graphis.ne.jp/",
     "1pondo.tv",
-    "cf.javfree.me",
 ]
 
 _SHOULD_NOT_MATCH = [
-    "image/jpeg",  # 無點分 label（/ 不是 .）
-    ".jpg",  # 首字元為點，無左 label
-    "Mozilla/5.0 (Windows NT 10.0; Win64) AppleWebKit/537.36",  # 含空白
-    "依優先順序自動選擇",  # 無點
-    "metatube:FANZA",  # 無點
     "127.0.0.1",  # 純數字 label：plan 窮舉範例明列「刻意排除」（見 _is_domain_shaped ③）
-    "192.168.1.1",
-    "https://10.0.0.1/",
 ]
 
 
@@ -893,19 +882,6 @@ TIER1_RED_CASES = [
         "_ALLOWED_X = {'evil.example'}\n",
         "module-level domain-shaped set 必須紅（只掃函式體會全綠）",
     ),
-    # ② 同一函式體內兩個違規容器
-    (
-        2,
-        "def f():\n    a = {'evil.example'}\n    b = {'other.evil'}\n    return a, b\n",
-        "函式體內兩個違規容器都要抓到",
-    ),
-    # list / tuple / dict value / dict key
-    (3, "X = ['javbus.com']\n", "list 字面"),
-    (4, "X = ('javbus.com',)\n", "tuple 字面"),
-    (5, "X = {'h': 'pics.dmm.co.jp'}\n", "dict value"),
-    (6, "X = {'cf.javfree.me': True}\n", "dict key"),
-    (7, "X = {'https://www.graphis.ne.jp/'}\n", "scheme+host+/"),
-    (8, "X = {'1pondo.tv'}\n", "root domain"),
 ]
 
 TIER1_GREEN_CASES = [
@@ -915,22 +891,6 @@ TIER1_GREEN_CASES = [
         "REFERER_MAP = {'graphis': 'https://www.graphis.ne.jp/'}\n",
         "允許清單 REFERER_MAP",
     ),
-    # 非 domain-shaped
-    (11, "CONTENT_TYPE_MAP = {'image/jpeg': '.jpg'}\n", "MIME／副檔名不命中"),
-    (
-        12,
-        "_HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64)'}\n",
-        "含空白 UA 不命中",
-    ),
-    # 裸字面比較——結構上不掃 Compare（Opus 裁決 2）
-    (
-        13,
-        'def proxy_image(url):\n    if "javbus.com" in url:\n        return 1\n',
-        "裸字面比較不進容器掃描",
-    ),
-    # 非容器
-    (14, 'HOST = "javbus.com"\n', "單一 Constant 賦值不是容器"),
-    (15, "SAFE = re.compile(r'^[A-Za-z0-9._~-]+$')\n", "re.compile 引數不是容器"),
 ]
 
 # Tier 2 RED
@@ -945,33 +905,6 @@ TIER2_RED_CASES = [
         "    return None\n",
         "兩段式 is_connected + base_url 必須紅",
     ),
-    # 四種 alias 寫法
-    (
-        21,
-        "from core.metatube.state import metatube_state as state\n"
-        "def f():\n    return state.base_url\n",
-        "as state alias",
-    ),
-    (
-        22,
-        "from core.metatube.state import metatube_state as _mt_state\n"
-        "def f():\n    return _mt_state.is_connected\n",
-        "as _mt_state alias",
-    ),
-    (
-        23,
-        "from core.metatube.state import metatube_state as _mt_startup_state\n"
-        "def f():\n    return _mt_startup_state.base_url\n",
-        "as _mt_startup_state alias",
-    ),
-    # 函式內 import
-    (
-        24,
-        "def f():\n"
-        "    from core.metatube.state import metatube_state as _mt_state\n"
-        "    return _mt_state.is_connected\n",
-        "函式內 import binding",
-    ),
 ]
 
 TIER2_GREEN_CASES = [
@@ -983,74 +916,15 @@ TIER2_GREEN_CASES = [
         "    return metatube_state.connected_base_url()\n",
         "connected_base_url() Call 不命中",
     ),
-    # 其他物件的同名屬性
-    (
-        31,
-        "def f(request):\n    return request.base_url\n",
-        "request.base_url 不得誤傷",
-    ),
-    # self._base_url（T3b shim）——receiver 非 import binding；attr 名也不同
-    (
-        32,
-        "class _MetatubeShim:\n"
-        "    def __init__(self, base_url):\n"
-        "        self._base_url = base_url\n"
-        "    def map(self, info):\n"
-        "        return self._base_url\n",
-        "self._base_url 不命中",
-    ),
-    # Store 寫入不掃
-    (
-        33,
-        "from core.metatube.state import metatube_state\n"
-        "def f(v):\n"
-        "    metatube_state.base_url = v\n",
-        "Store 不掃（僅 Load）",
-    ),
-    # 參數遮蔽
-    (
-        34,
-        "from core.metatube.state import metatube_state\n"
-        "def f(metatube_state):\n"
-        "    return metatube_state.base_url\n",
-        "參數遮蔽 import binding",
-    ),
-    # 其他屬性
-    (
-        35,
-        "from core.metatube.state import metatube_state\n"
-        "def f():\n"
-        "    return metatube_state.token\n",
-        "token 不在禁令",
-    ),
 ]
 
 # DoD-3 RED / GREEN
 DOD3_RED_CASES = [
     (40, "_X = set(_load_hosts())\n", "集合建構子 set(...)"),
-    (41, "_X = list(hosts)\n", "list(...)"),
-    (42, "_X = frozenset(hosts)\n", "frozenset(...)"),
-    (43, "_X = dict(pairs)\n", "dict(...)"),
-    (44, "_X = tuple(hosts)\n", "tuple(...)"),
-    (45, "_X = A | B\n", "BitOr 聯集"),
-    (46, "_X = A & B\n", "BitAnd 交集"),
-    (47, "_X = A + B\n", "Add 串接"),
-    (48, "_X = A - B\n", "Sub 差集"),
-    (49, "_X = {h for h in hosts}\n", "SetComp"),
-    (50, "_X = [h for h in hosts]\n", "ListComp"),
-    (51, "_X = {k: v for k, v in pairs}\n", "DictComp"),
 ]
 
 DOD3_GREEN_CASES = [
-    # 裁決 1 反向：非集合建構子 Call 必須仍綠
-    (60, "_Y = SomeClass(hosts)\n", "非集合建構子 Call 不紅"),
     (61, "logger = get_logger(__name__)\n", "get_logger"),
-    (62, "router = APIRouter()\n", "APIRouter"),
-    (63, "SAFE = re.compile(r'x')\n", "re.compile"),
-    # Div 不在觸發集合（Path / "output"）
-    (64, 'GFRIENDS_DIR = Path(__file__).parent / "output"\n', "Path Div 不紅"),
-    # 字面容器本身不是「動態建構」——由 Tier 1 管
-    (65, "X = {'a': 1}\n", "字面 dict 不是動態建構"),
 ]
 
 
@@ -1082,22 +956,6 @@ class TestFalsifiabilityDemonstration:
             f"T1-GREEN-{case_id} 應綠（{reason}），但違規: {violations}"
         )
 
-    def test_two_containers_count_is_two(self):
-        """② 強化：同一函式兩個違規容器 → 命中次數恰為 2；只拿掉一處仍須紅。"""
-        both = (
-            "def f():\n"
-            "    a = {'evil.example'}\n"
-            "    b = {'other.evil'}\n"
-            "    return a, b\n"
-        )
-        one = (
-            "def f():\n"
-            "    a = {'evil.example'}\n"
-            "    return a\n"
-        )
-        assert len(_tier1_violations_in_source(both)) == 2
-        assert len(_tier1_violations_in_source(one)) == 1
-
     @pytest.mark.parametrize(
         "case_id,source,reason",
         TIER2_RED_CASES,
@@ -1120,19 +978,6 @@ class TestFalsifiabilityDemonstration:
             f"T2-GREEN-{case_id} 應綠（{reason}），但違規: {violations}"
         )
 
-    def test_registry_two_step_read_counts_two(self):
-        """③：兩次屬性讀 → 兩筆違規（is_connected + base_url）。"""
-        src = (
-            "from core.metatube.state import metatube_state\n"
-            "def proxy_dynamic_hosts():\n"
-            "    if metatube_state.is_connected:\n"
-            "        return metatube_state.base_url\n"
-            "    return None\n"
-        )
-        v = _tier2_violations_in_source(src)
-        attrs = sorted(x[3] for x in v)
-        assert attrs == ["base_url", "is_connected"]
-
     @pytest.mark.parametrize(
         "case_id,source,reason",
         DOD3_RED_CASES,
@@ -1154,6 +999,35 @@ class TestFalsifiabilityDemonstration:
         assert not violations, (
             f"DOD3-GREEN-{case_id} 應綠（{reason}），但違規: {violations}"
         )
+
+    def test_two_containers_count_is_two(self):
+        """② 強化：同一函式兩個違規容器 → 命中次數恰為 2；只拿掉一處仍須紅。"""
+        both = (
+            "def f():\n"
+            "    a = {'evil.example'}\n"
+            "    b = {'other.evil'}\n"
+            "    return a, b\n"
+        )
+        one = (
+            "def f():\n"
+            "    a = {'evil.example'}\n"
+            "    return a\n"
+        )
+        assert len(_tier1_violations_in_source(both)) == 2
+        assert len(_tier1_violations_in_source(one)) == 1
+
+    def test_registry_two_step_read_counts_two(self):
+        """③：兩次屬性讀 → 兩筆違規（is_connected + base_url）。"""
+        src = (
+            "from core.metatube.state import metatube_state\n"
+            "def proxy_dynamic_hosts():\n"
+            "    if metatube_state.is_connected:\n"
+            "        return metatube_state.base_url\n"
+            "    return None\n"
+        )
+        v = _tier2_violations_in_source(src)
+        attrs = sorted(x[3] for x in v)
+        assert attrs == ["base_url", "is_connected"]
 
     def test_anti_rot_allowlist_rename_shape(self):
         """④ 合成形：允許清單名字對不到命中容器 → anti-rot 語意（命中變違規）。
@@ -1180,28 +1054,16 @@ _TIER2_DOTTED_RED = [
     # 同 113d 對 `import os.path` 的處理方式」）。initial 實作只認 ImportFrom。
     ("import-as, module scope",
      "import core.metatube.state as X\nu = X.metatube_state.base_url\n"),
-    ("import-as, 函式內使用（binding 沿 scope 繼承）",
-     "import core.metatube.state as X\ndef f():\n    return X.metatube_state.is_connected\n"),
-    ("plain dotted import（只綁頂層 core，靠最長前綴解析）",
-     "import core.metatube.state\nu = core.metatube.state.metatube_state.base_url\n"),
 ]
 
 _TIER2_DOTTED_GREEN = [
-    # 別誤傷：這四種都**不是** metatube_state 的讀取
     ("alias 被區域變數遮蔽",
      "import core.metatube.state as X\ndef f():\n    X = object()\n    return X.metatube_state.base_url\n"),
-    ("其他物件的同名屬性",
-     "import requests\nu = requests.base_url\n"),
-    ("self 的私有屬性（T3b 的 _MetatubeShim._base_url 形狀）",
-     "class C:\n    def f(self):\n        return self.base_url\n"),
-    ("長得像但模組不對",
-     "import core.other.state as X\nu = X.metatube_state.base_url\n"),
 ]
 
 
 @pytest.mark.parametrize("label,src", _TIER2_DOTTED_RED, ids=[c[0] for c in _TIER2_DOTTED_RED])
 def test_tier2_detects_dotted_import_bindings(label, src):
-    """dotted `ast.Import` 的三種形狀都必須被解析到 metatube_state。"""
     assert _tier2_violations_in_source(src), f"{label}：dotted import 漏抓"
 
 
@@ -1213,12 +1075,6 @@ def test_tier2_dotted_support_does_not_overreach(label, src):
 
 _DOD3_NON_CONSTANT_RED = [
     ("Set 內含 Call", '_X = {load_host(), "a.com"}\n'),
-    ("List 內含 Name", '_X = ["a.com", EXTRA_HOST]\n'),
-    ("Tuple 內含 BinOp", '_X = ("a.com", "b" + ".com")\n'),
-    ("Dict value 為 Call", '_X = {"k": load_host()}\n'),
-    ("Dict key 為 Name", '_X = {HOST_KEY: "a.com"}\n'),
-    ("Dict **spread", '_X = {**OTHER, "k": "a.com"}\n'),
-    ("Set *spread", '_X = {*OTHER, "a.com"}\n'),
 ]
 
 
@@ -1237,8 +1093,6 @@ def test_dod3_flags_container_with_non_constant_elements(label, src):
 
 _DOD3_ALL_CONSTANT_GREEN = [
     ("全 Constant Dict（REFERER_MAP 形狀）", '_X = {"graphis": "https://www.graphis.ne.jp/"}\n'),
-    ("全 Constant Tuple", '_X = ("a", "b")\n'),
-    ("空容器", '_X = {}\n'),
 ]
 
 
@@ -1249,3 +1103,260 @@ def test_dod3_does_not_flag_all_constant_containers(label, src):
     沒有這一組，上面那組「全部轉紅」用 `return True` 就能造假。
     """
     assert _dynamic_violations_in_source(src) == [], f"{label}：誤報"
+
+
+# ============================================================
+# 偵測分支聚合表（PR#220：A 類瘦身後，每個獨立偵測分支至少留一個紅／綠案例）
+# ============================================================
+# 逐字取自 437025cd 被刪的 case（label 沿用原 case id）；一次跑完收集漏網者，
+# 不在第一個失敗就中斷。只收「真掃描與保留案例都碰不到」的分支（證偽實測：
+# 改壞該分支後，改動前的測試檔仍全綠）；真掃描會抓到的分支不重複補。
+
+_T1_BRANCH_RED = (
+    ('TestFalsifiabilityDemonstration::test_tier1_red[T1-RED-3]', "X = ['javbus.com']\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_red[T1-RED-4]', "X = ('javbus.com',)\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_red[T1-RED-6]', "X = {'cf.javfree.me': True}\n"),
+)
+
+_T2_BRANCH_RED = (
+    ('test_tier2_detects_dotted_import_bindings[import-as, 函式內使用（binding 沿 scope 繼承）]',
+     "import core.metatube.state as X\ndef f():\n    return X.metatube_state.is_connected\n"),
+    ('test_tier2_detects_dotted_import_bindings[plain dotted import（只綁頂層 core，靠最長前綴解析）]',
+     "import core.metatube.state\nu = core.metatube.state.metatube_state.base_url\n"),
+)
+
+_T2_BRANCH_GREEN = (
+    ('TestFalsifiabilityDemonstration::test_tier2_green[T2-GREEN-33]',
+     "from core.metatube.state import metatube_state\n"
+     "def f(v):\n"
+     "    metatube_state.base_url = v\n"),
+    ('TestFalsifiabilityDemonstration::test_tier2_green[T2-GREEN-34]',
+     "from core.metatube.state import metatube_state\n"
+     "def f(metatube_state):\n"
+     "    return metatube_state.base_url\n"),
+    ('test_tier2_dotted_support_does_not_overreach[長得像但模組不對]',
+     "import core.other.state as X\nu = X.metatube_state.base_url\n"),
+)
+
+_DOD3_BRANCH_RED = (
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-45]', "_X = A | B\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-46]', "_X = A & B\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-47]', "_X = A + B\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-48]', "_X = A - B\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-49]', "_X = {h for h in hosts}\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-50]', "_X = [h for h in hosts]\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-51]', "_X = {k: v for k, v in pairs}\n"),
+    ('test_dod3_flags_container_with_non_constant_elements[Dict value 為 Call]', '_X = {"k": load_host()}\n'),
+    ('test_dod3_flags_container_with_non_constant_elements[Dict key 為 Name]', '_X = {HOST_KEY: "a.com"}\n'),
+)
+
+_DOD3_BRANCH_GREEN = (
+    ('test_dod3_does_not_flag_all_constant_containers[空容器]', '_X = {}\n'),
+)
+
+_DOMAIN_BRANCH_FALSE = (
+    ("test_domain_shaped_negative['https://10.0.0.1/']", 'https://10.0.0.1/'),   # scheme 包 IP 字面：bare 剝 scheme 後全數字
+)
+
+
+_IH_CHECKERS = {
+    "t1": lambda: _tier1_violations_in_source,
+    "t2": lambda: _tier2_violations_in_source,
+    "dyn": lambda: _dynamic_violations_in_source,
+    "dom": lambda: _is_domain_shaped,
+}
+
+
+def _ih_row_failure(checker, mode, src):
+    """跑一列；回傳失敗訊息或 None（例外交給 _ih_failures 記成該列失敗）。"""
+    got = _IH_CHECKERS[checker]()(src)
+    if mode == "red":
+        return None if got else "應轉紅卻判綠"
+    if mode == "green":
+        return None if not got else f"應綠卻違規: {got}"
+    want = mode == "is_true"
+    return None if got is want else f"_is_domain_shaped 應為 {want}，實際 {got!r}"
+
+
+def _ih_failures(rows, checker, mode):
+    """rows ＝ (label, src)。每列各自 try/except，不短路、不吞成綠。"""
+    failures = []
+    for label, src in rows:
+        try:
+            msg = _ih_row_failure(checker, mode, src)
+        except Exception as exc:  # noqa: BLE001 — 記成該列失敗
+            msg = f"{type(exc).__name__} {exc}"
+        if msg:
+            failures.append(f"{label}: {msg}")
+    return failures
+
+
+def test_tier1_branch_red_table():
+    assert not (f := _ih_failures(_T1_BRANCH_RED, "t1", "red")), "Tier 1 應紅卻沒抓到：\n" + "\n".join(f)
+
+
+def test_tier2_branch_red_table():
+    assert not (f := _ih_failures(_T2_BRANCH_RED, "t2", "red")), "Tier 2 應紅卻沒抓到：\n" + "\n".join(f)
+
+
+def test_tier2_branch_green_table():
+    assert not (f := _ih_failures(_T2_BRANCH_GREEN, "t2", "green")), "Tier 2 合法寫法被誤報：\n" + "\n".join(f)
+
+
+def test_dod3_branch_red_table():
+    assert not (f := _ih_failures(_DOD3_BRANCH_RED, "dyn", "red")), "DoD-3 應紅卻沒抓到：\n" + "\n".join(f)
+
+
+def test_dod3_branch_green_table():
+    assert not (f := _ih_failures(_DOD3_BRANCH_GREEN, "dyn", "green")), "DoD-3 合法寫法被誤報：\n" + "\n".join(f)
+
+
+def test_domain_shaped_branch_table():
+    assert not (f := _ih_failures(_DOMAIN_BRANCH_FALSE, "dom", "is_false")), (
+        "應判非 domain-shaped 卻判成 domain-shaped：\n" + "\n".join(f)
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR#220 第 2 輪：基準版（437025cd）被刪的合成案例逐字放回（對帳鍵＝原測試名[原 id]）
+# ---------------------------------------------------------------------------
+# 與上面各分支表同源者已把 label 改成對帳鍵（不重複放）；其餘在這張表。
+# 列 ＝ (對帳鍵, checker, mode, 輸入)；mode：red 必須有違規／green 必須無違規／
+# is_true、is_false 供 _is_domain_shaped。具名且斷言不只紅綠的 4 支已原樣放回上面。
+
+_IH_RESTORED_CASES = (
+    ('test_dod3_does_not_flag_all_constant_containers[全 Constant Tuple]',
+     'dyn', 'green',
+     '_X = ("a", "b")\n'),
+    ('test_dod3_flags_container_with_non_constant_elements[Dict **spread]',
+     'dyn', 'red',
+     '_X = {**OTHER, "k": "a.com"}\n'),
+    ('test_dod3_flags_container_with_non_constant_elements[List 內含 Name]',
+     'dyn', 'red',
+     '_X = ["a.com", EXTRA_HOST]\n'),
+    ('test_dod3_flags_container_with_non_constant_elements[Set *spread]',
+     'dyn', 'red',
+     '_X = {*OTHER, "a.com"}\n'),
+    ('test_dod3_flags_container_with_non_constant_elements[Tuple 內含 BinOp]',
+     'dyn', 'red',
+     '_X = ("a.com", "b" + ".com")\n'),
+    ('TestFalsifiabilityDemonstration::test_dod3_green[DOD3-GREEN-60]',
+     'dyn', 'green',
+     '_Y = SomeClass(hosts)\n'),
+    ('TestFalsifiabilityDemonstration::test_dod3_green[DOD3-GREEN-62]',
+     'dyn', 'green',
+     'router = APIRouter()\n'),
+    ('TestFalsifiabilityDemonstration::test_dod3_green[DOD3-GREEN-63]',
+     'dyn', 'green',
+     "SAFE = re.compile(r'x')\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_green[DOD3-GREEN-64]',
+     'dyn', 'green',
+     'GFRIENDS_DIR = Path(__file__).parent / "output"\n'),
+    ('TestFalsifiabilityDemonstration::test_dod3_green[DOD3-GREEN-65]',
+     'dyn', 'green',
+     "X = {'a': 1}\n"),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-41]',
+     'dyn', 'red',
+     '_X = list(hosts)\n'),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-42]',
+     'dyn', 'red',
+     '_X = frozenset(hosts)\n'),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-43]',
+     'dyn', 'red',
+     '_X = dict(pairs)\n'),
+    ('TestFalsifiabilityDemonstration::test_dod3_red[DOD3-RED-44]',
+     'dyn', 'red',
+     '_X = tuple(hosts)\n'),
+    ("test_domain_shaped_negative['.jpg']",
+     'dom', 'is_false',
+     '.jpg'),
+    ("test_domain_shaped_negative['192.168.1.1']",
+     'dom', 'is_false',
+     '192.168.1.1'),
+    ("test_domain_shaped_negative['Mozilla/5.0 (Windows NT 10.0; Win64) AppleWebKit/537.36']",
+     'dom', 'is_false',
+     'Mozilla/5.0 (Windows NT 10.0; Win64) AppleWebKit/537.36'),
+    ("test_domain_shaped_negative['依優先順序自動選擇']",
+     'dom', 'is_false',
+     '依優先順序自動選擇'),
+    ("test_domain_shaped_negative['image/jpeg']",
+     'dom', 'is_false',
+     'image/jpeg'),
+    ("test_domain_shaped_negative['metatube:FANZA']",
+     'dom', 'is_false',
+     'metatube:FANZA'),
+    ('test_domain_shaped_positive[cf.javfree.me]',
+     'dom', 'is_true',
+     'cf.javfree.me'),
+    ('test_domain_shaped_positive[https://www.graphis.ne.jp/]',
+     'dom', 'is_true',
+     'https://www.graphis.ne.jp/'),
+    ('test_domain_shaped_positive[javbus.com]',
+     'dom', 'is_true',
+     'javbus.com'),
+    ('test_domain_shaped_positive[pics.dmm.co.jp]',
+     'dom', 'is_true',
+     'pics.dmm.co.jp'),
+    ('TestFalsifiabilityDemonstration::test_tier1_green[T1-GREEN-11]',
+     't1', 'green',
+     "CONTENT_TYPE_MAP = {'image/jpeg': '.jpg'}\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_green[T1-GREEN-12]',
+     't1', 'green',
+     "_HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64)'}\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_green[T1-GREEN-13]',
+     't1', 'green',
+     'def proxy_image(url):\n    if "javbus.com" in url:\n        return 1\n'),
+    ('TestFalsifiabilityDemonstration::test_tier1_green[T1-GREEN-14]',
+     't1', 'green',
+     'HOST = "javbus.com"\n'),
+    ('TestFalsifiabilityDemonstration::test_tier1_green[T1-GREEN-15]',
+     't1', 'green',
+     "SAFE = re.compile(r'^[A-Za-z0-9._~-]+$')\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_red[T1-RED-2]',
+     't1', 'red',
+     "def f():\n    a = {'evil.example'}\n    b = {'other.evil'}\n    return a, b\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_red[T1-RED-5]',
+     't1', 'red',
+     "X = {'h': 'pics.dmm.co.jp'}\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_red[T1-RED-7]',
+     't1', 'red',
+     "X = {'https://www.graphis.ne.jp/'}\n"),
+    ('TestFalsifiabilityDemonstration::test_tier1_red[T1-RED-8]',
+     't1', 'red',
+     "X = {'1pondo.tv'}\n"),
+    ('test_tier2_dotted_support_does_not_overreach[其他物件的同名屬性]',
+     't2', 'green',
+     'import requests\nu = requests.base_url\n'),
+    ('test_tier2_dotted_support_does_not_overreach[self 的私有屬性（T3b 的 _MetatubeShim._base_url 形狀）]',
+     't2', 'green',
+     'class C:\n    def f(self):\n        return self.base_url\n'),
+    ('TestFalsifiabilityDemonstration::test_tier2_green[T2-GREEN-31]',
+     't2', 'green',
+     'def f(request):\n    return request.base_url\n'),
+    ('TestFalsifiabilityDemonstration::test_tier2_green[T2-GREEN-32]',
+     't2', 'green',
+     'class _MetatubeShim:\n    def __init__(self, base_url):\n        self._base_url = base_url\n    def map(self, info):\n        return self._base_url\n'),
+    ('TestFalsifiabilityDemonstration::test_tier2_green[T2-GREEN-35]',
+     't2', 'green',
+     'from core.metatube.state import metatube_state\ndef f():\n    return metatube_state.token\n'),
+    ('TestFalsifiabilityDemonstration::test_tier2_red[T2-RED-21]',
+     't2', 'red',
+     'from core.metatube.state import metatube_state as state\ndef f():\n    return state.base_url\n'),
+    ('TestFalsifiabilityDemonstration::test_tier2_red[T2-RED-22]',
+     't2', 'red',
+     'from core.metatube.state import metatube_state as _mt_state\ndef f():\n    return _mt_state.is_connected\n'),
+    ('TestFalsifiabilityDemonstration::test_tier2_red[T2-RED-23]',
+     't2', 'red',
+     'from core.metatube.state import metatube_state as _mt_startup_state\ndef f():\n    return _mt_startup_state.base_url\n'),
+    ('TestFalsifiabilityDemonstration::test_tier2_red[T2-RED-24]',
+     't2', 'red',
+     'def f():\n    from core.metatube.state import metatube_state as _mt_state\n    return _mt_state.is_connected\n'),
+)
+
+
+def test_image_host_restored_cases_table(tmp_path):
+    """逐列各自隔離、例外記成該列失敗、一次列出全部失敗列（無 tmp／全域狀態，皆純函式）。"""
+    failures = []
+    for label, checker, mode, src in _IH_RESTORED_CASES:
+        failures += _ih_failures([(label, src)], checker, mode)
+    assert not failures, "\n".join(failures)

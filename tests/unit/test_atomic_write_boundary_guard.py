@@ -137,7 +137,7 @@ Comprehension 不可能包含 `import`/`global`/`nonlocal` 陳述式（Python �
 `async for` 沒有獨立的 `AsyncComprehension` 節點型別——`comprehension.
 is_async` 只是既有 `ListComp`/`SetComp`/`DictComp`/`GeneratorExp` 節點上
 `ast.comprehension` 的一個旗標，本節所有規則對 `async for` 一體適用，不需要
-額外分支（實測驗證見 RED-32~34 同族案例與自我複查案例，`async for` 的行為
+額外分支（曾以 `async for` 合成案例實測，`async for` 的行為
 與 `for` 完全一致）。class body 內的 comprehension 同理不需特殊處理：實測
 `class C: vals = [x for x in x.replace(1,2)]`（`x` 是模組層 alias）確實會
 呼叫到 `x.replace`，與本守衛判定一致，不屬於既有「class body import 對
@@ -634,8 +634,8 @@ SCAN_TARGETS = _scan_targets()  # 本卡實測 110 支
 
 
 def test_scan_targets_is_nonempty_and_each_root_contributes():
-    """反假綠第三條路：SCAN_ROOTS 打錯字、或 rglob 因故回傳空清單，會讓所有
-    parametrize case 消失、pytest 顯示「0 個 case 卻整體 PASS」，看起來像是
+    """反假綠第三條路：SCAN_ROOTS 打錯字、或 rglob 因故回傳空清單，會讓聚合
+    掃描的迴圈零次迭代、pytest 顯示 PASS，看起來像是
     通過但其實什麼都沒掃到。這裡直接鎖住 core/web/windows 三個根目錄都至少
     貢獻 1 支檔案，且總數量在合理量級（本卡實測 110 支，抓寬鬆下限防止未來
     刪檔導致的漂移誤判成 bug）。"""
@@ -651,18 +651,19 @@ def test_scan_targets_is_nonempty_and_each_root_contributes():
 
 
 # ============================================================
-# (a) 主斷言：每檔獨立 parametrize，逐格可單獨轉紅（技術要點第 4 節）
+# (a) 主斷言：單支聚合掃描全部 SCAN_TARGETS，失敗訊息列出所有違規檔（技術要點第 4 節）
 # ============================================================
 
-@pytest.mark.parametrize(
-    "py_file", SCAN_TARGETS, ids=[str(p.relative_to(REPO_ROOT)) for p in SCAN_TARGETS]
-)
-def test_no_bare_replace_or_mkstemp_outside_primitive(py_file):
-    violations = _find_violations(py_file)
-    assert violations == [], (
-        f"{py_file}: 裸 os.replace/mkstemp 呼叫（{violations}）必須改走 "
-        f"core.atomic_write.atomic_write()，不得繞過 primitive"
-    )
+def test_no_bare_replace_or_mkstemp_outside_primitive():
+    failures = []
+    for py_file in SCAN_TARGETS:
+        violations = _find_violations(py_file)
+        if violations != []:
+            failures.append(
+                f"{py_file}: 裸 os.replace/mkstemp 呼叫（{violations}）必須改走 "
+                f"core.atomic_write.atomic_write()，不得繞過 primitive"
+            )
+    assert failures == [], "\n".join(failures)
 
 
 # ============================================================
@@ -693,296 +694,22 @@ def test_atomic_write_py_is_the_only_boundary_and_actually_uses_primitives():
 
 
 # ============================================================
-# (c) 15 格證偽矩陣（技術要點第 6 節，parametrize，永久留測試檔）
+# (c) 證偽矩陣（技術要點第 6 節，parametrize，永久留測試檔）
 # ============================================================
 
-# RED（10 格，防假綠）—— 每格附「這格在防什麼」，逐字承接 TASK-113d-T3.md D 段矩陣
+# RED（防假綠）—— 每格附「這格在防什麼」，逐字承接 TASK-113d-T3.md D 段矩陣
 RED_CASES = [
-    # 1: 最基本形狀，ast.Import 無 as、無 dotted
-    (1, "import os\nos.replace(a, b)\n"),
-    # 2: ast.Import 有 as、無 dotted —— bound=asname, target=name 分支
-    (2, "import os as platform_os\nplatform_os.replace(a, b)\n"),
-    # 3: 同 #1 但換 tempfile/mkstemp 配對
-    (3, "import tempfile\ntempfile.mkstemp()\n"),
-    # 4: 同 #2 但換配對；v2 漏掉，且 v2 還拿同一個 tmp 當 green case（見 #10）
-    (4, "import tempfile as tmp\ntmp.mkstemp()\n"),
-    # 5: ast.ImportFrom 無 as，裸名呼叫（callable_bindings）
-    (5, "from os import replace\nreplace(a, b)\n"),
-    # 6: ast.ImportFrom 有 as；v2 漏掉
-    (6, "from os import replace as atomic_replace\natomic_replace(a, b)\n"),
-    # 7: 同 #5 換配對
-    (7, "from tempfile import mkstemp\nmkstemp()\n"),
-    # 8: 同 #6 換配對；v2 漏掉
-    (8, "from tempfile import mkstemp as create_temp\ncreate_temp()\n"),
-    # 13: Python 把頂層 os 綁進 scope（a.name.split(".",1)[0] 分支）；v3 漏掉——
-    #     v3 曾用 alias.name ∈ {"os","tempfile"} 過濾掉 "os.path"，導致 .split() 那半從未生效
-    (13, "import os.path\nos.replace(a, b)\n"),
-    # 14: dotted import 不得干擾同檔其他 binding——兩條 ast.Import 各自獨立累積進
-    #     module_bindings，不互相覆蓋
-    (14, "import tempfile\nimport os.path\ntempfile.mkstemp()\n"),
     # 20: scope-aware 化之後，最基本的「模組層 import、函式內呼叫」繼承路徑必須
     #     還能用——防「修過頭把繼承鏈也一起殺了」（review P1 修法本身的回歸線）
     (20, "import os\ndef f(a,b): os.replace(a,b)\n"),
-    # 21: 巢狀函式必須能繼承外層函式（不是只繼承模組層）宣告的 import——
-    #     scope 鏈遞迴要一路往下傳，不能只做一層
-    (21, "def outer():\n    import os\n    def inner():\n        os.replace(a, b)\n    return inner\n"),
-    # 22: review P1 復現形狀 A——`global os` 不是重新綁定，是把這一層對 os 的
-    #     讀取解析導回 module scope 既有 binding；原本被誤當成一般 shadow 剔除
-    #     繼承 binding，造成這格假綠
-    (22, "import os\ndef f(a, b):\n    global os\n    os.replace(a, b)\n"),
-    # 23: review P1 復現形狀 B——`nonlocal os` 同理，解析導回最近 enclosing
-    #     function scope 既有 binding（不是模組層），巢狀函式 + nonlocal 雙重路徑
-    (23, "def outer():\n    import os\n    def inner(a, b):\n        nonlocal os\n        os.replace(a, b)\n    return inner\n"),
-    # 24: review P1 復現形狀 C——alias + tempfile 配對，不只 os，確認 global 的
-    #     修法不是只對 "os" 這個名字碰巧生效
-    (24, "import tempfile as tf\ndef f():\n    global tf\n    return tf.mkstemp()\n"),
-    # 25: Codex 特別要求——同一 scope 內 global 宣告與「另一個無關的一般 shadow
-    #     手段」並存時，global 宣告的名字仍要被抓到（不能靠既有 alias 矩陣間接
-    #     通過，必須是這格自己證明 global 分支真的獨立生效）
-    (25, "import os\ndef f(a, b):\n    global os\n    unrelated_local = 1\n    os.replace(a, b)\n    return unrelated_local\n"),
-    # 26: review P1 二審復現形狀——module 層 `x` 綁 tempfile、中間層 outer 用同名
-    #     alias `x` 改綁 os，最深層 inner 的 `global x` 必須跳過 outer、直接回
-    #     module 拿 tempfile，才會判定違規；只做「不 pop」的錯誤修法會在這裡漏抓
-    #     （因為它會保留 outer 那層 inherited 的 os，配不上任何 PAIRS）
-    (
-        26,
-        "import tempfile as x\n"
-        "def outer():\n"
-        "    import os as x\n"
-        "    def inner():\n"
-        "        global x\n"
-        "        x.mkstemp()\n"
-        "    return inner\n",
-    ),
-    # 28: nonlocal 必須解析到最近 enclosing function（outer 的 tempfile），不是
-    #     module（json，無關配對）——本格證明 global 與 nonlocal 走的是兩條不同
-    #     路徑：若實作誤把 nonlocal 也導向 root，這格會從 RED 變成 GREEN
-    (
-        28,
-        "import json as x\n"
-        "def outer():\n"
-        "    import tempfile as x\n"
-        "    def inner():\n"
-        "        nonlocal x\n"
-        "        x.mkstemp()\n"
-        "    return inner\n",
-    ),
-    # 30: Codex PR review 三審復現形狀——外層 alias `x -> os`、comprehension 的
-    #     for-target 也叫 `x`（comprehension 隱含獨立 scope，target 不外洩），
-    #     comprehension 結束後外層 `x.replace(...)` 仍是真違規，不得因為守衛
-    #     誤把 comprehension 的 target 當成「這一層」的 shadow 而剔除外層 binding
-    (
-        30,
-        "import os as x\n"
-        "def f(a, b):\n"
-        "    values = [x for x in ()]\n"
-        "    x.replace(a, b)\n"
-        "    return values\n",
-    ),
-    # 32: 同 #30 但換 SetComp——四種 comprehension 節點型別逐種列，不合併成一格
-    (
-        32,
-        "import tempfile as x\n"
-        "def f():\n"
-        "    s = {x for x in ()}\n"
-        "    return x.mkstemp()\n",
-    ),
-    # 33: 同 #30 但換 DictComp
-    (
-        33,
-        "import tempfile as x\n"
-        "def f():\n"
-        "    d = {x: 1 for x in ()}\n"
-        "    return x.mkstemp()\n",
-    ),
-    # 34: 同 #30 但換 GeneratorExp
-    (
-        34,
-        "import tempfile as x\n"
-        "def f():\n"
-        "    g = (x for x in ())\n"
-        "    return x.mkstemp()\n",
-    ),
-    # 35: comprehension 最外層第一個 generator 的 iter 在**外層 scope**求值
-    #     （實測驗證，見檔頂 docstring）——這裡的 `x.replace(a,b)` 是外層模組
-    #     層的 `os`，即使 comprehension 自己的 target 也叫 `x`；只把
-    #     comprehension「一刀切」當單一 scope、不特別處理第一個 iter 的錯誤
-    #     實作會在這格漏抓（本輪最重要的判別器）
-    (
-        35,
-        "import os as x\n"
-        "def f(a, b):\n"
-        "    return [x for x in x.replace(a, b)]\n",
-    ),
-    # 37: comprehension 內的 **lambda** 裡的 walrus 綁在 lambda 自己那層、不外洩
-    #     （實測：把每個 lambda 都呼叫過之後外層 x 仍是 os 模組），所以最後一行
-    #     仍是模組 alias 的 os.replace ⇒ 違規。`_comprehension_walrus_targets`
-    #     初版用 `ast.walk` 一律下鑽，會把這個 NamedExpr 誤算成外層 shadow 而
-    #     假綠（review 四審 P1）。與 GREEN-38 成對鎖住「穿越 comprehension、
-    #     不得穿越 lambda」這條邊界
-    (
-        37,
-        "import os as x\n"
-        "def f(items, a, b):\n"
-        "    callbacks = [lambda value: (x := value) for _ in items]\n"
-        "    return x.replace(a, b)\n",
-    ),
-    # 40: review 五審 P1（Codex 抓到，resolver 層而非 walrus helper）——lambda 的
-    #     **參數預設值**在物件建立時、於**外層**（f 的）scope 求值，即使 lambda
-    #     自己的參數也叫 x（遮蔽外層同名）。錯誤實作把整個 lambda 節點都當成子
-    #     scope 掃描，讓子 scope 的參數遮蔽誤剔除外層 binding，造成假綠
-    (
-        40,
-        "import os as x\n"
-        "def f(a, b):\n"
-        "    callback = lambda x=x.replace(a, b): x\n"
-        "    return callback\n",
-    ),
-    # 41: 同 #40 但換 FunctionDef（不是 lambda）的參數預設值——證明這條規則不是
-    #     只對 lambda 生效，函式定義的 args.defaults 同樣在外層求值
-    (
-        41,
-        "import os\n"
-        "def f(a, b):\n"
-        "    def callback(os=os.replace(a, b)):\n"
-        "        return os\n"
-        "    return callback\n",
-    ),
-    # 43: 參數 **annotation**（Opus 自查發現，Codex 五審未列）——annotation 與
-    #     defaults 同樣在外層求值，同名參數 `os: os.replace(...)` 的 annotation
-    #     解析到的是外層 import，不是這個參數自己
-    (
-        43,
-        "import os\n"
-        "def f(a, b):\n"
-        "    def inner(os: os.replace(a, b)):\n"
-        "        return os\n"
-        "    return inner\n",
-    ),
-    # 44: 模組層 lambda 預設值——證明這條與 scope 深度無關，即使 lambda 直接掛在
-    #     module 層（root scope），預設值仍在外層（module）求值
-    (44, "import os as x\ncb = lambda x=x.replace('a', 'b'): x\n"),
 ]
 
-# GREEN（5 格，防誤報）
+# GREEN（防誤報）
 GREEN_CASES = [
-    # 9: attribute 對、receiver 不是 ast.Name（是 ast.Constant）——
-    #    isinstance(node.func.value, ast.Name) 直接排除，代表現存 core/+web/ 67 處裡
-    #    的多數（尤其是字面字串起手的鏈式呼叫）
-    (9, '"abc".replace(x, y)\n'),
-    # 10: receiver 對（tmp -> tempfile）、attribute 不對（TemporaryDirectory 不在
-    #     PAIRS）——(mod, attr) in PAIRS 判斷擋下
-    (10, "import tempfile as tmp\ntmp.TemporaryDirectory()\n"),
-    # 11: 配對交叉——receiver 解析出來是 os、attribute 是 mkstemp，兩者各自都在各自
-    #     的清單裡，但 ("os","mkstemp") 不在 PAIRS（只有 ("os","replace") 與
-    #     ("tempfile","mkstemp")）——receiver 與 attribute 必須同時匹配同一組 pair
-    (11, "import os as tmp\ntmp.mkstemp()\n"),
     # 12: 區域變數 receiver，dest 從未出現在任何 import 語句 →
     #     module_bindings.get("dest") 是 None。合成案例，非本庫既有用法（TASK-113d-T3.md
     #     B 段已驗證全庫無 Path.replace(other_path) 改名語意呼叫），仍是必要的反誤報覆蓋
     (12, "from pathlib import Path\ndest = Path('x')\ndest.replace(other)\n"),
-    # 15: p 綁的是完整 dotted module os.path（有 as 分支：bound, target = asname, name），
-    #     target="os.path" 不在 {"os","tempfile"} 過濾清單裡，module_bindings 裡不會有
-    #     "p" 這個 key —— 若照「一律綁頂層」的簡化寫法會誤判成 RED（v4 與 Codex 建議的差異）
-    (15, "import os.path as p\np.replace(a, b)\n"),
-    # 17: 參數名撞到模組層 import alias（`import os as tmp` 後某個無關函式恰好
-    #     用 tmp 當參數名）——函式自己的參數要能剔除繼承來的 binding，不是「只要
-    #     module 層看過這個名字就永遠算數」（review P1 復現形狀③）
-    (17, "import os as tmp\ndef unrelated(tmp): return tmp.replace('a','b')\n"),
-    # 18: 參數直接叫 os，遮蔽模組層 `import os`——同上，換成完全撞名（P1 形狀④）
-    (18, "import os\ndef f(os): return os.replace('a','b')\n"),
-    # 19: 區域變數（非參數）叫 os，遮蔽模組層 `import os`——賦值 target 也要能
-    #     剔除繼承來的 binding，不是只有參數才算 shadow（P1 形狀⑤）
-    (19, "import os\ndef f(s):\n    os = s.strip()\n    return os.replace('a','b')\n"),
-    # 27: RED-26 的鏡像對調——module 層 `x` 綁 os、outer 層 `x` 改綁 tempfile，
-    #     inner 的 `global x` 必須跳過 outer、回 module 拿到 os，配不上 PAIRS。
-    #     本格是本輪最重要的判別器：只做「不 pop」的錯誤修法會在這裡**誤報**
-    #     （因為它會保留 outer 那層 inherited 的 tempfile，誤配成違規）——這格
-    #     才真正證明 global 分支「有回 module」而不只是「沒被 pop」
-    (
-        27,
-        "import os as x\n"
-        "def outer():\n"
-        "    import tempfile as x\n"
-        "    def inner():\n"
-        "        global x\n"
-        "        x.mkstemp()\n"
-        "    return inner\n",
-    ),
-    # 29: `global` 宣告但 module 根本沒有該名字的 binding（module 層完全沒有
-    #     `import ... as x`）——依優先序第②條，root 沒有就視為無 binding、直接
-    #     從 map 移除，不可退回 outer 的 inherited（os），鎖住「root 沒有就清掉、
-    #     不落回 inherited」這一半（review P1 二審提出的具體反例）
-    (
-        29,
-        "def outer():\n"
-        "    import os as x\n"
-        "    def inner():\n"
-        "        global x\n"
-        "        x.replace(a, b)\n"
-        "    return inner\n",
-    ),
-    # 31: RED-30 的鏡像對調——comprehension **內**使用 target `x`（items 的元素，
-    #     字串），不是外層模組 alias，不得誤報。這格防的是修法只做一半（不下鑽
-    #     但不真的把 comprehension 建成 scope）造成的反向誤報——那種半套實作會
-    #     讓這格從 GREEN 變成誤報的 RED
-    (
-        31,
-        "import os as x\n"
-        "def f(items):\n"
-        "    return [x.replace('a','b') for x in items]\n",
-    ),
-    # 36: PEP 572 例外（Opus 於 review 三審後自查發現，非 Codex 提出）——
-    #     comprehension 是 scope，但**它裡面的 walrus 綁在外層**，所以
-    #     `[(x := i) for i in items]` 之後外層的 `x` 已經不是模組 alias 了
-    #     （實測：型別變成 str），那之後的 `x.replace(...)` 不是違規。
-    #     這格鎖的是「把 comprehension 升格為 scope」時**新引入**的誤報：
-    #     若 `_shadowed_names` 不破例去收巢狀 comprehension 的 NamedExpr
-    #     target，這格會誤報。反向的護欄是 RED-30/32/33/34（那些證明破例
-    #     只收 walrus target、沒有把 for-target 一起收回外層）
-    (
-        36,
-        "import os as x\n"
-        "def f(items):\n"
-        "    vals = [(x := i) for i in items]\n"
-        "    return vals and x.replace('a', 'b')\n",
-    ),
-    # 38: GREEN-36 的「穿越」那一半——**巢狀** comprehension 的 walrus 一樣綁在
-    #     最外層那個 non-comprehension scope（PEP 572），所以外層 x 之後已不是
-    #     模組 alias。與 RED-37 成對：37 鎖「不得穿越 lambda」，38 鎖「必須穿越
-    #     comprehension」。少了 38，把 helper 改成「遇到任何巢狀節點都停」的過度
-    #     修正會在這格誤報而沒人發現
-    (
-        38,
-        "import os as x\n"
-        "def f(rows):\n"
-        "    v = [[(x := c) for c in r] for r in rows]\n"
-        "    return v and x.replace('a', 'b')\n",
-    ),
-    # 39: RED-37 的「但預設值例外」那一半（Opus 在四審修完後自查窮舉 walrus 的
-    #     所有槽位時發現，非 Codex 提出）——函式/lambda 的**參數預設值**是在
-    #     「函式物件建立時、於外層 scope」求值，所以預設值裡的 walrus **仍綁外層**。
-    #     實測：這段**不必呼叫任何 lambda**，外層 x 建立當下就已是 'b'（str）。
-    #     RED-37（本體）與 GREEN-39（預設值）成對：只看「是不是 lambda」而不分
-    #     「本體 vs 預設值」的實作，必在其中一格出錯
-    (
-        39,
-        "import os as x\n"
-        "def f(items):\n"
-        "    cbs = [lambda v=(x := c): v for c in items]\n"
-        "    return cbs and x.replace('a', 'b')\n",
-    ),
-    # 42: RED-40 的鏡像對調——lambda **body** 內使用同名參數 `x`（不是預設值），
-    #     不得因為修法把預設值拉回外層求值，就連 body 也一併誤拉走。這格鎖住
-    #     「只把 defaults/kw_defaults 移到外層，body 仍留在 lambda 自己的 scope」
-    #     這條邊界——若實作誤把整個 Lambda 節點的求值都算進外層，這格會從 GREEN
-    #     變成誤報的 RED
-    (
-        42,
-        "import os as x\n"
-        "def f(a, b):\n"
-        "    return lambda x: x.replace(a, b)\n",
-    ),
 ]
 
 
@@ -1002,6 +729,243 @@ def test_matrix_green_cases(case_id, source):
     assert _violations_in_source(source) == [], (
         f"case #{case_id} 應為合法，但守衛誤報為違規：{source!r}"
     )
+
+
+# 162d PR#220：基準版（437025cd）被刪的 RED/GREEN 表中，現存單例測試走不到的
+# 獨立偵測分支，改為表驅動聚合（不 parametrize，收集全部漏網／誤報 label 後一次 assert）。
+# 原始碼逐字取自基準版；label 沿用基準版 case id。
+_BRANCH_RED_TABLE = (
+    # ImportFrom 裸名（callable_bindings 分支）
+    ("test_matrix_red_cases[RED-5]", "from os import replace\nreplace(a, b)\n"),
+    # ImportFrom asname（`a.asname or a.name` 的 asname 側）
+    ("test_matrix_red_cases[RED-6]", "from os import replace as atomic_replace\natomic_replace(a, b)\n"),
+    # dotted import 取頂層（split(".", 1)[0] 分支）
+    ("test_matrix_red_cases[RED-13]", "import os.path\nos.replace(a, b)\n"),
+    # global 宣告：跳過中間層回 module（root 解析）
+    (
+        "test_matrix_red_cases[RED-26]",
+        "import tempfile as x\n"
+        "def outer():\n"
+        "    import os as x\n"
+        "    def inner():\n"
+        "        global x\n"
+        "        x.mkstemp()\n"
+        "    return inner\n",
+    ),
+    # nonlocal 解析到最近 enclosing function（不是 root）
+    (
+        "test_matrix_red_cases[RED-28]",
+        "import json as x\n"
+        "def outer():\n"
+        "    import tempfile as x\n"
+        "    def inner():\n"
+        "        nonlocal x\n"
+        "        x.mkstemp()\n"
+        "    return inner\n",
+    ),
+    # comprehension for-target 不外洩（ListComp / SetComp / DictComp / GeneratorExp）
+    (
+        "test_matrix_red_cases[RED-30]",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    values = [x for x in ()]\n"
+        "    x.replace(a, b)\n"
+        "    return values\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-32]",
+        "import tempfile as x\n"
+        "def f():\n"
+        "    s = {x for x in ()}\n"
+        "    return x.mkstemp()\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-33]",
+        "import tempfile as x\n"
+        "def f():\n"
+        "    d = {x: 1 for x in ()}\n"
+        "    return x.mkstemp()\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-34]",
+        "import tempfile as x\n"
+        "def f():\n"
+        "    g = (x for x in ())\n"
+        "    return x.mkstemp()\n",
+    ),
+    # comprehension 第一個 iter 在外層求值
+    (
+        "test_matrix_red_cases[RED-35]",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    return [x for x in x.replace(a, b)]\n",
+    ),
+    # comprehension 內 lambda 的 walrus 不外洩
+    (
+        "test_matrix_red_cases[RED-37]",
+        "import os as x\n"
+        "def f(items, a, b):\n"
+        "    callbacks = [lambda value: (x := value) for _ in items]\n"
+        "    return x.replace(a, b)\n",
+    ),
+    # lambda 參數預設值在外層求值
+    (
+        "test_matrix_red_cases[RED-40]",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    callback = lambda x=x.replace(a, b): x\n"
+        "    return callback\n",
+    ),
+    # FunctionDef 參數預設值在外層求值
+    (
+        "test_matrix_red_cases[RED-41]",
+        "import os\n"
+        "def f(a, b):\n"
+        "    def callback(os=os.replace(a, b)):\n"
+        "        return os\n"
+        "    return callback\n",
+    ),
+    # 參數 annotation 在外層求值
+    (
+        "test_matrix_red_cases[RED-43]",
+        "import os\n"
+        "def f(a, b):\n"
+        "    def inner(os: os.replace(a, b)):\n"
+        "        return os\n"
+        "    return inner\n",
+    ),
+    # 以下為基準版被刪、尚未入表的 RED 格（逐字取自基準版，label＝對帳鍵）
+    ("test_matrix_red_cases[RED-1]", "import os\nos.replace(a, b)\n"),
+    ("test_matrix_red_cases[RED-2]", "import os as platform_os\nplatform_os.replace(a, b)\n"),
+    ("test_matrix_red_cases[RED-3]", "import tempfile\ntempfile.mkstemp()\n"),
+    ("test_matrix_red_cases[RED-4]", "import tempfile as tmp\ntmp.mkstemp()\n"),
+    ("test_matrix_red_cases[RED-7]", "from tempfile import mkstemp\nmkstemp()\n"),
+    ("test_matrix_red_cases[RED-8]", "from tempfile import mkstemp as create_temp\ncreate_temp()\n"),
+    ("test_matrix_red_cases[RED-14]", "import tempfile\nimport os.path\ntempfile.mkstemp()\n"),
+    (
+        "test_matrix_red_cases[RED-21]",
+        "def outer():\n    import os\n    def inner():\n        os.replace(a, b)\n    return inner\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-22]",
+        "import os\ndef f(a, b):\n    global os\n    os.replace(a, b)\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-23]",
+        "def outer():\n    import os\n    def inner(a, b):\n        nonlocal os\n        os.replace(a, b)\n    return inner\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-24]",
+        "import tempfile as tf\ndef f():\n    global tf\n    return tf.mkstemp()\n",
+    ),
+    (
+        "test_matrix_red_cases[RED-25]",
+        "import os\ndef f(a, b):\n    global os\n    unrelated_local = 1\n    os.replace(a, b)\n    return unrelated_local\n",
+    ),
+    ("test_matrix_red_cases[RED-44]", "import os as x\ncb = lambda x=x.replace('a', 'b'): x\n"),
+)
+
+_BRANCH_GREEN_TABLE = (
+    # receiver 解析為 os 但 (os, mkstemp) 不在 PAIRS
+    ("test_matrix_green_cases[GREEN-11]", "import os as tmp\ntmp.mkstemp()\n"),
+    # import os.path as p：p 綁完整 dotted module，不進 module_bindings
+    ("test_matrix_green_cases[GREEN-15]", "import os.path as p\np.replace(a, b)\n"),
+    # 參數遮蔽模組層 alias
+    ("test_matrix_green_cases[GREEN-17]", "import os as tmp\ndef unrelated(tmp): return tmp.replace('a','b')\n"),
+    # 區域變數賦值遮蔽模組層 import
+    (
+        "test_matrix_green_cases[GREEN-19]",
+        "import os\ndef f(s):\n    os = s.strip()\n    return os.replace('a','b')\n",
+    ),
+    # global 宣告但 module 無該名：視為無 binding，不退回 inherited
+    (
+        "test_matrix_green_cases[GREEN-29]",
+        "def outer():\n"
+        "    import os as x\n"
+        "    def inner():\n"
+        "        global x\n"
+        "        x.replace(a, b)\n"
+        "    return inner\n",
+    ),
+    # comprehension 內使用自己的 target
+    (
+        "test_matrix_green_cases[GREEN-31]",
+        "import os as x\n"
+        "def f(items):\n"
+        "    return [x.replace('a','b') for x in items]\n",
+    ),
+    # PEP 572：comprehension 內 walrus 綁外層（單層／巢狀穿越／lambda 預設值）
+    (
+        "test_matrix_green_cases[GREEN-36]",
+        "import os as x\n"
+        "def f(items):\n"
+        "    vals = [(x := i) for i in items]\n"
+        "    return vals and x.replace('a', 'b')\n",
+    ),
+    (
+        "test_matrix_green_cases[GREEN-38]",
+        "import os as x\n"
+        "def f(rows):\n"
+        "    v = [[(x := c) for c in r] for r in rows]\n"
+        "    return v and x.replace('a', 'b')\n",
+    ),
+    (
+        "test_matrix_green_cases[GREEN-39]",
+        "import os as x\n"
+        "def f(items):\n"
+        "    cbs = [lambda v=(x := c): v for c in items]\n"
+        "    return cbs and x.replace('a', 'b')\n",
+    ),
+    # lambda body 內同名參數不得被拉到外層
+    (
+        "test_matrix_green_cases[GREEN-42]",
+        "import os as x\n"
+        "def f(a, b):\n"
+        "    return lambda x: x.replace(a, b)\n",
+    ),
+    # 以下為基準版被刪、尚未入表的 GREEN 格（逐字取自基準版，label＝對帳鍵）
+    ("test_matrix_green_cases[GREEN-9]", '"abc".replace(x, y)\n'),
+    ("test_matrix_green_cases[GREEN-10]", "import tempfile as tmp\ntmp.TemporaryDirectory()\n"),
+    ("test_matrix_green_cases[GREEN-18]", "import os\ndef f(os): return os.replace('a','b')\n"),
+    (
+        "test_matrix_green_cases[GREEN-27]",
+        "import os as x\n"
+        "def outer():\n"
+        "    import tempfile as x\n"
+        "    def inner():\n"
+        "        global x\n"
+        "        x.mkstemp()\n"
+        "    return inner\n",
+    ),
+)
+
+
+def _run_table(table, want_violation):
+    """逐列各自 try/except，不短路；回傳失敗訊息清單（label: 原因）。"""
+    failures = []
+    for label, src in table:
+        try:
+            got = _violations_in_source(src)
+        except Exception as exc:  # noqa: BLE001 - 例外記成該列失敗，不吞成綠
+            failures.append(f"{label}: {type(exc).__name__} {exc}")
+            continue
+        if want_violation and got == []:
+            failures.append(f"{label}: 應偵測為違規，但守衛判為合法")
+        elif not want_violation and got != []:
+            failures.append(f"{label}: 應為合法，但守衛誤報為違規 {got}")
+    return failures
+
+
+def test_branch_red_table():
+    """每個基準版被刪 RED 格一列（label＝原測試名[原 id]）：全部跑完再一次 assert。"""
+    failures = _run_table(_BRANCH_RED_TABLE, want_violation=True)
+    assert not failures, "\n".join(failures)
+
+
+def test_branch_green_table():
+    """每個基準版被刪 GREEN 格一列（label＝原測試名[原 id]）：全部跑完再一次 assert。"""
+    failures = _run_table(_BRANCH_GREEN_TABLE, want_violation=False)
+    assert not failures, "\n".join(failures)
 
 
 # 16: 兩個不相關的函式各自用同一個 alias 名（tmp）匯入不同模組——初版扁平 dict
@@ -1088,7 +1052,7 @@ def test_relative_import_does_not_raise_or_misjudge():
 # `.replace(` 呼叫中，除 core/atomic_write.py 內 2 處真呼叫外，其餘一律不誤判——
 # 由上方主斷言（test_no_bare_replace_or_mkstemp_outside_primitive）對 110 支
 # SCAN_TARGETS 全綠即為此條的完整證明，此處另外挑幾個代表性檔案做具名回歸釘點，
-# 讓失敗訊息能直接點出「哪個代表性檔案破了規則」而不必等全量 parametrize 掃過。
+# 讓失敗訊息能直接點出「哪個代表性檔案破了規則」而不必讀聚合掃描的整串訊息。
 # ============================================================
 
 REPRESENTATIVE_REPLACE_FILES = [

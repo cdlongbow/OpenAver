@@ -49,8 +49,7 @@ comprehension 包了幾層，它作為一個 `Name`/`Attribute` 節點終究得�
      PIN……那本來就該被攔下來人工看一眼 → 進具名帳本，寫理由。這是特
      性不是缺陷」）。
   2. 掃描範圍不下潛巢狀 def——巢狀 def 內對新 PIN 的比較不在掃描範圍
-     （見下方 `test_nested_def_boundary_is_not_scanned` 明文釘住這個邊
-     界，不讓它是「悄悄漏掉」而是「白紙黑字的已知邊界」）。
+     （這是白紙黑字的已知邊界，不是「悄悄漏掉」）。
   3. 若新 PIN 先被 rebind 成另一個名字才拿去比（`masked = pin` 之後
      `if masked == x:`），因為不做別名分析，這裡看不到——同樣是換掉一
      套 taint tracking 才會有的舊病，新設計刻意不追這個以避免重蹈覆
@@ -260,35 +259,11 @@ _RED_SNIPPETS_SET_AUTH = [
         "if _snapshot is not None and _snapshot.pin == pin:\n    return",
     ),
     (
-        "2_local_alias_of_global",
-        "_cur = _snapshot\nif _cur.pin == pin:\n    return",
-    ),
-    (
-        "3_direct_snapshot_call",
-        "if snapshot().pin == pin:\n    return",
-    ),
-    (
-        "4_subscript_get_auth_settings",
-        'if get_auth_settings(True)["pin"] == pin:\n    return',
-    ),
-    (
         "5_compare_digest_ifexp_encode",
         # 打穿上一版 taint-tracking 的那一條：OLD 值被 IfExp 包，兩邊都
         # 再包一層 .encode()——taint 追蹤失守的地方，語法包含關係不受影響。
         'if hmac.compare_digest((_snapshot.pin if _snapshot else "").encode(), '
         "pin.encode()):\n    return",
-    ),
-    (
-        "6_walrus_wrapped",
-        'if (masked := pin) == "0000":\n    return',
-    ),
-    (
-        "7_generator_comprehension",
-        'if any(c == pin for c in ("0000", "1111")):\n    return',
-    ),
-    (
-        "8_tuple_literal_and_ne_operator",
-        "if (pin,) != (stored_pin,):\n    return",
     ),
 ]
 
@@ -305,10 +280,6 @@ _RED_SNIPPETS_UPDATE_ACCESS_SETTINGS = [
     (
         "9_request_pin_vs_snapshot",
         "if request.pin == snapshot().pin:\n    return",
-    ),
-    (
-        "10_request_pin_str_wrapped_in_container",
-        'if str(request.pin) in (str(get_auth_settings(True)["pin"]),):\n    return',
     ),
 ]
 
@@ -329,15 +300,6 @@ def test_guard_flags_new_pin_in_compare_update_access_settings(label, src):
 
 _GREEN_SNIPPETS_SET_AUTH = [
     (
-        "1_format_validation_only_no_compare",
-        'if not _is_valid_pin_format(pin):\n'
-        '    raise ValueError("pin must be exactly 4 ASCII digits")',
-    ),
-    (
-        "2_ifexp_no_compare_node_at_all",
-        'stored_pin = pin if enabled else ""',
-    ),
-    (
         "3_enabled_field_not_pin",
         "if enabled != snapshot().enabled:\n    pass",
     ),
@@ -350,23 +312,6 @@ _GREEN_SNIPPETS_SET_AUTH = [
 def test_guard_does_not_flag_legitimate_shapes_set_auth(label, src):
     hits = _violations_set_auth(src)
     assert hits == [], f"{label}：誤報 {hits}\nsrc:\n{src}"
-
-
-def test_nested_def_boundary_is_not_scanned():
-    """已知邊界（不是意外漏放）：巢狀 def 內對新 PIN 的比較不在掃描範圍
-    ——本守衛只鎖 set_auth／update_access_settings『自己那一層』的函式
-    體，比照 T6-a／metatube 守衛同樣『不下潛巢狀 def』的規則。這支測試
-    的目的是把邊界釘成白紙黑字，不是主張這裡沒有風險——見檔頭「代價」
-    段落 2，真出現這種寫法要靠 review 擋。"""
-    src = (
-        "def _helper():\n"
-        "    return snapshot().pin == pin\n"
-        "_helper()\n"
-    )
-    hits = _violations_set_auth(src)
-    assert hits == [], (
-        f"巢狀 def 內的比較不應被掃到（設計邊界）：{hits}"
-    )
 
 
 def test_new_pin_passed_as_plain_call_argument_is_not_a_compare():
@@ -387,3 +332,100 @@ def test_watched_functions_cover_exactly_the_two_named_functions():
         ("core/access_auth.py", "set_auth"),
         ("web/routers/access.py", "update_access_settings"),
     }
+
+
+# ---------------------------------------------------------------------------
+# 分支補回（PR #220）：表驅動聚合。原始碼逐字取自 437025cd 被刪 case；
+# 標 [新增] 者為基準版沒有的 `request.pin` matcher 放行格。
+# 元素 = (label, 合成原始碼, 掃描函式)
+# ---------------------------------------------------------------------------
+
+_RED_BRANCH_TABLE = (
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[2_local_alias_of_global]",
+        "_cur = _snapshot\nif _cur.pin == pin:\n    return",
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[3_direct_snapshot_call]",
+        "if snapshot().pin == pin:\n    return",
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[4_subscript_get_auth_settings]",
+        'if get_auth_settings(True)["pin"] == pin:\n    return',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[6_walrus_wrapped]",
+        'if (masked := pin) == "0000":\n    return',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[7_generator_comprehension]",
+        'if any(c == pin for c in ("0000", "1111")):\n    return',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_set_auth[8_tuple_literal_and_ne_operator]",
+        "if (pin,) != (stored_pin,):\n    return",
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_flags_new_pin_in_compare_update_access_settings[10_request_pin_str_wrapped_in_container]",
+        'if str(request.pin) in (str(get_auth_settings(True)["pin"]),):\n    return',
+        _violations_update_access_settings,
+    ),
+)
+
+_GREEN_BRANCH_TABLE = (
+    (
+        "test_guard_does_not_flag_legitimate_shapes_set_auth[1_format_validation_only_no_compare]",
+        'if not _is_valid_pin_format(pin):\n'
+        '    raise ValueError("pin must be exactly 4 ASCII digits")',
+        _violations_set_auth,
+    ),
+    (
+        "test_guard_does_not_flag_legitimate_shapes_set_auth[2_ifexp_no_compare_node_at_all]",
+        'stored_pin = pin if enabled else ""',
+        _violations_set_auth,
+    ),
+    (
+        "test_nested_def_boundary_is_not_scanned",
+        "def _helper():\n"
+        "    return snapshot().pin == pin\n"
+        "_helper()\n",
+        _violations_set_auth,
+    ),
+    (
+        "[新增] request_pin_matcher_ignores_other_receiver",
+        "if stored.pin == stored_pin:\n    return",
+        _violations_update_access_settings,
+    ),
+)
+
+
+def _branch_failures(table, want_flagged: bool) -> list:
+    """每列各自 try/except：例外記成該列失敗，不吞成綠、不短路後列。"""
+    failures = []
+    for label, src, scan in table:
+        try:
+            hits = scan(src)
+        except Exception as exc:
+            failures.append(f"{label}: {type(exc).__name__} {exc}")
+            continue
+        if bool(hits) != want_flagged:
+            failures.append(f"{label}: " + ("應紅卻沒抓到" if want_flagged else f"被誤抓 {hits}"))
+    return failures
+
+
+def test_pin_write_branch_red_table():
+    """紅表：每個包裝寫法一格，必須全部被抓到；一次列出所有漏抓的 label。"""
+    failures = _branch_failures(_RED_BRANCH_TABLE, True)
+    assert not failures, "\n".join(failures)
+
+
+def test_pin_write_branch_green_table():
+    """綠表：每個放行分支一格，不得被誤抓；一次列出被誤抓的 label。"""
+    failures = _branch_failures(_GREEN_BRANCH_TABLE, False)
+    assert not failures, "\n".join(failures)
