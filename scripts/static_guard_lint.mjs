@@ -8846,6 +8846,15 @@ const RULES = [
     forbidden: [/x-trap\.inert/],
     note: '[lint-guard 162e-浮層x-trap與click.outside] 使用者按 Tab 或點浮層外面 → 浮層鎖住焦點(x-trap 不帶 .inert)且點外面取消編輯；缺 x-trap 焦點跑出浮層、缺 @click.outside 點外面關不掉；誤加 .inert 則背景整片不可點、點外面也關不掉 — 遷自 actress-pill-popover-shell.test.mjs' },
 
+  // ---- 162e：presentation-wiring ----
+  { file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'anchor-first-tag',
+    anchor: /<!-- 顯示模式 -->/,
+    tagPattern: /<button\b(?<=^(?:(?!<!-- 資訊顯示開關)[\s\S])*<button)[^>]*?(?<![\w:-])x-show="[^"]*showTableList[^"]*"[^>]*>/,
+    required: [/(?<![\w:-])(?:@|x-on:)click(?:\.[\w.]+)*="[^"]*selectPresentation\(/],
+    note: '[lint-guard 162e-新鈕click接selectPres] 使用者在旗標關的桌面按右上角卡型切換鈕 → 若 @click 沒接到 selectPresentation( 則按了沒反應 → 封面／海報切換不了（旗標關時沒有其他入口） — 遷自 presentation-wiring.test.mjs' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '<!-- 資訊顯示開關',
+    note: '[lint-guard 162e-新鈕click接selectPres] 新鈕搜尋區塊的終點註解「資訊顯示開關」須存在，否則區塊邊界失效、新鈕 @click 守衛失去範圍 — 遷自 presentation-wiring.test.mjs（extractModeMenu 終點 throw）' },
+
 ];
 
 // ---- helpers ----

@@ -351,13 +351,3 @@ test('源碼：新鈕 x-show 同時含 !showTableList 與 !_isNarrow，四態可
         '窄＋旗標開 → 新鈕不可見',
     );
 });
-
-test('源碼：新鈕 @click 落到 selectPresentation(', () => {
-    const menu = extractModeMenu(SHOWCASE_HTML);
-    const btn = extractShapeToggleButton(menu);
-    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
-    assert.ok(
-        /@click="[^"]*selectPresentation\(/.test(btn.attrs) || btn.attrs.includes('selectPresentation('),
-        '新鈕 @click 必須落到 selectPresentation(',
-    );
-});
