@@ -1,5 +1,5 @@
 // TASK-116c-T3: 女優 pill 浮層 markup 結構契約（116c 重設計）。
-// 技術比照 actress-pill-shell.test.mjs：以文字解析 showcase.html / zh_TW.json，
+// 技術比照 actress-pill-shell.test.mjs：以文字解析 showcase.html，
 // 不跑 CDP、不動 Alpine runtime、不需要 window/importmap（純文字讀取，FE-GUARD-11 不適用本檔）。
 // 可互動 / 視覺幾何（真 click 開關、360/481px 斷點行為、content box 量測）交給 T4 CDP，本檔不重複驗。
 
@@ -231,7 +231,7 @@ test('.pill-editor-actions 綁 x-show="_pillEditorHasRangeInput()"，且含 canc
     );
 });
 
-// ===== 浮層開關條件：三合取項 x-show，@click.stop，x-cloak =====
+// ===== 浮層開關條件：role/aria（dialog、aria-modal、aria-labelledby）=====
 
 // [lint-guard: node-justified] 162e 暫留：title id 半邊（class/id 雙向屬性序）缺 depth-aware scope（POPOVER），required 半邊須同粒度
 test('浮層 role/aria：dialog + aria-modal=false + aria-labelledby=pill-editor-title', () => {

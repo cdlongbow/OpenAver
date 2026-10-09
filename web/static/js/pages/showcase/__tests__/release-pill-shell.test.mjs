@@ -1,6 +1,6 @@
 // TASK-124a-T3: 發售日 pill / 浮層 markup 結構契約（跨切面收尾）。
 // 技術比照 pill-shell.test.mjs / actress-pill-popover-shell.test.mjs：以文字解析
-// showcase.html / zh_TW.json，不跑 CDP、不動 Alpine runtime。
+// showcase.html，不跑 CDP、不動 Alpine runtime。
 // 本檔只驗「接線對不對」（靜態結構是否照契約接線），不驗「按下去視覺上動不動」
 // ——視覺／互動最終確認交 owner 真機 hard-gate（plan-124a §6/§9 明文不跑 CDP）。
 

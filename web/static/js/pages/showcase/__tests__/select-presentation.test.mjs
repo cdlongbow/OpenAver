@@ -1,7 +1,7 @@
 // TASK-119-T4 / TASK-133a-T2: selectPresentation() 協調器 ＋ animations.js 兩階段 Flip API
 // （captureShapeState / playShapeMorph）。覆蓋 plan-119 §0.2 行為表七列、CD-133a-2 同一工作單元
 // 契約（capture → 同步切 class → 同步 morph → 最後寫 state）、
-// §0.4 CD-119-14（換模式一律委派 switchMode()，selectPresentation 內零 this.mode = 賦值）。
+// §0.4 CD-119-14（換模式一律委派 switchMode()；零 this.mode = 賦值的源碼守衛已搬 lint）。
 //
 // state-videos.js 用瀏覽器 importmap 別名 `@/showcase/...` 與 `@/shared/...`，
 // plain `node --test` 不認得。比照既有 pill-clear.test.mjs / pill-match.test.mjs，

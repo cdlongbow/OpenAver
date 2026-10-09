@@ -2,10 +2,10 @@
 // 覆蓋反向鎖（桌面 + poster 仍四條／四段）、A 鍵三／四段循環、窄螢幕不得洗掉
 // cardShape（技術要點 ①）、女優牆早退、選單源碼契約。
 //
-// harness 照抄 select-presentation.test.mjs（importmap hook、readFileSync 讀源碼、
+// harness 照抄 select-presentation.test.mjs（importmap hook、
 // Object.assign({}, stateVideos(), …)），並把 stateLightbox() 併進元件以測 A 鍵。
 //
-// TASK-133b-T2：選單／序列／A 鍵三組各拆旗標開／關兩態；新鈕 x-show／@click 源碼鎖。
+// TASK-133b-T2：選單／序列／A 鍵三組各拆旗標開／關兩態；新鈕 x-show 四態鎖（@click 接線已搬 lint）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
