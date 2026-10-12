@@ -2715,6 +2715,14 @@ const RULES = [
     note: '[168a-T7-load-config-in-c5-scope] _maybe_autostart_lan_listener 內的 load_config 不是 2 次 → C5 的讀取被刪或搬走，使用者設了「作為伺服器」開機卻不自動開 LAN 監聽；與整檔規則的 N 相等才代表全部落在 C5 內',
   },
 
+  // ---- [168b-T5] client 模式（_run_client_mode）內不得碰本機伺服器／區網監聽／驗證視窗／資料庫 ----
+  // forbidden-string 不剝 Python 註解／docstring：_run_client_mode 的註解也不得寫出這六個字面。
+  ...['run_server', 'find_free_port', 'lan_listener', '_build_cf_windows', 'web.app', 'core.database'].map((word) => ({
+    file: 'windows/standalone.py', kind: 'forbidden-string', pattern: word,
+    scope: /def _run_client_mode\([^\n]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)+)/,
+    note: '[168b-T5-client-mode-no-local-server] 設成連 NAS 的使用者開殼 → 殼仍在本機起伺服器、開區網監聽、建 JavLibrary／FC2 驗證視窗或開本機資料庫，等於沒切到連線模式，還多一個隱藏視窗行程與重複打外站的 IP',
+  })),
+
   // ---- [163b-T7b] 重開提示的接線（node:test 看不到模板；外觀不守） ----
   {
     file: 'web/templates/settings.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="cfWindowProxyRestartNeeded"/,
