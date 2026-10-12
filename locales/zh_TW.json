@@ -29,6 +29,12 @@
       "folder_open_failed": "開啟資料夾失敗",
       "copy_failed": "複製失敗"
     },
+    "bridge": {
+      "file_not_found": "找不到檔案：{path}",
+      "path_uncovered_local": "這台電腦看不到這個位置：{path}",
+      "path_uncovered_server": "這個資料夾伺服器看不到：{path}",
+      "not_video": "不是影片檔，無法開啟：{path}"
+    },
     "browse_dir": {
       "title": "選擇資料夾",
       "select_this": "選取此資料夾",
