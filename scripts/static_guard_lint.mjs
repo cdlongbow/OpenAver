@@ -9148,6 +9148,31 @@ const RULES = [
     pattern: '_reconcileHeroCard()',
     note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 _reconcileHeroCard() 恰一次；不剝註解）' },
 
+  // ---- 168b-T6b connect.html 對照表契約（遷自 connect-rows-page.test.mjs 的 HTML 字面檢查） ----
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-loading"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-loading → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-error"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-error → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-reload"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-reload → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-empty"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-empty → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-note"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-note → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-save"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-save → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'connect-row-local',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 對照表列缺 .connect-row-local → 使用者無法填路徑或看測試結果' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'connect-row-test',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 對照表列缺 .connect-row-test → 使用者無法填路徑或看測試結果' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'connect-row-result',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 對照表列缺 .connect-row-result → 使用者無法填路徑或看測試結果' },
+  { file: 'web/templates/connect.html', kind: 'structure-count', pattern: '<input', count: 1,
+    scope: /\sdata-row\s([\s\S]*?)id="connect-rows-save"/,
+    note: '[lint-guard 168b-T6b-connect_row_single_input] 對照表每列只有右欄一個輸入框（左欄是伺服器路徑、不能手打）→ 多一個 input 使用者會改到伺服器路徑字串、對照永遠對不上' },
+
 ];
 
 // ---- helpers ----

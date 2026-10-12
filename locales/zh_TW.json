@@ -1858,6 +1858,28 @@
     "restarting": "正在重新啟動 OpenAver…",
     "error_generic": "操作失敗，請再試一次",
     "move_toggle": "想把本機片庫搬到伺服器？",
-    "move_hint": "把本機片庫搬到伺服器的方法，之後補上"
+    "move_hint": "把本機片庫搬到伺服器的方法，之後補上",
+    "rows": {
+      "title": "路徑對照表",
+      "intro": "左欄是伺服器上的資料夾，右欄填這台電腦看到的路徑，可以先留空、之後再填。",
+      "placeholder_windows": "\\\\192.168.1.190\\av",
+      "placeholder_mac": "/Volumes/av",
+      "favorite": "我的最愛",
+      "readonly": "唯讀",
+      "test_btn": "測試",
+      "found": "找得到",
+      "not_found": "這台電腦看不到這個位置",
+      "no_sample": "這個來源裡沒有可測試的影片",
+      "loading": "正在讀取伺服器的掃描來源…",
+      "load_failed": "讀不到伺服器的掃描來源",
+      "reload_btn": "重新讀取",
+      "empty": "伺服器還沒有掃描來源或「我的最愛」資料夾",
+      "stale": "（伺服器已無此來源）",
+      "remove": "移除",
+      "save_btn": "儲存對照表",
+      "local_note": "對照表會在切換時一起寫入。",
+      "saved": "對照表已儲存",
+      "save_failed": "對照表儲存失敗"
+    }
   }
 }

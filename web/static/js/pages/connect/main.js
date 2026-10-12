@@ -1,6 +1,9 @@
 // 168b-T6a: connect page (single standalone Alpine component). All remote I/O goes through the shell bridge.
 import { PROBE_ICON_MAP } from '../settings/source-probe-logic.js';
-import { connectActions, probeCode, dotState, kindCode, forgotCode } from './connect-logic.js';
+import {
+    connectActions, probeCode, dotState, kindCode, forgotCode,
+    mergeRows, staleRows, rulesForSave, rowResultView, pathMapForApply as buildPathMap,
+} from './connect-logic.js';
 
 export function connectPage() {
     return {
@@ -15,6 +18,11 @@ export function connectPage() {
         probe: null,
         phase: 'idle',
         pin: '',
+        sourcesState: 'idle',
+        sourcesFor: '',
+        rows: [],
+        rowsSnapshot: '',
+        savedRules: [],
         // --- free state ---
         localVersion: '',
         savedHost: '',
@@ -56,9 +64,11 @@ export function connectPage() {
             this.lastOk = typeof state.last_ok === 'string' ? state.last_ok : '';
             this.savedUrl = this.mode === 'client' ? String(state.url || '') : '';
             this.savedHost = this.mode === 'client' ? String(state.host || '') : '';
+            this.savedRules = Array.isArray(state.path_map) ? state.path_map : [];
             this.urlText = this.savedUrl;
             this.bridge = 'ready';
             if (this.mode === 'client' && this.savedUrl) await this.testConnection();
+            await this._syncSources();
         },
 
         async call(name, ...args) {
@@ -102,6 +112,7 @@ export function connectPage() {
                 this.savedVersion = String(reply.version || '');
                 this.savedKind = String(reply.kind || '');
             }
+            await this._syncSources();
         },
 
         async login() {
@@ -117,11 +128,116 @@ export function connectPage() {
             this.phase = 'probed';
             if (reply && reply.ok === true) this.phase = 'authed';
             this.pinError = reply && reply.ok === true ? '' : (reply && reply.reason) || 'failed';
+            await this._syncSources();
         },
 
-        // T6b replaces the body; null means the Python side keeps the stored path map.
+        // null means the Python side keeps the stored path map.
         pathMapForApply() {
-            return null;
+            return buildPathMap(this);
+        },
+
+        // --- path-map table ---
+        async _syncSources() {
+            if (!this.actions().tableVisible) return;
+            if (this.sourcesState === 'loading' || this.rowsReady()) return;
+            await this.loadSources();
+        },
+
+        async loadSources() {
+            if (!this.probe || this.busy) return;
+            const url = this.probe.url;
+            this.sourcesState = 'loading';
+            const reply = await this.call('connect_sources', url);
+            if (this.bridge === 'unavailable') return;
+            if (!this.probe || this.probe.url !== url) {
+                this.sourcesState = 'idle';
+                await this._syncSources();
+                return;
+            }
+            if (!reply || reply.ok !== true || !Array.isArray(reply.sources)) {
+                this.sourcesFor = '';
+                this.sourcesState = 'error';
+                return;
+            }
+            const rows = [...mergeRows(reply.sources, this.savedRules), ...staleRows(reply.sources, this.savedRules)];
+            this.rows = rows;
+            this.rowsSnapshot = JSON.stringify(rulesForSave(rows));
+            this.sourcesFor = url;
+            this.sourcesState = 'ok';
+        },
+
+        rowsReady() {
+            return this.sourcesState === 'ok' && !!this.probe && this.sourcesFor === this.probe.url;
+        },
+
+        rowsLoading() {
+            return !this.rowsReady() && this.sourcesState !== 'error';
+        },
+
+        canTestRow(row) {
+            return this.bridge === 'ready' && !this.restarting && !row.testing && row.local.trim() !== '';
+        },
+
+        async testRow(row) {
+            if (!this.canTestRow(row)) return;
+            const gen = ++row.testGen;
+            row.testing = true;
+            const reply = await this.call('connect_test_row', row.server, row.local.trim(), row.sample);
+            if (row.testGen !== gen) return;
+            row.testing = false;
+            if (this.bridge === 'unavailable') return;
+            row.state = reply && typeof reply.state === 'string' ? reply.state : 'timeout';
+        },
+
+        onLocalInput(row) {
+            row.state = null;
+            row.testing = false;
+            row.testGen++;
+        },
+
+        removeStale(row) {
+            row.removed = true;
+        },
+
+        async saveRows() {
+            if (!this.actions().canSaveRows) return;
+            const rules = rulesForSave(this.rows);
+            this.busy = 'save';
+            const reply = await this.call('connect_save_path_map', rules);
+            this.busy = null;
+            if (this.bridge === 'unavailable') return;
+            if (reply && reply.ok === true) {
+                this.savedRules = rules;
+                this.rowsSnapshot = JSON.stringify(rules);
+                Alpine.store('toast').show(window.t('connect.rows.saved'), 'success');
+                return;
+            }
+            Alpine.store('toast').show(window.t('connect.rows.save_failed'), 'error');
+        },
+
+        // --- table copy ---
+        placeholderText() {
+            return this.shellKind === 'mac'
+                ? window.t('connect.rows.placeholder_mac')
+                : window.t('connect.rows.placeholder_windows');
+        },
+
+        rowTag(row) {
+            if (row.readonly) return window.t('connect.rows.readonly');
+            if (row.kind === 'favorite') return window.t('connect.rows.favorite');
+            return '';
+        },
+
+        rowResult(row) {
+            return row.testing ? 'none' : rowResultView(row.state);
+        },
+
+        okIcon() {
+            return PROBE_ICON_MAP.ok;
+        },
+
+        failIcon() {
+            return PROBE_ICON_MAP.unreachable;
         },
 
         async applyRestart() {

@@ -71,3 +71,75 @@
 .connect-move {
     padding: 0 0.25rem;
 }
+
+/* ========== Path-map table (168b-T6b) ========== */
+
+.connect-map {
+    margin-top: 1rem;
+}
+
+.connect-map-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.connect-map-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.connect-map-server {
+    flex: 1 1 10rem;
+    min-width: 0;
+    font-size: 0.875rem;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+}
+
+.connect-map-tag {
+    margin-left: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.connect-map-arrow {
+    color: var(--text-secondary);
+}
+
+.connect-row-local {
+    flex: 1 1 12rem;
+    min-width: 0;
+}
+
+.connect-row-result {
+    display: inline-flex;
+    align-items: center;
+    min-width: 1.5rem;
+}
+
+.connect-row-fail {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.875rem;
+}
+
+@media (max-width: 639px) {
+    .connect-map-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .connect-map-arrow {
+        display: none;
+    }
+
+    .connect-map-server,
+    .connect-row-local {
+        flex: 0 0 auto;
+    }
+}

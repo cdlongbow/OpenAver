@@ -29,6 +29,12 @@ export function connectActions(s) {
     const canApply = ready && authOk
         && (s.mode === 'local' || (s.mode === 'client' && (changed || s.phase === 'authed')));
     const canSwitchLocal = s.mode === 'client' && ready;
+    const probeUrl = probe ? probe.url : undefined;
+    const tableOk = s.sourcesState === 'ok' && s.sourcesFor === probeUrl;
+    const sameServer = probeUrl === s.savedUrl;
+    const dirty = tableOk && Array.isArray(s.rows) && isRowsDirty(s.rows, s.rowsSnapshot);
+    const canSaveRows = s.mode === 'client' && ready && tableOk && sameServer && dirty;
+    const canReloadSources = authOk && s.sourcesState === 'error' && !s.busy;
     const canProbe = s.bridge === 'ready' && !s.busy && !s.restarting && String(s.urlText || '').trim() !== '';
 
     return {
@@ -41,6 +47,9 @@ export function connectActions(s) {
         canApply,
         applyKind: s.mode === 'local' ? 'switch' : 'apply',
         canSwitchLocal,
+        tableVisible: authOk,
+        canSaveRows,
+        canReloadSources,
     };
 }
 
@@ -73,4 +82,66 @@ const FORGOT_MAP = {
 
 export function forgotCode(kind) {
     return Object.hasOwn(FORGOT_MAP, kind) ? FORGOT_MAP[kind] : null;
+}
+
+// ---------- path-map table (T6b) ----------
+
+function toRow(server, kind, readonly, sample, local, stale) {
+    return {
+        server, kind, readonly, sample, local, state: null, testing: false, testGen: 0, removed: false, stale,
+    };
+}
+
+/** One row per server source; local is prefilled from a saved rule whose server string is identical. */
+export function mergeRows(sources, savedRules) {
+    const saved = Array.isArray(savedRules) ? savedRules : [];
+    return (Array.isArray(sources) ? sources : []).map((src) => {
+        const hit = saved.find((r) => r.server === src.path);
+        return toRow(src.path, src.kind, src.readonly === true, src.sample === undefined ? null : src.sample,
+            hit ? String(hit.local) : '', false);
+    });
+}
+
+/** Saved rules whose server is no longer offered: kept (and flagged) so they are not silently lost. */
+export function staleRows(sources, savedRules) {
+    const paths = new Set((Array.isArray(sources) ? sources : []).map((src) => src.path));
+    const saved = Array.isArray(savedRules) ? savedRules : [];
+    const toStaleRow = (r) => toRow(r.server, 'saved_only', false, null, String(r.local), true);
+    return saved.filter((r) => !paths.has(r.server)).map(toStaleRow);
+}
+
+/** Rules to persist: skip removed rows and rows with an empty side. */
+export function rulesForSave(rows) {
+    const out = [];
+    for (const row of rows) {
+        if (row.removed === true) continue;
+        const server = String(row.server).trim();
+        const local = String(row.local).trim();
+        if (server === '' || local === '') continue;
+        out.push({ server: row.server, local });
+    }
+    return out;
+}
+
+export function isRowsDirty(rows, snapshot) {
+    return JSON.stringify(rulesForSave(rows)) !== snapshot;
+}
+
+const ROW_RESULT_MAP = {
+    ok: 'ok',
+    not_found: 'fail',
+    uncovered: 'fail',
+    timeout: 'fail',
+    no_sample: 'note',
+};
+
+/** Row test state code -> ok | fail | note | none. */
+export function rowResultView(state) {
+    return typeof state === 'string' && Object.hasOwn(ROW_RESULT_MAP, state) ? ROW_RESULT_MAP[state] : 'none';
+}
+
+/** Rules sent with apply; null means "leave the stored map alone" (sources not loaded for this server). */
+export function pathMapForApply(s) {
+    if (s.sourcesState !== 'ok' || s.sourcesFor !== (s.probe && s.probe.url)) return null;
+    return rulesForSave(s.rows);
 }
