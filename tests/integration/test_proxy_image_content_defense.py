@@ -24,6 +24,7 @@ BAD_BODIES = {
 NEAR_MISS = {
     "mp4_ftyp": b"\x00\x00\x00\x18ftypmp42MARKER",
     "heic_ftyp": b"\x00\x00\x00\x18ftypheicMARKER",
+    "mif1_compat_heic_only": b"\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1heicMARKER",
     "riff_wave": b"RIFF\x00\x00\x00\x00WAVEMARKER",
     "empty": b"",
     "text_bm": b"B MARKER",
@@ -37,6 +38,7 @@ GOOD = {
     "webp": (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp", "application/octet-stream"),
     "avif": (b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00", "image/avif", "image/jpeg"),
     "avis": (b"\x00\x00\x00\x1cftypavis\x00\x00\x00\x00", "image/avif", "image/jpeg"),
+    "avif_major_mif1": (b"\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1avif\x00\x00", "image/avif", "image/jpeg"),
     "bmp": (b"BM\x36\x00\x00\x00\x00\x00", "image/bmp", "text/html"),
 }
 
