@@ -3,7 +3,7 @@ OpenAver Web GUI - FastAPI Application
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 import asyncio
 import contextlib
 import ipaddress
@@ -317,6 +317,7 @@ from web.routers import settings_metatube as settings_metatube_router
 from web.routers import cf as cf_router
 from web.routers import diagnostics as diagnostics_router
 from web.routers import access as access_router
+from web.routers import client as client_router
 from web.routers import wishlist as wishlist_router
 from web.routers import insights as insights_router
 from web.routers import source_probe as source_probe_router
@@ -353,6 +354,7 @@ app.include_router(settings_metatube_router.router)
 app.include_router(cf_router.router)
 app.include_router(diagnostics_router.router)
 app.include_router(access_router.router)
+app.include_router(client_router.router)
 app.include_router(wishlist_router.router)
 app.include_router(insights_router.router)
 app.include_router(source_probe_router.router)
@@ -391,6 +393,11 @@ def _lan_access_allowed(client_host, server_mode):
 _VERIFY_ENDPOINT = ("POST", "/api/access/verify")
 _HEALTH_ENDPOINT = ("GET", "/api/health")
 _AUTH_ALLOWLIST = frozenset({_VERIFY_ENDPOINT, _HEALTH_ENDPOINT})
+
+# 桌面 client 握手（CD-168b-1）：只放 hello／token 兩端點，與上面常數分開、不併入。
+_CLIENT_HELLO_ENDPOINT = ("GET", "/api/client/hello")
+_CLIENT_TOKEN_ENDPOINT = ("POST", "/api/client/token")
+_CLIENT_HANDSHAKE_ALLOWLIST = frozenset({_CLIENT_HELLO_ENDPOINT, _CLIENT_TOKEN_ENDPOINT})
 
 
 def render_access_gate_page(request: Request):
@@ -506,6 +513,10 @@ async def access_gate(request: Request, call_next):
         # 登入入口本身，永遠可達，不比對 authed。
         return await call_next(request)
 
+    if (method, path) in _CLIENT_HANDSHAKE_ALLOWLIST:
+        # 桌面 client 握手端點（CD-168b-1）：冷載與「認證未開啟」判斷都已在上面做完。
+        return await call_next(request)
+
     if (method, path) == _HEALTH_ENDPOINT:
         if authed:
             return await call_next(request)
@@ -528,6 +539,41 @@ async def access_gate(request: Request, call_next):
         )
 
     return render_access_gate_page(request)
+
+
+def _query_without_oa_token(request: Request) -> str:
+    """去掉 oa_token 後重組 query（其餘參數順序與重複鍵保留）。"""
+    return urlencode([(k, v) for k, v in request.query_params.multi_items() if k != "oa_token"])
+
+
+async def _warm_auth_snapshot() -> bool:
+    """快取冷時照 access_gate 寫法載入；失敗回 False（呼叫端 fail-closed 放行）。"""
+    if snapshot() is not None:
+        return True
+    try:
+        await asyncio.to_thread(ensure_schema)
+    except Exception:
+        logger.exception("client_token_gate: cold-load ensure_schema() failed")
+        return False
+    return snapshot() is not None
+
+
+@app.middleware("http")
+async def client_token_gate(request: Request, call_next):
+    """桌面 client 的 `?oa_token=` 入口（CD-168b-4）：驗票通過 → 種 session cookie 並 303
+    轉址（token 不留在網址）；無效或沒帶 → 原樣放行，交給 access_gate。
+
+    宣告在 access_gate 之後、lan_access_gate 之前＝在 access_gate 之外（先於它執行）、
+    在 lan_access_gate 之內（單機模式的非 loopback 仍先 403）。不做 loopback 短路。
+    """
+    token = request.query_params.get("oa_token") if request.method == "GET" else None
+    if not token or not await _warm_auth_snapshot() or not verify_ticket(token):
+        return await call_next(request)
+    query = _query_without_oa_token(request)
+    location = request.url.path + (f"?{query}" if query else "")
+    response = RedirectResponse(location, status_code=303)
+    response.set_cookie("sid", token, path="/", httponly=True, samesite="lax")
+    return response
 
 
 @app.middleware("http")

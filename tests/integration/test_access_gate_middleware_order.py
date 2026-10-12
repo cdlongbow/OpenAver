@@ -71,3 +71,20 @@ def test_lan_gate_runs_before_access_gate_when_remote_single_mode(
     assert r.status_code == 403
     assert r.text == "Forbidden"
     assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_client_token_gate_sits_between_access_and_lan_gates(auth_db, single_mode, monkeypatch):
+    """client_token_gate 在 access_gate 之外（PIN 開＋有效 oa_token → 303，不是閘門頁），
+    在 lan_access_gate 之內（server_mode 關 → 同請求 403）。斷言可觀察後果。"""
+    token = access_auth.attempt_pin("1234")
+    assert token is not None
+    client = TestClient(app, client=REMOTE_CLIENT)
+
+    r = client.get(f"/search?oa_token={token}", follow_redirects=False)
+    assert r.status_code == 403
+    assert r.text == "Forbidden"
+
+    monkeypatch.setattr("web.app.load_config", lambda: {"general": {"server_mode": True}})
+    r = client.get(f"/search?oa_token={token}", follow_redirects=False)
+    assert r.status_code == 303
+    assert token not in r.headers["location"]
