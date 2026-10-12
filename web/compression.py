@@ -18,10 +18,9 @@ GZIP_COMPRESS_LEVEL = 1
 #   的認知負擔。代價：若真的存在 BMP 封面，它會少省一點可能有的頻寬（BMP 若剛好是
 #   未壓縮內容，其實壓縮會有效果）——這是刻意接受的小代價，不是零成本決策。
 # - image/jpg：它是 image/jpeg 的非 canonical 誤標，不在 starlette 官方預設清單裡。
-#   出現原因：/api/proxy-image 的 passthrough 分支原樣轉發上游圖床給的 Content-Type，
-#   不做正規化。
-#   已知殘留：同一條 passthrough 分支理論上可轉發任何字串（例如 image/tiff、image/x-icon），
-#   清單只能列已知常見者；漏掉的代價是白燒 CPU、內容不會損壞（gzip 無損）。
+#   現況：/api/proxy-image 只送檔頭魔數判定出的 image/*（jpeg/png/gif/webp/avif/bmp），
+#   不再轉發上游 Content-Type；/api/gallery/image 的 .jpg 也對應 image/jpeg。目前沒有
+#   路由會送出 image/jpg，這一項只是防禦性保留（漏掉的代價是白燒 CPU、內容不會損壞，gzip 無損）。
 #   ⚠️ 切勿改成 image/* 萬用字元：starlette 的比對確實支援拆出 image/* 進行比對，
 #   但那會連帶排除 image/svg+xml——SVG 是純文字，壓縮比高達 3–4 倍，starlette 官方清單
 #   刻意不排除它；若改用萬用字元將造成淨損失。

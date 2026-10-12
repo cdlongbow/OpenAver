@@ -78,7 +78,8 @@ def _is_allowed_image_url(url: str) -> bool:
 
     搬家的理由不是整潔：`core/scrapers/javdb_api.py` 的圖片閘也要問同一個問題，
     而 core 不能 import web。留在這裡就只能在 core 再寫一份近似判斷，
-    然後那份會比這份寬鬆（放行 `http://` 與 download-only 的 host）。
+    然後那兩份會漂移。現況判準＝metatube relay 路徑規則＋單一公網規則
+    （http／https、預設埠、解析後全公網），不看靜態 host 名單。
 
     本函式現在只剩 log——403 的原因字串仍由這裡輸出，格式不變。
     """
