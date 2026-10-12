@@ -128,7 +128,7 @@ def test_local_mode_entry_url_golden(monkeypatch, tmp_path):
     from core import client_settings
     monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
     assert (client_settings.shell_entry_url("http://127.0.0.1:49152", "windows")
-            == "http://127.0.0.1:49152/?oa_shell=windows")
+            == "http://127.0.0.1:49152/?oa_shell=windows&oa_mode=local")
     assert client_settings.server_origin("http://127.0.0.1:49152") == "http://127.0.0.1:49152"
 
 
@@ -139,4 +139,4 @@ def test_client_mode_entry_url_and_trusted_origin_same_origin(monkeypatch, tmp_p
         {"version": 1, "server": {"url": "http://192.168.1.180:8000", "token": ""}})
     local = "http://localhost:8000"
     assert client_settings.server_origin(local) == "http://192.168.1.180:8000"
-    assert client_settings.shell_entry_url(local, "mac") == "http://192.168.1.180:8000/?oa_shell=mac"
+    assert client_settings.shell_entry_url(local, "mac") == "http://192.168.1.180:8000/?oa_shell=mac&oa_mode=client"

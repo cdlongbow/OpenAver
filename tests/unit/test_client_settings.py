@@ -160,7 +160,8 @@ def test_shell_entry_url_origin_matches_server_origin(env, client):
         _client(env)
     local = "http://127.0.0.1:49152"
     url = client_settings.shell_entry_url(local, "windows")
-    assert url == client_settings.server_origin(local) + "/?oa_shell=windows"
+    mode = "client" if client else "local"
+    assert url == client_settings.server_origin(local) + f"/?oa_shell=windows&oa_mode={mode}"
     assert url.startswith("http://192.168.1.177:8000/" if client else local + "/")
 
 
@@ -228,3 +229,180 @@ def test_server_origin_client_mode_is_normalized(env):
     d["server"]["url"] = "HTTP://NAS.local:80/x"
     (env / "client.json").write_text(json.dumps(d), encoding="utf-8")
     assert client_settings.server_origin("http://127.0.0.1:49152") == "http://nas.local"
+
+
+# ---------------------------------------------------------------- 168b-T1
+
+def test_shell_kind_by_platform(monkeypatch):
+    monkeypatch.setattr(client_settings.sys, "platform", "win32")
+    assert client_settings.shell_kind() == "windows"
+    monkeypatch.setattr(client_settings.sys, "platform", "darwin")
+    assert client_settings.shell_kind() == "mac"
+
+
+def test_shell_entry_url_token_rules(env):
+    local = "http://127.0.0.1:49152"
+    assert client_settings.shell_entry_url(local, "windows") == local + "/?oa_shell=windows&oa_mode=local"
+    # 本機模式忽略 token（不外漏到本機伺服器 log）
+    assert "oa_token" not in client_settings.shell_entry_url(local, "windows", token="SECRET")
+    _client(env)
+    url = client_settings.shell_entry_url(local, "mac", token="a b/+")
+    assert url == "http://192.168.1.177:8000/?oa_shell=mac&oa_mode=client&oa_token=a%20b%2F%2B"
+    assert "oa_token" not in client_settings.shell_entry_url(local, "mac")
+    assert "oa_token" not in client_settings.shell_entry_url(local, "mac", token="")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("192.168.1.190:8765", "http://192.168.1.190:8765"),
+    ("HTTP://Host.LAN/", "http://host.lan"),
+    ("http://[0:0:0:0:0:0:0:1]:8000", "http://[::1]:8000"),
+    ("[2001:0db8:0000:0000:0000:0000:0000:0001]", "http://[2001:db8::1]"),
+    ("https://x:443", "https://x"),
+    ("http://x:80/a/b?q=1#f", "http://x"),
+    ("  nas.local:8000  ", "http://nas.local:8000"),
+    ("ftp://x", None), ("http://", None), ("http://u:p@x", None), ("", None), ("a b", None),
+    ("http://[::1", None), (None, None), (5, None),
+])
+def test_canonical_server_url_truth_table(raw, expected):
+    got = client_settings.canonical_server_url(raw)
+    assert got == expected
+    if got is not None:
+        assert client_settings.normalize_origin(got) == got
+
+
+@pytest.mark.parametrize("url,with_port,expected", [
+    ("http://192.168.1.190:8765", False, "192.168.1.190"),
+    ("http://192.168.1.190:8765", True, "192.168.1.190:8765"),
+    ("http://nas.local", True, "nas.local"),
+    ("https://nas.local:443/x", True, "nas.local"),
+    ("http://[::1]:8000", False, "[::1]"),
+    ("http://[::1]:8000", True, "[::1]:8000"),
+    ("http://[2001:db8::1]", True, "[2001:db8::1]"),
+])
+def test_display_host(url, with_port, expected):
+    assert client_settings.display_host(url, with_port=with_port) == expected
+
+
+def test_apply_connection_creates_client_json_0600(env):
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", [])
+    p = env / "client.json"
+    assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert client_settings.mode() == "client"
+    assert client_settings.server_token() == "T"
+    assert client_settings.server_url() == "http://192.168.1.190:8765"
+    assert client_settings.path_map() == []
+
+
+def test_apply_connection_migrates_local_settings_once(env):
+    cfg = _decoy_config(env)
+    local_player = client_settings.player_path()
+    local_exts = client_settings.video_extensions()
+    local_close = client_settings.close_action()
+    local_locale = client_settings.tray_locale()
+    # 本機 close_action()／tray_locale() 走 load_config()（既有行為，會補齊預設鍵）；基準取在 apply 之前
+    os.utime(cfg, ns=(1_000_000_000, 1_000_000_000))
+    before = _stat(cfg)
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", None)
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["player"] == "C:\\old\\p.exe"
+    assert data["video_extensions"] == [".zzz"]
+    assert data["close_action"] == "exit"
+    assert data["tray_locale"] == "ja"
+    # I-M：切換前後回值相同
+    assert client_settings.mode() == "client"
+    assert client_settings.player_path() == local_player
+    assert client_settings.video_extensions() == local_exts
+    assert client_settings.close_action() == local_close
+    assert client_settings.tray_locale() == local_locale
+    assert _stat(cfg) == before
+
+
+def test_apply_connection_migration_does_not_overwrite_existing(env):
+    _decoy_config(env)
+    _client(env, player="P", close_action="tray")
+    # 已是 client 模式 → 不遷移也不覆蓋
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", None)
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["player"] == "P" and data["close_action"] == "tray"
+    assert data["tray_locale"] is None
+
+
+def test_migrate_local_settings_fills_only_missing(env):
+    _decoy_config(env)
+    d = client_settings.migrate_local_settings({"player": "P", "close_action": "", "video_extensions": []})
+    assert d["player"] == "P"
+    assert d["close_action"] == "exit"
+    assert d["video_extensions"] == [".zzz"]
+    assert d["tray_locale"] == "ja"
+
+
+def test_migrate_local_settings_bad_or_missing_config(env):
+    assert client_settings.migrate_local_settings({}) == {}
+    (env / "config.json").write_text("{bad", encoding="utf-8")
+    assert client_settings.migrate_local_settings({"player": "P"}) == {"player": "P"}
+
+
+def test_apply_connection_does_not_migrate_when_already_client(env):
+    _decoy_config(env)
+    _client(env)
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", None)
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["player"] == "" and data["close_action"] == "ask"
+
+
+def test_clear_connection_then_apply_keeps_preserved_keys(env):
+    _client(env, player="P", close_action="tray", path_map=[{"server": "/a", "local": "Z:\\a"}])
+    client_settings.clear_connection()
+    assert client_settings.mode() == "local"
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["server"] == {"url": "", "token": ""}
+    assert data["player"] == "P" and "path_map" in data
+    client_settings.apply_connection("http://192.168.1.190:8765", "T2", None)
+    assert client_settings.mode() == "client"
+    assert client_settings.player_path() == "P"
+    assert client_settings.close_action() == "tray"
+    assert client_settings.path_map() == [{"server": "/a", "local": "Z:\\a"}]
+
+
+def test_apply_connection_path_map_none_keeps_list_replaces(env):
+    _client(env, path_map=[{"server": "/a", "local": "Z:\\a"}])
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", None)
+    assert client_settings.path_map() == [{"server": "/a", "local": "Z:\\a"}]
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", [{"server": "/b", "local": "Y:\\b"}])
+    assert client_settings.path_map() == [{"server": "/b", "local": "Y:\\b"}]
+
+
+def test_apply_connection_canonicalizes_url(env):
+    client_settings.apply_connection("HTTP://Nas.LAN:80/x", "T", [])
+    assert client_settings.server_url() == "http://nas.lan"
+
+
+def test_local_mode_mutators_are_noops(env):
+    cfg = _decoy_config(env)
+    before = _stat(cfg)
+    client_settings.touch_last_ok()
+    client_settings.save_path_map([{"server": "/a", "local": "Z:\\a"}])
+    assert client_settings.server_token() == ""
+    assert client_settings.server_last_ok() is None
+    assert not (env / "client.json").exists()
+    assert _stat(cfg) == before
+
+
+def test_save_path_map_filters_blank_rows_and_touch_last_ok(env):
+    _client(env)
+    client_settings.save_path_map([{"server": "/a", "local": "Z:\\a"}, {"server": " ", "local": "x"},
+                                   {"server": "/b", "local": ""}, {"server": "/c"}])
+    assert client_settings.path_map() == [{"server": "/a", "local": "Z:\\a"}]
+    assert client_settings.server_last_ok() is None
+    client_settings.touch_last_ok()
+    last = client_settings.server_last_ok()
+    assert isinstance(last, str) and last.endswith(("Z", "+00:00"))
+    assert client_settings.mode() == "client"
+
+
+def test_apply_connection_never_touches_config(env):
+    cfg = _decoy_config(env)
+    before = _stat(cfg)
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", [])
+    client_settings.clear_connection()
+    assert _stat(cfg) == before
