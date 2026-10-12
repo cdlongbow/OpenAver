@@ -126,6 +126,13 @@ def server_url() -> str:
     return str(server.get("url") or "").strip() if isinstance(server, dict) else ""
 
 
+def server_pair() -> tuple:
+    """(url, token) 取自同一次讀檔；無有效設定回 ("", "")。"""
+    server = _client_data().get("server")
+    server = server if isinstance(server, dict) else {}
+    return str(server.get("url") or "").strip(), str(server.get("token") or "")
+
+
 def path_map() -> list:
     pm = _client_data().get("path_map")
     return pm if isinstance(pm, list) else []
@@ -226,13 +233,19 @@ def shell_kind() -> str:
     return "windows" if sys.platform == "win32" else "mac"
 
 
-def shell_entry_url(local_origin: str, shell_kind: str, token=None) -> str:
-    """入口網址。``oa_mode`` 取 ``mode()``；``token`` 只在連線模式且非空時附 ``oa_token``。"""
-    m = mode()
-    url = f"{server_origin(local_origin)}/?oa_shell={shell_kind}&oa_mode={m}"
-    if m == "client" and token:
+def client_entry_url(origin: str, shell_kind: str, token=None) -> str:
+    """連線模式入口網址（純函式，不讀任何設定）。``token`` 非空才附 ``oa_token``。"""
+    url = f"{origin}/?oa_shell={shell_kind}&oa_mode=client"
+    if token:
         url += f"&oa_token={quote(str(token), safe='')}"
     return url
+
+
+def shell_entry_url(local_origin: str, shell_kind: str, token=None) -> str:
+    """入口網址。``oa_mode`` 取 ``mode()``；``token`` 只在連線模式且非空時附 ``oa_token``。"""
+    if mode() == "client":
+        return client_entry_url(server_origin(local_origin), shell_kind, token)
+    return f"{server_origin(local_origin)}/?oa_shell={shell_kind}&oa_mode=local"
 
 
 def _canonical(raw: str):

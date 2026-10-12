@@ -264,7 +264,12 @@ def test_evaluate_js_exception_is_untrusted_without_raising(fx):
 
 
 WHITELIST = {"open_file", "open_folder", "open_url",
-             "select_files", "select_folder", "select_folder_path"}
+             "select_files", "select_folder", "select_folder_path",
+             "connect_get_state", "connect_probe", "connect_login", "connect_sources",
+             "connect_test_row", "connect_save_path_map", "connect_apply_restart",
+             "connect_switch_local_restart", "connect_show_offline", "copy_text",
+             "offline_get_state", "offline_retry", "offline_save_url", "offline_login",
+             "offline_switch_local_restart"}
 
 
 def test_exposed_bridge_surface_is_exactly_the_whitelist(api_module):
@@ -589,4 +594,131 @@ def test_offline_state_invalid_url_is_stored_empty(fx):
 
 
 def test_exposed_functions_unchanged_by_scope_machinery(api_module):
-    assert len(api_module.exposed_functions()) == 6
+    assert len(api_module.exposed_functions()) == 21
+
+
+# ---------------------------------------------------------------------------
+# 168b-T4b：22 個方法 × 3 種頁面的 scope 矩陣（期望表為字面值，不由 _SCOPE 衍生）
+# ---------------------------------------------------------------------------
+SCOPE_LITERAL = {
+    "select_files": "server", "select_folder": "server", "select_folder_path": "server",
+    "open_file": "server", "open_folder": "server", "open_url": "server", "on_drop": "server",
+    "connect_get_state": "server", "connect_probe": "server", "connect_login": "server",
+    "connect_sources": "server", "connect_test_row": "server", "connect_save_path_map": "server",
+    "connect_apply_restart": "server", "connect_switch_local_restart": "server",
+    "connect_show_offline": "server", "copy_text": "server",
+    "offline_get_state": "offline", "offline_retry": "offline", "offline_save_url": "offline",
+    "offline_login": "offline", "offline_switch_local_restart": "offline",
+}
+NEW_ARGS = {
+    "connect_get_state": (), "connect_probe": (SERVER_LAN,), "connect_login": (SERVER_LAN, "1234"),
+    "connect_sources": (SERVER_LAN,), "connect_test_row": ("/a", "D:/a", "/a/x.mp4"),
+    "connect_save_path_map": ([],), "connect_apply_restart": (SERVER_LAN, []),
+    "connect_switch_local_restart": (), "connect_show_offline": (), "copy_text": ("x",),
+    "offline_get_state": (), "offline_retry": (), "offline_save_url": (SERVER_LAN,),
+    "offline_login": ("1234",), "offline_switch_local_restart": (),
+}
+OFFLINE_METHODS = sorted(m for m, k in SCOPE_LITERAL.items() if k == "offline")
+UNTRUSTED_REPLY = {"ok": False, "reason": "untrusted"}
+
+
+@pytest.fixture
+def mx(fx, tmp_path, monkeypatch):
+    """matrix fixture：client 模式、所有新方法的副作用口換成 Mock"""
+    import core.client_connect as client_connect
+    _write_client(tmp_path)
+    fx.mocks = {
+        "probe": Mock(return_value={"ok": True, "reason": None, "version": "0.17.7", "kind": "nas",
+                                    "auth_required": False, "authed": True,
+                                    "compat": client_connect.Compat("ok", "")}),
+        "login": Mock(return_value={"ok": True, "reason": None, "token": "t"}),
+        "fetch_sources": Mock(return_value={"ok": True, "reason": None, "sources": []}),
+        "preflight": Mock(return_value=client_connect.Preflight("ok", None, {})),
+    }
+    for name, mock in fx.mocks.items():
+        monkeypatch.setattr(client_connect, name, mock)
+    for name in ("apply_connection", "clear_connection", "save_path_map", "touch_last_ok"):
+        fx.mocks[name] = Mock()
+        monkeypatch.setattr(client_settings, name, fx.mocks[name])
+    fx.mocks["copy_text"] = Mock(return_value=True)
+    monkeypatch.setattr(fx.m.clipboard, "copy_text", fx.mocks["copy_text"])
+    fx.mocks["stat"] = Mock()
+    monkeypatch.setattr(fx.m, "_stat_path", fx.mocks["stat"])
+    fx.mocks["restart"] = Mock()
+    fx.m.set_restart_handler(fx.mocks["restart"])
+    return fx
+
+
+def _land(fx, kind):
+    if kind == "server":
+        _load(fx, TRUSTED)
+    elif kind == "offline":
+        fx.api._expect_offline()
+        _load_offline(fx)
+    else:
+        _load(fx, OTHER)
+    assert fx.api._page_kind == (None if kind == "none" else kind)
+    _reset(fx)
+    for mock in fx.mocks.values():
+        mock.reset_mock()
+    fx.window.load_url.reset_mock()
+    fx.window.set_title.reset_mock()
+
+
+def _matrix_call(fx, method):
+    if method in NEW_ARGS:
+        return getattr(fx.m, method)(*NEW_ARGS[method])
+    return _call(fx, method)
+
+
+def _refusal(method):
+    return UNTRUSTED_REPLY if method in NEW_ARGS else REFUSALS[method]
+
+
+def _assert_zero_effects(fx):
+    assert not _all_effects_called(fx)
+    for mock in fx.mocks.values():
+        mock.assert_not_called()
+    fx.window.load_url.assert_not_called()
+    fx.window.set_title.assert_not_called()
+
+
+def test_scope_matrix_literal_covers_exactly_the_scope_table(api_module):
+    assert len(SCOPE_LITERAL) == 22
+    assert set(SCOPE_LITERAL) == set(api_module._SCOPE)
+    assert {m: api_module._SCOPE[m] for m in SCOPE_LITERAL} == SCOPE_LITERAL
+
+
+@pytest.mark.parametrize("method", sorted(SCOPE_LITERAL))
+def test_scope_matrix_method_passes_on_its_own_page_kind(mx, method):
+    _land(mx, SCOPE_LITERAL[method])
+    result = _matrix_call(mx, method)
+    if method in NEW_ARGS:
+        assert result != UNTRUSTED_REPLY, method
+    else:
+        # 既有七項：回傳不是拒絕形狀（open_*：client 模式下會是 uncovered 另一種拒絕），或副作用口真的被碰到
+        assert result != REFUSALS[method] or _all_effects_called(mx), method
+
+
+@pytest.mark.parametrize("kind", ["none", "server", "offline"])
+@pytest.mark.parametrize("method", sorted(SCOPE_LITERAL))
+def test_scope_matrix_denied_on_other_page_kinds(mx, method, kind):
+    if SCOPE_LITERAL[method] == kind:
+        pytest.skip("own page kind")
+    _land(mx, kind)
+    assert _matrix_call(mx, method) == _refusal(method), (method, kind)
+    _assert_zero_effects(mx)
+
+
+@pytest.mark.parametrize("method", OFFLINE_METHODS)
+def test_scope_matrix_offline_methods_denied_on_server_page(mx, method):
+    _land(mx, "server")
+    assert _matrix_call(mx, method) == UNTRUSTED_REPLY
+    _assert_zero_effects(mx)
+
+
+def test_scope_matrix_unregistered_page_none_denies_all_new_methods(mx):
+    _land(mx, "none")
+    for method in NEW_ARGS:
+        assert _matrix_call(mx, method) == UNTRUSTED_REPLY, method
+    _assert_zero_effects(mx)
