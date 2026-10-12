@@ -611,6 +611,19 @@ def _shell_kind(request: Request):
     return value if value in _SHELL_KINDS else None
 
 
+_SHELL_MODES = ("client", "local")
+
+
+def _shell_mode(request: Request):
+    """殼回報的連線模式（僅供**顯示**；168b）。query `oa_mode` 優先，其次 cookie；
+    只認 client／local，其餘當沒帶。授權閘禁讀本函式。"""
+    value = request.query_params.get("oa_mode")
+    if value in _SHELL_MODES:
+        return value
+    value = request.cookies.get("oa_mode")
+    return value if value in _SHELL_MODES else None
+
+
 @app.middleware("http")
 async def oa_shell_signal(request: Request, call_next):
     """把 `_shell_kind` 掛上 request.state，query 帶來且 cookie 不同時種 session cookie。
@@ -620,10 +633,15 @@ async def oa_shell_signal(request: Request, call_next):
     """
     kind = _shell_kind(request)
     request.state.shell_kind = kind
+    mode = _shell_mode(request)
+    request.state.shell_mode = mode
     response = await call_next(request)
     from_query = request.query_params.get("oa_shell") in _SHELL_KINDS
     if from_query and request.cookies.get("oa_shell") != kind:
         response.set_cookie("oa_shell", kind, path="/", httponly=True, samesite="lax")
+    mode_from_query = request.query_params.get("oa_mode") in _SHELL_MODES
+    if mode_from_query and request.cookies.get("oa_mode") != mode:
+        response.set_cookie("oa_mode", mode, path="/", httponly=True, samesite="lax")
     return response
 
 
@@ -791,6 +809,7 @@ def get_common_context(request: Request) -> dict:
         "is_windows_desktop": getattr(request.state, "shell_kind", None) == "windows",
         "is_mac_desktop": getattr(request.state, "shell_kind", None) == "mac",
         "is_desktop": getattr(request.state, "shell_kind", None) is not None,
+        "shell_mode": getattr(request.state, "shell_mode", None),
         "is_synology": is_synology(),
     }
 
@@ -875,6 +894,16 @@ async def insights_page(request: Request):
     context = get_common_context(request)
     context["page"] = "insights"
     return templates.TemplateResponse(request, "insights.html", context)
+
+
+@app.get("/connect")
+async def connect_page(request: Request):
+    """連線頁（桌面殼專用；非殼請求與不存在的路由同形 404）"""
+    if getattr(request.state, "shell_kind", None) is None:
+        raise HTTPException(status_code=404)
+    context = get_common_context(request)
+    context["page"] = "connect"
+    return templates.TemplateResponse(request, "connect.html", context)
 
 
 @app.get("/settings")

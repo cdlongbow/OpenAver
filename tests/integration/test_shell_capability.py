@@ -167,3 +167,115 @@ def test_update_endpoints_ignore_shell_signal(monkeypatch):
         assert upd_q.status_code == 403
         results[label] = (upd.content, ctx.content, upd_q.content)
     assert results["plain"] == results["shell"]
+
+
+# ── TASK-168b-T3: oa_mode 通道 + /connect 空殼 + 側欄 plug ─────────────────
+CONNECT_LINK = 'href="/connect"'
+
+# (id, query, 期望 plug 數, 期望 data-conn-mode 值或 None)
+MODE_MARKS = [
+    ("none", "", 0, None),
+    ("windows-client", "?oa_shell=windows&oa_mode=client", 2, "client"),
+    ("windows-local", "?oa_shell=windows&oa_mode=local", 2, "local"),
+    ("mode-only", "?oa_mode=client", 0, None),
+    ("windows-evil", "?oa_shell=windows&oa_mode=evil", 2, "local"),
+    ("windows-nomode", "?oa_shell=windows", 2, "local"),
+]
+
+
+@pytest.mark.parametrize("server_kind", SERVER_KINDS)
+@pytest.mark.parametrize("mark_id,query,count,mode", MODE_MARKS, ids=[m[0] for m in MODE_MARKS])
+def test_shell_mode_follows_request_not_server_process(
+    monkeypatch, server_kind, mark_id, query, count, mode
+):
+    _set_server_kind(monkeypatch, server_kind)
+    monkeypatch.setattr("web.app.desktop_kind", lambda: server_kind)
+    client = _fresh_client()
+    for page in ("/search", "/help"):
+        resp = client.get(page + query)
+        assert resp.status_code == 200
+        assert resp.text.count(CONNECT_LINK) == count
+        if mode is None:
+            # 前導空白排除 inline CSS 裡的 [data-conn-mode=...] 選擇器
+            assert " data-conn-mode=" not in resp.text
+        else:
+            assert resp.text.count(f' data-conn-mode="{mode}"') == 2
+
+
+def test_oa_mode_valid_query_sets_session_cookie(monkeypatch):
+    _set_server_kind(monkeypatch, None)
+    resp = _fresh_client().get("/settings?oa_shell=windows&oa_mode=client")
+    sc = resp.headers.get("set-cookie", "")
+    assert "oa_mode=client" in sc
+    assert "oa_shell=windows" in sc
+    assert "Max-Age" not in sc and "expires" not in sc.lower()
+
+
+def test_oa_mode_evil_query_sets_no_cookie(monkeypatch):
+    _set_server_kind(monkeypatch, None)
+    resp = _fresh_client().get("/settings?oa_shell=windows&oa_mode=evil")
+    sc = resp.headers.get("set-cookie", "")
+    assert "oa_mode" not in sc
+    assert "oa_shell=windows" in sc
+
+
+def test_oa_mode_cookie_drives_display(monkeypatch):
+    _set_server_kind(monkeypatch, None)
+    client = _fresh_client({"oa_shell": "windows", "oa_mode": "client"})
+    assert ' data-conn-mode="client"' in client.get("/search").text
+    client = _fresh_client({"oa_shell": "windows", "oa_mode": "evil"})
+    assert ' data-conn-mode="local"' in client.get("/search").text
+
+
+def test_pin_gate_response_carries_oa_mode_cookie(monkeypatch, auth_db):
+    _server_mode(monkeypatch, True)
+    client = TestClient(app, client=REMOTE_CLIENT)
+    resp = client.get("/?oa_shell=windows&oa_mode=client")
+    assert 'id="v"' in resp.text
+    sc = resp.headers.get("set-cookie", "")
+    assert "oa_mode=client" in sc
+    assert "Max-Age" not in sc and "expires" not in sc.lower()
+
+
+def test_single_machine_403_carries_oa_mode_cookie(monkeypatch, auth_db):
+    _server_mode(monkeypatch, False)
+    client = TestClient(app, client=REMOTE_CLIENT)
+    resp = client.get("/?oa_shell=windows&oa_mode=client")
+    assert resp.status_code == 403
+    sc = resp.headers.get("set-cookie", "")
+    assert "oa_mode=client" in sc
+    assert "Max-Age" not in sc and "expires" not in sc.lower()
+
+
+def test_connect_page_200_with_shell(monkeypatch):
+    _set_server_kind(monkeypatch, None)
+    resp = _fresh_client().get("/connect?oa_shell=windows&oa_mode=client")
+    assert resp.status_code == 200
+    assert CONNECT_LINK in resp.text
+
+
+def test_connect_page_404_without_shell(monkeypatch):
+    _set_server_kind(monkeypatch, "windows")
+    assert _fresh_client().get("/connect").status_code == 404
+    assert _fresh_client().get("/connect?oa_mode=client").status_code == 404
+
+
+def test_update_endpoints_ignore_oa_mode(monkeypatch):
+    _set_server_kind(monkeypatch, None)
+    results = {}
+    for label, cookies in (
+        ("plain", {"oa_shell": "windows"}),
+        ("mode", {"oa_shell": "windows", "oa_mode": "client"}),
+    ):
+        client = _fresh_client(cookies)
+        with mock.patch("web.app.subprocess.Popen") as popen:
+            upd = client.post("/api/trigger-update", headers=_ACTION_HEADERS)
+            ctx = client.get("/api/install-context")
+            upd_q = client.post(
+                "/api/trigger-update?oa_mode=client", headers=_ACTION_HEADERS
+            )
+        popen.assert_not_called()
+        assert upd.status_code == 403
+        assert ctx.status_code == 403
+        results[label] = (upd.content, ctx.content, upd_q.content)
+    assert results["plain"] == results["mode"]
