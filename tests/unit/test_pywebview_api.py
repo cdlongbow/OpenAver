@@ -12,6 +12,9 @@ from pathlib import Path
 import importlib
 import importlib.util
 
+import core.client_settings as client_settings
+from core.path_utils import uri_to_fs_path
+
 
 @pytest.fixture
 def api_module(monkeypatch):
@@ -35,7 +38,11 @@ def api_module(monkeypatch):
 
 
 @pytest.fixture
-def api_instance(api_module):
+def api_instance(api_module, monkeypatch, tmp_path):
+    # 釘死本機模式：不讀開發機真實 client.json／config.json
+    import core.config as core_config
+    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_path / "config.json")
     return api_module.Api()
 
 
@@ -188,11 +195,12 @@ def test_open_file_custom_player_popen_oserror_logs_warning(api_module, api_inst
     """custom player の Popen が OSError → logger.warning を呼ぶ（fallback は継続）"""
     monkeypatch.setattr(sys, 'platform', 'win32')
 
-    # ファイルが存在するように見せる
-    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: True)
+    # ファイルとプレイヤーだけが存在するように見せる
+    video = uri_to_fs_path('C:\\video.mp4')
+    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: p in {video, 'C:\\Players\\vlc.exe'})
 
-    # _get_player_path が有効なプレイヤーを返す
-    monkeypatch.setattr(api_instance, '_get_player_path', lambda: 'C:\\Players\\vlc.exe')
+    # player_path が有効なプレイヤーを返す
+    monkeypatch.setattr(client_settings, 'player_path', lambda: 'C:\\Players\\vlc.exe')
 
     # Popen は失敗、startfile は成功
     monkeypatch.setattr(api_module.subprocess, 'Popen', MagicMock(side_effect=OSError("spawn failed")))
@@ -209,7 +217,7 @@ def test_open_file_custom_player_popen_oserror_logs_warning(api_module, api_inst
     assert 'falling back to OS default' in warning_msg
     # fallback should continue — startfile called and result is True
     api_module.os.startfile.assert_called_once()
-    assert result is True
+    assert result["ok"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -219,8 +227,9 @@ def test_open_file_os_default_oserror_logs_error(api_module, api_instance, monke
     """OS デフォルト開き (startfile) が OSError → logger.error を呼び False を返す"""
     monkeypatch.setattr(sys, 'platform', 'win32')
 
-    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: True)
-    monkeypatch.setattr(api_instance, '_get_player_path', lambda: '')
+    video = uri_to_fs_path('C:\\video.mp4')
+    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: p == video)
+    monkeypatch.setattr(client_settings, 'player_path', lambda: '')
 
     monkeypatch.setattr(api_module.os, 'startfile', MagicMock(side_effect=OSError("no assoc")), raising=False)
 
@@ -232,7 +241,8 @@ def test_open_file_os_default_oserror_logs_error(api_module, api_instance, monke
     mock_logger.error.assert_called_once()
     error_msg = mock_logger.error.call_args[0][0]
     assert 'open_file failed' in error_msg
-    assert result is False
+    assert result["ok"] is False
+    assert result["reason"] == "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +273,8 @@ def test_open_folder_popen_oserror_logs_error(api_module, api_instance, monkeypa
     """open_folder で Popen が OSError → logger.error を呼び False を返す"""
     monkeypatch.setattr(sys, 'platform', 'win32')
 
-    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: True)
+    folder = uri_to_fs_path('C:\\some\\folder')
+    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: p == folder)
     monkeypatch.setattr(api_module.os.path, 'isfile', lambda p: False)
     monkeypatch.setattr(api_module.subprocess, 'Popen', MagicMock(side_effect=OSError("explorer missing")))
 
@@ -275,87 +286,54 @@ def test_open_folder_popen_oserror_logs_error(api_module, api_instance, monkeypa
     mock_logger.error.assert_called_once()
     error_msg = mock_logger.error.call_args[0][0]
     assert 'open_folder failed' in error_msg
-    assert result is False
+    assert result["ok"] is False
+    assert result["reason"] == "failed"
 
 
 # ---------------------------------------------------------------------------
-# Logger test 5: _get_video_extensions — json.load raises JSONDecodeError → logger.warning
-# （TASK-153b-T1：改讀 core_config.CONFIG_PATH 後，FakePath monkeypatch 失效；
-#  改成 patch CONFIG_PATH 指向壞 JSON 檔，斷言內容不變）
+# Logger test 5-7: client_settings facade readers — 壞 JSON → logger.warning + fallback
+# （原 _get_video_extensions／_get_player_path／_load_config_extensions 隨 facade 搬到
+#  core.client_settings；原三種失敗原因各自保留斷言）
 # ---------------------------------------------------------------------------
-def test_get_video_extensions_json_error_logs_warning(api_module, api_instance, monkeypatch, tmp_path):
-    """_get_video_extensions の JSON parse 失敗 → logger.warning + DEFAULT_VIDEO_EXTENSIONS を返す"""
+def _bad_config(monkeypatch, tmp_path, text='{invalid json'):
     import core.config as core_config
-
-    bad_config = tmp_path / 'config.json'
-    bad_config.write_text('{invalid json', encoding='utf-8')
-    monkeypatch.setattr(core_config, "CONFIG_PATH", bad_config)
-
+    bad = tmp_path / 'config.json'
+    bad.write_text(text, encoding='utf-8')
+    monkeypatch.setattr(core_config, "CONFIG_PATH", bad)
     mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, 'logger', mock_logger)
+    monkeypatch.setattr(client_settings, 'logger', mock_logger)
+    return mock_logger
 
-    result = api_instance._get_video_extensions()
+
+def test_video_extensions_json_error_logs_warning(api_module, api_instance, monkeypatch, tmp_path):
+    """video_extensions の JSON parse 失敗 → logger.warning + DEFAULT_VIDEO_EXTENSIONS（on_drop 経路も同じ reader）"""
+    mock_logger = _bad_config(monkeypatch, tmp_path)
+
+    assert client_settings.video_extensions() == set(api_module.DEFAULT_VIDEO_EXTENSIONS)
 
     mock_logger.warning.assert_called_once()
     warning_msg = mock_logger.warning.call_args[0][0]
-    assert '_get_video_extensions' in warning_msg
+    assert 'video_extensions' in warning_msg
     assert 'DEFAULT_VIDEO_EXTENSIONS' in warning_msg
-    assert result == set(api_module.DEFAULT_VIDEO_EXTENSIONS)
 
 
-# ---------------------------------------------------------------------------
-# Logger test 6: _get_player_path — json.load raises JSONDecodeError → logger.warning
-# ---------------------------------------------------------------------------
-def test_get_player_path_json_error_logs_warning(api_module, api_instance, monkeypatch, tmp_path):
-    """_get_player_path の JSON parse 失敗 → logger.warning + '' を返す"""
-    import core.config as core_config
+def test_player_path_json_error_logs_warning(api_instance, monkeypatch, tmp_path):
+    """player_path の JSON parse 失敗 → logger.warning + '' を返す"""
+    mock_logger = _bad_config(monkeypatch, tmp_path)
 
-    bad_config = tmp_path / 'config.json'
-    bad_config.write_text('{invalid json', encoding='utf-8')
-    monkeypatch.setattr(core_config, "CONFIG_PATH", bad_config)
-
-    mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, 'logger', mock_logger)
-
-    result = api_instance._get_player_path()
+    assert client_settings.player_path() == ''
 
     mock_logger.warning.assert_called_once()
     warning_msg = mock_logger.warning.call_args[0][0]
-    assert '_get_player_path' in warning_msg
+    assert 'player_path' in warning_msg
     assert 'OS default player' in warning_msg
-    assert result == ''
 
 
 # ---------------------------------------------------------------------------
-# Logger test 7: _load_config_extensions — json.load raises JSONDecodeError → logger.warning
+# TASK-153b-T1: readers share core.config.CONFIG_PATH seam
 # ---------------------------------------------------------------------------
-def test_load_config_extensions_json_error_logs_warning(api_module, monkeypatch, tmp_path):
-    """_load_config_extensions の JSON parse 失敗 → logger.warning + DEFAULT_VIDEO_EXTENSIONS を返す"""
-    import core.config as core_config
-
-    bad_config = tmp_path / 'config.json'
-    bad_config.write_text('{invalid json', encoding='utf-8')
-    monkeypatch.setattr(core_config, "CONFIG_PATH", bad_config)
-
-    mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, 'logger', mock_logger)
-
-    result = api_module._load_config_extensions()
-
-    mock_logger.warning.assert_called_once()
-    warning_msg = mock_logger.warning.call_args[0][0]
-    assert '_load_config_extensions' in warning_msg
-    assert 'DEFAULT_VIDEO_EXTENSIONS' in warning_msg
-    assert result == set(api_module.DEFAULT_VIDEO_EXTENSIONS)
-
-
-# ---------------------------------------------------------------------------
-# TASK-153b-T1: three config readers share core.config.CONFIG_PATH seam
-# ---------------------------------------------------------------------------
-def test_pywebview_config_readers_use_core_config_path_seam(
-    api_module, api_instance, monkeypatch, tmp_path
-):
-    """monkeypatch core_config.CONFIG_PATH → tmp 檔後，三個函式都讀到該檔內容。"""
+def test_pywebview_config_readers_use_core_config_path_seam(api_instance, monkeypatch, tmp_path):
+    """monkeypatch core_config.CONFIG_PATH → tmp 檔後，facade 兩個 reader 都讀到該檔內容。"""
     import json
     import core.config as core_config
 
@@ -369,6 +347,5 @@ def test_pywebview_config_readers_use_core_config_path_seam(
     )
     monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_config)
 
-    assert api_instance._get_video_extensions() == {".unique_seam_ext"}
-    assert api_instance._get_player_path() == "/tmp/unique_seam_player"
-    assert api_module._load_config_extensions() == {".unique_seam_ext"}
+    assert client_settings.video_extensions() == {".unique_seam_ext"}
+    assert client_settings.player_path() == "/tmp/unique_seam_player"
