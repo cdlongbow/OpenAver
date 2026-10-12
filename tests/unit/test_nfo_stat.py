@@ -272,7 +272,8 @@ class TestOnErrorTriggeredCallSites:
         cover_uri = to_file_uri(str(cover_fs), {})
         video_uri = to_file_uri(str(tmp_path / "S5-TOCTOU.mp4"), {})
         repo.upsert(Video(path=video_uri, number="S5-TOCTOU", title="t",
-                           cover_path=cover_uri, nfo_mtime=0.0))
+                           cover_path=cover_uri, nfo_mtime=0.0,
+                           output_dir="/ro/out"))
 
         # migrate.py's `.exists()` check runs first and must still see the file
         # as present (real TOCTOU: exists() succeeds, the *later* explicit

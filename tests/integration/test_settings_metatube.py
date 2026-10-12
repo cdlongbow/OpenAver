@@ -7,10 +7,12 @@ Patching strategy:
 
 State isolation: reset metatube_state singleton between tests via fixture.
 """
+import asyncio
+import threading
 import time
 import json
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import DEFAULT, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -771,6 +773,21 @@ def _startup_config(
     }
 
 
+def _signal(event):
+    """side_effect：被呼叫時 set event，回傳值仍用 mock 的 return_value。"""
+    def _fn(*a, **kw):
+        event.set()
+        return DEFAULT
+    return _fn
+
+
+async def _await_reconnect_task():
+    """在 TestClient 的 loop 內等 lifespan 的 metatube_reconnect_task 結束（有逾時）。"""
+    task = app.state.metatube_reconnect_task
+    _done, pending = await asyncio.wait({task}, timeout=5)
+    assert not pending, "metatube_reconnect_task did not finish within 5s"
+
+
 class TestStartupReconnect:
     """(a) Pure function layer — call startup_reconnect() directly."""
 
@@ -1031,14 +1048,17 @@ class TestStartupReconnect:
         monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
         monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
         with patch("web.app.load_config") as mock_load, \
+             patch("web.app.backfill_readonly_nfo_mtime_once", return_value=None), \
              patch("web.app.startup_reconnect") as mock_sr, \
              patch("web.app._fire_probe") as mock_probe:
 
             mock_load.return_value = _startup_config()
             mock_sr.return_value = None  # simulate not connected
+            called = threading.Event()
+            mock_sr.side_effect = _signal(called)
 
             with TestClient(app):
-                pass
+                assert called.wait(5), "startup_reconnect was never called"
 
         mock_sr.assert_called_once()
 
@@ -1051,14 +1071,17 @@ class TestStartupReconnect:
         monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
 
         with patch("web.app.load_config") as mock_load, \
+             patch("web.app.backfill_readonly_nfo_mtime_once", return_value=None), \
              patch("web.app.startup_reconnect") as mock_sr, \
              patch("web.app._fire_probe") as mock_probe:
 
             mock_load.return_value = _startup_config()
             mock_sr.return_value = (names, 1)
+            probed = threading.Event()
+            mock_probe.side_effect = _signal(probed)
 
             with TestClient(app):
-                pass
+                assert probed.wait(5), "_fire_probe was never called"
 
         mock_probe.assert_called_once()
 
@@ -1067,14 +1090,15 @@ class TestStartupReconnect:
         monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
         monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
         with patch("web.app.load_config") as mock_load, \
+             patch("web.app.backfill_readonly_nfo_mtime_once", return_value=None), \
              patch("web.app.startup_reconnect") as mock_sr, \
              patch("web.app._fire_probe") as mock_probe:
 
             mock_load.return_value = _startup_config(enabled=False)
             mock_sr.return_value = None
 
-            with TestClient(app):
-                pass
+            with TestClient(app) as client:
+                client.portal.call(_await_reconnect_task)
 
         mock_probe.assert_not_called()
 
@@ -1084,15 +1108,18 @@ class TestStartupReconnect:
         monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
         monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
         with patch("web.app.load_config") as mock_load, \
+             patch("web.app.backfill_readonly_nfo_mtime_once", return_value=None), \
              patch("web.app.startup_reconnect") as mock_sr, \
              patch("web.app._fire_probe") as mock_probe:
 
             mock_load.return_value = _startup_config()
             # state.generation here is unrelated (0); the returned 42 must win.
             mock_sr.return_value = (["FANZA"], 42)
+            probed = threading.Event()
+            mock_probe.side_effect = _signal(probed)
 
             with TestClient(app):
-                pass
+                assert probed.wait(5), "_fire_probe was never called"
 
         mock_probe.assert_called_once()
         # generation is the last positional arg of _fire_probe(base, token, names, gen)

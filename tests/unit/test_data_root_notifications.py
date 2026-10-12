@@ -41,7 +41,7 @@ def _run_lifespan_with_bootstrap(monkeypatch, fake_bootstrap, emit: Mock):
     monkeypatch.setattr(webapp, "start_notification_persistence", Mock())
     monkeypatch.setattr(webapp, "stop_notification_persistence", Mock())
     monkeypatch.setattr(webapp, "ensure_schema", Mock())
-    monkeypatch.setattr(webapp, "backfill_readonly_nfo_mtime", Mock(return_value=0))
+    monkeypatch.setattr(webapp, "backfill_readonly_nfo_mtime_once", Mock(return_value=0))
     monkeypatch.setattr(webapp, "startup_reconnect", Mock(return_value=None))
     monkeypatch.setattr(webapp, "check_update", AsyncMock(return_value={"has_update": False}))
     monkeypatch.setattr(

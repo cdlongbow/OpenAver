@@ -1014,7 +1014,7 @@ async def test_lifespan_bootstrap_runs_before_init_db(monkeypatch):
     monkeypatch.setattr(webapp, "start_notification_persistence", lambda: None)
     monkeypatch.setattr(webapp, "ensure_schema", lambda: None)
     monkeypatch.setattr(webapp, "load_config", lambda: {"gallery": {}, "general": {}, "search": {}})
-    monkeypatch.setattr(webapp, "backfill_readonly_nfo_mtime", lambda **k: 0)
+    monkeypatch.setattr(webapp, "backfill_readonly_nfo_mtime_once", lambda **k: 0)
     monkeypatch.setattr(webapp, "startup_reconnect", lambda cfg: None)
     monkeypatch.setattr(webapp, "stop_notification_persistence", lambda: None)
     # CodeRabbit（153b PR #202）：lifespan 實際 await 的是

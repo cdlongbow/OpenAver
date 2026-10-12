@@ -125,10 +125,13 @@ def backfill_readonly_nfo_mtime(db_path=None, path_mappings=None) -> int:
         cursor.execute(
             "SELECT path, cover_path FROM videos "
             "WHERE cover_path IS NOT NULL AND cover_path != '' "
+            "AND output_dir IS NOT NULL AND output_dir != '' "
             "AND (nfo_mtime IS NULL OR nfo_mtime <= 0)"
         )
         rows = cursor.fetchall()
 
+        # Phase 1: probe disk only (no write lock held — NAS stat can be slow).
+        found = []
         for video_path, cover_path in rows:
             try:
                 cover_fs = uri_to_local_fs_path(cover_path, path_mappings)
@@ -139,19 +142,60 @@ def backfill_readonly_nfo_mtime(db_path=None, path_mappings=None) -> int:
                 nfo_mtime = nfo_mtime_or_none(nfo_path, on_error=_reraise_stat_error)
                 if nfo_mtime is None:
                     continue
-                cursor.execute(
-                    "UPDATE videos SET nfo_mtime = ? WHERE path = ?",
-                    (nfo_mtime, video_path),
-                )
-                healed += 1
+                found.append((nfo_mtime, video_path))
             except Exception:
                 logger.warning(
                     "backfill_readonly_nfo_mtime: failed to heal row path=%r cover_path=%r",
                     video_path, cover_path, exc_info=True
                 )
 
+        # Phase 2: write, guarded so a concurrently written real value survives.
+        for nfo_mtime, video_path in found:
+            cursor.execute(
+                "UPDATE videos SET nfo_mtime = ? WHERE path = ? AND (nfo_mtime IS NULL OR nfo_mtime <= 0)",
+                (nfo_mtime, video_path),
+            )
+            healed += cursor.rowcount
+
         conn.commit()
     finally:
         conn.close()
 
+    return healed
+
+
+_BACKFILL_MARKER_KEY = "backfill_readonly_nfo_mtime"
+
+
+def backfill_readonly_nfo_mtime_once(db_path=None, path_mappings=None):
+    """Run backfill_readonly_nfo_mtime at most once per DB (marker in app_meta).
+
+    Returns None if the marker already exists (no disk access), else the healed
+    count. The marker is written only AFTER the backfill returns normally; the
+    backfill is idempotent and non-destructive, so a failure just means one more
+    run next boot (opposite direction from BE-DATA-15).
+    """
+    from core.version import VERSION
+
+    if db_path is None:
+        db_path = connection.get_db_path()
+
+    conn = connection.get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM app_meta WHERE key = ?", (_BACKFILL_MARKER_KEY,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is not None:
+        return None
+
+    healed = backfill_readonly_nfo_mtime(db_path=db_path, path_mappings=path_mappings)
+
+    conn = connection.get_connection(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO app_meta (key, value) VALUES (?, ?)", (_BACKFILL_MARKER_KEY, VERSION))
+        conn.commit()
+    finally:
+        conn.close()
     return healed

@@ -287,6 +287,13 @@ def init_db(db_path: Path = None) -> None:
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
     # Migration: 加入 Phase 37 新欄位
     existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(videos)").fetchall()}
     if 'director' not in existing_cols:
