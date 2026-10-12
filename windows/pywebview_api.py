@@ -130,7 +130,7 @@ class Api:
 
     def _set_trusted_origin(self, origin):
         """設定唯一信任的 origin（尾斜線不計）。底線開頭：pywebview 不會把它注入頁面"""
-        self._trusted_origin = str(origin).rstrip("/")
+        self._trusted_origin = client_settings.normalize_origin(str(origin)) or str(origin).rstrip("/")
 
     def _denied(self, method):
         """非信任頁面：記一行 WARNING 並回 True"""
@@ -149,13 +149,26 @@ class Api:
         """頁面載入後：讀實際落地 origin 驗證；只有信任頁才綁 drop"""
         gen = self._nav_gen
         window = get_window()
-        try:
-            origin = window.evaluate_js("location.origin") if window is not None else None
-        except Exception as e:
-            logger.warning(f"[pywebview] origin check failed ({type(e).__name__}); treated as untrusted")
-            origin = None
+        origin = self._verified_origin(window)
         if self._apply_origin(gen, origin):
             window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+
+    @staticmethod
+    def _verified_origin(window):
+        """JS 實值與原生 URL 兩個來源都取得且一致才回 origin；否則 None（fail-closed）"""
+        if window is None:
+            return None
+        try:
+            js_origin = client_settings.normalize_origin(window.evaluate_js("location.origin"))
+            native_origin = client_settings.normalize_origin(window.get_current_url())
+        except Exception as e:
+            logger.warning(f"[pywebview] origin check failed ({type(e).__name__}); treated as untrusted")
+            return None
+        native_ok = native_origin is not None and native_origin == js_origin
+        if not native_ok:
+            logger.warning("[pywebview] origin sources disagree or missing; treated as untrusted")
+            return None
+        return js_origin
 
     def _apply_origin(self, gen, origin):
         """驗證結果只套用到啟動它的那次導航；回是否信任"""

@@ -204,3 +204,26 @@ def test_local_machine_keys_match_accessors():
     for row in client_settings.LOCAL_MACHINE_KEYS:
         assert len(row) == 4 and callable(getattr(client_settings, row[3]))
     assert "general.server_mode" in client_settings.SERVER_OWNED_NOTE
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("http://NAS.local:8000", "http://nas.local:8000"),
+    ("https://x.example:443", "https://x.example"),
+    ("http://192.168.1.180:80", "http://192.168.1.180"),
+    ("HTTP://Nas.Local/", "http://nas.local"),
+    ("http://[::1]:8000", "http://[::1]:8000"),
+    ("http://192.168.1.177:8000/foo/", "http://192.168.1.177:8000"),
+    ("ftp://x", None),
+    ("http://", None),
+    ("http://[::1", None),
+])
+def test_normalize_origin_matches_browser_location_origin(url, expected):
+    assert client_settings.normalize_origin(url) == expected
+
+
+def test_server_origin_client_mode_is_normalized(env):
+    _client(env)
+    d = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    d["server"]["url"] = "HTTP://NAS.local:80/x"
+    (env / "client.json").write_text(json.dumps(d), encoding="utf-8")
+    assert client_settings.server_origin("http://127.0.0.1:49152") == "http://nas.local"

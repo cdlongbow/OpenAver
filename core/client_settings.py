@@ -28,6 +28,7 @@ logger = get_logger(__name__)
 
 CLIENT_FILE_NAME = "client.json"
 CLIENT_VERSION = 1
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 _CLOSE_ACTIONS = ("ask", "tray", "exit")
 
 # (key, 本機讀取來源, client 讀取來源, accessor 名)
@@ -172,12 +173,33 @@ def set_close_action(action: str) -> None:
         save_client_settings({**_client_data(), "close_action": action})
 
 
+def normalize_origin(url: str):
+    """URL → 瀏覽器 ``location.origin`` 形狀（純函式、無 I/O）。
+
+    scheme／host 小寫、IPv6 加回方括號、去掉 http:80／https:443、其他埠保留；
+    非 http(s) 或無 host 回 None。
+    """
+    try:
+        parsed = urlparse(url.strip())
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname
+        port = parsed.port
+    except (ValueError, AttributeError):
+        return None
+    if scheme not in _DEFAULT_PORTS or not host:
+        return None
+    if ":" in host:
+        host = f"[{host}]"
+    if port is None or port == _DEFAULT_PORTS[scheme]:
+        return f"{scheme}://{host}"
+    return f"{scheme}://{host}:{port}"
+
+
 def server_origin(local_origin: str) -> str:
-    """連線模式回 server.url 的 scheme://netloc；本機模式原樣回傳 local_origin。"""
+    """連線模式回 ``normalize_origin(server.url)``；本機模式原樣回傳 local_origin。"""
     if mode() == "local":
         return local_origin
-    parsed = urlparse(server_url())
-    return f"{parsed.scheme}://{parsed.netloc}"
+    return normalize_origin(server_url())
 
 
 def shell_entry_url(local_origin: str, shell_kind: str) -> str:

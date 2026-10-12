@@ -80,6 +80,7 @@ def fx(api_module, monkeypatch, tmp_path):
     window.events = _FakeEvents()
     window.create_file_dialog.side_effect = lambda kind, **kw: [str(video)] if kind == 10 else [str(tmp_path)]
     window.evaluate_js.return_value = TRUSTED
+    window.get_current_url.return_value = TRUSTED + "/"
     window.dom.document.events.drop = _FakeEvent()
     effects["create_file_dialog"] = window.create_file_dialog
     ns = type("FX", (), dict(m=api_module, window=window, effects=effects, video=video))
@@ -128,6 +129,7 @@ def _reset(fx):
 
 def _load(fx, origin):
     fx.window.evaluate_js.return_value = origin
+    fx.window.get_current_url.return_value = origin + "/p?q=1" if isinstance(origin, str) else origin
     fx.window.events.before_load.fire()
     fx.window.events.loaded.fire()
 
@@ -227,14 +229,22 @@ def test_no_trusted_origin_set_means_nothing_is_trusted(api_module, fx):
     "http://localhost:8000",
     "http://localhost:8000.evil.com",
     "http://127.0.0.1:8000.evil.com",
-    "HTTP://127.0.0.1:8000",
-    "http://127.0.0.1:8000/",
     "null",
 ])
 def test_origin_comparison_is_exact(fx, origin):
     _load(fx, origin)
     assert fx.api._trusted is False
     _assert_all_inert(fx)
+    # 信任值是頁面 origin 的字串前綴（埠 800 vs 8000）也不能放行
+    fx.api._set_trusted_origin("http://127.0.0.1:800")
+    _load(fx, "http://127.0.0.1:8000")
+    assert fx.api._trusted is False
+
+
+@pytest.mark.parametrize("origin", ["HTTP://127.0.0.1:8000", "http://127.0.0.1:8000/", "http://127.0.0.1:8000/x?y=1"])
+def test_equivalent_spellings_of_trusted_origin_are_trusted(fx, origin):
+    _load(fx, origin)
+    assert fx.api._trusted is True
 
 
 def test_trailing_slash_on_configured_origin_is_normalised(fx):
@@ -302,3 +312,34 @@ def test_dispatch_open_file_wrapper_refuses_when_untrusted(fx):
     _reset(fx)
     assert wrapper(str(fx.video)) == REFUSALS["open_file"]
     assert not _all_effects_called(fx)
+
+
+@pytest.mark.parametrize("js,native,trusted", [
+    (TRUSTED, OTHER + "/", False),            # eval 被偽造：JS 說信任、原生說別處
+    (OTHER, TRUSTED + "/", False),            # 原生對、JS 不對
+    (TRUSTED, TRUSTED + "/", True),
+    (TRUSTED, None, False),
+    (TRUSTED, TRUSTED + "/search?x=1", True),  # 同 origin 不同 path／query
+    (TRUSTED, "HTTP://127.0.0.1:8000/a", True),  # 原生 URL 依瀏覽器規則正規化
+])
+def test_both_origin_sources_must_match_trusted(fx, js, native, trusted):
+    fx.window.evaluate_js.return_value = js
+    fx.window.get_current_url.return_value = native
+    fx.window.events.before_load.fire()
+    fx.window.events.loaded.fire()
+    assert fx.api._trusted is trusted
+
+
+def test_native_url_exception_is_untrusted(fx):
+    fx.window.get_current_url.side_effect = RuntimeError("no url")
+    fx.window.events.before_load.fire()
+    fx.window.events.loaded.fire()
+    assert fx.api._trusted is False
+
+
+def test_forged_js_origin_cannot_trust_foreign_native_page(fx):
+    fx.window.evaluate_js.return_value = TRUSTED
+    fx.window.get_current_url.return_value = "http://evil.example/"
+    fx.window.events.before_load.fire()
+    fx.window.events.loaded.fire()
+    _assert_all_inert(fx)
