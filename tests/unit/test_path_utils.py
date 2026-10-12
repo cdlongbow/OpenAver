@@ -1570,3 +1570,48 @@ class TestIsFsPathUnderDir:
         media.mkdir(parents=True)
         media2.mkdir(parents=True)
         assert path_utils.is_fs_path_under_dir(str(media2), str(media)) is False
+
+
+# ============ TestFileUriToServerPath ============
+
+class TestFileUriToServerPath:
+    """測試 file_uri_to_server_path() — file:/// URI → 伺服器命名空間裸字串（不依環境）"""
+
+    @pytest.mark.parametrize('uri, expected', [
+        ('file:////media/x.mp4', '/media/x.mp4'),
+        ('file:////volume1/av/x.mp4', '/volume1/av/x.mp4'),
+        ('file://///nas/s/x.mp4', '//nas/s/x.mp4'),
+        ('file:///home/u/x.mp4', '/home/u/x.mp4'),
+    ])
+    def test_posix_and_unc_shapes(self, uri, expected):
+        """四斜線 Linux / UNC 五斜線 / 舊式三斜線 Unix → 以 / 開頭的伺服器路徑"""
+        assert path_utils.file_uri_to_server_path(uri) == expected
+
+    def test_windows_drive_uri_keeps_drive_form(self):
+        """file:///D:/AV/x.mp4 → D:/AV/x.mp4（不補前導 /、不轉反斜線）"""
+        assert path_utils.file_uri_to_server_path('file:///D:/AV/x.mp4') == 'D:/AV/x.mp4'
+
+    @pytest.mark.parametrize('uri, expected', [
+        ('file:////volume1/av/a%20b/x.mp4', '/volume1/av/a b/x.mp4'),
+        ('file:///D:/AV/%E4%B8%AD%E6%96%87/x.mp4', 'D:/AV/中文/x.mp4'),
+    ])
+    def test_percent_encoding_is_decoded(self, uri, expected):
+        """URI 內的 %20 / 中文百分比編碼 → 解碼後的路徑"""
+        assert path_utils.file_uri_to_server_path(uri) == expected
+
+    @pytest.mark.parametrize('value', [
+        '/volume1/av/a%20b.mp4',
+        'D:\\AV\\x.mp4',
+        '\\\\nas\\av\\x.mp4',
+        '',
+    ])
+    def test_non_uri_passthrough_verbatim(self, value):
+        """非 URI 輸入逐字不變（%20 不被解碼）"""
+        assert path_utils.file_uri_to_server_path(value) == value
+
+    @pytest.mark.parametrize('env', ['windows', 'linux', 'wsl'])
+    def test_independent_of_current_env(self, monkeypatch, env):
+        """CURRENT_ENV 為 windows / linux / wsl 輸出皆相同"""
+        monkeypatch.setattr(path_utils, 'CURRENT_ENV', env)
+        assert path_utils.file_uri_to_server_path('file:////media/x.mp4') == '/media/x.mp4'
+        assert path_utils.file_uri_to_server_path('file:///D:/AV/x.mp4') == 'D:/AV/x.mp4'

@@ -489,6 +489,23 @@ def uri_to_fs_path(uri: str) -> str:
         return path
 
 
+def file_uri_to_server_path(value: str) -> str:
+    """file:/// URI → 伺服器命名空間裸字串（不依當前環境，無 I/O）。
+
+    file:////media/x → /media/x；file:///D:/AV/x → D:/AV/x（保持正斜線）；
+    file://///nas/s/x → //nas/s/x。不呼叫 normalize_path。
+    非 file:/// 輸入逐字原樣返回（不 unquote）。
+    """
+    path = value
+    if not path.startswith('file:///'):
+        return path
+    path = path[8:]
+    # 非 Windows drive-letter 且非 UNC → 還原前導 /
+    if not (len(path) >= 2 and path[1] == ':') and not path.startswith('/'):
+        path = '/' + path
+    return unquote(path)
+
+
 def is_path_under_dir(path: str, dir_uri: str) -> bool:
     """
     判斷 file:/// URI 路徑是否在指定目錄底下。
