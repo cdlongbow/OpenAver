@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import subprocess
+from urllib.parse import urlparse
 import webview
 import core.client_settings as client_settings
 from core.path_translate import Mapped, PathMap, Uncovered, to_local, to_server
@@ -32,6 +33,37 @@ def set_window(w):
 def get_window():
     """取得全域 window 參考"""
     return _window
+
+
+# 連不到伺服器時殼自帶的小頁（只組字串，檔案由離線小頁那張卡建立）
+OFFLINE_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "offline", "offline.html")
+_OFFLINE_HOSTS = ("127.0.0.1", "localhost")
+
+# bridge 方法 → 允許呼叫的頁面種類（唯一對照表；沒登記的方法一律拒絕）
+_SCOPE = {
+    "select_files": "server",
+    "select_folder": "server",
+    "select_folder_path": "server",
+    "open_file": "server",
+    "open_folder": "server",
+    "open_url": "server",
+    "on_drop": "server",
+}
+
+
+def _is_offline_landing(js_raw, native_raw):
+    """JS 與原生 URL 的原字串都指向本機 /offline.html 且 origin 一致才回 True"""
+    js_origin = client_settings.normalize_origin(js_raw)
+    native_origin = client_settings.normalize_origin(native_raw)
+    if js_origin is None or js_origin != native_origin:
+        return False
+    try:
+        parsed = urlparse(native_raw.strip())
+    except ValueError:
+        return False
+    if parsed.hostname not in _OFFLINE_HOSTS:
+        return False
+    return parsed.path.endswith("/offline.html")
 
 
 def is_video_file(filename, extensions=None):
@@ -120,63 +152,122 @@ def _notify_uncovered(method, paths):
 
 
 class Api:
-    """供前端 JS 調用的 Python API（信任閘：只有信任 origin 的頁面能動作，預設 fail-closed）"""
+    """供前端 JS 調用的 Python API（信任閘：依落地頁面種類放行，預設 fail-closed）"""
 
     def __init__(self):
-        self._trusted = False
+        self._page_kind = None  # None / "server" / "offline"
         self._trusted_origin = None
         self._nav_gen = 0
         self._seen_origin = None
+        self._offline_expected = False
+        self._offline_origin = None
+        self._offline_state = None
+
+    def _get_trusted(self):
+        """相容屬性 getter：目前頁面是否為伺服器頁"""
+        return self._page_kind == "server"
+
+    def _put_trusted(self, value):
+        """相容屬性 setter：真 → server、假 → None"""
+        self._page_kind = "server" if value else None
+
+    _trusted = property(_get_trusted, _put_trusted)
 
     def _set_trusted_origin(self, origin):
         """設定唯一信任的 origin（尾斜線不計）。底線開頭：pywebview 不會把它注入頁面"""
         self._trusted_origin = client_settings.normalize_origin(str(origin)) or str(origin).rstrip("/")
 
     def _denied(self, method):
-        """非信任頁面：記一行 WARNING 並回 True"""
-        if self._trusted:
+        """頁面種類不符該方法的範圍：記一行 WARNING 並回 True"""
+        scope = _SCOPE.get(method)
+        if scope is not None and scope == self._page_kind:
             return False
         origin = None if self._seen_origin is None else str(self._seen_origin)[:128]
         logger.warning(f"[pywebview] {method} refused reason=untrusted origin={origin!r}")
         return True
 
+    def _expect_offline(self):
+        """殼即將載入離線小頁：下一次通過世代守衛的驗證才可把本機 /offline.html 判成小頁"""
+        self._offline_expected = True
+
+    def _set_offline_state(self, reason, failed_url):
+        """離線狀態容器：網址只存規範化後的 scheme://host[:port]（不含票證）"""
+        failed = client_settings.canonical_server_url(failed_url) or ""
+        self._offline_state = {
+            "reason": reason,
+            "failed_url": failed,
+            "host_port": client_settings.display_host(failed, with_port=True),
+        }
+
+    def _show_offline(self, reason):
+        """把視窗換成離線小頁"""
+        self._set_offline_state(reason, self._trusted_origin)
+        self._expect_offline()
+        get_window().load_url(OFFLINE_PAGE)
+
     def _on_before_load(self):
-        """每次導航注入前：世代遞增並立即撤銷信任"""
+        """每次導航注入前：世代遞增並立即撤銷頁面種類"""
         self._nav_gen += 1
-        self._trusted = False  # before_load reset (I7)
+        self._page_kind = None  # before_load reset (I7)
 
     def _on_loaded(self):
-        """頁面載入後：讀實際落地 origin 驗證；只有信任頁才綁 drop"""
+        """頁面載入後：讀實際落地 origin 判定頁面種類；只有伺服器頁才綁 drop"""
         gen = self._nav_gen
         window = get_window()
-        origin = self._verified_origin(window)
-        if self._apply_origin(gen, origin):
+        js_raw, native_raw, ok = self._read_origins(window)
+        if gen != self._nav_gen:
+            return
+        expected, self._offline_expected = self._offline_expected, False
+        origin = self._agreed_origin(js_raw, native_raw) if ok else None
+        self._seen_origin = origin
+        self._page_kind = self._classify(origin, js_raw, native_raw, expected)
+        if self._page_kind == "server":
             window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+        elif self._page_kind is None:
+            self._on_nav_failure(js_raw, native_raw)
 
     @staticmethod
-    def _verified_origin(window):
-        """JS 實值與原生 URL 兩個來源都取得且一致才回 origin；否則 None（fail-closed）"""
+    def _read_origins(window):
+        """回 (JS 原字串, 原生 URL 原字串, 是否讀成功)；任何例外 fail-closed"""
         if window is None:
-            return None
+            return None, None, False
         try:
-            js_origin = client_settings.normalize_origin(window.evaluate_js("location.origin"))
-            native_origin = client_settings.normalize_origin(window.get_current_url())
+            return window.evaluate_js("location.origin"), window.get_current_url(), True
         except Exception as e:
             logger.warning(f"[pywebview] origin check failed ({type(e).__name__}); treated as untrusted")
-            return None
-        native_ok = native_origin is not None and native_origin == js_origin
-        if not native_ok:
+            return None, None, False
+
+    @staticmethod
+    def _agreed_origin(js_raw, native_raw):
+        """兩個來源正規化後一致才回 origin；否則 None"""
+        js_origin = client_settings.normalize_origin(js_raw)
+        native_origin = client_settings.normalize_origin(native_raw)
+        if native_origin is None or native_origin != js_origin:
             logger.warning("[pywebview] origin sources disagree or missing; treated as untrusted")
             return None
         return js_origin
 
-    def _apply_origin(self, gen, origin):
-        """驗證結果只套用到啟動它的那次導航；回是否信任"""
-        if gen != self._nav_gen:
-            return False
-        self._seen_origin = origin
-        self._trusted = origin is not None and origin == self._trusted_origin
-        return self._trusted
+    def _classify(self, origin, js_raw, native_raw, expected):
+        """伺服器頁優先；其次（等待中或同一小頁重整）的本機離線小頁；其餘 None"""
+        if origin is not None and origin == self._trusted_origin:
+            return "server"
+        remembered = self._offline_origin is not None and origin == self._offline_origin
+        if (expected or remembered) and _is_offline_landing(js_raw, native_raw):
+            self._offline_origin = origin
+            return "offline"
+        return None
+
+    def _on_nav_failure(self, js_raw, native_raw):
+        """信任伺服器的導航失敗（錯誤頁簽名）且為連線模式 → 換成離線小頁"""
+        if not (isinstance(js_raw, str) and js_raw.startswith("chrome-error://")):
+            return
+        native_origin = client_settings.normalize_origin(native_raw)
+        if native_origin is None or native_origin != self._trusted_origin:
+            return
+        if client_settings.mode() != "client":
+            return
+        logger.warning(f"[pywebview] server unreachable host={client_settings.display_host(native_origin, with_port=True)}")
+        self._show_offline("unreachable")
 
     def select_files(self):
         """
