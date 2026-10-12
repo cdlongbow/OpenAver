@@ -13,7 +13,7 @@ from .alias import AliasRecord, AliasRepository
 from .tag_alias import TagAliasRecord, TagAliasRepository
 from .actress import Actress, ActressRepository
 from .actress_library import get_library_actresses
-from .migrate import migrate_json_to_sqlite, backfill_readonly_nfo_mtime
+from .migrate import migrate_json_to_sqlite, backfill_readonly_nfo_mtime, backfill_readonly_nfo_mtime_once
 from .wishlist import WishlistRepository
 from .notifications import (
     insert_notification,
@@ -39,6 +39,7 @@ __all__ = [
     "get_library_actresses",
     "migrate_json_to_sqlite",
     "backfill_readonly_nfo_mtime",
+    "backfill_readonly_nfo_mtime_once",
     "WishlistRepository",
     "insert_notification",
     "mark_notifications_read",
