@@ -549,6 +549,38 @@ async def lan_access_gate(request: Request, call_next):
     return PlainTextResponse("Forbidden", status_code=403)
 
 
+_SHELL_KINDS = ("windows", "mac")
+
+
+def _shell_kind(request: Request):
+    """請求自稱的桌面殼種類（僅供**顯示**；CD-168a-6）。
+
+    query `oa_shell` 優先，其次 cookie；只認 windows／mac，其餘一律忽略。
+    授權閘（/api/install-context、/api/trigger-update）禁讀本函式（CD-168a-7）。
+    """
+    value = request.query_params.get("oa_shell")
+    if value in _SHELL_KINDS:
+        return value
+    value = request.cookies.get("oa_shell")
+    return value if value in _SHELL_KINDS else None
+
+
+@app.middleware("http")
+async def oa_shell_signal(request: Request, call_next):
+    """把 `_shell_kind` 掛上 request.state，query 帶來且 cookie 不同時種 session cookie。
+
+    宣告在 lan_access_gate 之後＝最外層，PIN 閘門頁與 LAN 403 回應也會帶 cookie。
+    不讀 config、不做 I/O。
+    """
+    kind = _shell_kind(request)
+    request.state.shell_kind = kind
+    response = await call_next(request)
+    from_query = request.query_params.get("oa_shell") in _SHELL_KINDS
+    if from_query and request.cookies.get("oa_shell") != kind:
+        response.set_cookie("oa_shell", kind, path="/", httponly=True, samesite="lax")
+    return response
+
+
 def _is_loopback_host(host):
     """判斷 `host` 是否為本機（`/api/trigger-update` 三層護欄 CD-110b-5 用）。
 
@@ -606,12 +638,14 @@ from web.lan_listener import get_lan_ip  # noqa: E402 — re-export for backward
 
 def _is_windows_desktop() -> bool:
     """True のみ Windows 桌面 App（feature/82 T4：OPENAVER_STANDALONE env + win32 雙重條件）。
-    非桌面 / 非 Windows → False，Settings 中不渲染 close_action 下拉。"""
+    非桌面 / 非 Windows → False，Settings 中不渲染 close_action 下拉。
+    伺服器行程判斷，禁用於顯示（顯示看 `_shell_kind(request)`，CD-168a-6）。"""
     return desktop_kind() == "windows"
 
 
 def _is_mac_desktop() -> bool:
-    """True 僅限 macOS 桌面 App（OPENAVER_STANDALONE=1 AND darwin）。"""
+    """True 僅限 macOS 桌面 App（OPENAVER_STANDALONE=1 AND darwin）。
+    伺服器行程判斷，禁用於顯示（顯示看 `_shell_kind(request)`，CD-168a-6）。"""
     return desktop_kind() == "mac"
 
 
@@ -708,9 +742,9 @@ def get_common_context(request: Request) -> dict:
         "locale": locale,
         "merged_translations": merged_translations,
         "t": _t_bound,
-        "is_windows_desktop": _is_windows_desktop(),
-        "is_mac_desktop": _is_mac_desktop(),
-        "is_desktop": _is_windows_desktop() or _is_mac_desktop(),
+        "is_windows_desktop": getattr(request.state, "shell_kind", None) == "windows",
+        "is_mac_desktop": getattr(request.state, "shell_kind", None) == "mac",
+        "is_desktop": getattr(request.state, "shell_kind", None) is not None,
         "is_synology": is_synology(),
     }
 
