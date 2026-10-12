@@ -196,7 +196,7 @@ def test_static_image_hosts_never_have_path_prefix_or_port():
 
 def test_registry_truth_table_download_and_proxy_consumers():
     """Walk every IMAGE_HOSTS row × (download, proxy) + one live dynamic row."""
-    assert len(IMAGE_HOSTS) == 28  # T4 removes two obsolete source hosts
+    assert len(IMAGE_HOSTS) == 10  # 6 download+（原共用列）、3 download-only、1 codec（tp.spfcas.com）
 
     for entry in IMAGE_HOSTS:
         download_allowed = "download" in entry.consumers
@@ -316,21 +316,20 @@ def test_nested_preview_target_residual_dns_name_resolving_private_is_not_covere
 
 def test_download_hosts_for_xcity():
     """TASK-157-T2: xcity 圖床白名單只放行 faws.xcity.jp（download 消費端視角）。
-    TASK-157-F2 更新：faws.xcity.jp 同時也開放 proxy 消費端（見
-    test_faws_xcity_jp_is_proxy_allowed），download_hosts_for() 只問 download
-    這一側，不受影響。"""
+    167 更新：照片預覽由公網規則（proxy_verdict）放行，registry 列只剩 download
+    （見 test_faws_xcity_jp_is_download_only_in_registry），download_hosts_for()
+    的集合不受影響。"""
     assert download_hosts_for("xcity") == {"faws.xcity.jp"}
 
 
-def test_faws_xcity_jp_is_proxy_allowed(public_resolver):
-    """TASK-157-F2: 女優換照片／預覽（未收藏時）要能透過 /api/proxy-image 顯示
-    xcity 來源的照片，faws.xcity.jp 必須同時開放 download 與 proxy 消費端
-    ——main 分支的對應項 minnano-av.com 就是 (download, proxy) 都給，xcity 頂
-    替它時若漏掉 proxy 會是功能倒退（157 branch review F2）。"""
+def test_faws_xcity_jp_is_download_only_in_registry(public_resolver):
+    """167: registry 只服務女優照片下載與 javdb 解碼，faws.xcity.jp 的 consumers
+    只剩 ("download",)；代理端改看公網規則（proxy_verdict），xcity 照片預覽
+    照樣放行，不再靠 registry 列。"""
     matches = [e for e in IMAGE_HOSTS if e.host == "faws.xcity.jp"]
     assert len(matches) == 1
     entry = matches[0]
-    assert entry.consumers == ("download", "proxy")
+    assert entry.consumers == ("download",)
 
     # This is the actual gate web/routers/search.py's /api/proxy-image calls
     # (proxy_verdict()) — assert on the real entry point, since that's what a

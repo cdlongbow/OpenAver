@@ -1,22 +1,17 @@
 """
-Declarative image-host policy registry (TASK-113c-T1 / CD-113c-1).
+Declarative image-host registry (TASK-113c-T1 / CD-113c-1; 167 縮表).
 
-Single source of truth for which hosts may be used by the download consumer
-(core/actress_photo.py) and/or the proxy consumer (web/routers/search.py).
+registry 只服務兩件事：
+1. 女優換照片下載（core/actress_photo.py）——經 download_hosts_for() 取各
+   photo_source 的 host 集合；
+2. javdb 圖片解碼——經 codec_for_host() 查 payload_codec。
 
-Consumers export their own minimal-permission views via download_hosts_for()
-and proxy_verdict(). Matching mechanism differences (exact-only vs exact+root,
-http+https vs https-only, photo_source binding) stay at the call sites.
+代理（/api/proxy-image）放不放行**不看靜態列**：判準本體在 proxy_verdict()
+的公網規則（metatube relay ＋ 單一公網檢查），靜態 IMAGE_HOSTS 已無代理放行名單。
+`web/routers/search.py` 與 `core/scrapers/javdb_api.py` 問同一個函式，避免兩份判準
+漂移（BE-TEST-14）。
 
-**代理那條路的判準本體在這裡**（`proxy_verdict()`）——所有權歸 registry 是
-Codex PR#128 round-2 P3 就定下的，132b 只是把最後一段實作搬過來：
-`web/routers/search.py` 退成「問一次 ＋ 記 log」，`core/scrapers/javdb_api.py`
-的圖片閘問同一個函式。兩邊各寫一份的話，第二份永遠比第一份寬鬆（BE-TEST-14）。
-
-`match="exact"` 不允子域是刻意的（**CD-60-1**：CDN / 女優照片的固定 host 嚴格匹配）；
-`match="root"` 才走呼叫端的 `host == root or host.endswith("." + root)` 邊界比對。
-兩端的允許集合**本來就不相等**（CD-113c-2）——registry 的價值是讓「不相等」變成
-被宣告的，不是把它們統一。
+`match="exact"` 不允子域是刻意的（**CD-60-1**：CDN / 女優照片的固定 host 嚴格匹配）。
 """
 from __future__ import annotations
 
@@ -34,7 +29,7 @@ class ImageHost:
     match: str  # "exact" | "root"
     schemes: tuple[str, ...]
     consumers: tuple[str, ...]  # "download" | "proxy" (any non-empty subset)
-    photo_source: str | None  # download consumer only; proxy-only → None
+    photo_source: str | None  # download consumer only; non-download → None
     # T3a: optional constraints for dynamic (and future) entries. Static rows
     # keep defaults — path_prefix/port None means "no extra check".
     path_prefix: str | None = None
@@ -44,53 +39,53 @@ class ImageHost:
     payload_codec: str | None = None
 
 
-# Static translation of the two pre-T1 whitelists (+ T3a cf.javfree.me).
+# 只服務女優照片下載（download）與 javdb 解碼（payload_codec）。
 # Dynamic metatube entries come from proxy_dynamic_hosts(), not this tuple.
 IMAGE_HOSTS: tuple[ImageHost, ...] = (
-    # ---- download + proxy (shared exact hosts; schemes upper-bound) ----
+    # ---- download（女優照片來源；schemes 為上界）----
     ImageHost(
         host="www.graphis.ne.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="graphis",
     ),
     ImageHost(
         host="graphis.ne.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="graphis",
     ),
     ImageHost(
         host="data.graphis.ne.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="graphis",
     ),
     ImageHost(
         host="cdn.jsdelivr.net",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="gfriends",
     ),
     ImageHost(
         host="upload.wikimedia.org",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="wiki",
     ),
     ImageHost(
         host="faws.xcity.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="xcity",
     ),
-    # ---- download-only (exact; not proxied) ----
+    # ---- download（備援／原始檔 host）----
     ImageHost(
         host="raw.githubusercontent.com",
         match="exact",
@@ -112,142 +107,12 @@ IMAGE_HOSTS: tuple[ImageHost, ...] = (
         consumers=("download",),
         photo_source="wiki",
     ),
-    # ---- proxy-only exact ----
-    ImageHost(
-        host="pics.dmm.co.jp",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="awsimgsrc.dmm.co.jp",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="www.dmm.co.jp",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="javdb.com",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="file.netcdn.space",  # AVSOX 圖床（caribbean / 1pondo / heyzo 封面 CDN）
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    # ---- proxy-only root domains (subdomain boundary match at call site) ----
-    ImageHost(
-        host="javbus.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="jav321.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="heyzo.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="caribbeancom.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="1pondo.tv",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="10musume.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="avsox.click",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="avsox.monster",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="avsox.website",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="javten.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="fc2.com",  # FC2 圖床（contents-thumbnail2 / live-storage / storage<NNN>.contents 數字子域）
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="jdbstatic.com",  # JavDB CDN root（c0/c1/c2 numbered subdomains）
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    # ---- T3a: sole §1.4-enumerated new host (exact CDN subdomain only) ----
-    ImageHost(
-        host="cf.javfree.me",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
     # ---- javdb App API image host (encoded body; decode via payload_codec) ----
     # consumers 只列 "proxy"：本 registry 的 "download" 消費端專指**女優照片**那條路
     # （`download_hosts_for(photo_source)` → core/actress_photo.py），封面／劇照的下載
     # 走 core/organizer.py 且**不查 registry**。標上 "download" 一個東西都選不到，
     # 卻會逼著鬆綁兩條真的不變式（download ⇒ http+https、photo_source is None ⟺ 非 download）。
-    # 解碼查 codec_for_host()（不看 consumers）；javdb 的圖片閘查 proxy_verdict()，
-    # 那條**必須**看 consumers——它問的正是「代理端會不會收」。
+    # 解碼只查 codec_for_host()（不看 consumers）；代理放不放行看 proxy_verdict() 的公網規則。
     ImageHost(
         host="tp.spfcas.com",
         match="exact",
