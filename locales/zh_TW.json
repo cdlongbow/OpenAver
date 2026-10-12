@@ -61,6 +61,27 @@
     }
   },
   "desktop": {
+    "offline": {
+      "message": {
+        "unreachable": "連不到 {host}",
+        "lan_forbidden": "連不到 {host}：伺服器沒有開放區網連線",
+        "incompatible": "{host} 上的 OpenAver 版本與這台電腦不相容",
+        "relogin": "密碼已變更，請重新輸入"
+      },
+      "url_label": "伺服器網址",
+      "retry": "重試",
+      "retrying": "連線中…",
+      "switch_local": "切回本機模式並重新啟動 OpenAver",
+      "password_label": "密碼",
+      "submit": "送出",
+      "bad_url": "網址格式不正確",
+      "bad_pin": "密碼不正確",
+      "login_failed": "登入失敗，請稍後再試",
+      "retry_failed": "仍然連不上，請確認伺服器已開機、網址正確"
+    },
+    "restart": {
+      "spawn_failed": "無法自動重新啟動 OpenAver，請手動重新開啟。"
+    },
     "tray": {
       "open_app": "開啟 OpenAver",
       "close_behavior": "關閉視窗時",
