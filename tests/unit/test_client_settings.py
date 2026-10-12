@@ -406,3 +406,11 @@ def test_apply_connection_never_touches_config(env):
     client_settings.apply_connection("http://192.168.1.190:8765", "T", [])
     client_settings.clear_connection()
     assert _stat(cfg) == before
+
+
+def test_min_server_version_not_above_shipped_version():
+    """MIN_SERVER_VERSION 是連線功能首次出貨版，不得高於本版（168b-T8）。"""
+    from core.version import VERSION
+
+    shipped = tuple(int(x) for x in VERSION.split(".")[:3])
+    assert shipped >= client_settings.MIN_SERVER_VERSION

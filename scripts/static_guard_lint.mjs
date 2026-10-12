@@ -2723,6 +2723,32 @@ const RULES = [
     note: '[168b-T5-client-mode-no-local-server] 設成連 NAS 的使用者開殼 → 殼仍在本機起伺服器、開區網監聽、建 JavLibrary／FC2 驗證視窗或開本機資料庫，等於沒切到連線模式，還多一個隱藏視窗行程與重複打外站的 IP',
   })),
 
+  // ---- [168b-T8] client.json 寫入／連線狀態賦值／剪貼簿 的單一出口 ----
+  // forbidden-string 不剝註解：windows/、web/ 的 .py 註解與 docstring 也不得寫出 save_client_settings 字面。
+  ...['windows', 'web'].map((dir) => ({
+    file: { dir, ext: ['.py'], recursive: true }, kind: 'forbidden-string', pattern: 'save_client_settings',
+    note: `[168b-T8-no-save-client-settings-in-${dir}] ${dir === 'windows'
+      ? '桌面殼的某個新功能繞過具名寫入函式、整份覆蓋 client.json → 使用者原本存好的伺服器網址、密碼與路徑對照被洗成空白，下次開殼回到「沒設定」，要重新輸入'
+      : '伺服器端的程式碼碰到「這台電腦」的 client.json → 在 NAS／區網伺服器上憑空多出一份 client 設定，之後同一資料根改當桌面殼時會被誤判成已連線到別台伺服器'}`,
+  })),
+  {
+    file: 'web/templates/base.html', kind: 'structure-count', pattern: /this\.connState\s*=(?!=)/, count: 2,
+    note: '[168b-T8-connstate-two-assignment-points] 有人另加一處直接改連線狀態 → 使用者在 NAS 重開機期間看到側欄插頭燈號亂跳或卡在綠色，以為連線正常卻開不了片',
+  },
+  {
+    file: {
+      dir: 'web/static/js', ext: ['.js'], recursive: true,
+      exclude: ['shared/clipboard.js', 'pages/scanner/state-scan.js', 'pages/help.js', 'pages/settings/state-config.js'],
+    },
+    kind: 'forbidden-string', pattern: /navigator\.clipboard/,
+    note: '[168b-T8-clipboard-only-in-shared] 有人在共用複製函式之外另寫一份 → 使用者在桌面殼（WebView2 非安全環境）點「複製番號清單」，toast 顯示已複製但剪貼簿其實沒東西，貼上是舊內容',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'forbidden-string', pattern: /navigator\.clipboard/,
+    scope: { anchor: /copyOutputPath\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[168b-T8-clipboard-copyoutputpath-uses-shared] 使用者在區網瀏覽器（非安全環境、沒有 navigator.clipboard）的掃描頁按複製輸出路徑 → 直接失敗、不再走備援，貼上是舊內容或沒東西',
+  },
+
   // ---- [163b-T7b] 重開提示的接線（node:test 看不到模板；外觀不守） ----
   {
     file: 'web/templates/settings.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="cfWindowProxyRestartNeeded"/,
