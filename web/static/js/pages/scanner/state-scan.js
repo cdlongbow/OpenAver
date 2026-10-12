@@ -1,3 +1,4 @@
+import { copyText } from '@/shared/clipboard.js';
 import { dirPath } from '@/shared/dir-path.js';
 
 let _dragTimeoutHandle = null;
@@ -1077,8 +1078,6 @@ export function stateScan() {
         copyOutputPath() {
             if (!this.outputPath) return;
 
-            // T3.6 P2 fix: guard against undefined navigator.clipboard
-            // sync property access on undefined 會 throw TypeError，.catch 不會跑。
             const showFailToast = () => {
                 this.showToast(
                     window.t('scanner.toast.copy_path_failed').replace('{path}', this.outputPath),
@@ -1087,15 +1086,12 @@ export function stateScan() {
                 );
             };
 
-            if (!navigator.clipboard?.writeText) {
-                showFailToast();
-                return;
-            }
-
-            navigator.clipboard.writeText(this.outputPath).then(() => {
-                this.showToast(window.t('scanner.toast.path_copied', { path: this.outputPath }), 'success');
-            }).catch(() => {
-                showFailToast();
+            copyText(this.outputPath).then((ok) => {
+                if (ok) {
+                    this.showToast(window.t('scanner.toast.path_copied', { path: this.outputPath }), 'success');
+                } else {
+                    showFailToast();
+                }
             });
         },
     };

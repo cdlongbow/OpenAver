@@ -3584,8 +3584,8 @@ const RULES = [
   // + 全 web/static/js 檔級 pairing（paired-string，新 kind）。
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
-    pattern: 'navigator.clipboard?.writeText', count: 2,
-    note: '[TestNoAlertInSearchJs] test_scanner_clipboard_has_availability_guard — scanner/state-scan.js 需 ≥2 處 guard（copyLogs L1053 附近 + copyOutputPath L720 附近）',
+    pattern: 'navigator.clipboard?.writeText', count: 1,
+    note: '[TestNoAlertInSearchJs] test_scanner_clipboard_has_availability_guard — scanner/state-scan.js 需 ≥1 處 guard（僅 copyLogs 一處；copyOutputPath 已改走 shared/clipboard.js）',
   },
   {
     file: { dir: 'web/static/js', ext: ['.js'], recursive: true }, kind: 'paired-string',

@@ -123,7 +123,7 @@ test('footnote 傳非空字串時 hasFootnote 為 true', () => {
     assert.equal(dd._footnote, note);
 });
 
-test('copy() 無 navigator.clipboard 且備援 execCommand 回 false 時，顯示失敗 toast 而非成功', () => {
+test('copy() 無 navigator.clipboard 且備援 execCommand 回 false 時，顯示失敗 toast 而非成功', async () => {
     const dd = fresh();
     dd.toggle({ title: '缺封面', items: [{ number: 'ABP-001', path: 'file:///C:/AVtest/ABP-001.mp4' }] });
 
@@ -131,14 +131,14 @@ test('copy() 無 navigator.clipboard 且備援 execCommand 回 false 時，顯�
     globalThis.document.execCommand = () => false;
     toastCalls.length = 0;
 
-    dd.copy();
+    await dd.copy();
 
     assert.equal(toastCalls.length, 1);
     assert.equal(toastCalls[0][1], 'error');
     assert.equal(toastCalls[0][0], 'common.number_drilldown.copy_failed');
 });
 
-test('copy() 備援 execCommand 回 true 時，顯示成功 toast', () => {
+test('copy() 備援 execCommand 回 true 時，顯示成功 toast', async () => {
     const dd = fresh();
     dd.toggle({ title: '缺封面', items: [{ number: 'ABP-001', path: 'file:///C:/AVtest/ABP-001.mp4' }] });
 
@@ -146,7 +146,7 @@ test('copy() 備援 execCommand 回 true 時，顯示成功 toast', () => {
     globalThis.document.execCommand = () => true;
     toastCalls.length = 0;
 
-    dd.copy();
+    await dd.copy();
 
     assert.equal(toastCalls.length, 1);
     assert.equal(toastCalls[0][1], 'success');
