@@ -14,7 +14,8 @@ DOC_PATH = Path(__file__).resolve().parents[2] / "docs" / "custom-sources.md"
 # schema.py 以字面驗證這三個子鍵、沒有常數可 import（T7 不得改 schema.py），故在此寫死
 _RESULTS_AND_NOT_FOUND_KEYS = frozenset({"css", "keep_if_contains", "body_contains"})
 # schema.py 未公開此集合，與 schema 模板白名單（_URL_VARS_SUFFIX）同步
-_PLACEHOLDERS = frozenset({"{number}", "{number_lower}", "{number_digits}", "{suffix}"})
+_PLACEHOLDERS = frozenset({"{number}", "{number_lower}", "{number_digits}", "{number_compact}",
+                           "{number_compact_lower}", "{suffix}"})
 
 _MARKER = "<!-- example -->"
 _EXAMPLE_RE = re.compile(r"<!-- example -->[ \t]*\n(?:[ \t]*\n)*```yaml\n(.*?)\n```", re.DOTALL)

@@ -50,7 +50,7 @@ ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 _PLACEHOLDER_RE = re.compile(r"\{[^{}]*\}")
 _AUTHORITY_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://([^/?#]*)")
 _JSONLD_RE = re.compile(r"[A-Za-z0-9_]+\.[A-Za-z0-9_@:-]+")
-_URL_VARS = frozenset({"{number}", "{number_lower}", "{number_digits}"})
+_URL_VARS = frozenset({"{number}", "{number_lower}", "{number_digits}", "{number_compact}", "{number_compact_lower}"})
 _URL_VARS_SUFFIX = _URL_VARS | {"{suffix}"}
 _LOCAL_SUFFIXES = (".localhost", ".local", ".internal")
 

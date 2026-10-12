@@ -1,22 +1,17 @@
 """
-Declarative image-host policy registry (TASK-113c-T1 / CD-113c-1).
+Declarative image-host registry (TASK-113c-T1 / CD-113c-1; 167 縮表).
 
-Single source of truth for which hosts may be used by the download consumer
-(core/actress_photo.py) and/or the proxy consumer (web/routers/search.py).
+registry 只服務兩件事：
+1. 女優換照片下載（core/actress_photo.py）——經 download_hosts_for() 取各
+   photo_source 的 host 集合；
+2. javdb 圖片解碼——經 codec_for_host() 查 payload_codec。
 
-Consumers export their own minimal-permission views via download_hosts_for()
-and proxy_rules(). Matching mechanism differences (exact-only vs exact+root,
-http+https vs https-only, photo_source binding) stay at the call sites.
+代理（/api/proxy-image）放不放行**不看靜態列**：判準本體在 proxy_verdict()
+的公網規則（metatube relay ＋ 單一公網檢查），靜態 IMAGE_HOSTS 已無代理放行名單。
+`web/routers/search.py` 與 `core/scrapers/javdb_api.py` 問同一個函式，避免兩份判準
+漂移（BE-TEST-14）。
 
-**代理那條路的判準本體在這裡**（`proxy_verdict()`）——所有權歸 registry 是
-Codex PR#128 round-2 P3 就定下的，132b 只是把最後一段實作搬過來：
-`web/routers/search.py` 退成「問一次 ＋ 記 log」，`core/scrapers/javdb_api.py`
-的圖片閘問同一個函式。兩邊各寫一份的話，第二份永遠比第一份寬鬆（BE-TEST-14）。
-
-`match="exact"` 不允子域是刻意的（**CD-60-1**：CDN / 女優照片的固定 host 嚴格匹配）；
-`match="root"` 才走呼叫端的 `host == root or host.endswith("." + root)` 邊界比對。
-兩端的允許集合**本來就不相等**（CD-113c-2）——registry 的價值是讓「不相等」變成
-被宣告的，不是把它們統一。
+`match="exact"` 不允子域是刻意的（**CD-60-1**：CDN / 女優照片的固定 host 嚴格匹配）。
 """
 from __future__ import annotations
 
@@ -25,6 +20,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlparse
 
+from core.public_target import check_public
+
 
 @dataclass(frozen=True, slots=True)
 class ImageHost:
@@ -32,7 +29,7 @@ class ImageHost:
     match: str  # "exact" | "root"
     schemes: tuple[str, ...]
     consumers: tuple[str, ...]  # "download" | "proxy" (any non-empty subset)
-    photo_source: str | None  # download consumer only; proxy-only → None
+    photo_source: str | None  # download consumer only; non-download → None
     # T3a: optional constraints for dynamic (and future) entries. Static rows
     # keep defaults — path_prefix/port None means "no extra check".
     path_prefix: str | None = None
@@ -42,53 +39,53 @@ class ImageHost:
     payload_codec: str | None = None
 
 
-# Static translation of the two pre-T1 whitelists (+ T3a cf.javfree.me).
+# 只服務女優照片下載（download）與 javdb 解碼（payload_codec）。
 # Dynamic metatube entries come from proxy_dynamic_hosts(), not this tuple.
 IMAGE_HOSTS: tuple[ImageHost, ...] = (
-    # ---- download + proxy (shared exact hosts; schemes upper-bound) ----
+    # ---- download（女優照片來源；schemes 為上界）----
     ImageHost(
         host="www.graphis.ne.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="graphis",
     ),
     ImageHost(
         host="graphis.ne.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="graphis",
     ),
     ImageHost(
         host="data.graphis.ne.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="graphis",
     ),
     ImageHost(
         host="cdn.jsdelivr.net",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="gfriends",
     ),
     ImageHost(
         host="upload.wikimedia.org",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="wiki",
     ),
     ImageHost(
         host="faws.xcity.jp",
         match="exact",
         schemes=("http", "https"),
-        consumers=("download", "proxy"),
+        consumers=("download",),
         photo_source="xcity",
     ),
-    # ---- download-only (exact; not proxied) ----
+    # ---- download（備援／原始檔 host）----
     ImageHost(
         host="raw.githubusercontent.com",
         match="exact",
@@ -110,142 +107,12 @@ IMAGE_HOSTS: tuple[ImageHost, ...] = (
         consumers=("download",),
         photo_source="wiki",
     ),
-    # ---- proxy-only exact ----
-    ImageHost(
-        host="pics.dmm.co.jp",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="awsimgsrc.dmm.co.jp",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="www.dmm.co.jp",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="javdb.com",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="file.netcdn.space",  # AVSOX 圖床（caribbean / 1pondo / heyzo 封面 CDN）
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    # ---- proxy-only root domains (subdomain boundary match at call site) ----
-    ImageHost(
-        host="javbus.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="jav321.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="heyzo.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="caribbeancom.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="1pondo.tv",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="10musume.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="avsox.click",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="avsox.monster",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="avsox.website",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="javten.com",
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="fc2.com",  # FC2 圖床（contents-thumbnail2 / live-storage / storage<NNN>.contents 數字子域）
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    ImageHost(
-        host="jdbstatic.com",  # JavDB CDN root（c0/c1/c2 numbered subdomains）
-        match="root",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
-    # ---- T3a: sole §1.4-enumerated new host (exact CDN subdomain only) ----
-    ImageHost(
-        host="cf.javfree.me",
-        match="exact",
-        schemes=("https",),
-        consumers=("proxy",),
-        photo_source=None,
-    ),
     # ---- javdb App API image host (encoded body; decode via payload_codec) ----
     # consumers 只列 "proxy"：本 registry 的 "download" 消費端專指**女優照片**那條路
     # （`download_hosts_for(photo_source)` → core/actress_photo.py），封面／劇照的下載
     # 走 core/organizer.py 且**不查 registry**。標上 "download" 一個東西都選不到，
     # 卻會逼著鬆綁兩條真的不變式（download ⇒ http+https、photo_source is None ⟺ 非 download）。
-    # 解碼查 codec_for_host()（不看 consumers）；javdb 的圖片閘查 proxy_verdict()，
-    # 那條**必須**看 consumers——它問的正是「代理端會不會收」。
+    # 解碼只查 codec_for_host()（不看 consumers）；代理放不放行看 proxy_verdict() 的公網規則。
     ImageHost(
         host="tp.spfcas.com",
         match="exact",
@@ -359,8 +226,6 @@ class ProxyVerdict:
     host: str
     scheme: str
     reason: str | None
-    # True ⟺ 由 Branch 3（自訂來源宣告的站）放行；代理端據此要求上游必須回 image/*。
-    custom_source: bool = False
 
 
 def proxy_verdict(url: str) -> ProxyVerdict:
@@ -371,9 +236,10 @@ def proxy_verdict(url: str) -> ProxyVerdict:
     - `core/scrapers/javdb_api.py`：資料介面回了不能代理的圖片網址 → 丟 ValueError
       → `search()` 降級 HTML，使用者拿到有浮水印但**看得見**的封面
 
-    第二個呼叫端如果自己寫一份「host 有沒有登記」的近似判斷，就會放行
-    `http://`（scheme 不符）與只給下載用的 host（沒有 proxy consumer）——
-    閘門過了、代理仍 403，使用者得到的是**沒有封面**。所以判準只能有一份。
+    判準兩層：metatube 已連線的 relay 端點先比（私網 IP 也放行）；其餘一律走
+    單一公網規則（http／https、預設埠、`check_public` 解析後全公網）。不看
+    IMAGE_HOSTS 名單。兩個呼叫端若各寫一份近似判斷，閘門過了代理仍 403，
+    使用者得到的是**沒有封面**。所以判準只能有一份。
     """
     # BE-SEC-01: single try/except-wrapped urlparse; reuse `parsed` everywhere
     # below (including path / port checks). Never re-parse without try/except.
@@ -384,17 +250,7 @@ def proxy_verdict(url: str) -> ProxyVerdict:
     host = (parsed.hostname or "").lower()
     scheme = parsed.scheme
     if not host:
-        return ProxyVerdict(False, host, scheme, "host 不在名單")
-
-    # Branch 1: static registry (proxy_rules) — still forces https.
-    # Host match first, then this branch's own scheme rule (設計問題 4).
-    exact_hosts, root_domains = proxy_rules()
-    if host in exact_hosts or any(
-        host == root or host.endswith("." + root) for root in root_domains
-    ):
-        if scheme != "https":
-            return ProxyVerdict(False, host, scheme, "scheme 不符")
-        return ProxyVerdict(True, host, scheme, None)
+        return ProxyVerdict(False, host, scheme, "URL 無 host")
 
     # Branch 2: dynamic entries (currently: connected metatube only).
     # Scheme / port / path_prefix come from the entry itself (裁決 1 / 3).
@@ -417,67 +273,16 @@ def proxy_verdict(url: str) -> ProxyVerdict:
             return ProxyVerdict(False, host, scheme, "巢狀目標不在白名單")
         return ProxyVerdict(True, host, scheme, None)
 
-    # Branch 3: routable 自訂來源宣告的站（T14）。同站規則＝去 www. 後 == base 或其子網域；
-    # scheme 收 http／https，port 只認該 scheme 預設埠（fail-closed，含畸形 port）。
-    if _custom_source_host_allowed(host):
-        if scheme not in ("http", "https"):
-            return ProxyVerdict(False, host, scheme, "scheme 不符")
-        if _effective_port(parsed) != (443 if scheme == "https" else 80):
-            return ProxyVerdict(False, host, scheme, "port 不符")
-        # 子網域可被站方指到內網；與抓頁同一道公網檢查（DNS 全部位址皆公網）。
-        from core.custom_source import guard
-        from core.custom_source.errors import BlockedTarget
-
-        try:
-            guard.check(url)
-        except BlockedTarget:
-            return ProxyVerdict(False, host, scheme, "自訂來源圖片 host 非公網")
-        return ProxyVerdict(True, host, scheme, None, True)
-
-    return ProxyVerdict(False, host, scheme, "host 不在名單")
-
-
-def _has_custom_source_files() -> bool:
-    """自訂來源目錄有沒有 yaml／yml——不 import core.custom_source（零自訂來源零影響）。"""
-    from core.data_root import get_data_root
-
-    try:
-        d = get_data_root() / "custom_sources"
-        return d.is_dir() and any(p.suffix in (".yaml", ".yml") for p in d.iterdir())
-    except OSError:
-        return False
-
-
-def _custom_source_host_allowed(host: str) -> bool:
-    """host 是不是某個 routable 自訂來源宣告站的基底或其子網域（每次即時算、不快取）。"""
-    if not _has_custom_source_files():
-        return False
-    from core.custom_source import views
-
-    host = host.removeprefix("www.")
-    for base in views.routable_hosts():
-        if host == base or host.endswith("." + base):
-            return True
-    return False
-
-
-def proxy_rules() -> tuple[frozenset[str], tuple[str, ...]]:
-    """Return (exact_hosts, root_domains) for the image proxy allowlist.
-
-    Recomputed on every call (no module-level cache) so later dynamic
-    entries can be attached without stale snapshots. Scheme enforcement
-    (https-only) stays in _is_allowed_image_url().
-    """
-    exact: set[str] = set()
-    roots: list[str] = []
-    for entry in IMAGE_HOSTS:
-        if "proxy" not in entry.consumers:
-            continue
-        if entry.match == "exact":
-            exact.add(entry.host)
-        elif entry.match == "root":
-            roots.append(entry.host)
-    return frozenset(exact), tuple(roots)
+    # 公網規則（CD-167-1）：不看 IMAGE_HOSTS、不看自訂來源狀態、不看使用者 proxy 設定。
+    # 判準只有 core.public_target.check_public 一份（BE-GUARD-01）。
+    if scheme not in ("http", "https"):
+        return ProxyVerdict(False, host, scheme, "scheme 不符")
+    if _effective_port(parsed) != (443 if scheme == "https" else 80):
+        return ProxyVerdict(False, host, scheme, "port 不符")
+    violation = check_public(url)
+    if violation is not None:
+        return ProxyVerdict(False, host, scheme, f"非公網目標（{violation.reason}）")
+    return ProxyVerdict(True, host, scheme, None)
 
 
 def proxy_dynamic_hosts() -> tuple[ImageHost, ...]:

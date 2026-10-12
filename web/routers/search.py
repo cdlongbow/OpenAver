@@ -63,7 +63,7 @@ _MAKER_MAPPING = load_prefix_mapping()
 
 
 def _image_verdict(url: str):
-    """問 `proxy_verdict()` 一次並在拒絕時記 log；回傳 verdict 本體（帶 custom_source 旗標）。"""
+    """問 `proxy_verdict()` 一次並在拒絕時記 log；回傳 verdict 本體。"""
     verdict = proxy_verdict(url)
     if not verdict.allowed:
         logger.warning(
@@ -78,7 +78,8 @@ def _is_allowed_image_url(url: str) -> bool:
 
     搬家的理由不是整潔：`core/scrapers/javdb_api.py` 的圖片閘也要問同一個問題，
     而 core 不能 import web。留在這裡就只能在 core 再寫一份近似判斷，
-    然後那份會比這份寬鬆（放行 `http://` 與 download-only 的 host）。
+    然後那兩份會漂移。現況判準＝metatube relay 路徑規則＋單一公網規則
+    （http／https、預設埠、解析後全公網），不看靜態 host 名單。
 
     本函式現在只剩 log——403 的原因字串仍由這裡輸出，格式不變。
     """
@@ -124,36 +125,13 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
             )
         elif resp.status_code == 200:
             host = (urlparse(url).hostname or "").lower()
-            if verdict.custom_source:
-                # 自訂來源站台只准轉送圖片：上游回 HTML／JSON 等一律不轉。
-                ctype = resp.headers.get("Content-Type", "")
-                # 只轉送常見點陣圖（不含 svg：可內嵌 script）。
-                if ctype.split(";")[0].strip().lower() not in (
-                    "image/jpeg", "image/png", "image/webp", "image/gif", "image/avif",
-                ):
-                    logger.warning("proxy_image 拒絕: host=%s 原因=自訂來源回應非圖片", host)
-                    return Response(status_code=403)
-                return Response(
-                    content=resp.content,
-                    media_type=ctype,
-                    headers={"Cache-Control": "public, max-age=86400"},
-                )
-            # 沒標 codec 的 host（既有 28 筆全部）走原路：內容與標頭逐位元不變。
-            # 範圍為什麼不擴到全部 host，見 core/organizer.py 同一處的註解。
-            if codec_for_host(host) is None:
-                return Response(
-                    content=resp.content,
-                    media_type=resp.headers.get("Content-Type", "image/jpeg"),
-                    headers={"Cache-Control": "public, max-age=86400"},
-                )
             payload = decode_image_payload(host, resp.content)
             if not looks_like_image(payload):
-                logger.warning(
-                    "proxy_image 拒絕: host=%s 原因=解碼後不是圖片", host
-                )
+                # 所有 host 同一條內容閘：不信上游 Content-Type，只看解碼後的檔頭魔數。
+                logger.warning("proxy_image 拒絕: host=%s 原因=內容不是圖片", host)
+                if codec_for_host(host) is None:
+                    return Response(status_code=403)
             else:
-                # 上游回的是 binary/octet-stream；沿用它的話瀏覽器不會 render。
-                # 型別改用**解出來的位元組**判定。
                 return Response(
                     content=payload,
                     media_type=image_media_type(payload) or "image/jpeg",

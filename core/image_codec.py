@@ -13,13 +13,35 @@ _IMAGE_MAGICS: tuple[tuple[bytes, str], ...] = (
     (b"GIF87a", "image/gif"),
     (b"GIF89a", "image/gif"),
     (b"RIFF", "image/webp"),  # 需再驗 WEBP；見 image_media_type
+    (b"BM", "image/bmp"),
 )
+
+
+_AVIF_BRANDS = (b"avif", b"avis")
+_FTYP_MAX = 256  # ftyp 盒 size 的合理上限，防怪 size
+
+
+def _is_avif(content: bytes) -> bool:
+    """ftyp 盒的 major brand 或任一 compatible brand 是 avif／avis（mp42、heic 等不是圖）。
+
+    合法 AVIF 的 major brand 可以是 mif1／miaf，avif 只出現在 compatible brands。
+    """
+    if len(content) < 12 or content[4:8] != b"ftyp":
+        return False
+    if content[8:12] in _AVIF_BRANDS:
+        return True
+    size = int.from_bytes(content[0:4], "big")
+    if size < 16 or size > min(len(content), _FTYP_MAX):
+        return False
+    return any(content[i:i + 4] in _AVIF_BRANDS for i in range(16, size - 3, 4))
 
 
 def image_media_type(content: bytes) -> str | None:
     """依魔數回傳 media type；認不出來回 None。"""
     if not content:
         return None
+    if _is_avif(content):
+        return "image/avif"
     for magic, media in _IMAGE_MAGICS:
         if content.startswith(magic):
             if media == "image/webp":

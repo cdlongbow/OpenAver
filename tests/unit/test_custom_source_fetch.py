@@ -15,7 +15,7 @@ from tests.unit._custom_source_fake import FakeTransport, page, redirect
 
 @pytest.fixture(autouse=True)
 def _no_real_dns_or_sleep(monkeypatch):
-    monkeypatch.setattr("core.custom_source.guard.resolve_host", lambda host: ["8.8.8.8"])
+    monkeypatch.setattr("core.public_target.resolve_host", lambda host: ["8.8.8.8"])
     monkeypatch.setattr("core.custom_source.fetch.rate_limit", lambda delay=0: None)
 
 

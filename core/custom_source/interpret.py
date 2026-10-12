@@ -13,7 +13,7 @@ from core.scrapers.utils import normalize_number_impl
 
 MAX_DETAIL_FETCH = 5
 log = get_logger(__name__)
-_PLACEHOLDER_RE = re.compile(r"\{(number|number_lower|number_digits|suffix)\}")
+_PLACEHOLDER_RE = re.compile(r"\{(number|number_lower|number_digits|number_compact|number_compact_lower|suffix)\}")
 _KEY_RE = re.compile(r"(.*?)(_contains|_include|_exclude|_max|)")
 
 
@@ -47,9 +47,21 @@ class CaseResult:
     mismatches: tuple
 
 
+def _compact_number(canon):
+    head, dash, rest = canon.partition("-")
+    return head + rest if dash and rest and re.fullmatch(r"[A-Z][A-Z0-9]*", head) else canon
+
+
 def _values(canon):
     tail = re.search(r"\d+$", canon)
-    return {"number": canon, "number_lower": canon.lower(), "number_digits": tail.group(0) if tail else ""}
+    compact = _compact_number(canon)
+    return {
+        "number": canon,
+        "number_lower": canon.lower(),
+        "number_digits": tail.group(0) if tail else "",
+        "number_compact": compact,
+        "number_compact_lower": compact.lower(),
+    }
 
 
 def _render(template, values, encode=True):

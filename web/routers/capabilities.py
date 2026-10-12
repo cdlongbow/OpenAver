@@ -628,17 +628,17 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "proxy_image",
-        "description": "代理下載遠端圖片 — 解決 Cloudflare / 防盜鏈問題。搜尋結果的 cover 和 sample_images URL 是遠端直連，AI agent 直接 curl 會被擋。必須透過此端點下載。URL 必須屬於 SSRF 白名單域名（scraper 圖片來源 javbus / dmm / javdb / jav321 等，以及女優圖片 cdn.jsdelivr.net / upload.wikimedia.org / graphis.ne.jp / faws.xcity.jp），外部圖床一律須為 https。另：若使用者目前**已連線** metatube，該台伺服器的圖片端點（path 必須以 /v1/images/ 開頭）亦放行，scheme 依其設定的 base_url（LAN 自架可能是 http）；未連線時該放行即消失。非白名單 host、非法 path、或跟隨 redirect 的來源一律回 403/404。",
+        "description": "代理下載遠端圖片。搜尋結果的 cover 和 sample_images URL 是遠端直連，AI agent 直接 curl 常被擋，請透過此端點下載（會替 javbus / dmm / jav321 帶上對應 Referer；需要其他特定 Referer 的站，圖片仍可能下載失敗）。任何公網 http / https 圖片網址皆可（不分來源）：須為預設埠、DNS 解析結果須全為公網位址、不跟隨轉址，且回應內容須為點陣圖（以檔頭判斷 JPEG / PNG / GIF / WebP / AVIF / BMP，不含 SVG，不信 Content-Type）。另：若使用者目前**已連線** metatube，該台伺服器的圖片端點（path 必須以 /v1/images/ 開頭）照舊放行，scheme 依其設定的 base_url（LAN 自架可能是 http）；未連線時該放行即消失。公網規則的例外：已連線 metatube 的圖片端點不受公網與預設埠限制（可為區網位址或非預設埠）。內網／本機位址、非預設埠、一般 host 回非點陣圖內容回 403；javdb 加密圖床解碼後仍非圖片回 404 空回應；來源回轉址或下載失敗回 404 空回應。",
         "method": "GET",
         "path": "/api/proxy-image",
         "input_schema": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "遠端圖片 URL（從搜尋結果的 cover 或 sample_images 欄位取得；須為 https 白名單域名）"},
+                "url": {"type": "string", "description": "遠端圖片 URL（從搜尋結果的 cover 或 sample_images 欄位取得；須為公網 http / https 圖片網址）"},
             },
             "required": ["url"],
         },
-        "output_schema": "binary — 圖片二進位資料（Content-Type: image/jpeg）。非白名單 URL 回 403；外部下載失敗回 404 空回應。",
+        "output_schema": "binary — 圖片二進位資料（Content-Type 依檔頭辨識出的格式：image/jpeg、image/png、image/gif、image/webp、image/avif、image/bmp，不固定為 jpeg）。不放行的 URL（內網位址、非預設埠；已連線 metatube 的圖片端點除外）或一般 host 回非點陣圖內容回 403；javdb 加密圖床解碼後仍非圖片、來源轉址、外部下載失敗回 404 空回應。",
         "side_effect": False,
         "retry_safe": True,
         "_example_template": "curl -o cover.jpg '{base}/api/proxy-image?url=https://pics.dmm.co.jp/digital/video/ssis00221/ssis00221pl.jpg'",
@@ -1795,11 +1795,10 @@ def _build_image_display(curl_auth: str) -> dict:
             "3. 依 agent 形態嵌入（見 agents 區塊）：對話氣泡內嵌 / artifact 面板 / 純路徑文字",
         ],
         "rules": [
-            "禁止直接 curl 遠端圖片 URL — 一定會被擋",
+            "禁止直接 curl 遠端圖片 URL — 常會被擋，請改用 /api/proxy-image",
             "一律透過 /api/proxy-image 代理下載",
-            "metatube 來源優先用 preview_* 欄位：/api/proxy-image 的網域白名單只收錄常見圖床，"
-            "metatube 接的冷門 provider 圖床不在名單內會回 403。preview_* 走使用者自己的 "
-            "metatube 伺服器（在動態白名單內），是同一張圖的可達副本。空字串代表該格沒有代理，"
+            "metatube 來源優先用 preview_* 欄位：preview_* 是同一張圖"
+            "經使用者自己的 metatube 伺服器取得的可達副本。空字串代表該格沒有代理，"
             "退回原始網址即可（用 || 不要用 ??）",
             "下載到本地後用絕對路徑顯示（不要用遠端 URL 嵌入）",
         ],

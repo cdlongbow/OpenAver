@@ -288,10 +288,9 @@ def _assert_image_urls_proxyable(video: Video) -> None:
     """CD-132b-7：cover / sample 的網址必須是**圖片代理收得下**的形狀。
 
     問的不是「host 有沒有登記」而是 `proxy_verdict()`（review round-2 P2）。
-    差別會咬人的三種形狀，全都是「登記過但代理仍 403」：
-    `http://tp.spfcas.com/...`（scheme）、只給女優照片下載用的 host（沒有 proxy
-    consumer）、以及 host 根本 parse 不出來的網址（舊版直接 `continue` 放行）。
-    放行它們的下場是閘門過了 ⇒ **不降級**，而瀏覽器那頭是破圖；擋下來則降級 HTML，
+    現況（公網規則）下會被代理拒絕的形狀：私網／本機位址的網址、非 http(s) scheme、
+    非預設埠、以及 host 根本 parse 不出來的網址。公網 `http://` 與任意公網 host 現在都放行。
+    放行會被拒的網址，下場是閘門過了 ⇒ **不降級**，而瀏覽器那頭是破圖；擋下來則降級 HTML，
     使用者拿到有浮水印但看得見的封面。
 
     空字串／None 的 cover_url 不算違規。不可代理 → ValueError（search 會降級 HTML）。

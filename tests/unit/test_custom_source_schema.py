@@ -99,6 +99,7 @@ def rows():
     add("test_number_mismatch", sub(BASE, "number: ABC-123", "number: XYZ-123"), "bad_pattern", "tests[0].number")
     add("tpl_unknown_placeholder", sub(BASE, "{number_lower}", "{foo}"), "bad_template", "steps[0].url")
     add("tpl_unbalanced", sub(BASE, "{number_lower}", "{number"), "bad_template", "steps[0].url")
+    add("tpl_compact_typo", sub(BASE, "{number_lower}", "{number_compactt}"), "bad_template", "steps[0].url")
     add("tpl_in_host", sub(BASE, "base.example/{number_lower}", "{number}.example/x"), "bad_template", "steps[0].url")
     add("tpl_scheme", sub(BASE, "https://", "ftp://"), "bad_template", "steps[0].url")
     add("tpl_suffix_without_candidates", sub(BASE, "{number_lower}", "{suffix}"), "bad_template", "steps[0].url")
@@ -354,3 +355,9 @@ def test_pattern_given_still_validated():
     with pytest.raises(LoadError) as e:
         load_text(sub(BASE, "number: ABC-123", "number: DA003"), "base")
     assert e.value.reason == "bad_pattern"
+
+
+def test_compact_placeholders_load():
+    text = sub(sub(TWO, "{number}", "{number_compact}"), 'keep_if_contains: "{number_lower}"',
+               'keep_if_contains: "{number_compact_lower}"')
+    load_text(text, "two")

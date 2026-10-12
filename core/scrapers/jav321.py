@@ -15,8 +15,8 @@ from core.source_probe import ProbePlan, ProbeTarget
 
 
 def _force_https(url: str) -> str:
-    """DMM 圖片回傳 http://，但 /api/proxy-image SSRF 白名單強制 https。
-    這裡統一升 https，否則前端封面 / 劇照會被 proxy 403 擋掉顯示不出。"""
+    """DMM 圖片回傳 http://；這裡統一升 https（DMM 圖床支援 https，避免混合內容）。
+    圖片代理現在對公網 http 也放行，所以這已不是代理的硬性要求，函式保留只為輸出一致。"""
     if url and url.startswith('http://'):
         return 'https://' + url[len('http://'):]
     return url

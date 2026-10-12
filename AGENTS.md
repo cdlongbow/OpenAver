@@ -83,7 +83,7 @@ line what category — do not expand them.
 - No unvalidated user input used directly in file system operations (`open()`, `Path()`, `os.path`).
 - No hardcoded secrets, API keys, passwords, or tokens in source code.
 - **SSRF is best-effort, NOT a default blocker.** Per the threat model stated at the top of this file, the default model does not include a hostile authenticated LAN user; residual browser-origin risks (DNS rebinding / malicious webpages) are handled as defense-in-depth, not merge blockers. Review missing SSRF hardening in **new** backend URL-fetching code as a suggestion/P3, not P0/P1, and do not block a PR solely on absent SSRF guards.
-  - Existing mitigations (private-IP rejection, no-redirect-follow, image-host allowlist, LAN opt-in) should not be casually removed or weakened.
+  - Existing mitigations (private-IP rejection, no-redirect-follow, public-address-only image proxy, image content sniffing (magic bytes, not upstream Content-Type), metatube nested-target check, LAN opt-in) should not be casually removed or weakened.
   - Still flag clear regressions in already-hardened endpoints, unauthenticated arbitrary-request proxy behavior, or code that contradicts a feature's own stated security contract.
 
 ### Path handling

@@ -31,6 +31,12 @@ _NUMBER_OF = {
 
 # ── fixture ───────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _public_dns(public_resolver):
+    """167 公網規則會解析 host；預設回公網（不放寬外連防線，只假 DNS）。"""
+    return public_resolver()
+
+
 @pytest.fixture
 def recorders(monkeypatch, temp_config_path):
     """POL／SYS 兩個 recorder；系統代理指向 SYS；rate limit 全關。"""

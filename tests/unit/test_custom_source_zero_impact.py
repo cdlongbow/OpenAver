@@ -49,7 +49,7 @@ def test_non_custom_ids_do_not_load_custom_source():
 
 _CODE_POLICY = (
     "import sys, core.image_host_policy as p\n"
-    "v = p.proxy_verdict('https://pics.dmm.co.jp/a.jpg')\n"
+    "v = p.proxy_verdict('https://8.8.8.8/a.jpg')\n"
     "assert v.allowed\n"
     "print('custom=' + str(any(m == 'core.custom_source' or m.startswith('core.custom_source.')"
     " for m in sys.modules)))\n"
@@ -85,7 +85,7 @@ def test_unknown_host_without_custom_dir_does_not_load_custom_source():
         "import os, sys, tempfile\n"
         "os.environ['OPENAVER_DATA_DIR'] = tempfile.mkdtemp()\n"
         "import core.image_host_policy as p\n"
-        "assert not p.proxy_verdict('https://nope.example/a.jpg').allowed\n"
+        "assert not p.proxy_verdict('https://10.0.0.5/a.jpg').allowed\n"
         "print('custom=' + str(any(m == 'core.custom_source' or m.startswith('core.custom_source.')"
         " for m in sys.modules)))\n"
     )

@@ -4,15 +4,16 @@ import socket
 
 import pytest
 
+from core import public_target
 from core.custom_source import guard
 from core.custom_source.errors import BlockedTarget
 
-_REAL_RESOLVE_HOST = guard.resolve_host
+_REAL_RESOLVE_HOST = public_target.resolve_host
 
 
 @pytest.fixture(autouse=True)
 def _public_dns(monkeypatch):
-    monkeypatch.setattr("core.custom_source.guard.resolve_host", lambda host: ["8.8.8.8"])
+    monkeypatch.setattr("core.public_target.resolve_host", lambda host: ["8.8.8.8"])
 
 
 # (url, 期望 reason；None＝放行)
@@ -76,14 +77,14 @@ def test_guard_truth_table(url, reason):
     (["not-an-ip"], "unresolvable"),
 ])
 def test_domain_resolving_to_non_public_is_blocked(monkeypatch, resolved, reason):
-    monkeypatch.setattr("core.custom_source.guard.resolve_host", lambda host: resolved)
+    monkeypatch.setattr("core.public_target.resolve_host", lambda host: resolved)
     with pytest.raises(BlockedTarget) as ei:
         guard.check("http://example.com/")
     assert ei.value.reason == reason
 
 
 def test_domain_resolving_to_public_passes(monkeypatch):
-    monkeypatch.setattr("core.custom_source.guard.resolve_host", lambda host: ["8.8.8.8", "1.1.1.1"])
+    monkeypatch.setattr("core.public_target.resolve_host", lambda host: ["8.8.8.8", "1.1.1.1"])
     assert guard.check("https://example.com/") is None
 
 
@@ -120,7 +121,7 @@ def test_real_resolve_host_strips_scope_and_dedupes(monkeypatch):
 def test_cross_check_blocks_when_connect_host_differs(monkeypatch):
     import types
     # 無反斜線的乾淨網址，但 urllib3 讀到的 host 不同 → 只有交叉比對擋得住
-    monkeypatch.setattr("core.custom_source.guard.parse_url", lambda u: types.SimpleNamespace(host="127.0.0.1"))
+    monkeypatch.setattr("core.public_target.parse_url", lambda u: types.SimpleNamespace(host="127.0.0.1"))
     with pytest.raises(BlockedTarget) as ei:
         guard.check("http://x.example/")
     assert ei.value.reason == "bad_authority"
@@ -129,7 +130,7 @@ def test_cross_check_blocks_when_connect_host_differs(monkeypatch):
 def test_cross_check_blocks_when_parse_url_raises(monkeypatch):
     def boom(u):
         raise ValueError("x")
-    monkeypatch.setattr("core.custom_source.guard.parse_url", boom)
+    monkeypatch.setattr("core.public_target.parse_url", boom)
     with pytest.raises(BlockedTarget) as ei:
         guard.check("http://x.example/")
     assert ei.value.reason == "bad_authority"
@@ -138,7 +139,21 @@ def test_cross_check_blocks_when_parse_url_raises(monkeypatch):
 def test_backslash_authority_blocked_even_if_hosts_agree(monkeypatch):
     import types
     # 兩個 parser 剛好讀到同一個 host，反斜線檢查仍要獨立擋下
-    monkeypatch.setattr("core.custom_source.guard.parse_url", lambda u: types.SimpleNamespace(host="8.8.8.8"))
+    monkeypatch.setattr("core.public_target.parse_url", lambda u: types.SimpleNamespace(host="8.8.8.8"))
     with pytest.raises(BlockedTarget) as ei:
         guard.check("http://x.example\\@8.8.8.8/")
     assert ei.value.reason == "bad_authority"
+
+
+
+
+
+
+def test_guard_reasons_unchanged():
+    assert guard.GUARD_REASONS == frozenset(
+        {"bad_scheme", "bad_url", "bad_host", "bad_authority", "non_ascii_host", "non_public", "unresolvable"}
+    )
+
+
+
+
