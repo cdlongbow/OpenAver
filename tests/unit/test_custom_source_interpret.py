@@ -527,3 +527,42 @@ def test_run_tests_total_budget_times_out_later_cases(monkeypatch):
 def test_accepts_number_without_pattern(number, expected):
     spec = dataclasses.replace(_spec("single-og"), number_pattern=None)
     assert accepts_number(spec, number) is expected
+
+
+@pytest.mark.parametrize("number, compact, compact_lower", [
+    ("MD-0317", "MD0317", "md0317"),
+    ("MD-0180-3", "MD0180-3", "md0180-3"),
+    ("FC2-2439990", "FC22439990", "fc22439990"),
+    ("N0762", "N0762", "n0762"),
+    ("91CM-001", "91CM-001", "91cm-001"),
+])
+def test_compact_truth_table(number, compact, compact_lower):
+    values = interpret._values(number)
+    assert (values["number_compact"], values["number_compact_lower"]) == (compact, compact_lower)
+
+
+@pytest.mark.parametrize("placeholder, expected", [
+    ("{number_compact}", "MD0317"), ("{number_compact_lower}", "md0317"),
+])
+def test_compact_placeholder_in_request_url(placeholder, expected):
+    url = "https://a.example/search?q=" + expected
+    spec = dataclasses.replace(_step0("single-og", url="https://a.example/search?q=" + placeholder),
+                               number_pattern="[A-Z0-9-]+")
+    result, transport = _run(spec, "MD-0317", {url: _pg("single-og")})
+    assert transport.calls[0] == url
+    assert "{" not in transport.calls[0]
+
+
+@pytest.mark.parametrize("placeholder, hit, miss", [
+    ("{number_compact}", "MD0317", "MD0318"), ("{number_compact_lower}", "md0317", "md0318"),
+])
+def test_compact_placeholder_filters_result_cards(placeholder, hit, miss):
+    spec = _spec("two-step")
+    step = dataclasses.replace(spec.steps[0], results=dataclasses.replace(spec.steps[0].results, keep_if_contains=placeholder))
+    spec = dataclasses.replace(spec, steps=(step, *spec.steps[1:]), number_pattern="[A-Z0-9-]+")
+    html = (f'<h3 class="entry-title"><a href="/v/a">title {hit}</a></h3>'
+            f'<h3 class="entry-title"><a href="/v/b">title {miss}</a></h3>')
+    base = "https://two-step.example"
+    routes = {TWO + "MD-0317": page(html), base + "/v/a": _pg("two-step-detail-a"), base + "/v/b": _pg("two-step-detail-b")}
+    result, transport = _run(spec, "MD-0317", routes)
+    assert transport.calls == [TWO + "MD-0317", base + "/v/a"]
