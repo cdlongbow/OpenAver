@@ -54,11 +54,7 @@ def _client_path() -> Path:
 def _valid_url(url) -> bool:
     if not isinstance(url, str) or not url.strip():
         return False
-    try:
-        parsed = urlparse(url.strip())
-    except ValueError:
-        return False
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    return normalize_origin(url) is not None
 
 
 def _load_valid():

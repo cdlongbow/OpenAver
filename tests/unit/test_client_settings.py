@@ -50,7 +50,8 @@ def _decoy_config(tmp):
                                      '{"version":1,"server":{"url":""}}',
                                      '{"version":1,"server":{"url":"ftp://x"}}',
                                      '{"version":1,"server":{"url":"http://"}}',
-                                     '{"version":1,"server":{"url":"http://[::1"}}'])
+                                     '{"version":1,"server":{"url":"http://[::1"}}',
+                                     '{"version":1,"server":{"url":"http://nas:99999"}}'])
 def test_mode_is_local_when_client_json_missing_or_invalid(env, content):
     if content is not None:
         (env / "client.json").write_text(content, encoding="utf-8")
