@@ -1047,6 +1047,11 @@ class TestSearchNewFields:
 class TestProxyImageReferer:
     """測試 /api/proxy-image DMM 樣品圖像 Referer 設定"""
 
+    @pytest.fixture(autouse=True)
+    def _public_dns(self, public_resolver):
+        """167 公網規則會解析 host；預設回公網，個別格自己覆寫成私網。"""
+        self.resolve = public_resolver()
+
     def _make_mock_response(self, content=b'\xff\xd8\xff', content_type='image/jpeg'):
         """建立 mock requests.Response"""
         mock_resp = MagicMock()
@@ -1096,15 +1101,16 @@ class TestProxyImageReferer:
         headers_sent = call_kwargs.get('headers', {})
         assert headers_sent.get('Referer') == 'https://www.javbus.com/'
 
-    def test_proxy_image_unknown_domain_no_referer(self, client):
-        """未知 domain 應被 SSRF allowlist 攔截，回 403 且不發出 HTTP 請求"""
+    def test_proxy_image_unlisted_public_domain_allowed(self, client):
+        """名單外的公網 domain 照常代理（167 公網規則）→ 200，請求恰發出一次"""
         url = 'https://cdn.example.com/image.jpg'
 
         with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
             response = client.get('/api/proxy-image', params={'url': url})
 
-        assert response.status_code == 403
-        mock_get.assert_not_called()
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+        assert 'cdn.example.com' in self.resolve.calls
 
     def test_proxy_image_external_failure_returns_404(self, client):
         """外部請求失敗時應回傳 HTTP 404 空 body"""
@@ -1132,6 +1138,11 @@ class TestProxyImageReferer:
 
 class TestProxyImageSSRF:
     """SSRF allowlist guard for /api/proxy-image"""
+
+    @pytest.fixture(autouse=True)
+    def _public_dns(self, public_resolver):
+        """167 公網規則會解析 host；預設回公網，個別格自己覆寫成私網。"""
+        self.resolve = public_resolver()
 
     def _make_mock_response(self, content=b'fake', content_type='image/jpeg'):
         mock_resp = MagicMock()
@@ -1166,21 +1177,23 @@ class TestProxyImageSSRF:
         assert response.status_code == 403
         mock_get.assert_not_called()
 
-    def test_ssrf_unknown_domain_blocked(self, client):
-        """未知 domain 應被攔截 → 403，不發出 HTTP 請求"""
+    def test_ssrf_unknown_public_domain_allowed(self, client):
+        """名單外公網 domain（解析成公網）→ 200（167 公網規則）"""
         url = 'https://evil.com/image.jpg'
-        with patch('web.routers.search.requests.get') as mock_get:
+        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
             response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 403
-        mock_get.assert_not_called()
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+        assert 'evil.com' in self.resolve.calls
 
-    def test_ssrf_http_scheme_on_legal_domain_blocked(self, client):
-        """http scheme（合法 domain）應被攔截 → 403（scheme 強制 https）"""
+    def test_http_scheme_on_public_domain_allowed(self, client):
+        """http scheme（公網 domain）→ 200（167：不再強制 https）"""
         url = 'http://javbus.com/image.jpg'
-        with patch('web.routers.search.requests.get') as mock_get:
+        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
             response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 403
-        mock_get.assert_not_called()
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+        assert 'javbus.com' in self.resolve.calls
 
     # ---- Scraper real-host allow cases (2) ----
 
@@ -1275,29 +1288,32 @@ class TestProxyImageSSRF:
 
     # ---- Exact-host subdomain blocked (1) ----
 
-    def test_evil_jsdelivr_subdomain_blocked(self, client):
-        """evil.jsdelivr.net 不在 exact set，不允子域 → 403"""
+    def test_jsdelivr_lookalike_subdomain_public_allowed(self, client):
+        """evil.jsdelivr.net 解析成公網 → 200（名單不再是判準）"""
         url = 'https://evil.jsdelivr.net/malicious.js'
-        with patch('web.routers.search.requests.get') as mock_get:
+        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
             response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 403
-        mock_get.assert_not_called()
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+        assert 'evil.jsdelivr.net' in self.resolve.calls
 
-    def test_fc2_lookalike_domain_blocked(self, client):
-        """fc2.com.evil.com 非 fc2.com 子域（endswith '.fc2.com' 不符）→ 403"""
+    def test_fc2_lookalike_domain_public_allowed(self, client):
+        """fc2.com.evil.com 解析成公網 → 200（名單不再是判準）"""
         url = 'https://fc2.com.evil.com/malicious.jpg'
-        with patch('web.routers.search.requests.get') as mock_get:
+        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
             response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 403
-        mock_get.assert_not_called()
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+        assert 'fc2.com.evil.com' in self.resolve.calls
 
-    def test_netcdn_lookalike_host_blocked(self, client):
-        """netcdn.space.evil.com / 其他 netcdn.space 子域不在 exact set → 403"""
+    def test_netcdn_lookalike_host_public_allowed(self, client):
+        """netcdn.space.evil.com 解析成公網 → 200（名單不再是判準）"""
         url = 'https://netcdn.space.evil.com/malicious.jpg'
-        with patch('web.routers.search.requests.get') as mock_get:
+        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
             response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 403
-        mock_get.assert_not_called()
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+        assert 'netcdn.space.evil.com' in self.resolve.calls
 
     # ---- TASK-113c-T2: redirect 不跟隨 ＋ 403 log ----
 
@@ -1329,9 +1345,11 @@ class TestProxyImageSSRF:
         # MUST NOT：完整 Location URL（含 path）
         assert 'http://127.0.0.1/evil' not in caplog.text
 
-    def test_ssrf_403_logs_host_without_query(self, client, caplog):
+    def test_ssrf_403_logs_host_without_query(self, client, caplog, public_resolver):
         """403 拒絕路徑記 host/scheme/原因，且不洩漏 query 中的 token"""
         url = 'https://evil.com/image.jpg?token=secret123'
+        # 167：拒絕原因改為「解析成私網」；resolver 把 evil.com 指到 10.0.0.5
+        resolve = public_resolver({'evil.com': ['10.0.0.5']})
 
         with caplog.at_level(logging.WARNING, logger='OpenAver.web.routers.search'):
             with patch('web.routers.search.requests.get') as mock_get:
@@ -1341,9 +1359,10 @@ class TestProxyImageSSRF:
         mock_get.assert_not_called()
         assert any(
             'evil.com' in r.getMessage()
-            and 'host 不在名單' in r.getMessage()
+            and '非公網目標' in r.getMessage()
             for r in caplog.records
         ), f"expected 403 warning with host + reason, got: {caplog.text!r}"
+        assert 'evil.com' in resolve.calls
         assert 'secret123' not in caplog.text
 
     # ---- TASK-113c-T3a: metatube dynamic + path/dot-segment + cf.javfree.me ----
@@ -1617,9 +1636,9 @@ class TestProxyImageSSRF:
         assert response.status_code == 200
         mock_get.assert_called_once()
 
-    def test_cf_javfree_me_lookalike_subdomain_rejected(self, client):
-        """evil.cf.javfree.me and cf.javfree.me.evil.com → 403 (exact only)."""
-        with patch('web.routers.search.requests.get') as mock_get:
+    def test_cf_javfree_me_lookalike_subdomain_public_allowed(self, client):
+        """evil.cf.javfree.me and cf.javfree.me.evil.com 解析成公網 → 200（名單不再是判準）。"""
+        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
             r1 = client.get(
                 '/api/proxy-image',
                 params={'url': 'https://evil.cf.javfree.me/x.jpg'},
@@ -1628,9 +1647,9 @@ class TestProxyImageSSRF:
                 '/api/proxy-image',
                 params={'url': 'https://cf.javfree.me.evil.com/x.jpg'},
             )
-        assert r1.status_code == 403
-        assert r2.status_code == 403
-        mock_get.assert_not_called()
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert mock_get.call_count == 2
 
 
 # ============ since 日期過濾 ============

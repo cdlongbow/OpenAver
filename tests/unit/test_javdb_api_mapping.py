@@ -22,6 +22,12 @@ from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.scrapers.models import Actress
 
 
+@pytest.fixture(autouse=True)
+def _public_dns(public_resolver):
+    """167 公網規則會解析圖片 host；預設回公網（只假 DNS，不放寬外連防線）。"""
+    return public_resolver()
+
+
 def _setup_api_mocks(
     monkeypatch,
     search_return=None,

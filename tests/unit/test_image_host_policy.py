@@ -16,7 +16,6 @@ from core.image_host_policy import (
     download_hosts_for,
     nested_preview_target_allowed,
     proxy_dynamic_hosts,
-    proxy_rules,
     proxy_verdict,
 )
 from core.actress_photo import REFERER_MAP, validate_photo_url
@@ -44,44 +43,6 @@ def test_download_hosts_for_matches_reconciliation_table():
         "ja.wikipedia.org",
     }
     assert download_hosts_for("xcity") == {"faws.xcity.jp"}
-
-
-def test_proxy_rules_matches_reconciliation_table():
-    """proxy_rules() must match §1.3 proxy-side exact + root sets exactly."""
-    exact, roots = proxy_rules()
-
-    assert exact == frozenset({
-        "pics.dmm.co.jp",
-        "awsimgsrc.dmm.co.jp",
-        "www.dmm.co.jp",
-        "javdb.com",
-        "cdn.jsdelivr.net",
-        "upload.wikimedia.org",
-        "data.graphis.ne.jp",
-        "www.graphis.ne.jp",
-        "graphis.ne.jp",
-        "file.netcdn.space",
-        "cf.javfree.me",  # TASK-113c-T3a: §1.4 sole enumerated new host
-        "tp.spfcas.com",  # TASK-132b-T4: javdb App API image host
-        "faws.xcity.jp",  # TASK-157-F2: 換照片/預覽的女優照片也要能走 proxy 顯示
-    })
-    assert set(roots) == {
-        "javbus.com",
-        "jav321.com",
-        "heyzo.com",
-        "caribbeancom.com",
-        "1pondo.tv",
-        "10musume.com",
-        "avsox.click",
-        "avsox.monster",
-        "avsox.website",
-        "javten.com",
-        "fc2.com",
-        "jdbstatic.com",
-    }
-    # roots must be a tuple (stable export shape), not a set
-    assert isinstance(roots, tuple)
-    assert isinstance(exact, frozenset)
 
 
 # ---------------------------------------------------------------------------
@@ -133,20 +94,6 @@ def test_download_hosts_for_exact_only_no_root_match():
             ]
             assert matching, f"no download entry for {source}/{host}"
             assert all(e.match == "exact" for e in matching)
-
-
-def test_proxy_rules_exports_root_domains_for_boundary_matching():
-    """proxy_rules() must export root domains used by endswith boundary match."""
-    exact, roots = proxy_rules()
-    # root-domain info present (not collapsed into exact)
-    assert "fc2.com" in roots
-    assert "javbus.com" in roots
-    assert "jdbstatic.com" in roots
-    # lookalike-sensitive exact hosts stay exact-only
-    assert "file.netcdn.space" in exact
-    assert "file.netcdn.space" not in roots
-    # no accidental overlap between exact and root exports
-    assert exact.isdisjoint(set(roots))
 
 
 # ---------------------------------------------------------------------------
@@ -247,27 +194,12 @@ def test_static_image_hosts_never_have_path_prefix_or_port():
         assert entry.port is None
 
 
-def test_cf_javfree_me_in_static_proxy_exact():
-    """cf.javfree.me is the sole §1.4 new host: proxy exact, https-only."""
-    matches = [e for e in IMAGE_HOSTS if e.host == "cf.javfree.me"]
-    assert len(matches) == 1
-    entry = matches[0]
-    assert entry.match == "exact"
-    assert entry.schemes == ("https",)
-    assert entry.consumers == ("proxy",)
-    assert entry.photo_source is None
-    exact, roots = proxy_rules()
-    assert "cf.javfree.me" in exact
-    assert "cf.javfree.me" not in roots
-
-
 def test_registry_truth_table_download_and_proxy_consumers():
     """Walk every IMAGE_HOSTS row × (download, proxy) + one live dynamic row."""
     assert len(IMAGE_HOSTS) == 28  # T4 removes two obsolete source hosts
 
     for entry in IMAGE_HOSTS:
         download_allowed = "download" in entry.consumers
-        proxy_allowed = "proxy" in entry.consumers
 
         if download_allowed:
             assert entry.photo_source is not None
@@ -277,15 +209,6 @@ def test_registry_truth_table_download_and_proxy_consumers():
             for src in ("graphis", "gfriends", "wiki", "xcity"):
                 assert entry.host not in download_hosts_for(src)
 
-        exact, roots = proxy_rules()
-        if proxy_allowed:
-            if entry.match == "exact":
-                assert entry.host in exact
-            else:
-                assert entry.host in roots
-        else:
-            assert entry.host not in exact
-            assert entry.host not in roots
 
     # Dynamic metatube row (not in IMAGE_HOSTS): proxy-only, download never
     metatube_state.connect("http://10.0.0.5:8900", "", [])
@@ -297,10 +220,6 @@ def test_registry_truth_table_download_and_proxy_consumers():
         assert "download" not in d.consumers
         for src in ("graphis", "gfriends", "wiki", "xcity"):
             assert d.host not in download_hosts_for(src)
-        # not in static proxy_rules host strings (hostname alone may collide
-        # only if a static entry used the same host — 10.0.0.5 won't)
-        exact, roots = proxy_rules()
-        assert d.host not in exact or d.port is not None
         assert d.path_prefix == "/v1/images/"
         assert d.port == 8900
         assert d.schemes == ("http",)
@@ -403,7 +322,7 @@ def test_download_hosts_for_xcity():
     assert download_hosts_for("xcity") == {"faws.xcity.jp"}
 
 
-def test_faws_xcity_jp_is_proxy_allowed():
+def test_faws_xcity_jp_is_proxy_allowed(public_resolver):
     """TASK-157-F2: 女優換照片／預覽（未收藏時）要能透過 /api/proxy-image 顯示
     xcity 來源的照片，faws.xcity.jp 必須同時開放 download 與 proxy 消費端
     ——main 分支的對應項 minnano-av.com 就是 (download, proxy) 都給，xcity 頂
@@ -412,20 +331,18 @@ def test_faws_xcity_jp_is_proxy_allowed():
     assert len(matches) == 1
     entry = matches[0]
     assert entry.consumers == ("download", "proxy")
-    exact, roots = proxy_rules()
-    assert "faws.xcity.jp" in exact
-    assert "faws.xcity.jp" not in roots
 
     # This is the actual gate web/routers/search.py's /api/proxy-image calls
-    # (proxy_verdict()) — assert on the real entry point, not just the
-    # exact/roots export shape, since that's what a 403 vs 200 depends on.
+    # (proxy_verdict()) — assert on the real entry point, since that's what a
+    # 403 vs 200 depends on.  167: 公網規則——https／http 皆放行（舊 scheme 不符已不成立）。
+    public_resolver()
     verdict = proxy_verdict("https://faws.xcity.jp/actress/large/image/person/11000.jpg")
     assert verdict.allowed is True
     assert verdict.reason is None
 
     http_verdict = proxy_verdict("http://faws.xcity.jp/actress/large/image/person/11000.jpg")
-    assert http_verdict.allowed is False
-    assert http_verdict.reason == "scheme 不符"
+    assert http_verdict.allowed is True
+    assert http_verdict.reason is None
 
 
 def test_validate_photo_url_xcity():

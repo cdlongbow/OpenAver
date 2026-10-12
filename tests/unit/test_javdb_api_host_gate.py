@@ -32,6 +32,12 @@ def _block_network(monkeypatch):
         monkeypatch.setattr(javdb.curl_requests, "post", _raise)
 
 
+@pytest.fixture(autouse=True)
+def _resolver(public_resolver):
+    """公網規則走 resolve_host；預設一律回公網，個別格自己覆寫成私網。"""
+    return public_resolver()
+
+
 def _detail_with_cover(cover_url: str, samples: list[str] | None = None) -> dict:
     return {
         "id": "abc123",
@@ -54,8 +60,9 @@ def _detail_with_cover(cover_url: str, samples: list[str] | None = None) -> dict
 
 
 class TestUnregisteredHost:
-    def test_unregistered_cover_host_raises(self, monkeypatch):
+    def test_cover_host_resolving_private_raises(self, monkeypatch, public_resolver):
         """mutation api-host-gate-degrades：拿掉閘 → 本支必須紅。"""
+        resolve = public_resolver({"unregistered-cdn.example": ["10.0.0.5"]})
         monkeypatch.setattr(
             javdb_api,
             "api_search",
@@ -69,8 +76,10 @@ class TestUnregisteredHost:
 
         with pytest.raises(ValueError, match="unregistered-cdn.example"):
             javdb_api.fetch_video("SSIS-001")
+        assert "unregistered-cdn.example" in resolve.calls
 
-    def test_unregistered_sample_host_raises(self, monkeypatch):
+    def test_sample_host_resolving_private_raises(self, monkeypatch, public_resolver):
+        resolve = public_resolver({"evil-sample.example": ["10.0.0.5"]})
         monkeypatch.setattr(
             javdb_api,
             "api_search",
@@ -87,6 +96,23 @@ class TestUnregisteredHost:
 
         with pytest.raises(ValueError, match="evil-sample.example"):
             javdb_api.fetch_video("SSIS-001")
+        assert "evil-sample.example" in resolve.calls
+
+    def test_public_unlisted_host_ok(self, monkeypatch):
+        """名單外的公網圖床不再被擋（公網規則）。"""
+        monkeypatch.setattr(
+            javdb_api,
+            "api_search",
+            lambda _kw: [{"id": "abc123", "number": "SSIS-001"}],
+        )
+        monkeypatch.setattr(
+            javdb_api,
+            "api_movie_detail",
+            lambda _id: _detail_with_cover("https://unregistered-cdn.example/c.jpg"),
+        )
+        video = javdb_api.fetch_video("SSIS-001")
+        assert video is not None
+        assert "unregistered-cdn.example" in video.cover_url
 
     def test_empty_cover_url_ok(self, monkeypatch):
         monkeypatch.setattr(
@@ -124,8 +150,8 @@ class TestUnregisteredHost:
         assert "tp.spfcas.com" in video.cover_url
 
 
-class TestRegisteredButNotProxyable:
-    """review round-2 P2：這三種都在 registry 裡「查得到」，代理卻一定 403。"""
+class TestFormerlyNotProxyable:
+    """公網規則後，舊的三種「登記過但代理 403」形狀只剩 host 解不出來仍擋。"""
 
     def _fetch(self, monkeypatch, cover_url: str):
         monkeypatch.setattr(
@@ -140,16 +166,15 @@ class TestRegisteredButNotProxyable:
         )
         return javdb_api.fetch_video("SSIS-001")
 
-    def test_http_scheme_raises(self, monkeypatch):
-        """host 登記了、scheme 不合。代理端 branch 1 一律要求 https。"""
-        with pytest.raises(ValueError, match="scheme 不符"):
-            self._fetch(monkeypatch, "http://tp.spfcas.com/rhe/covers/x.jpg")
+    def test_http_scheme_allowed(self, monkeypatch):
+        """舊 `scheme 不符`（代理 Branch 1 要求 https）已不成立：http 公網放行。"""
+        video = self._fetch(monkeypatch, "http://tp.spfcas.com/rhe/covers/x.jpg")
+        assert video is not None
 
-    def test_download_only_host_raises(self, monkeypatch):
-        """`raw.githubusercontent.com` 在 registry 裡，但 consumers 只有 download
-        （女優照片那條路）。`proxy_rules()` 選不到它 ⇒ 代理 403。"""
-        with pytest.raises(ValueError, match="raw.githubusercontent.com"):
-            self._fetch(monkeypatch, "https://raw.githubusercontent.com/a/b.jpg")
+    def test_download_only_host_allowed(self, monkeypatch):
+        """download-only 的 host 不再特殊：解析成公網就放行。"""
+        video = self._fetch(monkeypatch, "https://raw.githubusercontent.com/a/b.jpg")
+        assert video is not None
 
     def test_unparseable_host_raises(self, monkeypatch):
         """舊版對「非空但抓不出 host」的網址直接 `continue` 放行。"""

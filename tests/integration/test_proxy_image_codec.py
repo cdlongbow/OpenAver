@@ -7,6 +7,7 @@ from __future__ import annotations
 import io
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PIL import Image
 
 
@@ -27,6 +28,12 @@ def _mock_resp(content: bytes, content_type: str, status: int = 200):
     resp.content = content
     resp.headers = {"Content-Type": content_type}
     return resp
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(public_resolver):
+    """167 公網規則會解析 host；預設回公網（不放寬外連防線，只假 DNS）。"""
+    return public_resolver()
 
 
 class TestProxyImageCodecHost:
