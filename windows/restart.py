@@ -5,6 +5,7 @@
 import os
 import subprocess
 import sys
+import threading
 import time
 
 from core.i18n import t
@@ -14,6 +15,9 @@ logger = get_logger(__name__)
 
 PARENT_PID_ENV = "OPENAVER_RESTART_PARENT_PID"
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+QUIT_DELAY = 0.3
+QUIT_THREAD_NAME = "openaver-restart-quit"
 
 _state = {"requested": False, "spawned": False}
 
@@ -31,9 +35,24 @@ def restart_command(executable=None, argv=None, app_dir=None, isfile=None):
 
 
 def request_restart(quit_app):
-    """登記重啟請求並呼叫退出；本函式不 spawn（spawn 要等 GUI 迴圈返回）"""
+    """登記重啟請求並排程退出；本函式不 spawn（spawn 要等 GUI 迴圈返回）
+
+    退出不得在呼叫端執行緒同步執行：呼叫端常是 pywebview 的 bridge 執行緒，
+    macOS 上它在 destroy 後還要把回傳值送回頁面，會卡死整個行程。
+    回傳排程用的執行緒（測試用來 join）。
+    """
     _state["requested"] = True
-    quit_app()
+
+    def _later():
+        time.sleep(QUIT_DELAY)
+        try:
+            quit_app()
+        except Exception as e:
+            logger.error(f"[restart] quit failed ({type(e).__name__})")
+
+    th = threading.Thread(target=_later, name=QUIT_THREAD_NAME, daemon=True)
+    th.start()
+    return th
 
 
 def _spawn_kwargs():

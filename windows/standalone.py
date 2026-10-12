@@ -719,7 +719,14 @@ def _make_quit_app(window, lifecycle):
     """重啟用的退出動作：有托盤走托盤的結束路徑（不手設 quitting，否則收尾會被略過）。"""
     if lifecycle is not None:
         return lambda: lifecycle.handle_tray_command(CMD_QUIT)
-    return window.destroy
+    return _destroy_all_windows
+
+
+def _destroy_all_windows():
+    """沒有 lifecycle 時的退出：主視窗與 CF 隱藏視窗都要關，否則 GUI 迴圈不返回。"""
+    for w in list(webview.windows):
+        with contextlib.suppress(Exception):
+            w.destroy()
 
 
 def _register_bridge_seams(window, lifecycle):

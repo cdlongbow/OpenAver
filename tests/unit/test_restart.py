@@ -16,6 +16,7 @@ PID_ENV = "OPENAVER_RESTART_PARENT_PID"
 
 @pytest.fixture(autouse=True)
 def _reset_state(monkeypatch):
+    monkeypatch.setattr(restart, "QUIT_DELAY", 0)
     restart._state.update(requested=False, spawned=False)
     monkeypatch.delenv(PID_ENV, raising=False)
     yield
@@ -51,10 +52,37 @@ def test_restart_command_dash_c_quotes_awkward_app_dir():
 
 def test_request_restart_calls_quit_and_sets_flag():
     quit_app = Mock()
-    restart.request_restart(quit_app)
-    restart.request_restart(quit_app)
+    restart.request_restart(quit_app).join(5)
+    restart.request_restart(quit_app).join(5)
     assert restart._state["requested"] is True
     assert quit_app.call_count == 2
+
+
+def test_request_restart_returns_before_quit_runs_on_other_thread(monkeypatch):
+    """bridge 呼叫要先返回：退出不得在呼叫端執行緒同步執行（Mac 上同步 destroy 會卡死整個行程）。"""
+    monkeypatch.setattr(restart, "QUIT_DELAY", 0.05)
+    release = threading.Event()
+    seen = {}
+
+    def quit_app():
+        seen["thread"] = threading.current_thread()
+        release.set()
+
+    th = restart.request_restart(quit_app)
+    assert "thread" not in seen                 # 呼叫返回時 quit_app 尚未執行
+    assert release.wait(5)
+    th.join(5)
+    assert seen["thread"] is not threading.current_thread()
+    assert seen["thread"].daemon is True
+
+
+def test_request_restart_quit_failure_does_not_raise(monkeypatch):
+    log = Mock()
+    monkeypatch.setattr(restart, "logger", log)
+    quit_app = Mock(side_effect=RuntimeError("x"))
+    restart.request_restart(quit_app).join(5)
+    quit_app.assert_called_once()
+    log.error.assert_called_once()
 
 
 def test_request_restart_does_not_spawn_before_loop_exit(monkeypatch):
@@ -65,7 +93,7 @@ def test_request_restart_does_not_spawn_before_loop_exit(monkeypatch):
     def quit_app():
         seen["spawned_calls"] = popen.call_count
 
-    restart.request_restart(quit_app)
+    restart.request_restart(quit_app).join(5)
     assert popen.call_count == 0
     assert seen["spawned_calls"] == 0
     assert restart._state["spawned"] is False
@@ -80,8 +108,8 @@ def test_spawn_without_request_never_spawns():
 def test_spawn_twice_for_one_request_spawns_once(monkeypatch):
     monkeypatch.setattr(restart, "restart_command", lambda *a, **k: ["x"])
     popen = Mock()
-    restart.request_restart(Mock())
-    restart.request_restart(Mock())
+    restart.request_restart(Mock()).join(5)
+    restart.request_restart(Mock()).join(5)
     assert restart.spawn_if_requested(popen=popen) is True
     assert restart.spawn_if_requested(popen=popen) is False
     assert popen.call_count == 1
@@ -92,7 +120,7 @@ def test_spawn_popen_arguments(monkeypatch, platform):
     monkeypatch.setattr(restart.sys, "platform", platform)
     monkeypatch.setattr(restart, "restart_command", lambda *a, **k: ["py", "a.py"])
     popen = Mock()
-    restart.request_restart(Mock())
+    restart.request_restart(Mock()).join(5)
     restart.spawn_if_requested(popen=popen)
     args, kw = popen.call_args
     assert args[0] == ["py", "a.py"]
@@ -112,7 +140,7 @@ def test_spawn_failure_notifies_once_and_never_retries(monkeypatch):
     monkeypatch.setattr(restart, "restart_command", lambda *a, **k: ["x"])
     popen = Mock(side_effect=OSError("boom"))
     notify = Mock()
-    restart.request_restart(Mock())
+    restart.request_restart(Mock()).join(5)
     assert restart.spawn_if_requested(notify_error=notify, popen=popen) is False
     assert restart.spawn_if_requested(notify_error=notify, popen=popen) is False
     assert popen.call_count == 1
@@ -193,7 +221,7 @@ def test_smoke_spawn_real_child_sees_parent_pid(monkeypatch, tmp_path):
     out = tmp_path / "pid.txt"
     code = f"import os; open({str(out)!r},'w').write(os.environ.get('{PID_ENV}',''))"
     monkeypatch.setattr(restart, "restart_command", lambda *a, **k: [sys.executable, "-c", code])
-    restart.request_restart(Mock())
+    restart.request_restart(Mock()).join(5)
     assert restart.spawn_if_requested() is True
     deadline = time.time() + 10
     while time.time() < deadline and not (out.exists() and out.read_text()):

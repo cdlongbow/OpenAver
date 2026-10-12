@@ -5,6 +5,7 @@
 """
 import ast
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
@@ -124,9 +125,25 @@ def env(monkeypatch, tmp_path):
     boom = Mock(side_effect=AssertionError("client mode must not start local server"))
     for name in ("find_free_port", "run_server", "_build_cf_windows", "_maybe_autostart_lan_listener"):
         monkeypatch.setattr(standalone, name, boom)
-    monkeypatch.setattr(standalone.threading.Thread, "start", boom)
+    real_start = threading.Thread.start
+
+    def guarded_start(self):   # 只放行重啟的延遲退出執行緒；其餘仍禁
+        if self.name == standalone.restart.QUIT_THREAD_NAME:
+            return real_start(self)
+        return boom()
+
+    monkeypatch.setattr(standalone.threading.Thread, "start", guarded_start)
+    monkeypatch.setattr(standalone.restart, "QUIT_DELAY", 0)
+    monkeypatch.setattr(standalone.webview, "windows", [win], raising=False)
     e.boom = boom
     return e
+
+
+def _join_quit():
+    """等重啟的延遲退出執行緒做完（它已在 request_restart 返回前啟動）。"""
+    for th in threading.enumerate():
+        if th.name == standalone.restart.QUIT_THREAD_NAME:
+            th.join(5)
 
 
 def _client_json():
@@ -219,8 +236,19 @@ def test_restart_quit_goes_through_lifecycle_quit_path(env):
     assert env.lifecycle.quitting is False   # 不手設 quitting，否則 shutdown_after_loop 會被略過
 
 
-def test_make_quit_app_without_lifecycle_is_window_destroy(env):
-    assert standalone._make_quit_app(env.win, None) == env.win.destroy
+def test_make_quit_app_without_lifecycle_destroys_every_window(env):
+    """沒有 lifecycle（Mac）時，主視窗與 CF 隱藏視窗都要關，GUI 迴圈才會返回。"""
+    class _Hidden:
+        def destroy(self):
+            env.events.append("cf.destroy")
+
+    class _Broken:
+        def destroy(self):
+            raise RuntimeError("already gone")
+
+    standalone.webview.windows = [env.win, _Broken(), _Hidden()]
+    standalone._make_quit_app(env.win, None)()
+    assert env.events == ["window.destroy", "cf.destroy"]
 
 
 def test_shutdown_helper_spawns_restart_after_lifecycle_shutdown(env):
@@ -242,6 +270,7 @@ def test_restart_sequence_in_client_mode(monkeypatch, env):
     def trigger():
         assert standalone.pywebview_api._request_restart() is True
         assert "spawn" not in env.events      # 迴圈返回前零 spawn
+        _join_quit()
 
     monkeypatch.setattr(standalone.webview, "start", _fake_start(env, in_loop=trigger))
     standalone._run_client_mode(env.logger)
@@ -258,8 +287,11 @@ def test_client_mode_lifecycle_none_restart_uses_window_destroy(monkeypatch, env
     _client_json()
     _ok_preflight(monkeypatch)
     monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: None)
-    monkeypatch.setattr(standalone.webview, "start",
-                        _fake_start(env, in_loop=lambda: standalone.pywebview_api._request_restart()))
+    def trigger():
+        standalone.pywebview_api._request_restart()
+        _join_quit()
+
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env, in_loop=trigger))
     standalone._run_client_mode(env.logger)
     assert "window.destroy" in env.events
     assert env.events[-1] == "spawn"
@@ -324,6 +356,7 @@ def test_register_bridge_seams_registers_both(env, lifecycle_on):
     assert standalone.pywebview_api._offline_text_provider is standalone.shell_boot.offline_texts
     assert standalone.pywebview_api._restart_handler is not None
     assert standalone.pywebview_api._request_restart() is True
+    _join_quit()
     expected = ("handle_tray_command", CMD_QUIT) if lifecycle_on else "window.destroy"
     assert env.events == [expected]
     assert standalone.restart._state["requested"] is True
@@ -537,6 +570,34 @@ def test_launcher_spawns_restart_after_gui_loop():
     assert len(tries) == 1
     final_calls = [c for b in tries[0].finalbody for c in ast.walk(b) if isinstance(c, ast.Call)]
     assert spawns[0] in final_calls
+
+
+def test_launcher_restart_quit_destroys_every_window():
+    tree = _launcher_tree()
+    reqs = _calls(tree, "restart.request_restart")
+    assert len(reqs) == 1
+    assert "_destroy_all_windows" in [n.id for n in ast.walk(reqs[0]) if isinstance(n, ast.Name)]
+    assert "window.destroy" not in [_chain(n) for n in ast.walk(reqs[0]) if isinstance(n, ast.Attribute)]
+
+
+def test_launcher_destroy_all_windows_closes_every_window(monkeypatch):
+    import importlib
+    launcher = importlib.import_module("launcher")
+    closed = []
+
+    class _W:
+        def __init__(self, name, boom=False):
+            self.name, self.boom = name, boom
+
+        def destroy(self):
+            closed.append(self.name)
+            if self.boom:
+                raise RuntimeError("gone")
+
+    monkeypatch.setattr(launcher.webview, "windows",
+                        [_W("main", boom=True), _W("hidden")], raising=False)
+    launcher._destroy_all_windows()
+    assert closed == ["main", "hidden"]
 
 
 def test_launcher_expect_offline_before_create_window():

@@ -2,6 +2,7 @@
 OpenAver Windows Launcher
 使用 PyWebView 連接 WSL 後端服務
 """
+import contextlib
 import os
 import sys
 
@@ -27,6 +28,13 @@ from windows import restart, shell_boot
 
 startup_trace.mark("modules_loaded")
 
+
+def _destroy_all_windows():
+    """重啟的退出動作：關掉全部視窗（含隱藏視窗），GUI 迴圈才會返回。"""
+    for w in list(webview.windows):
+        with contextlib.suppress(Exception):
+            w.destroy()
+
 if __name__ == '__main__':
     setup_logging()
     startup_trace.flush()
@@ -48,7 +56,7 @@ if __name__ == '__main__':
 
     window = webview.create_window(boot.title, boot.url, **create_kwargs)
     window.expose(*pywebview_api.exposed_functions())
-    pywebview_api.set_restart_handler(lambda: restart.request_restart(window.destroy))
+    pywebview_api.set_restart_handler(lambda: restart.request_restart(_destroy_all_windows))
     pywebview_api.set_offline_text_provider(shell_boot.offline_texts)
     startup_trace.mark("main_window_created")
 
