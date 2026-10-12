@@ -1144,7 +1144,7 @@ class TestProxyImageSSRF:
         """167 公網規則會解析 host；預設回公網，個別格自己覆寫成私網。"""
         self.resolve = public_resolver()
 
-    def _make_mock_response(self, content=b'fake', content_type='image/jpeg'):
+    def _make_mock_response(self, content=b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.content = content
@@ -1365,6 +1365,32 @@ class TestProxyImageSSRF:
         assert 'evil.com' in resolve.calls
         assert 'secret123' not in caplog.text
 
+    # ---- 167-T3 I1b: 使用者設了外部 proxy，公網檢查仍照做 ----
+
+    _PROXY = {"proxies": {"http": "http://p:1", "https": "http://p:1"}}
+
+    def test_proxy_configured_private_resolution_still_denied(self, client, public_resolver):
+        """設了 proxy 後，站方把圖片 host 指到內網仍 403，且不發請求"""
+        resolve = public_resolver({'cdn.example.com': ['10.0.0.5']})
+        with patch('web.routers.search.proxy_kwargs', return_value=self._PROXY):
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get(
+                    '/api/proxy-image', params={'url': 'https://cdn.example.com/c.jpg'})
+        assert response.status_code == 403
+        mock_get.assert_not_called()
+        assert 'cdn.example.com' in resolve.calls
+
+    def test_proxy_configured_public_resolution_allowed(self, client, public_resolver):
+        """對照格：設了 proxy 且解析成公網 → 200，requests.get 收到 proxies"""
+        public_resolver({'cdn.example.com': ['8.8.8.8']})
+        with patch('web.routers.search.proxy_kwargs', return_value=self._PROXY):
+            with patch('web.routers.search.requests.get',
+                       return_value=self._make_mock_response()) as mock_get:
+                response = client.get(
+                    '/api/proxy-image', params={'url': 'https://cdn.example.com/c.jpg'})
+        assert response.status_code == 200
+        assert mock_get.call_args.kwargs['proxies'] == self._PROXY['proxies']
+
     # ---- TASK-113c-T3a: metatube dynamic + path/dot-segment + cf.javfree.me ----
 
     def test_proxy_image_unclosed_ipv6_returns_403_not_500(self, client):
@@ -1554,7 +1580,7 @@ class TestProxyImageSSRF:
                    f'?url={quote(nested, safe="")}&ratio=0&quality=100')
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.content = b'x'
+            mock_resp.content = b'\xff\xd8\xffx'
             mock_resp.headers = {'Content-Type': 'image/jpeg'}
             with patch('web.routers.search.requests.get', return_value=mock_resp):
                 response = client.get('/api/proxy-image', params={'url': url})
@@ -1578,7 +1604,7 @@ class TestProxyImageSSRF:
             url = f'http://127.0.0.1:8900{good_path}'
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.content = b'x'
+            mock_resp.content = b'\xff\xd8\xffx'
             mock_resp.headers = {'Content-Type': 'image/jpeg'}
             with patch('web.routers.search.requests.get', return_value=mock_resp):
                 response = client.get('/api/proxy-image', params={'url': url})

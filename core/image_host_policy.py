@@ -226,8 +226,6 @@ class ProxyVerdict:
     host: str
     scheme: str
     reason: str | None
-    # 已無寫入端（恆 False）；T3 隨 search.py 的讀取端一併刪除此欄位。
-    custom_source: bool = False
 
 
 def proxy_verdict(url: str) -> ProxyVerdict:

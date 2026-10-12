@@ -13,6 +13,7 @@ _IMAGE_MAGICS: tuple[tuple[bytes, str], ...] = (
     (b"GIF87a", "image/gif"),
     (b"GIF89a", "image/gif"),
     (b"RIFF", "image/webp"),  # 需再驗 WEBP；見 image_media_type
+    (b"BM", "image/bmp"),
 )
 
 
@@ -20,6 +21,9 @@ def image_media_type(content: bytes) -> str | None:
     """依魔數回傳 media type；認不出來回 None。"""
     if not content:
         return None
+    # AVIF：偏移 4–12 的 ftyp 盒，brand 只收 avif／avis（mp42、heic 等不是圖）。
+    if len(content) >= 12 and content[4:8] == b"ftyp" and content[8:12] in (b"avif", b"avis"):
+        return "image/avif"
     for magic, media in _IMAGE_MAGICS:
         if content.startswith(magic):
             if media == "image/webp":

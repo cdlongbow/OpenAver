@@ -88,13 +88,8 @@ class TestProxyImagePlainHostUnchanged:
         # Content-Type 沿用上游（非 codec host）
         assert "image/jpeg" in response.headers["content-type"]
 
-    def test_plain_host_non_image_passes_through(self, client):
-        """🔴 範圍鎖：魔數閘只作用在標了 codec 的 host。
-
-        上面那支餵真 JPEG，閘擴到全站也會綠——鎖不住範圍決定。
-        這一支餵非圖片內容：132b 之前會原樣回 200，之後也必須一樣。
-        閘一旦擴到全站，這裡會變成 404。
-        """
+    def test_plain_host_non_image_rejected(self, client):
+        """魔數閘對全 host：內建圖床回 200 的非圖內容 → 403 空 body，不原樣轉出。"""
         not_an_image = b"<html>upstream 200 error page</html>"
         url = "https://pics.dmm.co.jp/mono/movie/adult/x/x.jpg"
 
@@ -104,5 +99,5 @@ class TestProxyImagePlainHostUnchanged:
         ):
             response = client.get("/api/proxy-image", params={"url": url})
 
-        assert response.status_code == 200
-        assert response.content == not_an_image
+        assert response.status_code == 403
+        assert response.content == b""
