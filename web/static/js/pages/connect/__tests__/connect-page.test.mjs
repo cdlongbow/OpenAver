@@ -39,6 +39,10 @@ function fakeBridge(over = {}) {
 }
 function install(bridge) {
     window.pywebview = bridge ? { api: bridge.api } : undefined;
+    window.__oaBridgeKind = bridge ? 'server' : undefined;
+}
+function fireReady(type = 'oabridgeready') {
+    for (const l of winListeners.filter((x) => x.type === type)) l.fn();
 }
 function mkPage(mode = 'local', shellKind = 'windows') {
     const page = connectPage();
@@ -112,10 +116,10 @@ test('bridge arrives via event before the deadline', async () => {
     page.init();
     assert.equal(page.bridge, 'pending');
     assert.equal(timers.length, 1);
-    assert.equal(timers[0].ms, 3000);
-    assert.equal(winListeners[0].type, 'pywebviewready');
+    assert.equal(timers[0].ms, 8000);
+    assert.ok(winListeners.some((l) => l.type === 'oabridgeready'));
     install(fakeBridge());
-    winListeners[0].fn();
+    fireReady();
     await new Promise((r) => setImmediate(r));
     assert.equal(page.bridge, 'ready');
     timers[0].fn();
@@ -130,13 +134,13 @@ test('bridge arrives via event after the deadline still recovers', async () => {
     timers[0].fn();
     assert.equal(page.bridge, 'unavailable');
     install(fakeBridge());
-    winListeners[0].fn();
+    fireReady();
     await new Promise((r) => setImmediate(r));
     assert.equal(page.bridge, 'ready');
 });
 
-test('untrusted state reply or missing mode means unavailable', async () => {
-    for (const reply of [{ ok: false, reason: 'untrusted' }, {}, null]) {
+test('missing mode in the state reply means unavailable', async () => {
+    for (const reply of [{}, null]) {
         install(fakeBridge({ connect_get_state: async () => reply }));
         const page = mkPage('local');
         page.init();
@@ -145,6 +149,49 @@ test('untrusted state reply or missing mode means unavailable', async () => {
         const a = page.actions();
         assert.equal(a.canProbe || a.canApply || a.canLogin || a.canSwitchLocal, false);
     }
+});
+
+test('untrusted state reply waits for oabridgeready and retries once, then gives up', async () => {
+    timers.length = 0; winListeners.length = 0;
+    let n = 0;
+    const b = fakeBridge({ connect_get_state: async () => (++n === 1 ? { ok: false, reason: 'untrusted' } : { mode: 'local', version: '0.17.7', path_map: [] }) });
+    install(b);
+    const page = mkPage('local');
+    page.init();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(page.bridge, 'pending');
+    assert.equal(stateOf(b.calls, 'connect_get_state').length, 1);
+    fireReady();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(page.bridge, 'ready');
+    assert.equal(stateOf(b.calls, 'connect_get_state').length, 2);
+
+    install(fakeBridge({ connect_get_state: async () => ({ ok: false, reason: 'untrusted' }) }));
+    const page2 = mkPage('local');
+    page2.init();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(page2.bridge, 'pending');
+    fireReady();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(page2.bridge, 'unavailable');
+});
+
+test('shell present but not ready: no bridge call until oabridgeready, no unavailable on deadline', async () => {
+    timers.length = 0; winListeners.length = 0;
+    const b = fakeBridge();
+    window.pywebview = { api: b.api };
+    window.__oaBridgeKind = undefined;
+    const page = mkPage('local');
+    page.init();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(b.calls.length, 0);
+    assert.equal(page.bridge, 'pending');
+    timers[0].fn();
+    assert.equal(page.bridge, 'pending');
+    fireReady();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(page.bridge, 'ready');
+    assert.equal(stateOf(b.calls, 'connect_get_state').length, 1);
 });
 
 test('untrusted reply on a later call flips the bridge to unavailable', async () => {

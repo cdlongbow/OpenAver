@@ -52,6 +52,7 @@ const of = (calls, name) => calls.filter((c) => c[0] === name);
 async function boot(over = {}, mode = 'local') {
     const b = fakeBridge(over, mode);
     window.pywebview = { api: b.api };
+    window.__oaBridgeKind = 'server';
     toasts.length = 0;
     const page = connectPage();
     page.$el = { dataset: { mode, shellKind: 'windows' } };

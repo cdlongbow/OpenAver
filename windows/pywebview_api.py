@@ -449,6 +449,18 @@ class Api:
             window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
         elif self._page_kind is None:
             self._on_nav_failure(js_raw, native_raw)
+        if self._page_kind is not None and gen == self._nav_gen:
+            self._signal_bridge_ready(window, self._page_kind)
+
+    @staticmethod
+    def _signal_bridge_ready(window, kind):
+        """頁面種類已定後通知頁面可以呼叫 bridge（只帶 kind 字串，不帶網址／票證）"""
+        try:
+            window.evaluate_js(
+                f"window.__oaBridgeKind = {json.dumps(kind)}; window.dispatchEvent(new Event('oabridgeready'))"
+            )
+        except Exception as e:
+            logger.warning(f"[pywebview] bridge ready signal failed ({type(e).__name__})")
 
     @staticmethod
     def _read_origins(window):
@@ -482,8 +494,8 @@ class Api:
         return None
 
     def _on_nav_failure(self, js_raw, native_raw):
-        """信任伺服器的導航失敗（錯誤頁簽名）且為連線模式 → 換成離線小頁"""
-        if not (isinstance(js_raw, str) and js_raw.startswith("chrome-error://")):
+        """信任伺服器的導航失敗（錯誤頁簽名：chrome-error:// 或 WebView2 的 "null"，且原生網址在伺服器 origin）且為連線模式 → 換成離線小頁"""
+        if not (isinstance(js_raw, str) and (js_raw == "null" or js_raw.startswith("chrome-error://"))):
             return
         native_origin = client_settings.normalize_origin(native_raw)
         if native_origin is None or native_origin != self._trusted_origin:

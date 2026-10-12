@@ -722,3 +722,71 @@ def test_scope_matrix_unregistered_page_none_denies_all_new_methods(mx):
     for method in NEW_ARGS:
         assert _matrix_call(mx, method) == UNTRUSTED_REPLY, method
     _assert_zero_effects(mx)
+
+
+# ---------------------------------------------------------------------------
+# 168b-T9a：就緒訊號（F1/F2）與 WebView2 導航失敗簽名 "null"（F3）
+# ---------------------------------------------------------------------------
+def _ready_calls(fx):
+    return [c[0][0] for c in fx.window.evaluate_js.call_args_list if "oabridgeready" in c[0][0]]
+
+
+def test_loaded_signals_bridge_ready_with_kind_only_after_page_kind_is_set(fx, tmp_path):
+    _write_client(tmp_path)
+    fx.api._set_trusted_origin(SERVER_LAN)
+    kinds_at_signal = []
+
+    def spy(js):
+        if "oabridgeready" in js:
+            kinds_at_signal.append(fx.api._page_kind)
+        return SERVER_LAN
+
+    fx.window.evaluate_js.side_effect = spy
+    fx.window.get_current_url.return_value = SERVER_LAN + "/p?oa_token=TKN-SENTINEL-9"
+    fx.window.events.before_load.fire()
+    fx.window.events.loaded.fire()
+    sent = _ready_calls(fx)
+    assert len(sent) == 1
+    assert kinds_at_signal == ["server"]
+    assert "__oaBridgeKind" in sent[0] and '"server"' in sent[0]
+    for secret in ("192.168", "TKN-SENTINEL-9", "oa_token", "http"):
+        assert secret not in sent[0]
+
+
+def test_loaded_signals_offline_kind_for_offline_page(fx):
+    fx.api._expect_offline()
+    _load_offline(fx)
+    sent = _ready_calls(fx)
+    assert len(sent) == 1 and '"offline"' in sent[0]
+
+
+def test_loaded_sends_no_signal_when_page_kind_is_none(fx):
+    _load_raw(fx, "http://evil.example:9", "http://evil.example:9/")
+    assert fx.api._page_kind is None
+    assert _ready_calls(fx) == []
+
+
+def test_stale_generation_sends_no_signal(fx):
+    def late(js):
+        if js == "location.origin":
+            fx.window.events.before_load.fire()
+        return TRUSTED
+
+    fx.window.evaluate_js.side_effect = late
+    fx.window.events.before_load.fire()
+    fx.window.events.loaded.fire()
+    assert _ready_calls(fx) == []
+
+
+def test_nav_failure_with_webview2_null_origin_on_server_url_shows_offline(fx, tmp_path):
+    _write_client(tmp_path)
+    fx.api._set_trusted_origin(SERVER_LAN)
+    _load_raw(fx, "null", SERVER_LAN + "/settings")
+    fx.window.load_url.assert_called_once_with(fx.m.OFFLINE_PAGE)
+
+
+def test_null_origin_on_about_blank_is_not_a_nav_failure(fx, tmp_path):
+    _write_client(tmp_path)
+    fx.api._set_trusted_origin(SERVER_LAN)
+    _load_raw(fx, "null", "about:blank")
+    fx.window.load_url.assert_not_called()

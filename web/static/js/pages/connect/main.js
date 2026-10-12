@@ -35,26 +35,39 @@ export function connectPage() {
         pinError: '',
         moveHintOpen: false,
         _started: false,
+        _kindSeen: false,
+        _retried: false,
 
         init() {
             const ds = (this.$el && this.$el.dataset) || {};
             this.mode = ds.mode === 'client' ? 'client' : 'local';
             this.shellKind = ds.shellKind === 'mac' ? 'mac' : 'windows';
-            const api = window.pywebview && window.pywebview.api;
-            if (api && typeof api.connect_get_state === 'function') {
-                this.start();
-                return;
-            }
-            window.addEventListener('pywebviewready', () => this.start(), { once: true });
+            window.addEventListener('oabridgeready', () => { this._kindSeen = true; this._tryStart(); });
+            window.addEventListener('pywebviewready', () => this._tryStart());
             setTimeout(() => {
-                if (this.bridge === 'pending') this.bridge = 'unavailable';
-            }, 3000);
+                if (this.bridge === 'pending' && !window.pywebview) this.bridge = 'unavailable';
+            }, 8000);
+            this._tryStart();
+        },
+
+        // 168b-T9a: first bridge call waits for the shell's "page kind decided" signal (never earlier)
+        _tryStart() {
+            const api = window.pywebview && window.pywebview.api;
+            if (!this._kindSeen && !window.__oaBridgeKind) return;
+            if (api && typeof api.connect_get_state === 'function') this.start();
         },
 
         async start() {
             if (this._started) return;
             this._started = true;
             const state = await this.call('connect_get_state');
+            if (state && state.reason === 'untrusted' && !this._retried) {
+                this._retried = true;
+                this._started = false;
+                this._kindSeen = false;
+                window.__oaBridgeKind = undefined;
+                return;
+            }
             if (!state || typeof state.mode !== 'string') {
                 this.bridge = 'unavailable';
                 return;
@@ -80,7 +93,7 @@ export function connectPage() {
             } catch {
                 return { ok: false, reason: 'error' };
             }
-            if (reply && reply.reason === 'untrusted') this.bridge = 'unavailable';
+            if (reply && reply.reason === 'untrusted' && (name !== 'connect_get_state' || this._retried)) this.bridge = 'unavailable';
             return reply;
         },
 

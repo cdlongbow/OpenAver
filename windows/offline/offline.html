@@ -53,6 +53,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   var texts = {};
   var started = false;
   var busyLabel = null;
+  var retried = false;
 
   function el(id) { return document.getElementById(id); }
   function api() { return window.pywebview && window.pywebview.api; }
@@ -103,6 +104,14 @@ button:disabled { opacity: 0.55; cursor: default; }
 
   function loadState() {
     return Promise.resolve(api().offline_get_state()).then(function (s) {
+      if (s && s.reason === 'untrusted' && !retried) {
+        // shell has not finished classifying this page yet: wait for the next oabridgeready, once
+        retried = true;
+        started = false;
+        window.__oaBridgeKind = undefined;
+        return null;
+      }
+      if (s && s.reason === 'untrusted') { throw new Error('untrusted'); }
       if (!s || typeof s !== 'object' || Array.isArray(s)) { throw new Error('bad state'); }
       return s;
     });
@@ -161,9 +170,9 @@ button:disabled { opacity: 0.55; cursor: default; }
   }
 
   function start() {
-    if (started) { return; }
+    if (started || !window.__oaBridgeKind || !api()) { return; }
     started = true;
-    loadState().then(render).catch(showFallback);
+    loadState().then(function (s) { if (s) { render(s); } }).catch(showFallback);
   }
 
   el('retry-btn').addEventListener('click', onRetry);
@@ -172,9 +181,10 @@ button:disabled { opacity: 0.55; cursor: default; }
   el('pin-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') { onSubmit(); } });
   el('url-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') { onRetry(); } });
 
+  window.addEventListener('oabridgeready', start);
   window.addEventListener('pywebviewready', start);
-  if (api()) { start(); }
-  setTimeout(function () { if (!started) { started = true; showFallback(); } }, 3000);
+  start();
+  setTimeout(function () { if (!started && !window.pywebview) { started = true; showFallback(); } }, 8000);
 })();
 </script>
 </body>
