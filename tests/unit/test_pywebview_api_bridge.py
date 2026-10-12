@@ -162,12 +162,15 @@ def test_open_file_client_covered_opens_translated_path(api_module, client_env, 
 
 @pytest.mark.parametrize("method", ["open_file", "open_folder"])
 def test_forward_uncovered_never_touches_filesystem(api_module, client_env, no_launch, monkeypatch, method):
-    exists = Mock(return_value=True)
+    real_exists = api_module.os.path.exists
+    exists = Mock(side_effect=real_exists)
     monkeypatch.setattr(api_module.os.path, "exists", exists)
     r = getattr(api_module.api, method)("file:////media/elsewhere/x.mp4")
     assert r["ok"] is False and r["reason"] == "uncovered"
     assert r["local_path"] is None and r["server_path"] == "/media/elsewhere/x.mp4"
-    exists.assert_not_called()
+    # os.path 是全域的：全套測試時 logger 檔案 handler 會呼叫 exists(*.log)，那不是被測路徑
+    stray = [c for c in exists.call_args_list if not str(c.args[0]).endswith(".log")]
+    assert stray == []
     _assert_nothing_launched(no_launch)
 
 
