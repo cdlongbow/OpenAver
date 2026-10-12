@@ -19,8 +19,10 @@ from core import startup_trace   # 啟動計時基準：須早於所有重 impor
 
 import webview
 from pywebview_api import api, bind_events
+import pywebview_api
 import window_state
 from core.logger import setup_logging
+from core import client_settings
 
 startup_trace.mark("modules_loaded")
 
@@ -29,16 +31,20 @@ if __name__ == '__main__':
     startup_trace.flush()
 
     saved = window_state.load_state()
-    create_kwargs = dict(js_api=api, width=saved['width'], height=saved['height'])
+    local_origin = 'http://localhost:8000'
+    shell_kind = 'windows' if sys.platform == 'win32' else 'mac'
+    api._set_trusted_origin(client_settings.server_origin(local_origin))
+    create_kwargs = dict(js_api=None, width=saved['width'], height=saved['height'])
     if saved['x'] is not None and saved['y'] is not None:
         create_kwargs['x'] = saved['x']
         create_kwargs['y'] = saved['y']
 
     window = webview.create_window(
         'OpenAver',
-        'http://localhost:8000',
+        client_settings.shell_entry_url(local_origin, shell_kind),
         **create_kwargs,
     )
+    window.expose(*pywebview_api.exposed_functions())
     startup_trace.mark("main_window_created")
 
     def startup(w):

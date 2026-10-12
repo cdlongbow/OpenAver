@@ -193,7 +193,7 @@ def test_dialog_result_mapping():
 
 @pytest.mark.parametrize("locale", ["zh-TW", "zh-CN", "ja", "en"])
 def test_desktop_texts_are_complete_for_every_supported_locale(monkeypatch, locale):
-    monkeypatch.setattr("windows.tray.load_config", lambda: {"general": {"locale": locale}})
+    monkeypatch.setattr("core.client_settings.tray_locale", lambda: locale)
 
     texts = load_desktop_texts()
 
@@ -206,10 +206,7 @@ def test_desktop_texts_are_complete_for_every_supported_locale(monkeypatch, loca
 
 def test_desktop_texts_follow_runtime_locale_change(monkeypatch):
     current = {"locale": "zh-TW"}
-    monkeypatch.setattr(
-        "windows.tray.load_config",
-        lambda: {"general": {"locale": current["locale"]}},
-    )
+    monkeypatch.setattr("core.client_settings.tray_locale", lambda: current["locale"])
 
     assert load_desktop_texts().minimize_to_tray == "最小化到系統匣"
     current["locale"] = "zh-CN"
