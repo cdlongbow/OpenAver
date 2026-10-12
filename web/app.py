@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 
 # issue #66：全域保險，涵蓋 /static 以外的裸 FileResponse 也用 WHATWG canonical MIME。
 import mimetypes
@@ -41,7 +42,7 @@ from core.config import load_config, mutate_config
 from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result, consume_reset_access_auth_marker
 from core.focal import device_state
 from core.database import init_db
-from core.database import backfill_readonly_nfo_mtime
+from core.database import backfill_readonly_nfo_mtime_once
 from core.metatube.state import metatube_state as _mt_startup_state
 from core.access_auth import ensure_schema, load_snapshot, snapshot, verify_ticket
 from core import source_reachability
@@ -103,6 +104,63 @@ async def _periodic_update_check_loop() -> None:
             logger.warning("lifespan: periodic update check failed", exc_info=True)
 
 
+def _run_in_daemon_thread(fn):
+    """在 daemon thread 跑同步 fn，回傳可 await 的 future（例外照傳）。
+
+    刻意不用 to_thread／run_in_executor：executor worker 非 daemon，NAS 離線時
+    使用者開了馬上關，程序會被卡住的 worker 留在背景（CD-166-4）。
+    """
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+
+    def _set(setter, value):
+        if not fut.done():
+            setter(value)
+
+    def _runner():
+        try:
+            result = fn()
+            args = (_set, fut.set_result, result)
+        except BaseException as exc:  # noqa: BLE001 - 原樣傳回 awaiter
+            args = (_set, fut.set_exception, exc)
+        # loop 已關（TestClient 離場／CLI 關閉後 thread 才跑完）→ 沒人在等結果，吞掉。
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(*args)
+
+    threading.Thread(target=_runner, daemon=True).start()
+    return fut
+
+
+def _nfo_backfill_sync():
+    """load_config 與回填（含 DB／NAS I/O）一起放 daemon thread（BE-ASYNC-01）。"""
+    path_mappings = load_config().get("gallery", {}).get("path_mappings", {})
+    return backfill_readonly_nfo_mtime_once(path_mappings=path_mappings)
+
+
+async def _run_nfo_backfill_once():
+    try:
+        healed = await _run_in_daemon_thread(_nfo_backfill_sync)
+        if healed:
+            logger.info("lifespan: backfilled nfo_mtime for %d readonly row(s)", healed)
+    except Exception:
+        logger.warning("lifespan: backfill_readonly_nfo_mtime failed unexpectedly", exc_info=True)
+
+
+async def _startup_metatube_reconnect():
+    try:
+        _res = await _run_in_daemon_thread(lambda: startup_reconnect(load_config()))
+        if _res:
+            # Use the generation returned by startup_reconnect (captured under
+            # state's lock at connect time) — never re-read state.generation
+            # after the await boundary (CD-66b-2). base_url/token are still read
+            # from state; a concurrent connect that advanced the generation makes
+            # this probe's writes stale, which the generation guard drops.
+            _names, _gen = _res
+            _fire_probe(_mt_startup_state.base_url, _mt_startup_state.token, _names, _gen)
+    except Exception:
+        logger.warning("lifespan: startup_reconnect failed unexpectedly", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── startup ───────────────────────────────────────────────
@@ -139,39 +197,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("lifespan: consume_reset_access_auth_marker failed unexpectedly", exc_info=True)
 
-    # TASK-104: one-time heal for pre-0.12.6 readonly rows whose nfo_mtime was
-    # hardcoded to 0.0 even though the sibling .nfo was really written next to
-    # the cover (core/database/migrate.py::backfill_readonly_nfo_mtime docstring
-    # has full context). Must run exactly once per app boot — NOT inside init_db()
-    # (called on many showcase requests) and NOT on any per-request path.
-    # Wrapped in try-except so any unexpected failure cannot crash startup.
-    try:
-        _backfill_config = load_config()
-        _backfill_path_mappings = _backfill_config.get("gallery", {}).get("path_mappings", {})
-        _healed = backfill_readonly_nfo_mtime(path_mappings=_backfill_path_mappings)
-        if _healed > 0:
-            logger.info("lifespan: backfilled nfo_mtime for %d readonly row(s)", _healed)
-    except Exception:
-        logger.warning("lifespan: backfill_readonly_nfo_mtime failed unexpectedly", exc_info=True)
+    # TASK-104／166-T2: one-time heal for pre-0.12.6 readonly rows (see
+    # core/database/migrate.py::backfill_readonly_nfo_mtime docstring). 會 stat NAS
+    # 上的 .nfo，所以放背景 daemon thread，lifespan 不等它（就緒不等任何遠端 I/O）。
+    # create_task 回傳值存 app.state 保留強引用（event loop 只持弱引用）。
+    app.state.nfo_backfill_task = asyncio.create_task(_run_nfo_backfill_once())
 
-    # TASK-63e-1: auto-reconnect metatube from persisted config.
-    # Wrapped in try-except so any unexpected failure cannot crash startup.
-    try:
-        import asyncio as _asyncio
-        _config = load_config()
-        _loop = _asyncio.get_event_loop()
-        _res = await _loop.run_in_executor(None, lambda: startup_reconnect(_config))
-        if _res:
-            # Use the generation returned by startup_reconnect (captured under
-            # state's lock at connect time) — never re-read state.generation
-            # after the await/executor boundary (CD-66b-2). base_url/token are
-            # still read from state; a concurrent connect that advanced the
-            # generation makes this probe's writes stale, which the
-            # mark_available/failed generation guard drops harmlessly.
-            _names, _gen = _res
-            _fire_probe(_mt_startup_state.base_url, _mt_startup_state.token, _names, _gen)
-    except Exception:
-        logger.warning("lifespan: startup_reconnect failed unexpectedly", exc_info=True)
+    # TASK-63e-1／166-T2: auto-reconnect metatube from persisted config，同樣放背景。
+    app.state.metatube_reconnect_task = asyncio.create_task(_startup_metatube_reconnect())
 
     # TASK-107-P1-T2: 背景（非阻塞）啟動更新檢查。lifespan 不 await 此 task，
     # yield 立刻放行，App 啟動不被 GitHub 網路往返拖慢（AC-A6）。
@@ -193,6 +226,15 @@ async def lifespan(app: FastAPI):
     # ── shutdown ──────────────────────────────────────────────
     # 每一步各自 try/except（同 startup 的既有精神）：通知 drain 失敗不可擋住
     # 排程 task 的 cancel，反之亦然。
+    for _task_name in ("nfo_backfill_task", "metatube_reconnect_task"):
+        try:
+            _task = getattr(app.state, _task_name)
+            _task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _task
+        except Exception:
+            logger.warning("lifespan: %s shutdown failed unexpectedly", _task_name, exc_info=True)
+
     try:
         app.state.periodic_update_check_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

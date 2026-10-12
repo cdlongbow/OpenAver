@@ -421,6 +421,7 @@ def test_app_shutdown_drains_notification_writer_queue(tmp_path, monkeypatch):
         await asyncio.Event().wait()
 
     with patch("web.app.auto_organize_loop", _hang_forever), \
+         patch("web.app.backfill_readonly_nfo_mtime_once", return_value=None), \
          patch("web.app.startup_reconnect", return_value=None), \
          patch("web.app.source_reachability") as mock_sr:
         mock_sr.schedule_reprobe_if_stale = AsyncMock(return_value=None)

@@ -68,7 +68,7 @@ async def test_dod2_lifespan_yield_not_blocked(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("web.app.init_db", lambda *a, **kw: None)
     monkeypatch.setattr("web.app.ensure_schema", lambda *a, **kw: None)
-    monkeypatch.setattr("web.app.backfill_readonly_nfo_mtime", lambda *a, **kw: 0)
+    monkeypatch.setattr("web.app.backfill_readonly_nfo_mtime_once", lambda *a, **kw: 0)
     monkeypatch.setattr("web.app.startup_reconnect", lambda *a, **kw: None)
     monkeypatch.setattr("web.app._startup_update_check", AsyncMock())
     # v0.15.13：shutdown 開始 drain 通知 writer 之後，這一行才變成「會真的做事」。

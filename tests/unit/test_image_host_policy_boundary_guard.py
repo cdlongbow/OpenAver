@@ -87,7 +87,7 @@ TIER2_EXEMPTIONS: list[tuple[str, str, str, str, int, str]] = [
     ),
     (
         "web/app.py",
-        "lifespan",
+        "_startup_metatube_reconnect",
         "_mt_startup_state",
         "base_url",
         1,
@@ -785,7 +785,7 @@ class TestTier2ExemptionAntiRot:
         assert notes[
             ("web/routers/settings_metatube.py", "connect", "state", "base_url")
         ] == "known-debt(dedup-only)"
-        assert notes[("web/app.py", "lifespan", "_mt_startup_state", "base_url")] == ""
+        assert notes[("web/app.py", "_startup_metatube_reconnect", "_mt_startup_state", "base_url")] == ""
         assert notes[
             ("web/app.py", "get_common_context", "_mt_state", "is_connected")
         ] == ""
