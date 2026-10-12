@@ -43,7 +43,9 @@ def api_instance(api_module, monkeypatch, tmp_path):
     import core.config as core_config
     monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_path / "config.json")
-    return api_module.Api()
+    inst = api_module.Api()
+    inst._trusted = True
+    return inst
 
 
 # ---------------------------------------------------------------------------

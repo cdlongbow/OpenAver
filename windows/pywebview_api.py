@@ -120,13 +120,58 @@ def _notify_uncovered(method, paths):
 
 
 class Api:
-    """供前端 JS 調用的 Python API"""
+    """供前端 JS 調用的 Python API（信任閘：只有信任 origin 的頁面能動作，預設 fail-closed）"""
+
+    def __init__(self):
+        self._trusted = False
+        self._trusted_origin = None
+        self._nav_gen = 0
+        self._seen_origin = None
+
+    def _set_trusted_origin(self, origin):
+        """設定唯一信任的 origin（尾斜線不計）。底線開頭：pywebview 不會把它注入頁面"""
+        self._trusted_origin = str(origin).rstrip("/")
+
+    def _denied(self, method):
+        """非信任頁面：記一行 WARNING 並回 True"""
+        if self._trusted:
+            return False
+        origin = None if self._seen_origin is None else str(self._seen_origin)[:128]
+        logger.warning(f"[pywebview] {method} refused reason=untrusted origin={origin!r}")
+        return True
+
+    def _on_before_load(self):
+        """每次導航注入前：世代遞增並立即撤銷信任"""
+        self._nav_gen += 1
+        self._trusted = False  # before_load reset (I7)
+
+    def _on_loaded(self):
+        """頁面載入後：讀實際落地 origin 驗證；只有信任頁才綁 drop"""
+        gen = self._nav_gen
+        window = get_window()
+        try:
+            origin = window.evaluate_js("location.origin") if window is not None else None
+        except Exception as e:
+            logger.warning(f"[pywebview] origin check failed ({type(e).__name__}); treated as untrusted")
+            origin = None
+        if self._apply_origin(gen, origin):
+            window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+
+    def _apply_origin(self, gen, origin):
+        """驗證結果只套用到啟動它的那次導航；回是否信任"""
+        if gen != self._nav_gen:
+            return False
+        self._seen_origin = origin
+        self._trusted = origin is not None and origin == self._trusted_origin
+        return self._trusted
 
     def select_files(self):
         """
         開啟檔案選擇對話框，選取影片檔案
         Returns: 選取的檔案路徑陣列（已翻譯成伺服器路徑；未涵蓋者不回傳，改發通知）
         """
+        if self._denied("select_files"):
+            return []
         window = get_window()
         exts = client_settings.video_extensions()
         ext_filter = ';'.join(f'*{ext}' for ext in sorted(exts))
@@ -148,6 +193,8 @@ class Api:
         開啟資料夾選擇對話框，返回資料夾路徑和內部影片檔案
         Returns: { folder: 資料夾路徑, files: 影片檔案陣列 }（伺服器路徑）；資料夾未涵蓋回 None
         """
+        if self._denied("select_folder"):
+            return None
         window = get_window()
         result = window.create_file_dialog(webview.FOLDER_DIALOG)
         if not (result and len(result) > 0):
@@ -169,6 +216,8 @@ class Api:
 
     def select_folder_path(self):
         """開啟資料夾選擇對話框，只返回資料夾路徑（伺服器路徑；未涵蓋回 None）"""
+        if self._denied("select_folder_path"):
+            return None
         window = get_window()
         result = window.create_file_dialog(webview.FOLDER_DIALOG)
         if not (result and len(result) > 0):
@@ -188,6 +237,8 @@ class Api:
         Returns: {"ok", "reason", "local_path", "server_path"}；
         reason ∈ None / uncovered / not_video / not_found / failed
         """
+        if self._denied("open_file"):
+            return {"ok": False, "reason": "untrusted", "local_path": None, "server_path": None}
         local_path, server_path, refused = _resolve_forward('open_file', path)
         if refused:
             return refused
@@ -234,6 +285,8 @@ class Api:
         Returns:
             True 表示成功呼叫系統 API，False 表示驗證失敗或系統呼叫拋出例外
         """
+        if self._denied("open_url"):
+            return False
         if not isinstance(url, str) or not url.startswith(('http://', 'https://')):
             return False
         try:
@@ -264,6 +317,8 @@ class Api:
 
         Returns: 同 open_file()（無 not_video）；local_path 永遠報原路徑不報父層
         """
+        if self._denied("open_folder"):
+            return {"ok": False, "reason": "untrusted", "local_path": None, "server_path": None}
         local_path, server_path, refused = _resolve_forward('open_folder', path)
         if refused:
             return refused
@@ -297,6 +352,8 @@ class Api:
 
 def on_drop(e):
     """處理拖放事件，取得完整路徑並傳給前端（支援多檔案和資料夾；路徑已翻譯成伺服器路徑）"""
+    if api._denied("on_drop"):
+        return
     window = get_window()
 
     files = e.get('dataTransfer', {}).get('files', [])
@@ -348,17 +405,45 @@ def on_drop(e):
 
 
 def bind_events(w):
-    """綁定 DOM 事件（頁面加載後綁定 drop 事件）"""
+    """綁定導航事件（信任閘；信任頁載入後才綁 drop 事件）"""
     set_window(w)
 
-    def on_loaded():
-        """每次頁面加載後綁定 drop 事件"""
-        window = get_window()
-        window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
-
-    # 監聯頁面加載事件（每次導航後都會觸發）
-    w.events.loaded += on_loaded
+    # 每次導航：before_load 撤銷信任（先於注入），loaded 驗證落地 origin
+    w.events.before_load += api._on_before_load
+    w.events.loaded += api._on_loaded
 
 
 # 建立全域 api 實例
 api = Api()
+
+
+# --- 注入面：模組層包裝函式（窗口以 js_api=None＋window.expose 註冊，派送端只做精確名稱查表）---
+# 包裝函式不可有 self（expose 依 getfullargspec 產 stub）；on_drop 是 DOM 事件不是 JS 呼叫，不在其中。
+
+def open_file(path):
+    return api.open_file(path)
+
+
+def open_folder(path):
+    return api.open_folder(path)
+
+
+def open_url(url):
+    return api.open_url(url)
+
+
+def select_files():
+    return api.select_files()
+
+
+def select_folder():
+    return api.select_folder()
+
+
+def select_folder_path():
+    return api.select_folder_path()
+
+
+def exposed_functions():
+    """給 window.expose(*...) 的 bridge 白名單"""
+    return [open_file, open_folder, open_url, select_files, select_folder, select_folder_path]

@@ -49,6 +49,7 @@ def api_module(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.set_window(MagicMock())
+    module.api._trusted = True
     yield module
     module.set_window(None)
 
