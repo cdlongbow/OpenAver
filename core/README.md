@@ -177,6 +177,13 @@ scrapers/
 - **刻意不在這裡**：上鎖、刪同名舊檔、把失敗轉成 `False`、決定 `dest` 在哪——全部留在呼叫端。清舊檔一律排在 `os.replace` 成功**之後**（`os.replace` 在 Windows 不保證成功，見 `gotchas-backend.md` BE-ENV-01）。
 - ⚠️ 模組內對 `os.replace` / `tempfile.mkstemp` **必須用屬性存取**（禁 `from os import replace`），否則測試端 `patch("core.atomic_write.os.replace")` 會失效——由 `tests/unit/test_atomic_write_boundary_guard.py` 的 AST 守衛鎖住。
 
+### `client_settings.py`（這台電腦的設定）
+**`windows/` 讀「這台電腦的設定」（播放器、關閉行為、托盤語系等）的唯一入口（spec-168a）**
+- 檔案是 `<資料根>/client.json`；**歸屬清單以 `client_settings.LOCAL_MACHINE_KEYS` 為準**，這裡不列鍵名（避免兩處分岔）。
+- 本機模式（沒有 `client.json`）：讀取結果與升級前逐字相同，仍來自 `config.json`。
+- 桌面區塊跟著殼走（不再看伺服器平台）；bridge 只在信任 origin 的頁面動作，並以 `window.expose` 白名單暴露函式；`open_file` 限影片副檔名。
+- `windows/` 不得自己碰 config API；唯一例外是 `standalone.py` 的 `_maybe_autostart_lan_listener`（讀伺服器端的 `server_mode`）。由 `scripts/static_guard_lint.mjs` 的 `[168a-T7-*]` 規則守住。
+
 ### `image_host_policy.py`
 **圖片 host registry ＋ 代理放行判準（單一所有權，spec-113 F-6；167 縮表）**
 - `IMAGE_HOSTS: tuple[ImageHost, ...]` — 宣告式清單，**只服務**女優照片 `download` 名單與 javdb `payload_codec`；已無代理放行名單。
