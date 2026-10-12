@@ -686,7 +686,8 @@ class Api:
         return {"mode": client_settings.mode(), "url": url,
                 "host": client_settings.display_host(url, with_port=True),
                 "has_token": bool(client_settings.server_token()),
-                "path_map": client_settings.path_map(), "version": client_connect.LOCAL_VERSION}
+                "path_map": client_settings.path_map(), "version": client_connect.LOCAL_VERSION,
+                "last_ok": client_settings.server_last_ok()}
 
     def connect_probe(self, url):
         """探測伺服器（握手）；換不同 origin 時清掉暫存的登入"""

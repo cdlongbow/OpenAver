@@ -111,7 +111,7 @@ def as_offline(cx):
 def test_get_state_local_mode(cx):
     assert cx.api.connect_get_state() == {
         "mode": "local", "url": "", "host": "", "has_token": False, "path_map": [],
-        "version": client_connect.LOCAL_VERSION}
+        "version": client_connect.LOCAL_VERSION, "last_ok": None}
 
 
 def test_get_state_client_mode_exposes_has_token_not_token(cx):
@@ -122,6 +122,9 @@ def test_get_state_client_mode_exposes_has_token_not_token(cx):
     assert state["has_token"] is True
     assert state["path_map"] == [{"server": "/volume1/av", "local": "D:/av"}]
     assert TKN not in json.dumps(state)
+    assert state["last_ok"] is None
+    client_settings.touch_last_ok()
+    assert cx.api.connect_get_state()["last_ok"] == client_settings.server_last_ok() is not None
 
 
 def test_probe_shape_and_compat_is_plain_dict(cx):

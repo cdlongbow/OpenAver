@@ -2,6 +2,116 @@
 
 {% block title %}{{ t('nav.connect') }} - OpenAver{% endblock %}
 
+{% block extra_css %}
+<link href="/static/css/pages/connect.css" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
-<div class="connect-container page-layer"></div>
+<div class="connect-container page-layer" x-data="connectPage"
+     data-mode="{{ shell_mode or 'local' }}"
+     data-shell-kind="{{ 'mac' if is_mac_desktop else 'windows' }}">
+
+    <p id="connect-nobridge" class="connect-nobridge" x-show="bridge === 'unavailable'" x-cloak>{{ t('connect.nobridge') }}</p>
+
+    <div class="connect-stack" x-show="bridge === 'ready'" x-cloak>
+
+        <section id="connect-status-card" class="card connect-card fluent-rounded-xl">
+            <h2 class="connect-title" x-text="statusLine()"></h2>
+            <p class="connect-line" x-show="statusVersionLine() !== ''" x-text="statusVersionLine()"></p>
+            <p class="connect-line" x-show="lastOkText() !== ''" x-text="lastOkText()"></p>
+        </section>
+
+        <section class="card connect-card fluent-rounded-xl">
+            <h2 class="connect-title">{{ t('connect.change_title') }}</h2>
+
+            <div class="connect-row">
+                <input id="connect-url" type="text" class="input input-bordered input-sm connect-url"
+                       placeholder="{{ t('connect.url_placeholder') }}"
+                       autocomplete="off" spellcheck="false"
+                       x-model="urlText"
+                       @keydown.enter.prevent="testConnection()">
+                <button type="button" class="btn btn-sm btn-outline" id="connect-test-btn"
+                        @click="testConnection()"
+                        :disabled="!actions().canProbe">
+                    <span x-show="busy === 'probe'" class="loading loading-spinner loading-sm"></span>
+                    <span x-show="busy !== 'probe'">{{ t('connect.test_btn') }}</span>
+                </button>
+            </div>
+
+            <div id="connect-probe-result" class="connect-row connect-result" aria-live="polite"
+                 x-show="actions().probeFresh" x-cloak>
+                <span class="source-pill-probe connect-probe-dot" :data-state="dotName()"><i :class="dotIcon()"></i></span>
+                <span x-text="resultText()"></span>
+                <span class="connect-line" x-show="resultVersionText() !== ''" x-text="resultVersionText()"></span>
+            </div>
+
+            <div class="connect-password"
+                 x-show="actions().passwordField === 'input' || actions().passwordField === 'disabled'" x-cloak>
+                <label class="connect-line" for="connect-pin">{{ t('connect.password_label') }}</label>
+                <div class="connect-row">
+                    <input id="connect-pin" type="password" inputmode="numeric" autocomplete="off"
+                           class="input input-bordered input-sm connect-pin"
+                           x-model="pin"
+                           @keydown.enter.prevent="login()"
+                           :disabled="actions().passwordField === 'disabled'">
+                    <button type="button" class="btn btn-sm btn-outline" id="connect-login-btn"
+                            @click="login()"
+                            :disabled="!actions().canLogin">
+                        {{ t('connect.login_btn') }}
+                    </button>
+                </div>
+                <p id="connect-pin-error" class="connect-error" x-show="pinErrorText() !== ''" x-text="pinErrorText()"></p>
+                <p id="connect-forgot" class="connect-line"
+                   x-show="actions().passwordField === 'input' && forgotText() !== ''" x-text="forgotText()"></p>
+            </div>
+
+            <p id="connect-nopassword" class="connect-line" x-show="actions().passwordField === 'none'" x-cloak>{{ t('connect.nopassword') }}</p>
+
+            {# connect-rows-slot: T6b #}
+
+            <p id="connect-cf" class="connect-line" x-text="cfText()"></p>
+
+            <div class="connect-row connect-actions">
+                <button type="button" class="btn btn-sm btn-primary" id="connect-apply-btn"
+                        @click="applyRestart()"
+                        :disabled="!actions().canApply"
+                        x-text="applyLabel()"></button>
+            </div>
+            <p class="connect-line" x-text="applyHint()"></p>
+            <p id="connect-action-error" class="connect-error" x-show="actionErrorText() !== ''" x-text="actionErrorText()"></p>
+            <p id="connect-restarting" class="connect-line" x-show="restarting" x-cloak>{{ t('connect.restarting') }}</p>
+        </section>
+
+        <template x-if="mode === 'client'">
+            <section class="card connect-card fluent-rounded-xl">
+                <div class="connect-row">
+                    <button type="button" class="btn btn-sm btn-outline" id="connect-switch-local-btn"
+                            @click="switchLocal()"
+                            :disabled="!actions().canSwitchLocal">
+                        {{ t('connect.switch_local_btn') }}
+                    </button>
+                </div>
+                <p class="connect-line">{{ t('connect.switch_local_hint') }}</p>
+            </section>
+        </template>
+
+        <template x-if="mode === 'local'">
+            <section class="connect-move">
+                <button type="button" class="btn btn-sm btn-ghost" id="connect-move-toggle"
+                        @click="moveHintOpen = !moveHintOpen"
+                        :aria-expanded="moveHintOpen ? 'true' : 'false'"
+                        :disabled="bridge !== 'ready'">
+                    {{ t('connect.move_toggle') }}
+                </button>
+                <p class="connect-line" x-show="moveHintOpen" x-cloak>{{ t('connect.move_hint') }}</p>
+            </section>
+        </template>
+
+    </div>
+</div>
+{% endblock %}
+
+{# connect.js 走 pre_alpine_module：須早於 Alpine start 掛上 alpine:init listener，否則 connectPage 註冊太晚（FE-TIMING-01）。 #}
+{% block pre_alpine_module %}
+<script type="module" src="/static/js/pages/connect/main.js"></script>
 {% endblock %}
