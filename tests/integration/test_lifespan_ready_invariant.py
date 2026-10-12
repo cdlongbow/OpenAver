@@ -27,7 +27,7 @@ from core.metatube.state import metatube_state
 from core.path_utils import to_file_uri
 from web.app import app, lifespan
 
-BLACKHOLE = "/mnt/blackhole-nas"
+BLACKHOLE = "/srv/blackhole-nas"
 MAX_READY_SECONDS = 2.0
 
 
@@ -123,12 +123,16 @@ def _blackhole_metatube(monkeypatch, gate, seen=None):
     monkeypatch.setattr(socket, "create_connection", fake_create_connection)
 
 
-async def _measure_ready(gate):
+async def _measure_ready(gate, injected=None):
     t0 = time.perf_counter()
     cm = lifespan(app)
     try:
         await asyncio.wait_for(cm.__aenter__(), timeout=5)
-        return time.perf_counter() - t0
+        elapsed = time.perf_counter() - t0
+        if injected is not None:
+            # yield 之後、離場取消背景 task 之前，確認注入點真的被進入過（不能空過）。
+            assert await asyncio.to_thread(injected.wait, 5), "blackhole injection never reached"
+        return elapsed
     finally:
         gate.set()
         with contextlib.suppress(BaseException):
@@ -138,12 +142,12 @@ async def _measure_ready(gate):
 @pytest.mark.asyncio
 async def test_lifespan_ready_case_a_backfill(base_env, monkeypatch):
     db_path, cfg_path = base_env
-    _write_cfg(cfg_path, metatube={"enabled": False, "url": "", "token": ""},
-               directories=[r"\\blackhole-nas\media"])
+    _write_cfg(cfg_path, metatube={"enabled": False, "url": "", "token": ""})
     _seed_rows(db_path)
     gate = threading.Event()
-    _blackhole_exists(monkeypatch, gate)
-    elapsed = await _measure_ready(gate)
+    seen = {"backfill_ev": threading.Event()}
+    _blackhole_exists(monkeypatch, gate, seen)
+    elapsed = await _measure_ready(gate, injected=seen["backfill_ev"])
     assert elapsed <= MAX_READY_SECONDS, f"lifespan took {elapsed:.2f}s to reach yield"
 
 
