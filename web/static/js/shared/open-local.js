@@ -17,6 +17,7 @@
  */
 
 import { pathToDisplay } from '@/components/path-utils.js';
+import { bridgeReasonMessage } from '@/shared/bridge-notify.js';
 
 /**
  * 開啟本地資料夾（複製路徑到剪貼簿 + PyWebView 桌面模式額外開啟資料夾）。
@@ -42,9 +43,13 @@ export function openLocal(path) {
   // 3. PyWebView 桌面模式：額外開啟資料夾
   if (window.pywebview?.api?.open_folder) {
     window.pywebview.api.open_folder(path)
-      .then(async (opened) => {
+      .then(async (result) => {
         const ok = await clipboardOk;
-        if (opened) {
+        // 168a-T4：bridge 回 dict；具名原因（not_found／not_video／uncovered）贏過「已複製」
+        const named = result && result.ok === true ? null : bridgeReasonMessage(result);
+        if (named !== null) {
+          this.showToast(named, 'error');
+        } else if (result && result.ok === true) {
           this.showToast(ok ? window.t('common.open_local.folder_opened_copied') : window.t('common.open_local.folder_opened'), 'success');
         } else {
           this.showToast(ok ? window.t('common.open_local.path_copied', { path: displayPath }) : window.t('common.open_local.folder_open_failed'), ok ? 'success' : 'error');

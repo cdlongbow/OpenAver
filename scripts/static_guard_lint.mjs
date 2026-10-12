@@ -2694,6 +2694,27 @@ const RULES = [
     note: '[163b-T7a-no-proxy-url-in-windows] 驗證視窗要走哪個代理只能問 core.proxy_policy 的 cf_window_proxy；windows 層若自己讀代理設定欄位，就會繞過「僅 DMM／所有來源」的範圍判斷，使用者選「僅 DMM」卻發現 JavLibrary／FC2-javten 的視窗也被送進代理',
   })),
 
+  // ---- [168a-T7] windows/ 不得自讀「這台電腦」的設定；load_config 只容許 standalone.py 的 C5 ----
+  // C5＝_maybe_autostart_lan_listener 讀 general.server_mode（歸伺服器）。C5 以外一律 fail-closed。
+  // forbidden-string 不剝 Python 註解／docstring：windows/ 內註解不得寫出這幾個詞（structure-count 會剝註解，不在此限）。
+  ...['CONFIG_PATH', 'mutate_config', 'core_config'].map((word) => ({
+    file: { dir: 'windows', ext: ['.py'], recursive: true }, kind: 'forbidden-string', pattern: word,
+    note: '[168a-T7-no-config-api-in-windows] 使用者在 client 模式的這台電腦改了播放器／關閉行為 → windows 層若直接碰伺服器那份 config，設定看似存了、實際讀寫的是別台的檔，畫面看不出來；這台電腦的設定只能走 core.client_settings',
+  })),
+  {
+    file: { dir: 'windows', ext: ['.py'], recursive: true, exclude: ['standalone.py'] }, kind: 'forbidden-string', pattern: /\bload_config\b/,
+    note: '[168a-T7-no-load-config-outside-c5] 托盤語系／關閉行為又改回 load_config → client 模式下跟著伺服器那台的設定走，使用者看到不是自己設的語言與行為；這台電腦的設定只能走 core.client_settings',
+  },
+  {
+    file: 'windows/standalone.py', kind: 'structure-count', pattern: /\bload_config\b/, count: 2,
+    note: '[168a-T7-load-config-only-in-c5] standalone.py 整檔的 load_config 出現次數不是 2（C5 的 import ＋ 呼叫）→ 有人把它加進別的函式（關閉行為回到讀伺服器 config），或把 C5 的讀取刪掉（開機自動開 LAN 監聽失效）',
+  },
+  {
+    file: 'windows/standalone.py', kind: 'structure-count', pattern: /\bload_config\b/, count: 2,
+    scope: /def _maybe_autostart_lan_listener\([^\n]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)+)/,
+    note: '[168a-T7-load-config-in-c5-scope] _maybe_autostart_lan_listener 內的 load_config 不是 2 次 → C5 的讀取被刪或搬走，使用者設了「作為伺服器」開機卻不自動開 LAN 監聽；與整檔規則的 N 相等才代表全部落在 C5 內',
+  },
+
   // ---- [163b-T7b] 重開提示的接線（node:test 看不到模板；外觀不守） ----
   {
     file: 'web/templates/settings.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="cfWindowProxyRestartNeeded"/,
@@ -8573,8 +8594,8 @@ const RULES = [
     pattern: /^\s*def open_folder\(/m,
     note: '[lint-guard 162c-test_open_folder_pywebview_api] 桌面版點資料夾 → pywebview API 須有 def open_folder — 遷自 test_contract_desktop.py' },
   { file: 'web/static/js/shared/open-local.js', kind: 'required-string',
-    pattern: '.then(async (opened)',
-    note: '[lint-guard 162c-test_open_local_checks_return_value] 開啟失敗仍顯示已開啟 → .then 須檢查 opened 回傳值 — 遷自 test_contract_desktop.py' },
+    pattern: '.then(async (result)',
+    note: '[lint-guard 162c-test_open_local_checks_return_value] 開啟失敗仍顯示已開啟 → .then 須檢查 bridge 回傳結果（168a 起為 dict，行為由 bridge-open-wiring.test.mjs 守）' },
   { file: 'web/static/js/shared/open-local.js', kind: 'required-string',
     pattern: 'displayPath',
     note: '[lint-guard 162c-test_open_local_cross_platform_path] Windows 剪貼簿路徑須走 displayPath 跨平台格式 — 遷自 test_contract_desktop.py' },

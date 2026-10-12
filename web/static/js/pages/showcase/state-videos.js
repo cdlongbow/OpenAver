@@ -9,6 +9,7 @@
 import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos, _recomputeAllBadges, _recomputeCardActorAges } from '@/showcase/state-base.js';
 import { applyCellFocal } from '@/shared/focal-cell.js';
 import { openLocal } from '@/shared/open-local.js';
+import { notifyOpenResult } from '@/shared/bridge-notify.js';
 import { normalizePillValue, buildPillPredicate } from '@/shared/pill-filter.js';
 // TASK-124a-T2：發售日 pill 浮層狀態機直接呼叫的 T1 六支純函式中的五支
 // （matchesReleasePill 屬 pill-filter.js 內部使用，state 層不直接呼叫）。
@@ -869,8 +870,8 @@ export function stateVideos() {
         playVideo(path) {
             if (window.pywebview && window.pywebview.api) {
                 window.pywebview.api.open_file(path)
-                    .then(opened => {
-                        if (!opened) this.showToast(window.t('showcase.video.play_failed'), 'error');
+                    .then(result => {
+                        if (!notifyOpenResult(this.showToast.bind(this), result, 'file')) return;
                     })
                     .catch(err => {
                         console.error('Failed to open file:', err);

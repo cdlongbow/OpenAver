@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from core.config import load_config
+from core import client_settings
 from core.i18n import FALLBACK_LOCALE, SUPPORTED_LOCALES, t
 from core.logger import get_logger
 
@@ -73,7 +73,7 @@ class DesktopTexts:
 def load_desktop_texts() -> DesktopTexts:
     """Read the current locale once and return all strings for one native UI interaction."""
     try:
-        locale = load_config().get("general", {}).get("locale", FALLBACK_LOCALE)
+        locale = client_settings.tray_locale()
     except Exception:
         logger.warning("failed to read desktop locale; using fallback", exc_info=True)
         locale = FALLBACK_LOCALE

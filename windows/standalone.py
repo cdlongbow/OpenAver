@@ -25,8 +25,10 @@ from core.data_layout import bootstrap_data_layout
 from core.logger import setup_logging, get_logger
 import webview
 from pywebview_api import api, bind_events
+import pywebview_api
 from tray import DesktopLifecycle, NativeTrayIcon
 from webview2_proxy import ReadyHolder, install as install_webview2_proxy   # sibling import（同 cf_transport_impl）
+from core import client_settings
 from core.data_root import get_data_root
 from core.desktop_env import desktop_kind
 from core.proxy_policy import cf_window_proxy, current_settings, record_cf_window_proxy_at_start
@@ -539,14 +541,7 @@ def _maybe_autostart_lan_listener(lan_listener, logger) -> None:
 
 def _setup_windows_lifecycle(window, jl_win, javten_win, saved, lan_listener) -> DesktopLifecycle | None:
     if sys.platform == 'win32':
-        from core.config import mutate_config
-        from core.config import load_config
         import window_state
-
-        def _write_close_action(action: str) -> None:
-            def _mutator(cfg):
-                cfg.setdefault("general", {})["close_action"] = action
-            mutate_config(_mutator)
 
         lifecycle = DesktopLifecycle(
             window,
@@ -554,8 +549,8 @@ def _setup_windows_lifecycle(window, jl_win, javten_win, saved, lan_listener) ->
             saved,
             window_state.save_state,
             on_quit_cleanup=lan_listener.shutdown,
-            read_close_action=lambda: load_config().get("general", {}).get("close_action", "ask"),
-            write_close_action=_write_close_action,
+            read_close_action=client_settings.close_action,
+            write_close_action=client_settings.set_close_action,
         )
         tray_icon = NativeTrayIcon(
             Path(APP_DIR) / "web" / "static" / "favicon.png",
@@ -745,16 +740,20 @@ def main():
 
     import window_state
     saved = window_state.load_state()
-    create_kwargs = dict(js_api=api, width=saved['width'], height=saved['height'])
+    local_origin = f'http://{CLIENT_HOST}:{port}'
+    shell_kind = 'windows' if sys.platform == 'win32' else 'mac'
+    api._set_trusted_origin(client_settings.server_origin(local_origin))
+    create_kwargs = dict(js_api=None, width=saved['width'], height=saved['height'])
     if saved['x'] is not None and saved['y'] is not None:
         create_kwargs['x'] = saved['x']
         create_kwargs['y'] = saved['y']
 
     window = webview.create_window(
         'OpenAver',
-        f'http://{CLIENT_HOST}:{port}',
+        client_settings.shell_entry_url(local_origin, shell_kind),
         **create_kwargs,
     )
+    window.expose(*pywebview_api.exposed_functions())
     startup_trace.mark("main_window_created")
 
     jl_win, javten_win = _build_cf_windows(logger)
