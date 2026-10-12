@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.5] - 2026-10-12
+
+> 片庫放在 NAS 上的人，開 OpenAver 不再每次多等十幾秒；metatube 主機沒開時，視窗也不再白等 20 多秒才出現。
+
+### Fixed
+
+#### 🚀 開機不再等 NAS 與 metatube
+
+- 開機時不再逐片去 NAS 查 NFO 的修改時間：這個舊版留下的補正只看「唯讀來源產出」的片、只在升級後第一次開機跑一次，而且改在背景進行，不擋視窗出現。
+- metatube 開機自動重連改在背景進行，視窗不必等它。連不上時與過去相同：維持未連線，要到設定頁按「連線」才會再試。
+- 背景工作在你關掉視窗時不會讓程式殘留在背景。
+
+### Changed
+
+- `debug.log` 新增啟動各階段的耗時紀錄（載入、伺服器就緒、主視窗建立、首頁載入、總時間），回報啟動慢的問題時可以附上。
+
+#### ⚠️ 已知限制
+
+- metatube 主機沒開時，開 OpenAver 後約 25 秒內到設定頁按「連線／斷線」，按鈕會轉圈到重連逾時才有反應；不影響資料。
+- 升級後第一次開機，唯讀來源的片上「補 NFO」圖示會晚幾秒才消失；若那次開機 NAS 正好沒開，這些圖示會留著，按補完或燈箱 ⚙ 進階重刮即可清掉。
+
 ## [0.17.4] - 2026-10-10
 
 > 想用的站不在內建的十個來源裡？現在可以自己加：把一份描述「怎麼從某個網站抓出一部片的資料」的規則檔（YAML）交給 OpenAver，

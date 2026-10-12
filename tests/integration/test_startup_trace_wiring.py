@@ -149,4 +149,5 @@ def test_launcher_flushes_after_setup_logging():
     ml = _module_level_marks(tree).get("modules_loaded")
     assert ml is not None and ml > _last_import_line(tree)
     startup = _func(tree, "startup")
-    assert startup is not None and _named_calls(startup, "_arm_first_page_mark") or "first_page_loaded" in _marks(tree)
+    assert startup is not None
+    assert "first_page_loaded" in _marks(startup)
