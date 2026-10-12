@@ -20,6 +20,7 @@ WINDOWS_DIR = os.path.dirname(os.path.abspath(__file__))
 if WINDOWS_DIR not in sys.path:
     sys.path.insert(0, WINDOWS_DIR)
 
+from core import startup_trace   # 啟動計時基準：須早於所有重 import
 from core.data_layout import bootstrap_data_layout
 from core.logger import setup_logging, get_logger
 import webview
@@ -36,6 +37,8 @@ from windows.health_probe import (
     run_server,
     wait_for_server,
 )
+
+startup_trace.mark("modules_loaded")
 
 # 配置
 PORT = 49152  # 使用動態/私有端口範圍 (49152-65535)，避免權限問題
@@ -675,12 +678,21 @@ def _build_cf_windows(logger):
 
 # ============ 主程序 ============
 
+def _arm_first_page_mark(window) -> None:
+    """首頁載入計時：對 events.loaded 掛一次回呼；去重由 startup_trace.mark 負責。"""
+    def on_first_loaded():
+        startup_trace.mark("first_page_loaded")
+
+    window.events.loaded += on_first_loaded
+
+
 def main():
     # 檢查 DEBUG 環境變數
     debug_mode = os.environ.get('OPENAVER_DEBUG', '0') == '1'
     console_level = logging.DEBUG if debug_mode else logging.INFO
     setup_logging(console_level=console_level)
     logger = get_logger('standalone')
+    startup_trace.flush()
 
     logger.info("正在啟動...")
 
@@ -693,6 +705,7 @@ def main():
 
     # 1b. 資料根定版（必須在 port／server thread／視窗之前；失敗即中止啟動）
     _bootstrap_data_layout_or_exit(logger)
+    startup_trace.mark("data_root_ready")
 
     # 2. 尋找可用端口
     try:
@@ -712,10 +725,12 @@ def main():
     logger.info("啟動伺服器...")
     server_thread = threading.Thread(target=run_server, args=(port, debug_mode), daemon=True)
     server_thread.start()
+    startup_trace.mark("server_thread_started")
 
     # 3. 等待伺服器就緒
     logger.info("等待伺服器就緒...")
     _wait_for_server_or_exit(port, logger, server_thread)
+    startup_trace.mark("server_ready")
     logger.info("伺服器已就緒")
 
     # 3b. 接線 LAN listener manager（dual-listener 架構）
@@ -740,8 +755,10 @@ def main():
         f'http://{CLIENT_HOST}:{port}',
         **create_kwargs,
     )
+    startup_trace.mark("main_window_created")
 
     jl_win, javten_win = _build_cf_windows(logger)
+    startup_trace.mark("cf_windows_created")
 
     # CD-70c-2 Layer 1: intercept JL window close → hide instead of destroy.
     # A destroyed window makes self._win dead, breaking all subsequent fetch/is_ready
@@ -800,6 +817,7 @@ def main():
         javten_win.events.closing += _on_javten_closing
 
     def startup(w):
+        _arm_first_page_mark(w)
         bind_events(w)
         live = window_state.attach(w, saved)
         if lifecycle is not None:

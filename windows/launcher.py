@@ -15,11 +15,19 @@ WINDOWS_DIR = os.path.dirname(os.path.abspath(__file__))
 if WINDOWS_DIR not in sys.path:
     sys.path.insert(0, WINDOWS_DIR)
 
+from core import startup_trace   # 啟動計時基準：須早於所有重 import
+
 import webview
 from pywebview_api import api, bind_events
 import window_state
+from core.logger import setup_logging
+
+startup_trace.mark("modules_loaded")
 
 if __name__ == '__main__':
+    setup_logging()
+    startup_trace.flush()
+
     saved = window_state.load_state()
     create_kwargs = dict(js_api=api, width=saved['width'], height=saved['height'])
     if saved['x'] is not None and saved['y'] is not None:
@@ -31,8 +39,13 @@ if __name__ == '__main__':
         'http://localhost:8000',
         **create_kwargs,
     )
+    startup_trace.mark("main_window_created")
 
     def startup(w):
+        def on_first_loaded():
+            startup_trace.mark("first_page_loaded")
+
+        w.events.loaded += on_first_loaded
         bind_events(w)
         live = window_state.attach(w, saved)
         if saved['maximized']:
