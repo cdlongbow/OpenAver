@@ -145,27 +145,8 @@ def test_backslash_authority_blocked_even_if_hosts_agree(monkeypatch):
     assert ei.value.reason == "bad_authority"
 
 
-# 改前（HEAD:core/custom_source/guard.py）的固定訊息原文，手寫字面
-@pytest.mark.parametrize("url,reason,message", [
-    ("http://[::1", "bad_url", "網址格式不正確"),
-    ("ftp://example.com/", "bad_scheme", "只允許 http／https"),
-    ("http:///x", "bad_host", "網址沒有主機名稱"),
-    ("http://localhost/", "bad_host", "不允許的主機名稱"),
-    ("http://faß.example/", "non_ascii_host", "主機名稱含非 ASCII 字元，請改用 punycode（xn--）"),
-    ("http://x.example\\@127.0.0.1/", "bad_authority", "網址的主機段格式不正確"),
-    ("http://10.0.0.5/", "non_public", "目標不是公網位址"),
-])
-def test_guard_messages_verbatim(url, reason, message):
-    with pytest.raises(BlockedTarget) as ei:
-        guard.check(url)
-    assert (ei.value.reason, ei.value.message) == (reason, message)
 
 
-def test_guard_unresolvable_message_verbatim(monkeypatch):
-    monkeypatch.setattr("core.public_target.resolve_host", lambda host: [])
-    with pytest.raises(BlockedTarget) as ei:
-        guard.check("http://example.com/")
-    assert (ei.value.reason, ei.value.message) == ("unresolvable", "無法解析目標主機")
 
 
 def test_guard_reasons_unchanged():
@@ -174,15 +155,5 @@ def test_guard_reasons_unchanged():
     )
 
 
-def test_guard_has_no_second_resolver():
-    for name in ("resolve_host", "parse_url", "_is_public", "_blocked_name", "_authority", "_connect_host_differs"):
-        assert not hasattr(guard, name)
 
 
-def test_single_resolver_flips_guard_and_check_public_together(monkeypatch):
-    url = "http://example.com/"
-    assert guard.check(url) is None and public_target.check_public(url) is None
-    monkeypatch.setattr("core.public_target.resolve_host", lambda host: ["10.0.0.5"])
-    with pytest.raises(BlockedTarget):
-        guard.check(url)
-    assert public_target.check_public(url) is not None

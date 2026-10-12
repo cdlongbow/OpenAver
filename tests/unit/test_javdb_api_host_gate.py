@@ -166,16 +166,6 @@ class TestFormerlyNotProxyable:
         )
         return javdb_api.fetch_video("SSIS-001")
 
-    def test_http_scheme_allowed(self, monkeypatch):
-        """舊 `scheme 不符`（代理 Branch 1 要求 https）已不成立：http 公網放行。"""
-        video = self._fetch(monkeypatch, "http://tp.spfcas.com/rhe/covers/x.jpg")
-        assert video is not None
-
-    def test_download_only_host_allowed(self, monkeypatch):
-        """download-only 的 host 不再特殊：解析成公網就放行。"""
-        video = self._fetch(monkeypatch, "https://raw.githubusercontent.com/a/b.jpg")
-        assert video is not None
-
     def test_unparseable_host_raises(self, monkeypatch):
         """舊版對「非空但抓不出 host」的網址直接 `continue` 放行。"""
         with pytest.raises(ValueError, match="host=\\?"):

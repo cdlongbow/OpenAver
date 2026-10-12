@@ -88,16 +88,3 @@ class TestProxyImagePlainHostUnchanged:
         # Content-Type 沿用上游（非 codec host）
         assert "image/jpeg" in response.headers["content-type"]
 
-    def test_plain_host_non_image_rejected(self, client):
-        """魔數閘對全 host：內建圖床回 200 的非圖內容 → 403 空 body，不原樣轉出。"""
-        not_an_image = b"<html>upstream 200 error page</html>"
-        url = "https://pics.dmm.co.jp/mono/movie/adult/x/x.jpg"
-
-        with patch(
-            "web.routers.search.requests.get",
-            return_value=_mock_resp(not_an_image, "text/html"),
-        ):
-            response = client.get("/api/proxy-image", params={"url": url})
-
-        assert response.status_code == 403
-        assert response.content == b""

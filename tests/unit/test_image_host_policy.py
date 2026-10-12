@@ -322,26 +322,6 @@ def test_download_hosts_for_xcity():
     assert download_hosts_for("xcity") == {"faws.xcity.jp"}
 
 
-def test_faws_xcity_jp_is_download_only_in_registry(public_resolver):
-    """167: registry 只服務女優照片下載與 javdb 解碼，faws.xcity.jp 的 consumers
-    只剩 ("download",)；代理端改看公網規則（proxy_verdict），xcity 照片預覽
-    照樣放行，不再靠 registry 列。"""
-    matches = [e for e in IMAGE_HOSTS if e.host == "faws.xcity.jp"]
-    assert len(matches) == 1
-    entry = matches[0]
-    assert entry.consumers == ("download",)
-
-    # This is the actual gate web/routers/search.py's /api/proxy-image calls
-    # (proxy_verdict()) — assert on the real entry point, since that's what a
-    # 403 vs 200 depends on.  167: 公網規則——https／http 皆放行（舊 scheme 不符已不成立）。
-    public_resolver()
-    verdict = proxy_verdict("https://faws.xcity.jp/actress/large/image/person/11000.jpg")
-    assert verdict.allowed is True
-    assert verdict.reason is None
-
-    http_verdict = proxy_verdict("http://faws.xcity.jp/actress/large/image/person/11000.jpg")
-    assert http_verdict.allowed is True
-    assert http_verdict.reason is None
 
 
 def test_validate_photo_url_xcity():

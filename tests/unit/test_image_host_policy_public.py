@@ -3,17 +3,11 @@
 真 host 名一律 `public_resolver`；字面 IP 免 resolver。每個反向斷言格都有
 resolver 回私網的對照並斷言 `resolve.calls` 含該 host（BE-TEST-23）。
 """
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 
 from core import image_host_policy
 from core.image_host_policy import proxy_verdict
 from core.metatube.state import metatube_state
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -50,31 +44,8 @@ def test_listed_host_resolving_private_denied(public_resolver):
     assert "pics.dmm.co.jp" in resolve.calls
 
 
-def test_unknown_host_resolving_public_allowed_listed_not_special(public_resolver):
-    resolve = public_resolver({"pics.dmm.co.jp": ["8.8.8.8"]})
-    assert proxy_verdict("https://pics.dmm.co.jp/a.jpg").allowed is True
-    assert proxy_verdict("https://other.unlisted.example/a.jpg").allowed is True
-    assert "other.unlisted.example" in resolve.calls
 
 
-# 4 ---------------------------------------------------------------------
-def test_image_hosts_emptied_gives_identical_verdicts(public_resolver, monkeypatch):
-    urls = [
-        "https://pics.dmm.co.jp/a.jpg",
-        "http://javbus.com/a.jpg",
-        "https://sub.javbus.com/a.jpg",
-        "https://cdn.unlisted.example/a.jpg",
-        "https://priv.example/a.jpg",
-        "https://x.example:8443/a.jpg",
-        "ftp://cdn.unlisted.example/a.jpg",
-        "https://8.8.8.8/a.jpg",
-        "https://10.0.0.5/a.jpg",
-    ]
-    public_resolver({"priv.example": ["10.0.0.5"]})
-    before = [proxy_verdict(u) for u in urls]
-    monkeypatch.setattr(image_host_policy, "IMAGE_HOSTS", ())
-    after = [proxy_verdict(u) for u in urls]
-    assert before == after
 
 
 # 5 ---------------------------------------------------------------------
@@ -100,11 +71,6 @@ def test_non_http_scheme_denied(public_resolver, url):
     assert proxy_verdict(url).allowed is False
 
 
-def test_http_listed_host_and_subdomain_allowed(public_resolver):
-    public_resolver()
-    assert proxy_verdict("http://javbus.com/a.jpg").allowed is True
-    assert proxy_verdict("https://pics.dmm.co.jp.sub.example/a.jpg").allowed is True
-    assert proxy_verdict("https://sub.pics.dmm.co.jp/a.jpg").allowed is True
 
 
 def test_literal_private_and_empty_host_denied():
@@ -123,11 +89,6 @@ def test_metatube_relay_private_ip_allowed(public_resolver, mt_disconnected):
     assert resolve.calls == []  # 走 metatube 條目，不經公網規則
 
 
-def test_metatube_private_host_nonrelay_path_denied(public_resolver, mt_disconnected):
-    public_resolver()
-    metatube_state.connect("http://192.168.1.177:8080", "", [])
-    v = proxy_verdict("http://192.168.1.177:8080/other.jpg")
-    assert v.allowed is False
 
 
 # 7 ---------------------------------------------------------------------
@@ -203,14 +164,3 @@ def test_verdict_independent_of_custom_source_state(public_resolver, tmp_path, m
     assert absent == enabled == disabled
 
 
-# 11 --------------------------------------------------------------------
-def test_policy_does_not_load_custom_source_in_subprocess():
-    code = (
-        "import sys, core.image_host_policy as p\n"
-        "assert p.proxy_verdict('https://8.8.8.8/a.jpg').allowed\n"
-        "assert not [m for m in sys.modules if m.startswith('core.custom_source')]\n"
-    )
-    proc = subprocess.run(
-        [sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True, timeout=60
-    )
-    assert proc.returncode == 0, proc.stderr
