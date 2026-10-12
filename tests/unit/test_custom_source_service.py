@@ -11,7 +11,7 @@ import pytest
 
 import core.config as core_config
 import core.custom_source.fetch as fetch_mod
-import core.custom_source.guard as guard_mod
+import core.public_target as public_target_mod
 import core.custom_source.scraper as scraper_mod
 from core.config import load_config, save_config
 from core.custom_source import registry, service, state
@@ -33,7 +33,7 @@ MIN_MISS = "https://single-og-min.example/videos/zzzz-999/"
 
 @pytest.fixture(autouse=True)
 def _no_real_dns_or_sleep(monkeypatch):
-    monkeypatch.setattr("core.custom_source.guard.resolve_host", lambda host: ["8.8.8.8"])
+    monkeypatch.setattr("core.public_target.resolve_host", lambda host: ["8.8.8.8"])
     monkeypatch.setattr("core.custom_source.fetch.rate_limit", lambda delay=0: None)
 
 
@@ -96,7 +96,7 @@ def test_upload_good_file_is_unverified_and_never_touches_network(env, monkeypat
             raise AssertionError(name)
         return _f
 
-    monkeypatch.setattr(guard_mod, "resolve_host", boom("resolve_host"))
+    monkeypatch.setattr(public_target_mod, "resolve_host", boom("resolve_host"))
     monkeypatch.setattr(socket, "getaddrinfo", boom("getaddrinfo"))
     monkeypatch.setattr(fetch_mod, "make_transport", boom("make_transport"))
     monkeypatch.setattr(fetch_mod.PlainTransport, "request", boom("plain"))
@@ -465,7 +465,7 @@ def test_applicable_is_pure_and_lists_only_routable(env, monkeypatch):
     def boom(*a, **k):
         raise AssertionError("network touched")
 
-    monkeypatch.setattr(guard_mod, "resolve_host", boom)
+    monkeypatch.setattr(public_target_mod, "resolve_host", boom)
     monkeypatch.setattr(socket, "getaddrinfo", boom)
     monkeypatch.setattr(fetch_mod, "make_transport", boom)
     assert service.applicable("SONE-205") == {"custom:single-og": True}

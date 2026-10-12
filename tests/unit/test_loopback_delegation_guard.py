@@ -128,11 +128,11 @@ LEDGER: tuple[LedgerEntry, ...] = (
         ),
     ),
     LedgerEntry(
-        rel="core/custom_source/guard.py",
+        rel="core/public_target.py",
         scope="_blocked_name",
         shape="literal",
         reason=(
-            "deny-direction（target）：自訂來源 SSRF 位址守衛，判的是要連的 host 是不是 "
+            "deny-direction（target）：公網目標判準（SSRF 位址守衛），判的是要連的 host 是不是 "
             "localhost 別名，判 true 是擋掉不是放行。不在 T6-a 語意範圍。"
         ),
     ),

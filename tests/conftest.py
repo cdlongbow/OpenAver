@@ -496,6 +496,29 @@ def _no_startup_update_network(request, monkeypatch):
 # 用法（放在測試檔頂層）：
 #     pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
 @pytest.fixture
+def public_resolver(monkeypatch):
+    """opt-in（非 autouse）：把唯一的 resolver `core.public_target.resolve_host` 換成查表假件。
+
+    用法：`resolve = public_resolver({"example.com": ["10.0.0.5"]})`；表外的 host 回預設 ["8.8.8.8"]。
+    `resolve.calls` 記錄被呼叫的 host 清單，供斷言「resolver 有沒有被叫到、參數是誰」。
+    """
+
+    def factory(table=None, default=("8.8.8.8",)):
+        table = dict(table or {})
+        calls = []
+
+        def fake(host):
+            calls.append(host)
+            return list(table.get(host, default))
+
+        fake.calls = calls
+        monkeypatch.setattr("core.public_target.resolve_host", fake)
+        return fake
+
+    return factory
+
+
+@pytest.fixture
 def isolate_reconcile_db(tmp_path_factory, monkeypatch):
     """把對帳 hook 會用到的 DB 路徑導到一個乾淨的 tmp 庫（空庫 ⇒ 對帳是 no-op）。"""
     from core.database import init_db
