@@ -12,6 +12,9 @@ from urllib3.util import parse_url
 
 _BLOCKED_NAME_SUFFIXES = (".localhost", ".local", ".internal")
 
+# Clash／Surge TUN fake-ip 預設網段（RFC 2544）：流量由代理轉送到真網站，不是區網；只放行這一段
+_FAKE_IP_NET = ipaddress.ip_network("198.18.0.0/15")
+
 
 class Violation(NamedTuple):
     """違規結果：reason 為固定代碼；detail 區分 bad_host 的兩種成因，其餘 None。不含使用者輸入。"""
@@ -36,6 +39,8 @@ def resolve_host(host):
 
 def _is_public(addr):
     addr = getattr(addr, "ipv4_mapped", None) or addr
+    if addr.version == 4 and addr in _FAKE_IP_NET:
+        return True
     return addr.is_global and not addr.is_multicast
 
 

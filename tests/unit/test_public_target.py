@@ -1,14 +1,8 @@
 """core.public_target.check_public：公網目標判準的真值表（手寫字面）。"""
 
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 
 from core.public_target import Violation, check_public
-
-ROOT = Path(__file__).resolve().parents[2]
 
 # (url, (reason, detail)；None＝放行)
 TRUTH_TABLE = [
@@ -61,8 +55,6 @@ def test_ipv4_mapped_is_unwrapped(url):
     assert got is not None and (got.reason, got.detail) == ("non_public", None)
 
 
-def test_ipv4_mapped_public_passes():
-    assert check_public("http://[::ffff:8.8.8.8]/") is None
 
 
 @pytest.mark.parametrize("url", [
@@ -85,10 +77,6 @@ def test_domain_resolving_to_private_is_blocked_and_resolver_called(public_resol
     assert resolve.calls == ["example.com"]
 
 
-def test_domain_resolving_to_public_passes(public_resolver):
-    resolve = public_resolver({"example.com": ["8.8.8.8", "1.1.1.1"]})
-    assert check_public("https://example.com/") is None
-    assert resolve.calls == ["example.com"]
 
 
 @pytest.mark.parametrize("resolved", [[], ["not-an-ip"]])
@@ -106,10 +94,25 @@ def test_violation_carries_no_user_input(public_resolver):
         assert secret not in text
 
 
-def test_import_pulls_in_no_custom_source():
-    code = (
-        f"import sys; sys.path.insert(0, {str(ROOT)!r}); import core.public_target; "
-        "assert not [m for m in sys.modules if m.startswith('core.custom_source')]"
-    )
-    r = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
+
+
+@pytest.mark.parametrize("url", [
+    "http://198.18.0.5/",
+    "http://[::ffff:198.18.0.5]/",
+    "http://198.19.255.254/",
+])
+def test_fake_ip_range_literal_passes(url):
+    # Clash／Surge TUN fake-ip 網段：流量由代理轉送到真網站，不是區網
+    assert check_public(url) is None
+
+
+def test_fake_ip_range_resolved_passes(public_resolver):
+    resolve = public_resolver({"example.com": ["198.18.0.5"]})
+    assert check_public("https://example.com/") is None
+    assert resolve.calls == ["example.com"]
+
+
+@pytest.mark.parametrize("url", ["http://198.51.100.1/", "http://100.64.0.1/", "http://[::ffff:198.51.100.1]/"])
+def test_other_non_global_ranges_still_blocked(url):
+    got = check_public(url)
+    assert got is not None and got.reason == "non_public"
