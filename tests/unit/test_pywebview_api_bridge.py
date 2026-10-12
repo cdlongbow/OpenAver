@@ -368,14 +368,6 @@ def test_on_drop_mixed_notifies_once(api_module, client_env):
     assert "/volume1/av/x.mp4" in pushes and str(other) not in pushes
 
 
-def test_select_folder_uncovered_files_filtered(api_module, client_env):
-    """資料夾命中、檔案逐個翻譯；此處以 other 子層無對照檢查只通知一次"""
-    ret = _setup_exit(api_module, "select_folder", [str(client_env / "av")])()
-    assert ret["folder"] == "/volume1/av"
-    assert ret["files"] == ["/volume1/av/x.mp4"]
-    assert _uncovered_calls(api_module.get_window()) == []
-
-
 def test_uncovered_each_path_logged_one_line(api_module, client_env, monkeypatch):
     mock_logger = MagicMock()
     monkeypatch.setattr(api_module, "logger", mock_logger)

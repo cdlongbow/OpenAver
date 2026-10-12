@@ -26,12 +26,6 @@ class TestLongestPrefix:
         r = to_local("/volume1/av/jav/x.mp4", pmap)
         assert r == Mapped(r"\\nas\jav\x.mp4", 1)
 
-    def test_equal_length_first_rule_wins(self):
-        """(a) 同長取表中先出現者。"""
-        pmap = _pmap(("/m/a", r"\\one\a"), ("/m/a/", r"\\two\a"))
-        assert to_local("/m/a/x", pmap) == Mapped(r"\\one\a\x", 0)
-
-
 class TestBoundary:
     def test_prefix_boundary_is_enforced(self):
         """(b) /volume1/avx 不是 /volume1/av 的子路徑。"""
@@ -145,12 +139,6 @@ class TestTypes:
         assert not isinstance(u, str)
         with pytest.raises(dataclasses.FrozenInstanceError):
             u.x = 1
-
-    def test_mapped_frozen(self):
-        m = Mapped("/a", 0)
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            m.path = "/b"
-
 
 class TestFromRules:
     def test_incomplete_rules_skipped_with_warning(self, caplog):

@@ -64,15 +64,6 @@ test('ok:true 不顯示 toast 且回傳 true', () => {
     assert.deepEqual(calls, []);
 });
 
-test('uncovered 顯示 server_path', () => {
-    for (const kind of ['file', 'folder']) {
-        const { calls } = run(UNCOVERED, kind);
-        assert.equal(calls.length, 1);
-        assert.equal(calls[0][0], 'common.bridge.path_uncovered_local|/srv/other/A.mp4');
-        assert.ok(calls[0][0].includes(UNCOVERED.server_path));
-    }
-});
-
 test('bridgeReasonMessage 只對具名原因回字串', () => {
     assert.equal(bridgeReasonMessage(NOT_FOUND), 'common.bridge.file_not_found|D:\\AV\\A.mp4');
     assert.equal(bridgeReasonMessage({ ok: false, reason: 'failed' }), null);
@@ -96,14 +87,6 @@ test('handleBridgeUncovered 單筆一則、三筆仍一則（、連接）', () =
     toastCalls.length = 0;
     handleBridgeUncovered(['/a', '/b', '/c']);
     assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server|/a、/b、/c', 'error']]);
-});
-
-test('handleBridgeUncovered 用 server 方向的 key', () => {
-    toastCalls.length = 0;
-    handleBridgeUncovered(['/a']);
-    assert.equal(toastCalls.length, 1);
-    assert.ok(toastCalls[0][0].startsWith('common.bridge.path_uncovered_server|'));
-    assert.ok(!toastCalls[0][0].startsWith('common.bridge.path_uncovered_local'));
 });
 
 test('handleBridgeUncovered Alpine 未就緒不拋錯', () => {

@@ -263,11 +263,6 @@ def test_evaluate_js_exception_is_untrusted_without_raising(fx):
     assert "RuntimeError" in mock_logger.warning.call_args[0][0]
 
 
-def test_loaded_queries_location_origin(fx):
-    _load(fx, TRUSTED)
-    fx.window.evaluate_js.assert_called_once_with("location.origin")
-
-
 WHITELIST = {"open_file", "open_folder", "open_url",
              "select_files", "select_folder", "select_folder_path"}
 

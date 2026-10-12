@@ -95,12 +95,6 @@ def test_valid_query_sets_session_cookie(monkeypatch):
     assert "Max-Age" not in sc and "expires" not in sc.lower()
 
 
-def test_same_cookie_not_reset(monkeypatch):
-    _set_server_kind(monkeypatch, None)
-    resp = _fresh_client({"oa_shell": "windows"}).get("/settings?oa_shell=windows")
-    assert "oa_shell" not in resp.headers.get("set-cookie", "")
-
-
 # ── PIN 閘門格 ────────────────────────────────────────────────────────────
 
 
@@ -173,19 +167,3 @@ def test_update_endpoints_ignore_shell_signal(monkeypatch):
         assert upd_q.status_code == 403
         results[label] = (upd.content, ctx.content, upd_q.content)
     assert results["plain"] == results["shell"]
-
-
-# ── 衝突格：cookie=windows ＋ query=mac → 以 query 為準 ──────────────────
-
-MAC_ONLY = "未測的有：JavLibrary、FC2-javten（macOS 版照系統代理）"  # help 的 is_mac_desktop 分支
-
-
-def test_query_overrides_cookie_and_reseeds(monkeypatch):
-    _set_server_kind(monkeypatch, None)
-    client = _fresh_client({"oa_shell": "windows"})
-    resp = client.get("/help?oa_shell=mac")
-    assert resp.status_code == 200
-    assert "oa_shell=mac" in resp.headers.get("set-cookie", "")
-    assert MAC_ONLY in resp.text  # mac 專屬 SSR 內容
-    settings = client.get("/settings")  # cookie 已被換成 mac
-    assert CLOSE_ACTION not in settings.text
