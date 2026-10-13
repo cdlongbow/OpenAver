@@ -183,6 +183,9 @@ scrapers/
 - 本機模式（沒有 `client.json`）：讀取結果與升級前逐字相同，仍來自 `config.json`。
 - 桌面區塊跟著殼走（不再看伺服器平台）；bridge 只在信任 origin 的頁面動作，並以 `window.expose` 白名單暴露函式；`open_file` 限影片副檔名。
 - `windows/` 不得自己碰 config API；唯一例外是 `standalone.py` 的 `_maybe_autostart_lan_listener`（讀伺服器端的 `server_mode`）。由 `scripts/static_guard_lint.mjs` 的 `[168a-T7-*]` 規則守住。
+- `client.json` 的寫入只經 `client_settings` 內的具名函式（`set_close_action`／`touch_last_ok`／`apply_connection`／`clear_connection`／`save_path_map`）；`windows/`、`web/` 不得直接呼叫 `save_client_settings`（lint `[168b-T8-no-save-client-settings-in-*]`）。
+- `MIN_SERVER_VERSION` 是「連線功能首次出貨版」，必須 ≤ `core/version.py` 的版本（`tests/unit/test_client_settings.py` 守）。
+- `client_connect.py` 負責桌面版與伺服器的版本相容判定；`client_sources.py` 負責來源清單（連線頁路徑對照用）。
 
 ### `image_host_policy.py`
 **圖片 host registry ＋ 代理放行判準（單一所有權，spec-113 F-6；167 縮表）**

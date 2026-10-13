@@ -37,6 +37,7 @@ tools/
 *.html
 !web/templates/*.html
 !web/templates/**/*.html
+!windows/offline/*.html
 failure_report.txt
 
 # Windows

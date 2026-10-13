@@ -18,6 +18,7 @@
 
 import { pathToDisplay } from '@/components/path-utils.js';
 import { bridgeReasonMessage } from '@/shared/bridge-notify.js';
+import { copyText } from '@/shared/clipboard.js';
 
 /**
  * 開啟本地資料夾（複製路徑到剪貼簿 + PyWebView 桌面模式額外開啟資料夾）。
@@ -34,11 +35,7 @@ export function openLocal(path) {
   const displayPath = pathToDisplay(folder);
 
   // 2. 複製到剪貼簿
-  // T3.7 fix: guard against undefined navigator.clipboard (HTTP / older WebView)
-  // sync property access 在 clipboard undefined 時會 TypeError，.catch 不會跑。
-  const clipboardOk = navigator.clipboard?.writeText
-    ? navigator.clipboard.writeText(displayPath).then(() => true).catch(() => false)
-    : Promise.resolve(false);
+  const clipboardOk = copyText(displayPath);
 
   // 3. PyWebView 桌面模式：額外開啟資料夾
   if (window.pywebview?.api?.open_folder) {

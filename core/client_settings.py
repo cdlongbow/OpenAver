@@ -9,9 +9,12 @@
 
 純函式、無 class；不 import web／windows／webview。
 """
+import ipaddress
 import json
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import core.config as core_config
 from core.atomic_write import atomic_write
@@ -28,6 +31,8 @@ logger = get_logger(__name__)
 
 CLIENT_FILE_NAME = "client.json"
 CLIENT_VERSION = 1
+# 本 branch 期間佔位（＝當時 VERSION，真機驗收才連得上自己）；pre-merge 填實際出貨版
+MIN_SERVER_VERSION = (0, 17, 7)
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _CLOSE_ACTIONS = ("ask", "tray", "exit")
 
@@ -80,6 +85,25 @@ def _load_valid():
     return data
 
 
+def _load_raw():
+    """讀 client.json 但**不要求 url 有效**（clear_connection 後 url 為空，保留鍵不可被洗掉）。
+
+    檔不存在／壞檔／version 非 1／頂層非 dict → None。
+    """
+    path = _client_path()
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.warning(f"[client_settings] {path} 無法解析：{e}")
+        return None
+    if not isinstance(data, dict) or data.get("version") != CLIENT_VERSION:
+        return None
+    return data
+
+
 def _client_data() -> dict:
     data = _load_valid()
     return data if data is not None else {}
@@ -102,8 +126,21 @@ def server_url() -> str:
     return str(server.get("url") or "").strip() if isinstance(server, dict) else ""
 
 
+def server_pair() -> tuple:
+    """(url, token) 取自同一次讀檔；無有效設定回 ("", "")。"""
+    server = _client_data().get("server")
+    server = server if isinstance(server, dict) else {}
+    return str(server.get("url") or "").strip(), str(server.get("token") or "")
+
+
 def path_map() -> list:
     pm = _client_data().get("path_map")
+    return pm if isinstance(pm, list) else []
+
+
+def saved_path_map() -> list:
+    """client.json 裡保留的對照表（不看 mode；切回本機後仍在）。只給連線頁預填用，換算請用 path_map()。"""
+    pm = (_load_raw() or {}).get("path_map")
     return pm if isinstance(pm, list) else []
 
 
@@ -198,5 +235,169 @@ def server_origin(local_origin: str) -> str:
     return normalize_origin(server_url())
 
 
-def shell_entry_url(local_origin: str, shell_kind: str) -> str:
-    return f"{server_origin(local_origin)}/?oa_shell={shell_kind}"
+def shell_kind() -> str:
+    return "windows" if sys.platform == "win32" else "mac"
+
+
+def client_entry_url(origin: str, shell_kind: str, token=None) -> str:
+    """連線模式入口網址（純函式，不讀任何設定）。``token`` 非空才附 ``oa_token``。"""
+    url = f"{origin}/?oa_shell={shell_kind}&oa_mode=client"
+    if token:
+        url += f"&oa_token={quote(str(token), safe='')}"
+    return url
+
+
+def shell_entry_url(local_origin: str, shell_kind: str, token=None) -> str:
+    """入口網址。``oa_mode`` 取 ``mode()``；``token`` 只在連線模式且非空時附 ``oa_token``。"""
+    if mode() == "client":
+        return client_entry_url(server_origin(local_origin), shell_kind, token)
+    return f"{server_origin(local_origin)}/?oa_shell={shell_kind}&oa_mode=local"
+
+
+def _canonical(raw: str):
+    s = raw.strip()
+    if not s or any(c.isspace() for c in s):
+        return None
+    if "://" not in s:
+        s = "http://" + s
+    parsed = urlparse(s)
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname
+    port = parsed.port
+    if scheme not in _DEFAULT_PORTS or not host:
+        return None
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        return None
+    if ":" in host:
+        host = f"[{ipaddress.ip_address(host).compressed}]"
+    if port is None or port == _DEFAULT_PORTS[scheme]:
+        return f"{scheme}://{host}"
+    return f"{scheme}://{host}:{port}"
+
+
+def canonical_server_url(raw):
+    """使用者輸入 → 存檔用的規範網址（只留 scheme://host[:port]）；不合法回 None。"""
+    if not isinstance(raw, str):
+        return None
+    try:
+        return _canonical(raw)
+    except ValueError:
+        return None
+
+
+def display_host(url: str, with_port: bool = False) -> str:
+    """已存網址 → 顯示用主機（IPv6 加方括號）；``with_port`` 且非預設埠才附埠。"""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        port = parsed.port
+    except ValueError:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    if with_port and port is not None and port != _DEFAULT_PORTS.get(parsed.scheme.lower()):
+        return f"{host}:{port}"
+    return host
+
+
+def _server_section(d: dict) -> dict:
+    server = d.get("server")
+    return server if isinstance(server, dict) else {}
+
+
+def server_token() -> str:
+    return str(_server_section(_client_data()).get("token") or "")
+
+
+def server_last_ok():
+    return _server_section(_client_data()).get("last_ok") or None
+
+
+def touch_last_ok() -> None:
+    if mode() == "local":
+        return
+    d = _load_raw()
+    if d is None:
+        return
+    d["server"] = {**_server_section(d), "last_ok": datetime.now(timezone.utc).isoformat()}
+    save_client_settings(d)
+
+
+def _is_blank(v) -> bool:
+    return v is None or v == "" or v == []
+
+
+def migrate_local_settings(d: dict) -> dict:
+    """把本機 config.json 的四項「這台電腦設定」補進 d 缺的鍵（已有值不覆蓋）；回新 dict。"""
+    out = dict(d)
+    try:
+        config = _read_raw_config()
+    except Exception as e:
+        logger.warning(f"[client_settings] migrate: config.json 讀不到：{e}；略過遷移")
+        return out
+    if not isinstance(config, dict):
+        return out
+
+    def _section(name):
+        sec = config.get(name)
+        return sec if isinstance(sec, dict) else {}
+
+    candidates = (
+        ("player", _section("showcase").get("player")),
+        ("video_extensions", _section("scraper").get("video_extensions")),
+        ("close_action", _section("general").get("close_action")),
+        ("tray_locale", _section("general").get("locale")),
+    )
+    for key, value in candidates:
+        if not _is_blank(out.get(key)) or _is_blank(value):
+            continue
+        if key == "video_extensions":
+            if isinstance(value, list):
+                out[key] = list(value)
+        elif isinstance(value, str):
+            out[key] = value
+    return out
+
+
+def apply_connection(url_canonical: str, token, path_map_rules) -> None:
+    """寫入連線設定。只在**呼叫當下**為本機模式時一次性搬本機舊設定；不碰 config.json。"""
+    url = canonical_server_url(url_canonical)
+    if url is None:
+        raise ValueError(f"invalid server url: {url_canonical!r}")
+    was_local = mode() == "local"
+    d = _load_raw() or {}
+    d["version"] = CLIENT_VERSION
+    if was_local:
+        d = migrate_local_settings(d)
+    d["server"] = {**_server_section(d), "url": url, "token": token or ""}
+    if path_map_rules is not None:
+        d["path_map"] = list(path_map_rules)
+    elif not isinstance(d.get("path_map"), list):
+        d["path_map"] = []
+    save_client_settings(d)
+
+
+def clear_connection() -> None:
+    """切回本機：只清 server.url／token，其餘保留。檔不存在不建檔。"""
+    d = _load_raw()
+    if d is None:
+        return
+    d["server"] = {**_server_section(d), "url": "", "token": ""}
+    save_client_settings(d)
+
+
+def save_path_map(rules) -> None:
+    if mode() == "local":
+        return
+    d = _load_raw()
+    if d is None:
+        return
+    clean = []
+    for r in rules or []:
+        if not isinstance(r, dict):
+            continue
+        srv, loc = r.get("server"), r.get("local")
+        if isinstance(srv, str) and isinstance(loc, str) and srv.strip() and loc.strip():
+            clean.append({"server": srv, "local": loc})
+    d["path_map"] = clean
+    save_client_settings(d)

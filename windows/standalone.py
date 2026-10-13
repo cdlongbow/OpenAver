@@ -2,6 +2,7 @@
 OpenAver Windows 單機版啟動器
 整合 FastAPI 後端 + PyWebView 前端於同一進程
 """
+import contextlib
 import os
 import sys
 import threading
@@ -26,12 +27,13 @@ from core.logger import setup_logging, get_logger
 import webview
 from pywebview_api import api, bind_events
 import pywebview_api
-from tray import DesktopLifecycle, NativeTrayIcon
+from tray import CMD_QUIT, DesktopLifecycle, NativeTrayIcon
 from webview2_proxy import ReadyHolder, install as install_webview2_proxy   # sibling import（同 cf_transport_impl）
 from core import client_settings
 from core.data_root import get_data_root
 from core.desktop_env import desktop_kind
 from core.proxy_policy import cf_window_proxy, current_settings, record_cf_window_proxy_at_start
+from windows import restart, shell_boot
 from windows.health_probe import (
     CLIENT_HOST,
     PROBE_OK,
@@ -548,7 +550,7 @@ def _setup_windows_lifecycle(window, jl_win, javten_win, saved, lan_listener) ->
             {'javlibrary': jl_win, 'fc-javten': javten_win},
             saved,
             window_state.save_state,
-            on_quit_cleanup=lan_listener.shutdown,
+            on_quit_cleanup=lan_listener.shutdown if lan_listener is not None else None,
             read_close_action=client_settings.close_action,
             write_close_action=client_settings.set_close_action,
         )
@@ -681,6 +683,109 @@ def _arm_first_page_mark(window) -> None:
     window.events.loaded += on_first_loaded
 
 
+def _create_main_window(boot, local_origin, saved):
+    """建主視窗：信任 origin 與（離線時）小頁狀態都必須早於 create_window。"""
+    api._set_trusted_origin(client_settings.server_origin(local_origin))
+    if boot.kind == "offline":
+        api._set_offline_state(boot.offline.reason, boot.offline.failed_url)
+        api._expect_offline()
+    create_kwargs = dict(js_api=None, width=saved['width'], height=saved['height'])
+    if saved['x'] is not None and saved['y'] is not None:
+        create_kwargs['x'] = saved['x']
+        create_kwargs['y'] = saved['y']
+    window = webview.create_window(boot.title, boot.url, **create_kwargs)
+    window.expose(*pywebview_api.exposed_functions())
+    return window
+
+
+def _attach_window_state(w, saved, lifecycle, logger):
+    import window_state
+    bind_events(w)
+    live = window_state.attach(w, saved)
+    if lifecycle is not None:
+        lifecycle.replace_state(live)
+        lifecycle.start_tray()
+    if saved['maximized']:
+        try:
+            w.maximize()
+        except Exception as e:
+            logger.warning(f"window maximize failed: {e}")
+            # Codex P2: maximize 失敗時清 live state，否則 on_resized/on_moved
+            # 永遠 early-return，下次啟動仍寫回 maximized=true 形成 sticky failure
+            live["maximized"] = False
+
+
+def _make_quit_app(window, lifecycle):
+    """重啟用的退出動作：有托盤走托盤的結束路徑（不手設 quitting，否則收尾會被略過）。"""
+    if lifecycle is not None:
+        return lambda: lifecycle.handle_tray_command(CMD_QUIT)
+    return _destroy_all_windows
+
+
+def _destroy_all_windows():
+    """沒有 lifecycle 時的退出：主視窗與 CF 隱藏視窗都要關，否則 GUI 迴圈不返回。"""
+    for w in list(webview.windows):
+        with contextlib.suppress(Exception):
+            w.destroy()
+
+
+def _register_bridge_seams(window, lifecycle):
+    """註冊 bridge 的兩個注入接縫（重啟、小頁文案）；兩種模式都要呼叫。"""
+    quit_app = _make_quit_app(window, lifecycle)
+    pywebview_api.set_restart_handler(lambda: restart.request_restart(quit_app))
+    pywebview_api.set_offline_text_provider(shell_boot.offline_texts)
+
+
+def _restart_failed_notice(message):
+    """重啟 spawn 失敗的告知；本身不得拋。"""
+    with contextlib.suppress(Exception):
+        if sys.platform == 'win32':
+            try:
+                _win_message_box(message, "OpenAver", yes_no=False)
+                return
+            except Exception:                                        # noqa: BLE001
+                get_logger("standalone").debug("restart notice msgbox failed")
+        show_error("OpenAver", message, None, None)
+
+
+def _shutdown_and_maybe_restart(lifecycle):
+    """GUI 迴圈返回後的收尾；spawn 一定在 shutdown_after_loop 之後。"""
+    if lifecycle is not None:
+        lifecycle.shutdown_after_loop()
+    restart.spawn_if_requested(notify_error=_restart_failed_notice)
+
+
+def _start_gui(startup, window):
+    if sys.platform == 'darwin':
+        webview.start(startup, window)  # macOS 使用預設 (Cocoa/WebKit)
+    else:
+        webview.start(startup, window, gui='edgechromium')  # Windows
+
+
+def _run_client_mode(logger):
+    """連線模式：只開殼，不起任何本機服務。"""
+    import window_state
+    saved = window_state.load_state()
+    local_origin = f'http://{CLIENT_HOST}:{PORT}'
+    boot = shell_boot.resolve_boot(local_origin, client_settings.shell_kind())
+    startup_trace.mark("client_preflight_done")
+    window = _create_main_window(boot, local_origin, saved)
+    startup_trace.mark("main_window_created")
+    lifecycle = _setup_windows_lifecycle(window, None, None, saved, None)
+    _register_bridge_seams(window, lifecycle)
+    if lifecycle is not None:
+        window.events.closing += lifecycle.on_window_closing
+
+    def startup(w):
+        _arm_first_page_mark(w)
+        _attach_window_state(w, saved, lifecycle, logger)
+
+    try:
+        _start_gui(startup, window)
+    finally:
+        _shutdown_and_maybe_restart(lifecycle)
+
+
 def main():
     # 檢查 DEBUG 環境變數
     debug_mode = os.environ.get('OPENAVER_DEBUG', '0') == '1'
@@ -688,6 +793,8 @@ def main():
     setup_logging(console_level=console_level)
     logger = get_logger('standalone')
     startup_trace.flush()
+    restart.wait_for_parent_exit()
+    shell_boot.install_webview_token_filter()
 
     logger.info("正在啟動...")
 
@@ -701,6 +808,9 @@ def main():
     # 1b. 資料根定版（必須在 port／server thread／視窗之前；失敗即中止啟動）
     _bootstrap_data_layout_or_exit(logger)
     startup_trace.mark("data_root_ready")
+    if client_settings.mode() == "client":
+        _run_client_mode(logger)
+        return
 
     # 2. 尋找可用端口
     try:
@@ -741,19 +851,8 @@ def main():
     import window_state
     saved = window_state.load_state()
     local_origin = f'http://{CLIENT_HOST}:{port}'
-    shell_kind = 'windows' if sys.platform == 'win32' else 'mac'
-    api._set_trusted_origin(client_settings.server_origin(local_origin))
-    create_kwargs = dict(js_api=None, width=saved['width'], height=saved['height'])
-    if saved['x'] is not None and saved['y'] is not None:
-        create_kwargs['x'] = saved['x']
-        create_kwargs['y'] = saved['y']
-
-    window = webview.create_window(
-        'OpenAver',
-        client_settings.shell_entry_url(local_origin, shell_kind),
-        **create_kwargs,
-    )
-    window.expose(*pywebview_api.exposed_functions())
+    boot = shell_boot.resolve_boot(local_origin, client_settings.shell_kind())
+    window = _create_main_window(boot, local_origin, saved)
     startup_trace.mark("main_window_created")
 
     jl_win, javten_win = _build_cf_windows(logger)
@@ -766,6 +865,7 @@ def main():
     # window close normally so we don't trap the shutdown sequence.
     _app_state = {"quitting": False}
     lifecycle = _setup_windows_lifecycle(window, jl_win, javten_win, saved, lan_listener)
+    _register_bridge_seams(window, lifecycle)
 
     def _on_main_closing():
         if lifecycle is not None:
@@ -817,19 +917,7 @@ def main():
 
     def startup(w):
         _arm_first_page_mark(w)
-        bind_events(w)
-        live = window_state.attach(w, saved)
-        if lifecycle is not None:
-            lifecycle.replace_state(live)
-            lifecycle.start_tray()
-        if saved['maximized']:
-            try:
-                w.maximize()
-            except Exception as e:
-                logger.warning(f"window maximize failed: {e}")
-                # Codex P2: maximize 失敗時清 live state，否則 on_resized/on_moved
-                # 永遠 early-return，下次啟動仍寫回 maximized=true 形成 sticky failure
-                live["maximized"] = False
+        _attach_window_state(w, saved, lifecycle, logger)
 
     # 5. 開始 GUI 事件循環（阻塞直到窗口關閉）
     # 根據平台選擇 GUI 後端
@@ -839,8 +927,7 @@ def main():
         else:
             webview.start(startup, window, gui='edgechromium')  # Windows
     finally:
-        if lifecycle is not None:
-            lifecycle.shutdown_after_loop()
+        _shutdown_and_maybe_restart(lifecycle)
 
 
 if __name__ == '__main__':

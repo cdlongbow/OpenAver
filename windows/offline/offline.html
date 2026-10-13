@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenAver</title>
+<style>
+:root { color-scheme: light dark; --bg: #f3f3f3; --card: #ffffff; --fg: #1a1a1a; --muted: #5d5d5d; --line: #d1d1d1; --accent: #0f6cbd; --accent-fg: #ffffff; --err: #b10e1c; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #202020; --card: #2b2b2b; --fg: #f5f5f5; --muted: #b5b5b5; --line: #4a4a4a; --accent: #479ef5; --accent-fg: #0b0b0b; --err: #f1707b; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--fg); font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif; font-size: 14px; }
+main { width: 100%; min-width: 360px; max-width: 460px; margin: 16px; padding: 28px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+h1 { margin: 0 0 20px; font-size: 18px; font-weight: 600; line-height: 1.5; }
+label { display: block; margin-bottom: 6px; color: var(--muted); }
+input { width: 100%; padding: 8px 10px; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.row { margin-bottom: 16px; }
+.actions { display: flex; flex-direction: column; gap: 8px; }
+button { padding: 8px 12px; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 4px; font: inherit; cursor: pointer; }
+button.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+button:disabled { opacity: 0.55; cursor: default; }
+#status { min-height: 20px; margin: 12px 0 0; color: var(--err); }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="content" hidden>
+    <h1 id="message"></h1>
+    <div id="url-row" class="row" hidden>
+      <label id="url-label" for="url-input"></label>
+      <input id="url-input" type="text" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="pin-row" class="row" hidden>
+      <label id="pin-label" for="pin-input"></label>
+      <input id="pin-input" type="password" autocomplete="off">
+    </div>
+    <div class="actions">
+      <button id="retry-btn" class="primary" type="button" hidden></button>
+      <button id="submit-btn" class="primary" type="button" hidden></button>
+      <button id="local-btn" type="button"></button>
+    </div>
+    <p id="status" role="status"></p>
+  </section>
+  <p id="fallback" hidden>無法載入設定，請關閉後重新開啟 OpenAver。</p>
+</main>
+<script>
+(function () {
+  var state = null;
+  var texts = {};
+  var started = false;
+  var busyLabel = null;
+  var retried = false;
+
+  function el(id) { return document.getElementById(id); }
+  function api() { return window.pywebview && window.pywebview.api; }
+
+  function showFallback() {
+    el('content').hidden = true;
+    el('fallback').hidden = false;
+  }
+
+  function setStatus(text) { el('status').textContent = text || ''; }
+
+  function setBusy(on) {
+    var ids = ['retry-btn', 'submit-btn', 'local-btn'];
+    for (var i = 0; i < ids.length; i++) {
+      var b = el(ids[i]);
+      b.disabled = on;
+    }
+    el('url-input').disabled = on;
+    el('pin-input').disabled = on;
+    if (on) {
+      busyLabel = el('retry-btn').hidden ? el('submit-btn') : el('retry-btn');
+      busyLabel.dataset.label = busyLabel.textContent;
+      busyLabel.textContent = texts.retrying || '';
+    } else if (busyLabel) {
+      busyLabel.textContent = busyLabel.dataset.label || busyLabel.textContent;
+      busyLabel = null;
+    }
+  }
+
+  function render(next) {
+    state = next;
+    texts = next.texts || {};
+    var relogin = next.reason === 'relogin';
+    el('message').textContent = texts.message || '';
+    el('url-label').textContent = texts.url_label || '';
+    el('pin-label').textContent = texts.password_label || '';
+    el('retry-btn').textContent = texts.retry || '';
+    el('submit-btn').textContent = texts.submit || '';
+    el('local-btn').textContent = texts.switch_local || '';
+    el('url-row').hidden = relogin;
+    el('retry-btn').hidden = relogin;
+    el('pin-row').hidden = !relogin;
+    el('submit-btn').hidden = !relogin;
+    if (!relogin) { el('url-input').value = next.failed_url || ''; }
+    el('content').hidden = false;
+    el('fallback').hidden = true;
+  }
+
+  function loadState() {
+    return Promise.resolve(api().offline_get_state()).then(function (s) {
+      if (s && s.reason === 'untrusted' && !retried) {
+        // shell has not finished classifying this page yet: wait for the next oabridgeready, once
+        retried = true;
+        started = false;
+        window.__oaBridgeKind = undefined;
+        return null;
+      }
+      if (s && s.reason === 'untrusted') { throw new Error('untrusted'); }
+      if (!s || typeof s !== 'object' || Array.isArray(s)) { throw new Error('bad state'); }
+      return s;
+    });
+  }
+
+  function refreshAfterFailure() {
+    return loadState().then(function (s) {
+      render(s);
+      setBusy(false);
+      setStatus(texts.retry_failed);
+    });
+  }
+
+  function doRetry() {
+    return Promise.resolve(api().offline_retry()).then(function (r) {
+      if (r && r.ok) { return; }
+      return refreshAfterFailure();
+    });
+  }
+
+  function onRetry() {
+    var value = el('url-input').value.trim();
+    setStatus('');
+    setBusy(true);
+    var chain = Promise.resolve({ ok: true });
+    if (value !== (state.failed_url || '')) {
+      chain = Promise.resolve(api().offline_save_url(value));
+    }
+    chain.then(function (r) {
+      if (r && r.ok === false) {
+        setBusy(false);
+        setStatus(texts.bad_url);
+        return;
+      }
+      return doRetry();
+    }).catch(function () { setBusy(false); setStatus(texts.retry_failed); });
+  }
+
+  function onSubmit() {
+    var pin = el('pin-input').value;
+    if (!pin.trim()) { return; }
+    setStatus('');
+    setBusy(true);
+    Promise.resolve(api().offline_login(pin)).then(function (r) {
+      if (r && r.ok) { return doRetry(); }
+      setBusy(false);
+      if (r && r.reason === 'bad_pin') { setStatus(texts.bad_pin); } else { setStatus(texts.login_failed); }
+    }).catch(function () { setBusy(false); setStatus(texts.login_failed); });
+  }
+
+  function onLocal() {
+    setStatus('');
+    setBusy(true);
+    Promise.resolve(api().offline_switch_local_restart()).then(function (r) {
+      if (r && r.ok === false) { setBusy(false); setStatus(texts.login_failed); }
+    }).catch(function () { setBusy(false); setStatus(texts.login_failed); });
+  }
+
+  function start() {
+    if (started || !window.__oaBridgeKind || !api()) { return; }
+    started = true;
+    loadState().then(function (s) { if (s) { render(s); } }).catch(showFallback);
+  }
+
+  el('retry-btn').addEventListener('click', onRetry);
+  el('submit-btn').addEventListener('click', onSubmit);
+  el('local-btn').addEventListener('click', onLocal);
+  el('pin-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') { onSubmit(); } });
+  el('url-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') { onRetry(); } });
+
+  window.addEventListener('oabridgeready', start);
+  window.addEventListener('pywebviewready', start);
+  start();
+  setTimeout(function () { if (!started && !window.pywebview) { started = true; showFallback(); } }, 8000);
+})();
+</script>
+</body>
+</html>

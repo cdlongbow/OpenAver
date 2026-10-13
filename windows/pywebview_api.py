@@ -6,13 +6,17 @@ import os
 import sys
 import json
 import subprocess
+import threading
+from urllib.parse import urlparse
 import webview
+import core.client_connect as client_connect
 import core.client_settings as client_settings
 from core.path_translate import Mapped, PathMap, Uncovered, to_local, to_server
 from core.path_utils import file_uri_to_server_path, uri_to_fs_path
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
 from core.logger import get_logger
 from webview.dom import DOMEventHandler
+from windows import clipboard
 
 logger = get_logger(__name__)
 
@@ -32,6 +36,258 @@ def set_window(w):
 def get_window():
     """取得全域 window 參考"""
     return _window
+
+
+# 連不到伺服器時殼自帶的小頁（只組字串，檔案由離線小頁那張卡建立）
+OFFLINE_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "offline", "offline.html")
+_OFFLINE_HOSTS = ("127.0.0.1", "localhost")
+
+# bridge 方法 → 允許呼叫的頁面種類（唯一對照表；沒登記的方法一律拒絕）
+_SCOPE = {
+    "select_files": "server",
+    "select_folder": "server",
+    "select_folder_path": "server",
+    "open_file": "server",
+    "open_folder": "server",
+    "open_url": "server",
+    "on_drop": "server",
+    "connect_get_state": "server",
+    "connect_probe": "server",
+    "connect_login": "server",
+    "connect_sources": "server",
+    "connect_test_row": "server",
+    "connect_save_path_map": "server",
+    "connect_apply_restart": "server",
+    "connect_switch_local_restart": "server",
+    "connect_show_offline": "server",
+    "copy_text": "server",
+    "offline_get_state": "offline",
+    "offline_retry": "offline",
+    "offline_save_url": "offline",
+    "offline_login": "offline",
+    "offline_switch_local_restart": "offline",
+}
+
+_COPY_MAX_BYTES = 64 * 1024
+_ROW_TEST_TIMEOUT = 5.0
+
+# 連線頁暫存：登入成功拿到的 token 只留在這裡（Python 端），不回傳頁面
+_draft = {"origin": None, "token": None}
+_restart_handler = None
+_offline_text_provider = None
+_row_busy = threading.Lock()
+_write_lock = threading.Lock()  # client.json 讀改寫的序列化（網路 I/O 不得在鎖內）
+
+
+def set_restart_handler(fn):
+    """T5 接線時註冊「重新啟動」處理器；未註冊時所有會重啟的方法在寫檔前就拒絕"""
+    global _restart_handler
+    _restart_handler = fn
+
+
+def set_offline_text_provider(fn):
+    """註冊小頁文案提供者 fn(reason, host_port) -> dict"""
+    global _offline_text_provider
+    _offline_text_provider = fn
+
+
+def _request_restart():
+    """呼叫已註冊的重啟處理器；未註冊或處理器失敗回 False"""
+    if _restart_handler is None:
+        return False
+    try:
+        _restart_handler()
+    except Exception as e:
+        logger.warning(f"[pywebview] restart handler failed ({type(e).__name__})")
+        return False
+    return True
+
+
+def _stat_path(path):
+    """薄包裝 os.stat（測試接縫）"""
+    return os.stat(path)
+
+
+def _untrusted():
+    return {"ok": False, "reason": "untrusted"}
+
+
+def _done():
+    return dict(ok=True, reason=None)
+
+
+def _failed(reason):
+    return {"ok": False, "reason": reason}
+
+
+def _not_client():
+    """非連線模式回拒絕 dict，否則 None"""
+    if client_settings.mode() != "client":
+        return _failed("not_client")
+    return None
+
+
+def _snapshot_unchanged(url, token):
+    """阻塞期間設定沒被改：已存網址與 token 仍等於擷取時的快照"""
+    return client_settings.server_pair() == (url, token)
+
+
+def _origin_unchanged(origin):
+    return client_settings.canonical_server_url(client_settings.server_url()) == origin
+
+
+def _store_login_token(origin, token):
+    """比對 origin 與寫回在同一把鎖內完成；origin 已不是目前網址就不寫"""
+    with _write_lock:  # login 回寫
+        if not _origin_unchanged(origin):
+            return False
+        client_settings.apply_connection(origin, token or "", None)
+    return True
+
+
+def _compat_dict(compat):
+    return {"status": compat.status, "hint": compat.hint}
+
+
+def _token_for(origin):
+    """該 origin 要帶的 token：同 origin 的 draft 優先，其次 url 等於 client.json 現存網址時用已存 token"""
+    if origin is None:
+        return None
+    if _draft["origin"] == origin:
+        return _draft["token"]
+    stored_url, stored_token = client_settings.server_pair()
+    if client_settings.canonical_server_url(stored_url) == origin:
+        return stored_token or None
+    return None
+
+
+def _clear_draft():
+    _draft["origin"] = None
+    _draft["token"] = None
+
+
+def _public_probe(p, origin):
+    """probe 結果 → 頁面可見形狀（不含任何憑證）"""
+    return {"ok": p["ok"], "reason": p["reason"], "version": p["version"], "kind": p["kind"],
+            "auth_required": p["auth_required"], "authed": p["authed"],
+            "compat": _compat_dict(p["compat"]), "url": origin or ""}
+
+
+def _login_draft(origin, pin):
+    """登入並把 token 暫存在 Python 端；只回 ok／reason"""
+    reply = client_connect.login(origin, pin)
+    if not reply["ok"]:
+        return _failed(reply["reason"])
+    _draft["origin"] = origin
+    _draft["token"] = reply["token"]
+    return {"ok": True, "reason": None}
+
+
+def _clean_rules(rules):
+    """對照表 → 只留兩欄皆非空字串的列；非 list 回 None（＝不動既有對照表）"""
+    if not isinstance(rules, list):
+        return None
+    return [{"server": r["server"], "local": r["local"]} for r in rules
+            if isinstance(r, dict) and isinstance(r.get("server"), str) and isinstance(r.get("local"), str)
+            and r["server"].strip() and r["local"].strip()]
+
+
+def _apply_check(url):
+    """套用前置檢查：回 (canonical, token, 拒絕 reason 或 None)"""
+    canonical = client_settings.canonical_server_url(url)
+    if canonical is None:
+        return None, None, "invalid_url"
+    token = _token_for(canonical)
+    p = client_connect.probe(canonical, token)
+    if not p["ok"]:
+        return canonical, token, p["reason"] or "incompatible"
+    if not client_connect.is_connectable(p["compat"]):
+        return canonical, token, "incompatible"
+    if p["auth_required"] and not p["authed"]:
+        return canonical, token, "need_login"
+    return canonical, token, None
+
+
+def _apply_and_restart(url, path_map):
+    canonical, token, refused = _apply_check(url)
+    if refused:
+        return _failed(refused)
+    if _restart_handler is None:
+        return _failed("restart_unavailable")
+    try:
+        with _write_lock:
+            client_settings.apply_connection(canonical, token or "", _clean_rules(path_map))
+    except (OSError, ValueError) as e:
+        logger.warning(f"[pywebview] apply_connection failed ({type(e).__name__})")
+        return _failed("write_failed")
+    _clear_draft()
+    return _done() if _request_restart() else _failed("restart_unavailable")
+
+
+def _switch_local():
+    """切回本機並重啟（連線頁與離線小頁共用）"""
+    if _restart_handler is None:
+        return _failed("restart_unavailable")
+    with _write_lock:
+        client_settings.clear_connection()
+    return _done() if _request_restart() else _failed("restart_unavailable")
+
+
+def _stat_worker(path, box, done):
+    try:
+        _stat_path(path)
+        box.append("ok")
+    except Exception as e:
+        if not isinstance(e, OSError):
+            logger.warning(f"[pywebview] row stat failed ({type(e).__name__})")
+        box.append("not_found")
+    finally:
+        done.set()
+        _row_busy.release()
+
+
+def _stat_state(local_path):
+    """在 daemon thread 探測本機路徑；逾時只是不等（thread 不取消、結果丟棄）；同時至多一個在飛"""
+    if not _row_busy.acquire(blocking=False):
+        return {"state": "timeout"}
+    box, done = [], threading.Event()
+    try:
+        threading.Thread(target=_stat_worker, args=(local_path, box, done), daemon=True).start()
+    except Exception as e:
+        logger.warning(f"[pywebview] row stat thread start failed ({type(e).__name__})")
+        _row_busy.release()
+        return {"state": "timeout"}
+    if not done.wait(_ROW_TEST_TIMEOUT):
+        return {"state": "timeout"}
+    if box[0] == "not_found":
+        return {"state": "not_found", "local_path": local_path}
+    return {"state": "ok"}
+
+
+def _row_state(server_prefix, local_prefix, sample):
+    if not (isinstance(local_prefix, str) and local_prefix.strip()):
+        return {"state": "empty"}
+    if not isinstance(sample, str):
+        return {"state": "no_sample"}
+    translated = to_local(sample, PathMap.from_rules([{"server": server_prefix, "local": local_prefix}]))
+    if isinstance(translated, Uncovered):
+        return {"state": "uncovered"}
+    return _stat_state(translated.path)
+
+
+def _is_offline_landing(js_raw, native_raw):
+    """JS 與原生 URL 的原字串都指向本機 /offline.html 且 origin 一致才回 True"""
+    js_origin = client_settings.normalize_origin(js_raw)
+    native_origin = client_settings.normalize_origin(native_raw)
+    if js_origin is None or js_origin != native_origin:
+        return False
+    try:
+        parsed = urlparse(native_raw.strip())
+    except ValueError:
+        return False
+    if parsed.hostname not in _OFFLINE_HOSTS:
+        return False
+    return parsed.path.endswith("/offline.html")
 
 
 def is_video_file(filename, extensions=None):
@@ -120,63 +376,134 @@ def _notify_uncovered(method, paths):
 
 
 class Api:
-    """供前端 JS 調用的 Python API（信任閘：只有信任 origin 的頁面能動作，預設 fail-closed）"""
+    """供前端 JS 調用的 Python API（信任閘：依落地頁面種類放行，預設 fail-closed）"""
 
     def __init__(self):
-        self._trusted = False
+        self._page_kind = None  # None / "server" / "offline"
         self._trusted_origin = None
         self._nav_gen = 0
         self._seen_origin = None
+        self._offline_expected = False
+        self._offline_origin = None
+        self._offline_state = None
+
+    def _get_trusted(self):
+        """相容屬性 getter：目前頁面是否為伺服器頁"""
+        return self._page_kind == "server"
+
+    def _put_trusted(self, value):
+        """相容屬性 setter：真 → server、假 → None"""
+        self._page_kind = "server" if value else None
+
+    _trusted = property(_get_trusted, _put_trusted)
 
     def _set_trusted_origin(self, origin):
         """設定唯一信任的 origin（尾斜線不計）。底線開頭：pywebview 不會把它注入頁面"""
         self._trusted_origin = client_settings.normalize_origin(str(origin)) or str(origin).rstrip("/")
 
     def _denied(self, method):
-        """非信任頁面：記一行 WARNING 並回 True"""
-        if self._trusted:
+        """頁面種類不符該方法的範圍：記一行 WARNING 並回 True"""
+        scope = _SCOPE.get(method)
+        if scope is not None and scope == self._page_kind:
             return False
         origin = None if self._seen_origin is None else str(self._seen_origin)[:128]
         logger.warning(f"[pywebview] {method} refused reason=untrusted origin={origin!r}")
         return True
 
+    def _expect_offline(self):
+        """殼即將載入離線小頁：下一次通過世代守衛的驗證才可把本機 /offline.html 判成小頁"""
+        self._offline_expected = True
+
+    def _set_offline_state(self, reason, failed_url):
+        """離線狀態容器：網址只存規範化後的 scheme://host[:port]（不含票證）"""
+        failed = client_settings.canonical_server_url(failed_url) or ""
+        self._offline_state = {
+            "reason": reason,
+            "failed_url": failed,
+            "host_port": client_settings.display_host(failed, with_port=True),
+        }
+
+    def _show_offline(self, reason):
+        """把視窗換成離線小頁"""
+        self._set_offline_state(reason, self._trusted_origin)
+        self._expect_offline()
+        get_window().load_url(OFFLINE_PAGE)
+
     def _on_before_load(self):
-        """每次導航注入前：世代遞增並立即撤銷信任"""
+        """每次導航注入前：世代遞增並立即撤銷頁面種類"""
         self._nav_gen += 1
-        self._trusted = False  # before_load reset (I7)
+        self._page_kind = None  # before_load reset (I7)
 
     def _on_loaded(self):
-        """頁面載入後：讀實際落地 origin 驗證；只有信任頁才綁 drop"""
+        """頁面載入後：讀實際落地 origin 判定頁面種類；只有伺服器頁才綁 drop"""
         gen = self._nav_gen
         window = get_window()
-        origin = self._verified_origin(window)
-        if self._apply_origin(gen, origin):
+        js_raw, native_raw, ok = self._read_origins(window)
+        if gen != self._nav_gen:
+            return
+        expected, self._offline_expected = self._offline_expected, False
+        origin = self._agreed_origin(js_raw, native_raw) if ok else None
+        self._seen_origin = origin
+        self._page_kind = self._classify(origin, js_raw, native_raw, expected)
+        if self._page_kind == "server":
             window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+        elif self._page_kind is None:
+            self._on_nav_failure(js_raw, native_raw)
+        if self._page_kind is not None and gen == self._nav_gen:
+            self._signal_bridge_ready(window, self._page_kind)
 
     @staticmethod
-    def _verified_origin(window):
-        """JS 實值與原生 URL 兩個來源都取得且一致才回 origin；否則 None（fail-closed）"""
-        if window is None:
-            return None
+    def _signal_bridge_ready(window, kind):
+        """頁面種類已定後通知頁面可以呼叫 bridge（只帶 kind 字串，不帶網址／票證）"""
         try:
-            js_origin = client_settings.normalize_origin(window.evaluate_js("location.origin"))
-            native_origin = client_settings.normalize_origin(window.get_current_url())
+            window.evaluate_js(
+                f"window.__oaBridgeKind = {json.dumps(kind)}; window.dispatchEvent(new Event('oabridgeready'))"
+            )
+        except Exception as e:
+            logger.warning(f"[pywebview] bridge ready signal failed ({type(e).__name__})")
+
+    @staticmethod
+    def _read_origins(window):
+        """回 (JS 原字串, 原生 URL 原字串, 是否讀成功)；任何例外 fail-closed"""
+        if window is None:
+            return None, None, False
+        try:
+            return window.evaluate_js("location.origin"), window.get_current_url(), True
         except Exception as e:
             logger.warning(f"[pywebview] origin check failed ({type(e).__name__}); treated as untrusted")
-            return None
-        native_ok = native_origin is not None and native_origin == js_origin
-        if not native_ok:
+            return None, None, False
+
+    @staticmethod
+    def _agreed_origin(js_raw, native_raw):
+        """兩個來源正規化後一致才回 origin；否則 None"""
+        js_origin = client_settings.normalize_origin(js_raw)
+        native_origin = client_settings.normalize_origin(native_raw)
+        if native_origin is None or native_origin != js_origin:
             logger.warning("[pywebview] origin sources disagree or missing; treated as untrusted")
             return None
         return js_origin
 
-    def _apply_origin(self, gen, origin):
-        """驗證結果只套用到啟動它的那次導航；回是否信任"""
-        if gen != self._nav_gen:
-            return False
-        self._seen_origin = origin
-        self._trusted = origin is not None and origin == self._trusted_origin
-        return self._trusted
+    def _classify(self, origin, js_raw, native_raw, expected):
+        """伺服器頁優先；其次（等待中或同一小頁重整）的本機離線小頁；其餘 None"""
+        if origin is not None and origin == self._trusted_origin:
+            return "server"
+        remembered = self._offline_origin is not None and origin == self._offline_origin
+        if (expected or remembered) and _is_offline_landing(js_raw, native_raw):
+            self._offline_origin = origin
+            return "offline"
+        return None
+
+    def _on_nav_failure(self, js_raw, native_raw):
+        """信任伺服器的導航失敗（錯誤頁簽名：chrome-error:// 或 WebView2 的 "null"，且原生網址在伺服器 origin）且為連線模式 → 換成離線小頁"""
+        if not (isinstance(js_raw, str) and (js_raw == "null" or js_raw.startswith("chrome-error://"))):
+            return
+        native_origin = client_settings.normalize_origin(native_raw)
+        if native_origin is None or native_origin != self._trusted_origin:
+            return
+        if client_settings.mode() != "client":
+            return
+        logger.warning(f"[pywebview] server unreachable host={client_settings.display_host(native_origin, with_port=True)}")
+        self._show_offline("unreachable")
 
     def select_files(self):
         """
@@ -361,6 +688,205 @@ class Api:
             ok = False
         return _result(ok, None if ok else 'failed', local_path, server_path)
 
+    # --- 168b：連線頁（伺服器頁）---
+
+    def connect_get_state(self):
+        """連線頁初始狀態；只回 has_token 布林，不回 token"""
+        if self._denied("connect_get_state"):
+            return _untrusted()
+        url = client_settings.server_url()
+        return {"mode": client_settings.mode(), "url": url,
+                "host": client_settings.display_host(url, with_port=True),
+                "has_token": bool(client_settings.server_token()),
+                "path_map": client_settings.saved_path_map(), "version": client_connect.LOCAL_VERSION,
+                "last_ok": client_settings.server_last_ok()}
+
+    def connect_probe(self, url):
+        """探測伺服器（握手）；換不同 origin 時清掉暫存的登入"""
+        if self._denied("connect_probe"):
+            return _untrusted()
+        origin = client_settings.canonical_server_url(url)
+        if origin != _draft["origin"]:
+            _clear_draft()
+        p = client_connect.probe(origin or url, _token_for(origin))
+        return _public_probe(p, origin)
+
+    def connect_login(self, url, pin):
+        """用密碼換 token；token 只存在 Python 端暫存"""
+        if self._denied("connect_login"):
+            return _untrusted()
+        origin = client_settings.canonical_server_url(url)
+        if origin is None:
+            return _failed("invalid_url")
+        return _login_draft(origin, pin)
+
+    def connect_sources(self, url):
+        """取伺服器的掃描來源清單（對照表用）"""
+        if self._denied("connect_sources"):
+            return _untrusted()
+        origin = client_settings.canonical_server_url(url)
+        reply = client_connect.fetch_sources(origin or url, _token_for(origin))
+        return {"ok": reply["ok"], "reason": reply["reason"], "sources": reply["sources"]}
+
+    def connect_test_row(self, server_prefix, local_prefix, sample):
+        """對照表單列測試：empty／no_sample／uncovered／ok／not_found／timeout"""
+        if self._denied("connect_test_row"):
+            return _untrusted()
+        return _row_state(server_prefix, local_prefix, sample)
+
+    def connect_save_path_map(self, rules):
+        """只存兩欄皆非空的列（連線模式才存）"""
+        if self._denied("connect_save_path_map"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        if not isinstance(rules, list):
+            return _failed("invalid_rules")
+        with _write_lock:
+            client_settings.save_path_map(rules)
+        return _done()
+
+    def connect_apply_restart(self, url, path_map):
+        """前置檢查全過才寫入連線設定並重新啟動"""
+        if self._denied("connect_apply_restart"):
+            return _untrusted()
+        return _apply_and_restart(url, path_map)
+
+    def connect_switch_local_restart(self):
+        """切回本機模式並重新啟動"""
+        if self._denied("connect_switch_local_restart"):
+            return _untrusted()
+        return _switch_local()
+
+    def connect_show_offline(self, href=None):
+        """側欄點擊在連線失敗時改顯示離線小頁；href 一律忽略"""
+        if self._denied("connect_show_offline"):
+            return _untrusted()
+        if get_window() is None:
+            return {"ok": False}
+        self._show_offline("unreachable")
+        return {"ok": True}
+
+    def copy_text(self, text):
+        """寫入剪貼簿（UTF-8 上限 64 KiB）"""
+        if self._denied("copy_text"):
+            return _untrusted()
+        if not isinstance(text, str):
+            return {"ok": False}
+        try:
+            size = len(text.encode("utf-8"))
+        except UnicodeEncodeError:
+            return {"ok": False}
+        if size > _COPY_MAX_BYTES:
+            return {"ok": False}
+        return {"ok": bool(clipboard.copy_text(text))}
+
+    # --- 168b：離線小頁 ---
+
+    def offline_get_state(self):
+        """小頁初始狀態：原因、失敗網址（不含票證）、host:port、文案"""
+        if self._denied("offline_get_state"):
+            return _untrusted()
+        state = self._offline_state or {}
+        reason, host_port = state.get("reason"), state.get("host_port", "")
+        return {"reason": reason, "failed_url": state.get("failed_url", ""),
+                "host_port": host_port, "texts": self._offline_texts(reason, host_port)}
+
+    @staticmethod
+    def _offline_texts(reason, host_port):
+        if _offline_text_provider is None:
+            return {}
+        try:
+            texts = _offline_text_provider(reason, host_port)
+        except Exception as e:
+            logger.warning(f"[pywebview] offline text provider failed ({type(e).__name__})")
+            return {}
+        return texts if isinstance(texts, dict) else {}
+
+    def offline_retry(self):
+        """重新檢查已存的伺服器；通過就載入入口頁"""
+        if self._denied("offline_retry"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        with _write_lock:
+            url, token = client_settings.server_pair()
+        origin = client_settings.normalize_origin(url)
+        pf = client_connect.preflight(url, token)
+        if not _snapshot_unchanged(url, token):
+            return _failed("changed")  # 檢查期間使用者改了目標：不導航、不覆寫離線狀態
+        if pf.status != "ok":
+            self._set_offline_state(pf.reason, url)
+            return _failed(pf.reason)
+        if origin is None:
+            return _failed("invalid_url")
+        if not self._commit_retry(url, token, origin):
+            return _failed("changed")
+        window = get_window()
+        kind = client_settings.shell_kind()
+        entry = client_settings.client_entry_url(origin, kind, token)  # 只用擷取快照，不重讀設定
+        window.load_url(entry)
+        window.set_title("OpenAver \u2014 " + client_settings.display_host(url))
+        return {"ok": True}
+
+    def _commit_retry(self, url, token, origin):
+        """鎖內再比對一次快照，通過才記 last_ok 並信任該 origin"""
+        with _write_lock:
+            if not _snapshot_unchanged(url, token):
+                return False
+            client_settings.touch_last_ok()
+            self._set_trusted_origin(origin)
+        return True
+
+    def offline_save_url(self, url):
+        """只存新網址（不探測；驗證留給 retry）；同 origin 才保留舊 token"""
+        if self._denied("offline_save_url"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        canonical = client_settings.canonical_server_url(url)
+        if canonical is None:
+            return {**_failed("invalid_url"), "host_port": ""}
+        with _write_lock:
+            stored_url, stored_token = client_settings.server_pair()
+            same = client_settings.canonical_server_url(stored_url) == canonical
+            client_settings.apply_connection(canonical, stored_token if same else "", None)
+            self._set_trusted_origin(canonical)
+            reason = (self._offline_state or {}).get("reason") or "unreachable"
+            self._set_offline_state(reason, canonical)
+        return {"ok": True, "reason": None, "host_port": self._offline_state["host_port"]}
+
+    def offline_login(self, pin):
+        """用密碼登入已存的伺服器；成功就存 token（頁面接著呼叫 retry）"""
+        if self._denied("offline_login"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        if not isinstance(pin, str) or not pin.strip():
+            return _failed("bad_pin")  # 空密碼不送伺服器（會被算一次失敗、全域計數）
+        origin = client_settings.canonical_server_url(client_settings.server_url())
+        if origin is None:
+            return _failed("invalid_url")
+        reply = client_connect.login(origin, pin)
+        if not reply["ok"]:
+            return _failed(reply["reason"])
+        if not _store_login_token(origin, reply["token"]):
+            return _failed("changed")  # 登入期間改存了別台：票證不寫給新主機
+        return _done()
+
+    def offline_switch_local_restart(self):
+        """切回本機模式並重新啟動（小頁入口）"""
+        if self._denied("offline_switch_local_restart"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        return _switch_local()
+
 
 
 def on_drop(e):
@@ -457,6 +983,70 @@ def select_folder_path():
     return api.select_folder_path()
 
 
+def connect_get_state():
+    return api.connect_get_state()
+
+
+def connect_probe(url):
+    return api.connect_probe(url)
+
+
+def connect_login(url, pin):
+    return api.connect_login(url, pin)
+
+
+def connect_sources(url):
+    return api.connect_sources(url)
+
+
+def connect_test_row(server_prefix, local_prefix, sample):
+    return api.connect_test_row(server_prefix, local_prefix, sample)
+
+
+def connect_save_path_map(rules):
+    return api.connect_save_path_map(rules)
+
+
+def connect_apply_restart(url, path_map):
+    return api.connect_apply_restart(url, path_map)
+
+
+def connect_switch_local_restart():
+    return api.connect_switch_local_restart()
+
+
+def connect_show_offline(href=None):
+    return api.connect_show_offline(href)
+
+
+def copy_text(text):
+    return api.copy_text(text)
+
+
+def offline_get_state():
+    return api.offline_get_state()
+
+
+def offline_retry():
+    return api.offline_retry()
+
+
+def offline_save_url(url):
+    return api.offline_save_url(url)
+
+
+def offline_login(pin):
+    return api.offline_login(pin)
+
+
+def offline_switch_local_restart():
+    return api.offline_switch_local_restart()
+
+
 def exposed_functions():
     """給 window.expose(*...) 的 bridge 白名單"""
-    return [open_file, open_folder, open_url, select_files, select_folder, select_folder_path]
+    return [open_file, open_folder, open_url, select_files, select_folder, select_folder_path,
+            connect_get_state, connect_probe, connect_login, connect_sources, connect_test_row,
+            connect_save_path_map, connect_apply_restart, connect_switch_local_restart,
+            connect_show_offline, copy_text, offline_get_state, offline_retry, offline_save_url,
+            offline_login, offline_switch_local_restart]

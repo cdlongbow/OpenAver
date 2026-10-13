@@ -2715,6 +2715,40 @@ const RULES = [
     note: '[168a-T7-load-config-in-c5-scope] _maybe_autostart_lan_listener 內的 load_config 不是 2 次 → C5 的讀取被刪或搬走，使用者設了「作為伺服器」開機卻不自動開 LAN 監聽；與整檔規則的 N 相等才代表全部落在 C5 內',
   },
 
+  // ---- [168b-T5] client 模式（_run_client_mode）內不得碰本機伺服器／區網監聽／驗證視窗／資料庫 ----
+  // forbidden-string 不剝 Python 註解／docstring：_run_client_mode 的註解也不得寫出這六個字面。
+  ...['run_server', 'find_free_port', 'lan_listener', '_build_cf_windows', 'web.app', 'core.database'].map((word) => ({
+    file: 'windows/standalone.py', kind: 'forbidden-string', pattern: word,
+    scope: /def _run_client_mode\([^\n]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)+)/,
+    note: '[168b-T5-client-mode-no-local-server] 設成連 NAS 的使用者開殼 → 殼仍在本機起伺服器、開區網監聽、建 JavLibrary／FC2 驗證視窗或開本機資料庫，等於沒切到連線模式，還多一個隱藏視窗行程與重複打外站的 IP',
+  })),
+
+  // ---- [168b-T8] client.json 寫入／連線狀態賦值／剪貼簿 的單一出口 ----
+  // forbidden-string 不剝註解：windows/、web/ 的 .py 註解與 docstring 也不得寫出 save_client_settings 字面。
+  ...['windows', 'web'].map((dir) => ({
+    file: { dir, ext: ['.py'], recursive: true }, kind: 'forbidden-string', pattern: 'save_client_settings',
+    note: `[168b-T8-no-save-client-settings-in-${dir}] ${dir === 'windows'
+      ? '桌面殼的某個新功能繞過具名寫入函式、整份覆蓋 client.json → 使用者原本存好的伺服器網址、密碼與路徑對照被洗成空白，下次開殼回到「沒設定」，要重新輸入'
+      : '伺服器端的程式碼碰到「這台電腦」的 client.json → 在 NAS／區網伺服器上憑空多出一份 client 設定，之後同一資料根改當桌面殼時會被誤判成已連線到別台伺服器'}`,
+  })),
+  {
+    file: 'web/templates/base.html', kind: 'structure-count', pattern: /this\.connState\s*=(?!=)/, count: 2,
+    note: '[168b-T8-connstate-two-assignment-points] 有人另加一處直接改連線狀態 → 使用者在 NAS 重開機期間看到側欄插頭燈號亂跳或卡在綠色，以為連線正常卻開不了片',
+  },
+  {
+    file: {
+      dir: 'web/static/js', ext: ['.js'], recursive: true,
+      exclude: ['shared/clipboard.js', 'pages/scanner/state-scan.js', 'pages/help.js', 'pages/settings/state-config.js'],
+    },
+    kind: 'forbidden-string', pattern: /navigator\.clipboard/,
+    note: '[168b-T8-clipboard-only-in-shared] 有人在共用複製函式之外另寫一份 → 使用者在桌面殼（WebView2 非安全環境）點「複製番號清單」，toast 顯示已複製但剪貼簿其實沒東西，貼上是舊內容',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'forbidden-string', pattern: /navigator\.clipboard/,
+    scope: { anchor: /copyOutputPath\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[168b-T8-clipboard-copyoutputpath-uses-shared] 使用者在區網瀏覽器（非安全環境、沒有 navigator.clipboard）的掃描頁按複製輸出路徑 → 直接失敗、不再走備援，貼上是舊內容或沒東西',
+  },
+
   // ---- [163b-T7b] 重開提示的接線（node:test 看不到模板；外觀不守） ----
   {
     file: 'web/templates/settings.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="cfWindowProxyRestartNeeded"/,
@@ -3584,8 +3618,8 @@ const RULES = [
   // + 全 web/static/js 檔級 pairing（paired-string，新 kind）。
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
-    pattern: 'navigator.clipboard?.writeText', count: 2,
-    note: '[TestNoAlertInSearchJs] test_scanner_clipboard_has_availability_guard — scanner/state-scan.js 需 ≥2 處 guard（copyLogs L1053 附近 + copyOutputPath L720 附近）',
+    pattern: 'navigator.clipboard?.writeText', count: 1,
+    note: '[TestNoAlertInSearchJs] test_scanner_clipboard_has_availability_guard — scanner/state-scan.js 需 ≥1 處 guard（僅 copyLogs 一處；copyOutputPath 已改走 shared/clipboard.js）',
   },
   {
     file: { dir: 'web/static/js', ext: ['.js'], recursive: true }, kind: 'paired-string',
@@ -5396,6 +5430,9 @@ const RULES = [
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'pre_alpine_module', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (block)' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'insights/main.js', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (main.js script)' },
 
+  // ---- [168b-T3] handleNavClick 的離線攔截 mode 必須取自頁面層級的 plug，不取自被點的連結 ----
+  { file: 'web/templates/base.html', kind: 'forbidden-string', pattern: 'currentTarget', scope: { anchor: /handleNavClick\s*\(\s*event\s*,\s*href\s*\)\s*\{/, braceBalanced: true }, note: "[168b-T3] base.html 不得讀 event.currentTarget：除 plug 外的側欄／drawer 連結沒有 data-conn-mode，改讀被點連結會讓「說明」「設定」等在斷線時不被攔，使用者點了直接進一個連不到的空白頁" },
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: "document.querySelector('a.nav-link--conn')", note: "[168b-T3] handleNavClick 必須從 plug 元素取 mode（單一來源）：少了它，斷線時所有側欄導覽都不會被攔" },
   // ---- [TestInsightsSidebarGuard] 側欄「片庫分析」連結與頒獎台 icon (156a-T4, CD-156-7) ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'href="/insights"', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_link_present — offcanvas 與 desktop sidebar 各一處' },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6z', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_icon_svg_present — 頒獎台 icon 的 path 資料，兩處插入點逐字相同' },
@@ -9136,6 +9173,31 @@ const RULES = [
     scope: { anchor: /async init\(\)[^{]*\{/, braceBalanced: true },
     pattern: '_reconcileHeroCard()',
     note: '[lint-guard 162e-init_heroCard_gate_order] 使用者切頁離開再回到影片牆（掛著收藏女優 pill）→ 大卡比影片牆慢一拍才出現、格子先閃一次再補大卡；女優牆回頁則可能被影片牆大卡狀態污染 → 畫面跳動、須再操作一次才穩定 — 遷自 pill-hero.test.mjs（init() 內 _reconcileHeroCard() 恰一次；不剝註解）' },
+
+  // ---- 168b-T6b connect.html 對照表契約（遷自 connect-rows-page.test.mjs 的 HTML 字面檢查） ----
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-loading"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-loading → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-error"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-error → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-reload"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-reload → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-empty"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-empty → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-note"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-note → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'id="connect-rows-save"',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 連線頁對照表缺 #connect-rows-save → 使用者看不到載入中／錯誤／儲存等對應畫面' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'connect-row-local',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 對照表列缺 .connect-row-local → 使用者無法填路徑或看測試結果' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'connect-row-test',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 對照表列缺 .connect-row-test → 使用者無法填路徑或看測試結果' },
+  { file: 'web/templates/connect.html', kind: 'required-string', pattern: 'connect-row-result',
+    note: '[lint-guard 168b-T6b-connect_rows_ids] 對照表列缺 .connect-row-result → 使用者無法填路徑或看測試結果' },
+  { file: 'web/templates/connect.html', kind: 'structure-count', pattern: '<input', count: 1,
+    scope: /\sdata-row\s([\s\S]*?)id="connect-rows-save"/,
+    note: '[lint-guard 168b-T6b-connect_row_single_input] 對照表每列只有右欄一個輸入框（左欄是伺服器路徑、不能手打）→ 多一個 input 使用者會改到伺服器路徑字串、對照永遠對不上' },
 
 ];
 
