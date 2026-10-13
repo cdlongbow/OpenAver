@@ -279,3 +279,50 @@ def test_update_endpoints_ignore_oa_mode(monkeypatch):
         assert ctx.status_code == 403
         results[label] = (upd.content, ctx.content, upd_q.content)
     assert results["plain"] == results["mode"]
+
+
+# ── TASK-168c-T4: 設定頁 data-shell-mode 與「這台電腦」標籤 ─────────────────
+LOCAL_TAG = "local-machine-tag"
+SETTINGS_SHELL_MARKS = [
+    ("none", "/settings", "", 0),
+    ("windows_client", "/settings?oa_shell=windows&oa_mode=client", "client", 2),
+    ("mac_client", "/settings?oa_shell=mac&oa_mode=client", "client", 1),
+    ("windows_local", "/settings?oa_shell=windows&oa_mode=local", "local", 0),
+    ("windows_evil", "/settings?oa_shell=windows&oa_mode=evil", "", 0),
+]
+
+
+@pytest.mark.parametrize(
+    "mark_id,url,attr,tags",
+    SETTINGS_SHELL_MARKS,
+    ids=[m[0] for m in SETTINGS_SHELL_MARKS],
+)
+def test_settings_shell_mode_attr_and_local_tags(monkeypatch, mark_id, url, attr, tags):
+    _set_server_kind(monkeypatch, None)
+    resp = _fresh_client().get(url)
+    assert resp.status_code == 200
+    assert f'data-shell-mode="{attr}"' in resp.text
+    assert resp.text.count(f'class="badge badge-ghost badge-sm {LOCAL_TAG}"') == tags
+
+
+# ── TASK-168c-T5: 說明頁 data-shell-mode 與更新確認窗的 client 標題 ─────────
+HELP_SHELL_MARKS = [
+    ("none", "/help", "", False),
+    ("windows_client", "/help?oa_shell=windows&oa_mode=client", "client", True),
+    ("windows_local", "/help?oa_shell=windows&oa_mode=local", "local", True),
+    ("windows_evil", "/help?oa_shell=windows&oa_mode=evil", "", True),
+]
+
+
+@pytest.mark.parametrize(
+    "mark_id,url,attr,has_modal",
+    HELP_SHELL_MARKS,
+    ids=[m[0] for m in HELP_SHELL_MARKS],
+)
+def test_help_shell_mode_attr_and_client_modal(monkeypatch, mark_id, url, attr, has_modal):
+    _set_server_kind(monkeypatch, None)
+    resp = _fresh_client().get(url)
+    assert resp.status_code == 200
+    assert f'data-shell-mode="{attr}"' in resp.text
+    # 更新確認窗在 {% if is_desktop %} 內：client 標題的 x-show 節點 ⇔ 有桌面殼標記
+    assert resp.text.count('class="fluent-modal-title" x-show="_bridgeMode"') == (1 if has_modal else 0)

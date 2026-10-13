@@ -269,7 +269,9 @@ WHITELIST = {"open_file", "open_folder", "open_url",
              "connect_test_row", "connect_save_path_map", "connect_apply_restart",
              "connect_switch_local_restart", "connect_show_offline", "copy_text",
              "offline_get_state", "offline_retry", "offline_save_url", "offline_login",
-             "offline_switch_local_restart"}
+             "offline_switch_local_restart",
+             "local_settings_get", "local_settings_save", "update_check", "update_context",
+             "update_run"}
 
 
 def test_exposed_bridge_surface_is_exactly_the_whitelist(api_module):
@@ -349,6 +351,7 @@ def test_forged_js_origin_cannot_trust_foreign_native_page(fx):
 # 168b-T4a：頁面種類 scope（_page_kind／_SCOPE）、離線頁判定、導航失敗分支、離線狀態容器
 # ---------------------------------------------------------------------------
 import core.client_settings as client_settings  # noqa: E402
+import core.self_update as self_update  # noqa: E402
 
 OFFLINE_ORIGIN = "http://127.0.0.1:55555"
 OFFLINE_URL = OFFLINE_ORIGIN + "/offline.html"
@@ -594,11 +597,11 @@ def test_offline_state_invalid_url_is_stored_empty(fx):
 
 
 def test_exposed_functions_unchanged_by_scope_machinery(api_module):
-    assert len(api_module.exposed_functions()) == 21
+    assert len(api_module.exposed_functions()) == 26
 
 
 # ---------------------------------------------------------------------------
-# 168b-T4b：22 個方法 × 3 種頁面的 scope 矩陣（期望表為字面值，不由 _SCOPE 衍生）
+# 168b-T4b：27 個方法 × 3 種頁面的 scope 矩陣（期望表為字面值，不由 _SCOPE 衍生）
 # ---------------------------------------------------------------------------
 SCOPE_LITERAL = {
     "select_files": "server", "select_folder": "server", "select_folder_path": "server",
@@ -609,6 +612,8 @@ SCOPE_LITERAL = {
     "connect_show_offline": "server", "copy_text": "server",
     "offline_get_state": "offline", "offline_retry": "offline", "offline_save_url": "offline",
     "offline_login": "offline", "offline_switch_local_restart": "offline",
+    "local_settings_get": "server", "local_settings_save": "server", "update_check": "server",
+    "update_context": "server", "update_run": "server",
 }
 NEW_ARGS = {
     "connect_get_state": (), "connect_probe": (SERVER_LAN,), "connect_login": (SERVER_LAN, "1234"),
@@ -617,6 +622,8 @@ NEW_ARGS = {
     "connect_switch_local_restart": (), "connect_show_offline": (), "copy_text": ("x",),
     "offline_get_state": (), "offline_retry": (), "offline_save_url": (SERVER_LAN,),
     "offline_login": ("1234",), "offline_switch_local_restart": (),
+    "local_settings_get": (), "local_settings_save": ({},), "update_check": (),
+    "update_context": (), "update_run": (),
 }
 OFFLINE_METHODS = sorted(m for m, k in SCOPE_LITERAL.items() if k == "offline")
 UNTRUSTED_REPLY = {"ok": False, "reason": "untrusted"}
@@ -646,6 +653,12 @@ def mx(fx, tmp_path, monkeypatch):
     monkeypatch.setattr(fx.m, "_stat_path", fx.mocks["stat"])
     fx.mocks["restart"] = Mock()
     fx.m.set_restart_handler(fx.mocks["restart"])
+    fx.mocks["check_latest"] = Mock(return_value={"ok": True, "has_update": False, "current_version": "0.0.0"})
+    monkeypatch.setattr(self_update, "check_latest", fx.mocks["check_latest"])
+    fx.mocks["launch_installer"] = Mock()
+    monkeypatch.setattr(self_update, "launch_installer", fx.mocks["launch_installer"])
+    fx.mocks["update_local_settings"] = Mock(return_value={"ok": True, "changed": []})
+    monkeypatch.setattr(client_settings, "update_local_settings", fx.mocks["update_local_settings"])
     return fx
 
 
@@ -684,7 +697,7 @@ def _assert_zero_effects(fx):
 
 
 def test_scope_matrix_literal_covers_exactly_the_scope_table(api_module):
-    assert len(SCOPE_LITERAL) == 22
+    assert len(SCOPE_LITERAL) == 27
     assert set(SCOPE_LITERAL) == set(api_module._SCOPE)
     assert {m: api_module._SCOPE[m] for m in SCOPE_LITERAL} == SCOPE_LITERAL
 
@@ -790,3 +803,126 @@ def test_null_origin_on_about_blank_is_not_a_nav_failure(fx, tmp_path):
     fx.api._set_trusted_origin(SERVER_LAN)
     _load_raw(fx, "null", "about:blank")
     fx.window.load_url.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 168c-T2：導航空窗複查（原生 origin）與載入完成鉤子
+# ---------------------------------------------------------------------------
+EVIL_URL = "http://evil.example/"
+_KIND_ORIGIN = {"server": TRUSTED, "offline": OFFLINE_ORIGIN}
+
+
+def _set_native(fx, how, kind):
+    """_land 之後才改原生 URL：同／異／None／拋例外"""
+    getter = fx.window.get_current_url
+    getter.side_effect = None
+    if how == "same":
+        getter.return_value = _KIND_ORIGIN[kind] + "/next"
+    elif how == "other":
+        getter.return_value = EVIL_URL
+    elif how == "none":
+        getter.return_value = None
+    else:
+        getter.side_effect = RuntimeError("no url")
+
+
+def _own_kind_methods():
+    return sorted(SCOPE_LITERAL)
+
+
+@pytest.mark.parametrize("how", ["other", "none", "raises"])
+@pytest.mark.parametrize("method", _own_kind_methods())
+def test_native_origin_recheck_refuses_with_zero_effects(mx, method, how):
+    kind = SCOPE_LITERAL[method]
+    _land(mx, kind)
+    _set_native(mx, how, kind)
+    mx.m.logger = MagicMock()
+    assert _matrix_call(mx, method) == _refusal(method), (method, how)
+    _assert_zero_effects(mx)
+    lines = [c[0][0] for c in mx.m.logger.warning.call_args_list
+             if "refused reason=navigating origin=" in c[0][0]]
+    assert len(lines) == 1 and method in lines[0]
+    assert not any("reason=untrusted" in c[0][0] for c in mx.m.logger.warning.call_args_list)
+
+
+@pytest.mark.parametrize("method", _own_kind_methods())
+def test_native_origin_recheck_passes_on_own_page_when_unchanged(mx, method):
+    kind = SCOPE_LITERAL[method]
+    _land(mx, kind)
+    _set_native(mx, "same", kind)
+    mx.m.logger = MagicMock()
+    result = _matrix_call(mx, method)
+    if method in NEW_ARGS:
+        assert result != UNTRUSTED_REPLY, method
+    else:
+        assert result != REFUSALS[method] or _all_effects_called(mx), method
+    assert not any("refused reason=navigating" in c[0][0] for c in mx.m.logger.warning.call_args_list)
+
+
+@pytest.mark.parametrize("platform", ["linux", "freebsd"])
+def test_native_origin_recheck_skipped_on_other_platforms(mx, monkeypatch, platform):
+    _land(mx, "server")
+    _set_native(mx, "other", "server")
+    monkeypatch.setattr(sys, "platform", platform)
+    assert mx.api._denied("copy_text") is False
+
+
+def test_loaded_hook_runs_for_server_and_offline_pages(fx):
+    hook = Mock()
+    fx.m.set_loaded_hook(hook)
+    try:
+        _load(fx, TRUSTED)
+        hook.assert_called_once_with("server", fx.window, fx.api._nav_gen)
+        hook.reset_mock()
+        fx.api._expect_offline()
+        _load_offline(fx)
+        hook.assert_called_once_with("offline", fx.window, fx.api._nav_gen)
+        hook.reset_mock()
+        _load(fx, OTHER)  # 不受信任頁
+        hook.assert_not_called()
+
+        def late(js):
+            if js == "location.origin":
+                fx.window.events.before_load.fire()
+            return TRUSTED
+
+        fx.window.evaluate_js.side_effect = late  # 遲到的 loaded
+        fx.window.events.before_load.fire()
+        fx.window.events.loaded.fire()
+        hook.assert_not_called()
+        fx.window.evaluate_js.side_effect = None
+        fx.m.set_loaded_hook(None)  # 未註冊
+        _load(fx, TRUSTED)
+        hook.assert_not_called()
+    finally:
+        fx.m.set_loaded_hook(None)
+
+
+def test_loaded_hook_exception_does_not_escape_on_loaded(fx):
+    fx.m.logger = MagicMock()
+    fx.m.set_loaded_hook(Mock(side_effect=RuntimeError("boom")))
+    try:
+        _load(fx, TRUSTED)
+    finally:
+        fx.m.set_loaded_hook(None)
+    assert fx.api._page_kind == "server"
+    assert any("RuntimeError" in c[0][0] for c in fx.m.logger.warning.call_args_list)
+
+
+def test_loaded_hook_not_called_when_generation_advances_during_bridge_ready_signal(fx):
+    hook = Mock()
+    fx.m.set_loaded_hook(hook)
+
+    def during_signal(js):
+        if "oabridgeready" in js:
+            fx.window.events.before_load.fire()  # 通知期間又一輪導航開始
+        return TRUSTED
+
+    fx.window.evaluate_js.side_effect = during_signal
+    try:
+        fx.window.events.before_load.fire()
+        fx.window.events.loaded.fire()
+    finally:
+        fx.m.set_loaded_hook(None)
+    assert fx.api._page_kind is None
+    hook.assert_not_called()

@@ -2749,6 +2749,25 @@ const RULES = [
     note: '[168b-T8-clipboard-copyoutputpath-uses-shared] 使用者在區網瀏覽器（非安全環境、沒有 navigator.clipboard）的掃描頁按複製輸出路徑 → 直接失敗、不再走備援，貼上是舊內容或沒東西',
   },
 
+  // ---- [168c-T6] 桌面 client 收尾守衛：安裝指令單一來源（CD-168c-7）／client.json 單一寫入出口（CD-168c-2）／導航空窗原生 origin 複查（CD-168c-10） ----
+  // L2 forbidden-string 不剝註解：web／windows／core 的 .py 註解與 docstring 也不得寫出 install.ps1／install.sh（唯一放行 core/self_update.py）。
+  ...['web', 'windows', 'core'].map((dir) => ({
+    file: { dir, ext: ['.py'], recursive: true, ...(dir === 'core' ? { exclude: ['self_update.py'] } : {}) },
+    kind: 'forbidden-string', pattern: /install\.(ps1|sh)/,
+    note: `[168c-T1-installer-command-single-source] ${dir} 內另寫一份安裝指令 → 使用者在桌面殼按「執行更新」跑的腳本與本機版／伺服器版不同，更新動作無法預期（安裝指令只能放 core/self_update.py）`,
+  })),
+  // L3 structure-count 對 .py 剝註解／docstring：註解裡的 save_client_settings( 不計。2 ＝ def 一次 ＋ _rmw 內唯一呼叫。
+  {
+    file: 'core/client_settings.py', kind: 'structure-count', pattern: /save_client_settings\(/, count: 2,
+    note: '[168c-T1-client-json-single-write-funnel] 有人新增繞過 _rmw 共用鎖的 client.json 寫入呼叫（或讓 _rmw 不再落檔）→ 使用者剛存的播放器設定被同時完成的語系同步用舊內容蓋回，畫面說存好了、下次播放還是舊的',
+  },
+  // L5 scope 只涵蓋 _denied 本體（8 格縮排；下一個 4 格縮排的 @staticmethod 截止）；structure-count 剝註解，註解掉的呼叫不算。
+  {
+    file: 'windows/pywebview_api.py', kind: 'structure-count', pattern: '_native_origin(', min: 1,
+    scope: /def _denied\(self, method\):\n((?:        [^\n]*\n|[ \t]*\n)+)/,
+    note: '[168c-T2-denied-rechecks-native-origin] _denied 內少了導航瞬間的原生 origin 複查 → 使用者在受信任頁剛導向外站的空窗內，外站頁面可呼叫「開檔／開資料夾」等 bridge 方法',
+  },
+
   // ---- [163b-T7b] 重開提示的接線（node:test 看不到模板；外觀不守） ----
   {
     file: 'web/templates/settings.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="cfWindowProxyRestartNeeded"/,
@@ -5433,6 +5452,9 @@ const RULES = [
   // ---- [168b-T3] handleNavClick 的離線攔截 mode 必須取自頁面層級的 plug，不取自被點的連結 ----
   { file: 'web/templates/base.html', kind: 'forbidden-string', pattern: 'currentTarget', scope: { anchor: /handleNavClick\s*\(\s*event\s*,\s*href\s*\)\s*\{/, braceBalanced: true }, note: "[168b-T3] base.html 不得讀 event.currentTarget：除 plug 外的側欄／drawer 連結沒有 data-conn-mode，改讀被點連結會讓「說明」「設定」等在斷線時不被攔，使用者點了直接進一個連不到的空白頁" },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: "document.querySelector('a.nav-link--conn')", note: "[168b-T3] handleNavClick 必須從 plug 元素取 mode（單一來源）：少了它，斷線時所有側欄導覽都不會被攔" },
+  // ---- [168c-T5] 殼的「這台電腦有新版」提醒：base.html 載入 hook、hook 掛上 window ----
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: 'shell-notice.js', note: "[168c-T5] base.html 必須載入 shell-notice.js：少了它，殼查到新版後頁面永遠不顯示提醒，且因「顯示成功才記帳」每次重開殼都再查一次" },
+  { file: 'web/static/js/shared/shell-notice.js', kind: 'required-string', pattern: 'window.handleShellNotice =', note: "[168c-T5] shell-notice.js 必須把 handleShellNotice 掛上 window：少了它，殼呼叫不到、新版提醒永遠不顯示，且每次重開殼都再查一次" },
   // ---- [TestInsightsSidebarGuard] 側欄「片庫分析」連結與頒獎台 icon (156a-T4, CD-156-7) ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'href="/insights"', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_link_present — offcanvas 與 desktop sidebar 各一處' },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6z', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_icon_svg_present — 頒獎台 icon 的 path 資料，兩處插入點逐字相同' },
@@ -9198,6 +9220,16 @@ const RULES = [
   { file: 'web/templates/connect.html', kind: 'structure-count', pattern: '<input', count: 1,
     scope: /\sdata-row\s([\s\S]*?)id="connect-rows-save"/,
     note: '[lint-guard 168b-T6b-connect_row_single_input] 對照表每列只有右欄一個輸入框（左欄是伺服器路徑、不能手打）→ 多一個 input 使用者會改到伺服器路徑字串、對照永遠對不上' },
+
+  // ---- [168c-T4] 設定頁「這台電腦」兩格不得直接寫進伺服器 payload ----
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string',
+    pattern: ['player: this.form.viewerPlayer.trim()', 'close_action: this.form.closeAction'],
+    stripLineComments: true,
+    note: '[168c-T4-settings-localfields-via-helper] 桌面版連到 NAS 後在設定頁按儲存 → 這台的播放器／關閉行為會被直接寫進 NAS 設定，手機或另一台電腦的設定被換成別台的值（兩欄只能經 applyServerLocalFields 寫入）' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'applyServerLocalFields(',
+    stripLineComments: true,
+    note: '[168c-T4-settings-localfields-via-helper] 設定頁儲存少了 applyServerLocalFields → 桌面版連到 NAS 時按儲存，NAS 的播放器／關閉行為會被這台的值蓋掉' },
 
 ];
 

@@ -11,7 +11,9 @@
 """
 import ipaddress
 import json
+import re
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -19,7 +21,7 @@ from urllib.parse import quote, urlparse
 import core.config as core_config
 from core.atomic_write import atomic_write
 from core.data_root import get_data_root
-from core.i18n import FALLBACK_LOCALE
+from core.i18n import FALLBACK_LOCALE, SUPPORTED_LOCALES
 from core.logger import get_logger
 from core.video_extensions import (
     DEFAULT_VIDEO_EXTENSIONS,
@@ -44,12 +46,18 @@ LOCAL_MACHINE_KEYS = (
     ("video_extensions", "config.json scraper.video_extensions", "client.json video_extensions", "video_extensions"),
     ("close_action", "config.json general.close_action", "client.json close_action", "close_action"),
     ("tray_locale", "config.json general.locale", "client.json tray_locale", "tray_locale"),
+    ("auto_check_update", "config.json general.auto_check_update", "client.json auto_check_update", "auto_check_update"),
 )
 
 SERVER_OWNED_NOTE = (
     "歸伺服器管、不屬這台電腦：general.server_mode、gallery.*、所有爬蟲設定（scraper.*，"
     "含伺服器掃描用的 scraper.video_extensions；這台電腦 bridge 用的副檔名清單是另一份，見 video_extensions）。"
+    "general.auto_check_update／last_notified_update_version 在 client 模式屬這台電腦（見 auto_check_update）。"
 )
+_PLAYER_MAX = 1024
+_VERSION_STR_RE = re.compile(r"^\d+(\.\d+)*$")
+# 單一寫入出口：所有 client.json 讀改寫都經 _rmw，整段在此鎖內（網路 I/O 不得放進鎖內）
+_write_lock = threading.RLock()
 
 
 def _client_path() -> Path:
@@ -184,6 +192,19 @@ def tray_locale() -> str:
     return _client_data().get("tray_locale") or FALLBACK_LOCALE
 
 
+def auto_check_update() -> bool:
+    if mode() == "local":
+        value = core_config.load_config().get("general", {}).get("auto_check_update", True)
+    else:
+        value = _client_data().get("auto_check_update", True)
+    return value if isinstance(value, bool) else True
+
+
+def last_notified_update_version() -> str:
+    value = _client_data().get("last_notified_update_version")
+    return value if isinstance(value, str) else ""
+
+
 def save_client_settings(d: dict) -> None:
     """原子寫入 client.json（0600）。僅供測試與開發者手改輔助。"""
     path = _client_path()
@@ -203,7 +224,7 @@ def set_close_action(action: str) -> None:
             cfg.setdefault("general", {})["close_action"] = action
         core_config.mutate_config(_mutator)
     else:
-        save_client_settings({**_client_data(), "close_action": action})
+        _rmw(lambda d: d.__setitem__("close_action", action))
 
 
 def normalize_origin(url: str):
@@ -316,11 +337,29 @@ def server_last_ok():
 def touch_last_ok() -> None:
     if mode() == "local":
         return
-    d = _load_raw()
-    if d is None:
-        return
-    d["server"] = {**_server_section(d), "last_ok": datetime.now(timezone.utc).isoformat()}
-    save_client_settings(d)
+    now = datetime.now(timezone.utc).isoformat()
+    _rmw(lambda d: d.__setitem__("server", {**_server_section(d), "last_ok": now}))
+
+
+def _rmw(mutator, *, create: bool = False) -> bool:
+    """client.json 唯一讀改寫出口。回 True＝有寫檔。
+
+    檔不存在／壞檔：``create`` 才從 ``{}`` 起建，否則回 False 不建檔。
+    mutator 原地改 d；回 dict＝以它取代；回 False＝沒變、不寫；回 None＝照寫。
+    """
+    with _write_lock:
+        d = _load_raw()
+        if d is None:
+            if not create:
+                return False
+            d = {}
+        result = mutator(d)
+        if result is False:
+            return False
+        if isinstance(result, dict):
+            d = result
+        save_client_settings(d)
+        return True
 
 
 def _is_blank(v) -> bool:
@@ -328,7 +367,7 @@ def _is_blank(v) -> bool:
 
 
 def migrate_local_settings(d: dict) -> dict:
-    """把本機 config.json 的四項「這台電腦設定」補進 d 缺的鍵（已有值不覆蓋）；回新 dict。"""
+    """把本機 config.json 的五項「這台電腦設定」補進 d 缺的鍵（已有值不覆蓋）；回新 dict。"""
     out = dict(d)
     try:
         config = _read_raw_config()
@@ -347,6 +386,7 @@ def migrate_local_settings(d: dict) -> dict:
         ("video_extensions", _section("scraper").get("video_extensions")),
         ("close_action", _section("general").get("close_action")),
         ("tray_locale", _section("general").get("locale")),
+        ("auto_check_update", _section("general").get("auto_check_update")),
     )
     for key, value in candidates:
         if not _is_blank(out.get(key)) or _is_blank(value):
@@ -354,6 +394,9 @@ def migrate_local_settings(d: dict) -> dict:
         if key == "video_extensions":
             if isinstance(value, list):
                 out[key] = list(value)
+        elif key == "auto_check_update":
+            if isinstance(value, bool):
+                out[key] = value
         elif isinstance(value, str):
             out[key] = value
     return out
@@ -364,33 +407,29 @@ def apply_connection(url_canonical: str, token, path_map_rules) -> None:
     url = canonical_server_url(url_canonical)
     if url is None:
         raise ValueError(f"invalid server url: {url_canonical!r}")
-    was_local = mode() == "local"
-    d = _load_raw() or {}
-    d["version"] = CLIENT_VERSION
-    if was_local:
-        d = migrate_local_settings(d)
-    d["server"] = {**_server_section(d), "url": url, "token": token or ""}
-    if path_map_rules is not None:
-        d["path_map"] = list(path_map_rules)
-    elif not isinstance(d.get("path_map"), list):
-        d["path_map"] = []
-    save_client_settings(d)
+
+    def _mutator(d):
+        was_local = mode() == "local"
+        d["version"] = CLIENT_VERSION
+        if was_local:
+            d = migrate_local_settings(d)
+        d["server"] = {**_server_section(d), "url": url, "token": token or ""}
+        if path_map_rules is not None:
+            d["path_map"] = list(path_map_rules)
+        elif not isinstance(d.get("path_map"), list):
+            d["path_map"] = []
+        return d
+
+    _rmw(_mutator, create=True)
 
 
 def clear_connection() -> None:
     """切回本機：只清 server.url／token，其餘保留。檔不存在不建檔。"""
-    d = _load_raw()
-    if d is None:
-        return
-    d["server"] = {**_server_section(d), "url": "", "token": ""}
-    save_client_settings(d)
+    _rmw(lambda d: d.__setitem__("server", {**_server_section(d), "url": "", "token": ""}))
 
 
 def save_path_map(rules) -> None:
     if mode() == "local":
-        return
-    d = _load_raw()
-    if d is None:
         return
     clean = []
     for r in rules or []:
@@ -399,5 +438,71 @@ def save_path_map(rules) -> None:
         srv, loc = r.get("server"), r.get("local")
         if isinstance(srv, str) and isinstance(loc, str) and srv.strip() and loc.strip():
             clean.append({"server": srv, "local": loc})
-    d["path_map"] = clean
-    save_client_settings(d)
+    _rmw(lambda d: d.__setitem__("path_map", clean))
+
+
+_BAD = object()
+
+
+def _validate_local_value(key: str, value):
+    """回正規化後的值；不合法回 _BAD。"""
+    if key == "player":
+        if not isinstance(value, str) or len(value.strip()) > _PLAYER_MAX:
+            return _BAD
+        return value.strip()
+    if key == "close_action":
+        return value if isinstance(value, str) and value in _CLOSE_ACTIONS else _BAD
+    if key == "auto_check_update":
+        return value if isinstance(value, bool) else _BAD
+    if key == "video_extensions":  # [] 合法：＝用預設（讀取端 fallback）
+        if not isinstance(value, list) or not all(isinstance(e, str) for e in value):
+            return _BAD
+        return sorted(normalize_extensions(value))
+    if key == "tray_locale":
+        return value if isinstance(value, str) and value in SUPPORTED_LOCALES else _BAD
+    # last_notified_update_version
+    return value if isinstance(value, str) and _VERSION_STR_RE.match(value) else _BAD
+
+
+_LOCAL_WRITER_KEYS = ("player", "close_action", "auto_check_update", "video_extensions",
+                      "tray_locale", "last_notified_update_version")
+
+
+def update_local_settings(patch: dict) -> dict:
+    """client 模式下改「這台電腦」的設定（整份驗證、全過才寫）。
+
+    回 ``{"ok": True, "changed": [...]}`` 或 ``{"ok": False, "reason": not_client|bad_key|bad_value}``。
+    沒有任何鍵變動就不寫檔。寫檔 OSError 往外丟。
+    """
+    if mode() != "client":
+        return {"ok": False, "reason": "not_client"}
+    if not isinstance(patch, dict) or any(k not in _LOCAL_WRITER_KEYS for k in patch):
+        return {"ok": False, "reason": "bad_key"}
+    clean = {}
+    for key, value in patch.items():
+        v = _validate_local_value(key, value)
+        if v is _BAD:
+            return {"ok": False, "reason": "bad_value"}
+        clean[key] = v
+    changed = []
+    not_client = []
+
+    def _mutator(d):
+        # 鎖內以讀到的資料再判一次：與 clear_connection 交錯時不寫已停用的檔
+        not_client.clear()
+        changed.clear()
+        if not _valid_url(_server_section(d).get("url")):
+            not_client.append(True)
+            return False
+        for key, v in clean.items():
+            if key in d and d[key] == v and type(d[key]) is type(v):
+                continue
+            d[key] = v
+            changed.append(key)
+        if not changed:
+            return False
+
+    _rmw(_mutator)
+    if not_client:
+        return {"ok": False, "reason": "not_client"}
+    return {"ok": True, "changed": list(changed)}

@@ -1,5 +1,10 @@
 import { ChipEditor } from '@/settings/chip-editor.js';
 import { normalizeFolderLayers, buildNamingPreview, buildNfoTitlePreview } from '@/shared/naming-preview.js';
+import { whenBridgeReady, callBridge } from '@/shared/shell-client.js';
+import {
+    applyServerLocalFields, buildLocalPatch, localDiff, mergeLocalIntoForm,
+    combineSaveOutcome, resolveLocalMachine,
+} from '@/settings/local-machine.js';
 
 // 同時啟用來源數上限（前端鏡像；後端真理來源 core/source_config.py:MAX_ENABLED_SOURCES）
 const MAX_ENABLED_SOURCES = 10;
@@ -86,6 +91,11 @@ export function stateConfig() {
         // ===== Server Mode State (80a-T3) =====
         serverMode: false,
         lanIp: '',
+        // 168c-T4：「這台電腦」兩格（viewerPlayer／closeAction）的讀寫路由。
+        // localMachineState：off（非 client）／legacy（舊殼）／unavailable（讀不到）／ready。
+        shellMode: '',
+        localMachineState: 'off',
+        _localSaved: { viewerPlayer: '', closeAction: 'ask' },
         lanPort: null,
         publicExposure: false,
 
@@ -340,6 +350,7 @@ export function stateConfig() {
 
             // 80a-T3: 讀 data-lan-ip attribute（T2 注入 template context）
             this.lanIp = this.$el?.dataset?.lanIp || '';
+            this.shellMode = this.$el?.dataset?.shellMode || '';
 
             this.loadConfig().then(() => {
                 // B1: init scanner link state after config loaded
@@ -831,6 +842,8 @@ export function stateConfig() {
                     // 建立初始快照（dirty check 基準）— 必須在解鎖前建立
                     this.savedState = JSON.parse(JSON.stringify(this.form));
                     this.savedOpenaiUseCustomModel = this.openaiUseCustomModel;
+                    // 168c-T4：client 模式下兩格改讀這台電腦（表單此時仍 inert）
+                    await this._applyLocalMachine();
                     // 解鎖表單（config hydrate 完成）
                     this._configLoading = false;
 
@@ -896,16 +909,69 @@ export function stateConfig() {
             }
         },
 
+        // 168c-T4：解析「這台電腦」四態並（ready 時）覆寫兩格。非 client 直接 return，不碰 window.pywebview。
+        async _applyLocalMachine() {
+            if (this.shellMode !== 'client') return;
+            const res = await resolveLocalMachine(this.shellMode, {
+                whenBridgeReady,
+                callBridge,
+                getBridge: () => (window.pywebview && window.pywebview.api) || null,
+            });
+            this.localMachineState = res.state;
+            if (res.state !== 'ready') return;
+            const merged = mergeLocalIntoForm(this.form, this.savedState, res.local);
+            for (const k of ['viewerPlayer', 'closeAction']) {
+                this.form[k] = merged.form[k];
+                this.savedState[k] = merged.savedState[k];
+            }
+            this._localSaved = {
+                viewerPlayer: merged.savedState.viewerPlayer,
+                closeAction: merged.savedState.closeAction,
+            };
+        },
+
+        // 168c-T4：伺服器 + 這台電腦各存各的；互不阻擋。
         async saveConfig() {
+            const localChanged = this.localMachineState === 'ready'
+                && localDiff(this.form, this._localSaved).length > 0;
+            const patch = localChanged ? buildLocalPatch(this.form) : null;
+            const serverOk = await this._saveServerConfig();
+            if (!localChanged) return;
+            const reply = await callBridge('local_settings_save', patch);
+            const localOk = !!reply && reply.ok === true;
+            if (localOk) {
+                this._localSaved = { viewerPlayer: patch.player, closeAction: patch.close_action };
+            } else if (serverOk && this.savedState) {
+                // 伺服器存好但這台失敗：savedState 兩格還原成這台已存的值，讓畫面仍顯示未儲存
+                this.savedState.viewerPlayer = this._localSaved.viewerPlayer;
+                this.savedState.closeAction = this._localSaved.closeAction;
+            }
+            const key = combineSaveOutcome({ serverOk, localChanged, localOk });
+            let msg = null;
+            switch (key) {
+                case 'settings.toast.config_saved_with_local':
+                    msg = window.t('settings.toast.config_saved_with_local'); break;
+                case 'settings.toast.local_failed_server_saved':
+                    msg = window.t('settings.toast.local_failed_server_saved'); break;
+                case 'settings.toast.local_saved_server_failed':
+                    msg = window.t('settings.toast.local_saved_server_failed'); break;
+                case 'settings.toast.local_failed_server_failed':
+                    msg = window.t('settings.toast.local_failed_server_failed'); break;
+            }
+            if (msg) this.showToast(msg, serverOk && localOk ? 'success' : 'error');
+        },
+
+        async _saveServerConfig() {
+            let saved = false;  // PUT 成功即 true（回傳給 saveConfig 包裝）
             try {
                 // 先載入現有設定
                 const currentResp = await fetch('/api/config');
                 const currentResult = await currentResp.json();
                 if (!currentResult.success) {
                     this.showToast(window.t('settings.toast.load_current_failed'), 'error');
-                    return;
+                    return false;
                 }
-                const config = currentResult.data;
+                let config = currentResult.data;
                 // 71-T5: 存檔前的「已持久化」縮圖快取狀態（authoritative：剛從 server GET 的 config.json）。
                 // 用來在 PUT 成功後判定「這次儲存是否剛把它從開變關」→ 才清空 output/thumb/（現在只有 disable 半在用）。
                 const prevThumbEnabled = config.thumbnail_cache_enabled === true;
@@ -1032,20 +1098,16 @@ export function stateConfig() {
                     }
                 };
 
-                // 更新 showcase
-                config.showcase = {
-                    ...config.showcase,
-                    player: this.form.viewerPlayer.trim()
-                };
-
                 // 更新 general
                 config.general = {
                     ...config.general,
                     default_page: this.form.defaultPage,
-                    close_action: this.form.closeAction,
                     theme: this.theme || document.documentElement.getAttribute('data-theme') || 'light'
                     // theme / sidebar_collapsed 由 base.html $watch 即時同步，此處僅隨整體設定一併寫入
                 };
+
+                // 168c-T4：showcase.player／general.close_action 依四態決定寫 form 還是保留 GET 原值
+                config = applyServerLocalFields(config, this.form, this.localMachineState);
 
                 // 更新 metatube enabled（CD-63b-3）：保留 url/token（GET 載入的），只更新 enabled。
                 config.metatube = { ...(config.metatube || {}), enabled: this.metatubeEnabled };
@@ -1071,6 +1133,7 @@ export function stateConfig() {
                 });
                 const result = await resp.json();
                 if (result.success) {
+                    saved = true;
                     this.cfWindowProxyRestartNeeded = result.cf_window_proxy_restart_needed === true;
                     this.showToast(window.t('settings.toast.config_saved'), 'success');
                     // 更新快照（避免儲存後仍為 dirty）
@@ -1119,8 +1182,10 @@ export function stateConfig() {
                 } else {
                     this.showToast(window.t('settings.toast.save_failed', { error: result.error }), 'error');
                 }
+                return saved;
             } catch (e) {
                 this.showToast(window.t('settings.toast.save_failed', { error: e.message }), 'error');
+                return saved;
             }
         },
 

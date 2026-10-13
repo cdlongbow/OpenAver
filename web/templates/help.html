@@ -9,6 +9,7 @@
 {% block content %}
 <div class="help-container container mx-auto max-w-screen-2xl page-layer" x-data="helpPage"
      data-is-desktop="{{ 'true' if is_desktop else 'false' }}"
+     data-shell-mode="{{ shell_mode or '' }}"
      data-auto-check-update="{{ 'true' if config.get('general', {}).get('auto_check_update', True) else 'false' }}">
     <div class="help-cards">
     <!-- Hero Card — 置頂區 -->
@@ -26,7 +27,7 @@
                         <span>{{ t('help.hero.auto_check_toggle') }}</span>
                         <input type="checkbox" class="toggle toggle-primary toggle-sm"
                                x-model="autoCheckUpdate" @change="saveAutoCheckUpdate()"
-                               :disabled="_autoCheckSaving">
+                               :disabled="_autoCheckSaving || _bridgeUnavailable">
                     </label>
                     {% endif %}
                 </h2>
@@ -50,9 +51,14 @@
                         <span x-show="!checkUpdateLoading">{{ t('help.hero.btn_check_update_idle') }}</span>
                     </button>
                     <!-- 更新結果 inline -->
-                    <template x-if="checkDone && !errorMsg && hasUpdate">
+                    <template x-if="!_bridgeMode && checkDone && !errorMsg && hasUpdate">
                         <a :href="downloadUrl" target="_blank" rel="noopener noreferrer" class="text-success text-sm">
                             <i class="bi bi-download"></i> {{ t('help.hero.update_available_prefix') }} <span x-text="latestVersion"></span> {{ t('help.hero.update_available_suffix') }}
+                        </a>
+                    </template>
+                    <template x-if="_bridgeMode && checkDone && !errorMsg && hasUpdate">
+                        <a :href="downloadUrl" target="_blank" rel="noopener noreferrer" class="text-success text-sm">
+                            <i class="bi bi-download"></i> {{ t('help.hero.client_update_available_prefix') }} <span x-text="latestVersion"></span> {{ t('help.hero.client_update_available_suffix') }}
                         </a>
                     </template>
                     {% if is_desktop %}
@@ -65,9 +71,14 @@
                         </button>
                     </template>
                     {% endif %}
-                    <template x-if="checkDone && !errorMsg && !hasUpdate">
+                    <template x-if="!_bridgeMode && checkDone && !errorMsg && !hasUpdate">
                         <span class="text-base-content/50 text-sm">
                             <i class="bi bi-check-circle"></i> {{ t('help.hero.up_to_date') }}
+                        </span>
+                    </template>
+                    <template x-if="_bridgeMode && checkDone && !errorMsg && !hasUpdate">
+                        <span class="text-base-content/50 text-sm">
+                            <i class="bi bi-check-circle"></i> {{ t('help.hero.client_up_to_date') }}
                         </span>
                     </template>
                     <template x-if="checkDone && errorMsg">
@@ -826,14 +837,22 @@
             @click.self="!updateLoading && cancelUpdate()"
             @keydown.escape.window="!updateLoading && cancelUpdate()">
         <div class="modal-box fluent-modal-box">
-            <h3 class="fluent-modal-title">{{ t('help.update_modal.title') }}</h3>
+            <h3 class="fluent-modal-title" x-show="!_bridgeMode">{{ t('help.update_modal.title') }}</h3>
+            <h3 class="fluent-modal-title" x-show="_bridgeMode" x-cloak>{{ t('help.update_modal.client_title') }}</h3>
             <!-- 情況 A：預設路徑 -->
-            <p x-show="isDefaultPath" class="fluent-modal-body text-sm">
+            <p x-show="!_bridgeMode && isDefaultPath" class="fluent-modal-body text-sm">
                 {{ t('help.update_modal.case_a_body') }}
             </p>
             <!-- 情況 B：非預設路徑（whitespace-pre-line 保留換行） -->
-            <p x-show="!isDefaultPath" class="fluent-modal-body text-sm whitespace-pre-line">
+            <p x-show="!_bridgeMode && !isDefaultPath" class="fluent-modal-body text-sm whitespace-pre-line">
                 {{ t('help.update_modal.case_b_body') }}
+            </p>
+            <!-- 168c-T5：client 模式（這台電腦）的 A／B -->
+            <p x-show="_bridgeMode && isDefaultPath" x-cloak class="fluent-modal-body text-sm">
+                {{ t('help.update_modal.client_case_a_body') }}
+            </p>
+            <p x-show="_bridgeMode && !isDefaultPath" x-cloak class="fluent-modal-body text-sm whitespace-pre-line">
+                {{ t('help.update_modal.client_case_b_body') }}
             </p>
             <div class="modal-action fluent-modal-actions">
                 <button type="button" class="btn btn-ghost btn-sm"

@@ -183,9 +183,16 @@ scrapers/
 - 本機模式（沒有 `client.json`）：讀取結果與升級前逐字相同，仍來自 `config.json`。
 - 桌面區塊跟著殼走（不再看伺服器平台）；bridge 只在信任 origin 的頁面動作，並以 `window.expose` 白名單暴露函式；`open_file` 限影片副檔名。
 - `windows/` 不得自己碰 config API；唯一例外是 `standalone.py` 的 `_maybe_autostart_lan_listener`（讀伺服器端的 `server_mode`）。由 `scripts/static_guard_lint.mjs` 的 `[168a-T7-*]` 規則守住。
-- `client.json` 的寫入只經 `client_settings` 內的具名函式（`set_close_action`／`touch_last_ok`／`apply_connection`／`clear_connection`／`save_path_map`）；`windows/`、`web/` 不得直接呼叫 `save_client_settings`（lint `[168b-T8-no-save-client-settings-in-*]`）。
+- `client.json` 的寫入出口只有一個：`_rmw`（整段讀改寫在同一把鎖內，網路 I/O 不得放進鎖內）；具名函式與鍵值型寫入 `update_local_settings` 都經它落檔。`windows/`、`web/` 不得直接呼叫 `save_client_settings`（lint `[168b-T8-no-save-client-settings-in-*]`），`client_settings.py` 內也只准 `_rmw` 一處呼叫（lint `[168c-T1-client-json-single-write-funnel]`）。
 - `MIN_SERVER_VERSION` 是「連線功能首次出貨版」，必須 ≤ `core/version.py` 的版本（`tests/unit/test_client_settings.py` 守）。
-- `client_connect.py` 負責桌面版與伺服器的版本相容判定；`client_sources.py` 負責來源清單（連線頁路徑對照用）。
+- `client_connect.py` 負責桌面版與伺服器的版本相容判定，以及向伺服器取影片副檔名（`fetch_video_extensions`）；`client_sources.py` 負責來源清單（連線頁路徑對照用）。
+
+### `self_update.py`
+**「更新到最新版」的共用核心（spec-168c）：伺服器端點與桌面殼 bridge 共用同一份安裝指令**
+- 伺服器的 `get_install_context`／`trigger_update` 與桌面殼 bridge 的 `update_run` 共用同一份安裝指令與安裝路徑推導；`install.ps1`／`install.sh` 字面只准出現在這支（lint `[168c-T1-installer-command-single-source]`，`web/`、`windows/`、`core/` 其餘 `.py` 連註解都不得寫出）。
+- `check_latest`：向 `GITHUB_LATEST_API` 查最新版；失敗不丟例外，回 `{ok: False, reason: timeout|network|bad_response}`。
+- `is_newer`：只比版號（tuple 比較）；版號解析失敗回布林 `False`，不丟例外。
+- 模組內 `httpx`／`subprocess`／`sys` **一律屬性存取**（`httpx.Client`、`subprocess.Popen`、`sys.platform`），既有測試才能從 `web.app.subprocess.Popen` 等路徑 patch 命中。
 
 ### `image_host_policy.py`
 **圖片 host registry ＋ 代理放行判準（單一所有權，spec-113 F-6；167 縮表）**

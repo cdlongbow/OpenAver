@@ -2,6 +2,7 @@
 import json
 import os
 import stat
+import threading
 
 import pytest
 
@@ -11,7 +12,8 @@ from core.i18n import FALLBACK_LOCALE
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, get_video_extensions
 
 CLIENT_URL = "http://192.168.1.177:8000/foo/"
-GETTERS = {"server_url", "path_map", "player_path", "video_extensions", "close_action", "tray_locale"}
+GETTERS = {"server_url", "path_map", "player_path", "video_extensions", "close_action", "tray_locale",
+           "auto_check_update"}
 
 
 @pytest.fixture
@@ -202,7 +204,7 @@ def test_set_close_action_client_mode_writes_client_json_only(env):
 
 def test_local_machine_keys_match_accessors():
     assert {row[3] for row in client_settings.LOCAL_MACHINE_KEYS} == GETTERS
-    assert len(client_settings.LOCAL_MACHINE_KEYS) == 6
+    assert len(client_settings.LOCAL_MACHINE_KEYS) == 7
     for row in client_settings.LOCAL_MACHINE_KEYS:
         assert len(row) == 4 and callable(getattr(client_settings, row[3]))
     assert "general.server_mode" in client_settings.SERVER_OWNED_NOTE
@@ -428,3 +430,214 @@ def test_saved_path_map_missing_or_malformed_is_empty(env):
     assert client_settings.saved_path_map() == []
     _client(env, path_map="oops")
     assert client_settings.saved_path_map() == []
+
+
+# ───────────────────────── 168c-T1：_rmw 收斂／update_local_settings ─────────────────────────
+
+def _cfg_bytes(tmp):
+    cfg = tmp / "config.json"
+    cfg.write_text(json.dumps({"general": {"auto_check_update": False}}), encoding="utf-8")
+    os.utime(cfg, ns=(1_000_000_000, 1_000_000_000))
+    return cfg
+
+
+def test_concurrent_writers_lose_no_keys(env, monkeypatch):
+    """4 個寫入器交錯寫；讀→寫縫隙在讀檔後讓出（有上限、不等別 thread），任何一鍵都不得被舊內容蓋回。"""
+    _client(env)
+    real_load = client_settings._load_raw
+    gap = threading.Event()
+
+    def slow_load():
+        data = real_load()
+        gap.wait(timeout=0.003)  # 只讓出時間片，不等別人；鎖內持有者最多多等 3ms
+        return data
+
+    monkeypatch.setattr(client_settings, "_load_raw", slow_load)
+    rounds = 20
+    stop = threading.Event()
+    bad_reads = []
+
+    def reader():
+        path = env / "client.json"
+        while not stop.is_set():
+            try:
+                json.loads(path.read_text(encoding="utf-8"))
+            except Exception as e:  # noqa: BLE001
+                bad_reads.append(repr(e))
+
+    def w_update():
+        for i in range(rounds):
+            client_settings.update_local_settings({"player": f"p{i}"})
+
+    def w_touch():
+        for _ in range(rounds):
+            client_settings.touch_last_ok()
+
+    def w_map():
+        for i in range(rounds):
+            client_settings.save_path_map([{"server": f"/s{i}", "local": f"/l{i}"}])
+
+    def w_close():
+        for i in range(rounds):
+            client_settings.set_close_action(("tray", "exit")[i % 2])
+
+    rt = threading.Thread(target=reader)
+    rt.start()
+    ts = [threading.Thread(target=f) for f in (w_update, w_touch, w_map, w_close)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(timeout=60)
+    stop.set()
+    rt.join(timeout=5)
+    assert not any(t.is_alive() for t in ts)
+    assert bad_reads == []
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["player"] == f"p{rounds - 1}"
+    assert data["path_map"] == [{"server": f"/s{rounds - 1}", "local": f"/l{rounds - 1}"}]
+    assert data["close_action"] == "exit"
+    assert data["server"].get("last_ok")
+
+
+def test_update_local_settings_in_local_mode_writes_nothing(env):
+    # 純本機（無 client.json）與「切回本機後 client.json 仍在、url 為空」兩種
+    cfg = _cfg_bytes(env)
+    cfg_before = _stat(cfg)
+    assert client_settings.update_local_settings({"player": "x"}) == {"ok": False, "reason": "not_client"}
+    assert not (env / "client.json").exists()
+    _client(env, server={"url": "", "token": ""})
+    assert client_settings.mode() == "local"
+    cj = env / "client.json"
+    cj_before = _stat(cj)
+    assert client_settings.update_local_settings({"player": "x"}) == {"ok": False, "reason": "not_client"}
+    assert _stat(cj) == cj_before and _stat(cfg) == cfg_before
+
+
+def test_update_local_settings_writes_and_reports_changed(env):
+    _client(env, player="old")
+    r = client_settings.update_local_settings({
+        "player": "  mpv  ", "close_action": "tray", "auto_check_update": False,
+        "video_extensions": ["MP4", ".mkv", "mp4"], "tray_locale": "ja",
+        "last_notified_update_version": "0.18.0"})
+    assert r["ok"] is True
+    assert set(r["changed"]) == {"player", "close_action", "auto_check_update", "video_extensions",
+                                 "tray_locale", "last_notified_update_version"}
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["player"] == "mpv" and data["close_action"] == "tray"
+    assert data["auto_check_update"] is False
+    assert data["video_extensions"] == [".mkv", ".mp4"]
+    assert data["tray_locale"] == "ja" and data["last_notified_update_version"] == "0.18.0"
+    assert client_settings.auto_check_update() is False
+    assert client_settings.last_notified_update_version() == "0.18.0"
+    # 只變一鍵 ⇒ changed 只含該鍵
+    assert client_settings.update_local_settings({"player": "mpv", "close_action": "exit"}) == \
+        {"ok": True, "changed": ["close_action"]}
+    # 值相同／空 patch ⇒ changed 為空；缺鍵的 client.json 視為不同
+    assert client_settings.update_local_settings({"player": "mpv", "close_action": "exit", "auto_check_update": False}) == \
+        {"ok": True, "changed": []}
+    assert client_settings.update_local_settings({}) == {"ok": True, "changed": []}
+    _client(env)
+    assert client_settings.update_local_settings({"auto_check_update": True}) == \
+        {"ok": True, "changed": ["auto_check_update"]}
+
+
+@pytest.mark.parametrize("patch,reason", [
+    ({"nope": 1}, "bad_key"),
+    ({"player": "ok", "nope": 1}, "bad_key"),
+    ({"player": 5}, "bad_value"),
+    ({"player": "x" * 1025}, "bad_value"),
+    ({"close_action": "x"}, "bad_value"),
+    ({"auto_check_update": "false"}, "bad_value"),
+    ({"auto_check_update": 0}, "bad_value"),
+    ({"video_extensions": [1]}, "bad_value"),
+    ({"video_extensions": "mp4"}, "bad_value"),
+    ({"tray_locale": "xx"}, "bad_value"),
+    ({"last_notified_update_version": "1.2.x"}, "bad_value"),
+    ({"last_notified_update_version": 1}, "bad_value"),
+])
+def test_update_local_settings_rejects_whole_patch(env, patch, reason):
+    _client(env, player="old")
+    cj = env / "client.json"
+    before = _stat(cj)
+    # 搭一個合法鍵，證明「整份拒、不寫」
+    r = client_settings.update_local_settings({**patch, "close_action": patch.get("close_action", "tray")})
+    assert r == {"ok": False, "reason": reason}
+    assert _stat(cj) == before
+
+
+def test_update_local_settings_empty_video_extensions_means_default(env):
+    _client(env, video_extensions=[".zzz"])
+    assert client_settings.video_extensions() == {".zzz"}
+    assert client_settings.update_local_settings({"video_extensions": []}) == \
+        {"ok": True, "changed": ["video_extensions"]}
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["video_extensions"] == []
+    assert client_settings.video_extensions() == set(DEFAULT_VIDEO_EXTENSIONS)
+
+
+def test_rmw_writers_do_not_create_file(env):
+    client_settings.touch_last_ok()
+    client_settings.clear_connection()
+    client_settings.save_path_map([])
+    client_settings.set_close_action("tray")  # 本機分支寫 config.json，不建 client.json
+    assert not (env / "client.json").exists()
+    (env / "client.json").write_text("{bad", encoding="utf-8")
+    client_settings.clear_connection()
+    assert (env / "client.json").read_text(encoding="utf-8") == "{bad"
+
+
+@pytest.mark.parametrize("cfg,expect", [
+    (None, True),
+    ({"general": {}}, True),
+    ({"general": {"auto_check_update": "no"}}, True),
+    ({"general": {"auto_check_update": False}}, False),
+    ({"general": {"auto_check_update": True}}, True),
+])
+def test_auto_check_update_local_accessor(env, cfg, expect):
+    if cfg is not None:
+        (env / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    assert client_settings.auto_check_update() is expect
+    assert client_settings.last_notified_update_version() == ""
+
+
+@pytest.mark.parametrize("extra,expect", [({}, True), ({"auto_check_update": "x"}, True),
+                                          ({"auto_check_update": False}, False)])
+def test_auto_check_update_client_accessor_ignores_config(env, extra, expect):
+    (env / "config.json").write_text(json.dumps({"general": {"auto_check_update": not expect}}), encoding="utf-8")
+    _client(env, **extra)
+    assert client_settings.auto_check_update() is expect
+    assert client_settings.last_notified_update_version() == ""
+
+
+def test_migrate_auto_check_update_false_is_kept(env):
+    _cfg_bytes(env)
+    assert client_settings.migrate_local_settings({})["auto_check_update"] is False
+
+
+def test_migrate_auto_check_update_does_not_overwrite(env):
+    _cfg_bytes(env)
+    assert client_settings.migrate_local_settings({"auto_check_update": True})["auto_check_update"] is True
+    (env / "config.json").write_text(json.dumps({"general": {"auto_check_update": "x"}}), encoding="utf-8")
+    assert "auto_check_update" not in client_settings.migrate_local_settings({})
+
+
+def test_update_local_settings_mode_flip_between_check_and_write(env, monkeypatch):
+    """模式判斷後、進鎖前被 clear_connection 切回本機 → 不得寫入已停用的 client.json。"""
+    _client(env, player="old")
+    real_mode = client_settings.mode
+    fired = []
+
+    def mode_then_clear():
+        m = real_mode()
+        if m == "client" and not fired:
+            fired.append(1)
+            client_settings.clear_connection()
+        return m
+
+    monkeypatch.setattr(client_settings, "mode", mode_then_clear)
+    r = client_settings.update_local_settings({"player": "new", "close_action": "exit"})
+    assert fired
+    assert r == {"ok": False, "reason": "not_client"}
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["player"] == "old" and data["close_action"] == "ask"
+    assert data["server"]["url"] == ""

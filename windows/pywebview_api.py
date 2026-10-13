@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 import webview
 import core.client_connect as client_connect
 import core.client_settings as client_settings
+import core.self_update as self_update
+from core.version import VERSION
 from core.path_translate import Mapped, PathMap, Uncovered, to_local, to_server
 from core.path_utils import file_uri_to_server_path, uri_to_fs_path
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
@@ -66,7 +68,17 @@ _SCOPE = {
     "offline_save_url": "offline",
     "offline_login": "offline",
     "offline_switch_local_restart": "offline",
+    "local_settings_get": "server",
+    "local_settings_save": "server",
+    "update_check": "server",
+    "update_context": "server",
+    "update_run": "server",
 }
+
+# 導航空窗複查只在能讀到原生 URL 的平台啟用（其餘維持 168a 現狀）
+_NATIVE_RECHECK_PLATFORMS = ("win32", "darwin")
+# 頁面可寫的「這台電腦」設定鍵（其餘鍵由殼自己的流程寫）
+_PAGE_KEYS = frozenset({"player", "close_action", "auto_check_update"})
 
 _COPY_MAX_BYTES = 64 * 1024
 _ROW_TEST_TIMEOUT = 5.0
@@ -75,6 +87,7 @@ _ROW_TEST_TIMEOUT = 5.0
 _draft = {"origin": None, "token": None}
 _restart_handler = None
 _offline_text_provider = None
+_loaded_hook = None
 _row_busy = threading.Lock()
 _write_lock = threading.Lock()  # client.json 讀改寫的序列化（網路 I/O 不得在鎖內）
 
@@ -89,6 +102,12 @@ def set_offline_text_provider(fn):
     """註冊小頁文案提供者 fn(reason, host_port) -> dict"""
     global _offline_text_provider
     _offline_text_provider = fn
+
+
+def set_loaded_hook(fn):
+    """註冊「頁面載入完成」鉤子 fn(kind, window, gen)；None＝取消"""
+    global _loaded_hook
+    _loaded_hook = fn
 
 
 def _request_restart():
@@ -404,11 +423,25 @@ class Api:
     def _denied(self, method):
         """頁面種類不符該方法的範圍：記一行 WARNING 並回 True"""
         scope = _SCOPE.get(method)
+        reason = "untrusted"
         if scope is not None and scope == self._page_kind:
-            return False
+            if sys.platform not in _NATIVE_RECHECK_PLATFORMS:
+                return False
+            native = self._native_origin()
+            if native is not None and native == self._seen_origin:
+                return False
+            reason = "navigating"
         origin = None if self._seen_origin is None else str(self._seen_origin)[:128]
-        logger.warning(f"[pywebview] {method} refused reason=untrusted origin={origin!r}")
+        logger.warning(f"[pywebview] {method} refused reason={reason} origin={origin!r}")
         return True
+
+    @staticmethod
+    def _native_origin():
+        """此刻原生視窗的 origin；讀不到或任何例外回 None（只信 get_current_url）"""
+        try:
+            return client_settings.normalize_origin(get_window().get_current_url())
+        except Exception:
+            return None
 
     def _expect_offline(self):
         """殼即將載入離線小頁：下一次通過世代守衛的驗證才可把本機 /offline.html 判成小頁"""
@@ -451,6 +484,18 @@ class Api:
             self._on_nav_failure(js_raw, native_raw)
         if self._page_kind is not None and gen == self._nav_gen:
             self._signal_bridge_ready(window, self._page_kind)
+            if gen == self._nav_gen and self._page_kind is not None:  # 通知期間可能又開始新導航
+                self._notify_loaded_hook(self._page_kind, window, gen)
+
+    @staticmethod
+    def _notify_loaded_hook(kind, window, gen):
+        """通知已註冊的載入完成鉤子；鉤子例外只記型別名、不外丟"""
+        if _loaded_hook is None:
+            return
+        try:
+            _loaded_hook(kind, window, gen)
+        except Exception as e:
+            logger.warning(f"[pywebview] loaded hook failed ({type(e).__name__})")
 
     @staticmethod
     def _signal_bridge_ready(window, kind):
@@ -782,6 +827,73 @@ class Api:
             return {"ok": False}
         return {"ok": bool(clipboard.copy_text(text))}
 
+    # --- 168c：這台電腦的設定與更新（client 模式的伺服器頁）---
+
+    def local_settings_get(self):
+        """這台電腦的設定（播放器、關閉行為、自動檢查更新）"""
+        if self._denied("local_settings_get"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        return {"ok": True, "player": client_settings.player_path(),
+                "close_action": client_settings.close_action(),
+                "auto_check_update": client_settings.auto_check_update()}
+
+    def local_settings_save(self, patch):
+        """只收頁面可寫的鍵；其餘鍵整份拒絕、不轉送"""
+        if self._denied("local_settings_save"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        if not isinstance(patch, dict):
+            return _failed("bad_value")
+        if any(k not in _PAGE_KEYS for k in patch):
+            return _failed("bad_key")
+        try:
+            reply = client_settings.update_local_settings(patch)
+        except OSError:
+            return _failed("write_failed")
+        return _done() if reply["ok"] else _failed(reply["reason"])
+
+    def update_check(self):
+        """查 GitHub 最新版；current_version 是這台電腦的版本"""
+        if self._denied("update_check"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        reply = self_update.check_latest()
+        if not reply.get("ok"):
+            return _failed(reply.get("reason"))
+        return {"ok": True, "reason": None, "has_update": bool(reply.get("has_update")),
+                "current_version": VERSION, "latest_version": reply.get("latest_version") or "",
+                "download_url": reply.get("download_url") or ""}
+
+    def update_context(self):
+        """更新卡需要的本機脈絡：是否預設安裝位置、目前版本"""
+        if self._denied("update_context"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        return {"ok": True, "is_default_path": self_update.is_default_install(), "current_version": VERSION}
+
+    def update_run(self):
+        """開外部終端機跑官方安裝腳本（不關窗、不重啟、不退出殼）"""
+        if self._denied("update_run"):
+            return _untrusted()
+        refused = _not_client()
+        if refused:
+            return refused
+        try:
+            self_update.launch_installer()
+        except Exception as e:
+            logger.warning(f"[pywebview] update_run launch failed ({type(e).__name__})")
+            return _failed("launch_failed")
+        return _done()
+
     # --- 168b：離線小頁 ---
 
     def offline_get_state(self):
@@ -1043,10 +1155,31 @@ def offline_switch_local_restart():
     return api.offline_switch_local_restart()
 
 
+def local_settings_get():
+    return api.local_settings_get()
+
+
+def local_settings_save(patch):
+    return api.local_settings_save(patch)
+
+
+def update_check():
+    return api.update_check()
+
+
+def update_context():
+    return api.update_context()
+
+
+def update_run():
+    return api.update_run()
+
+
 def exposed_functions():
     """給 window.expose(*...) 的 bridge 白名單"""
     return [open_file, open_folder, open_url, select_files, select_folder, select_folder_path,
             connect_get_state, connect_probe, connect_login, connect_sources, connect_test_row,
             connect_save_path_map, connect_apply_restart, connect_switch_local_restart,
             connect_show_offline, copy_text, offline_get_state, offline_retry, offline_save_url,
-            offline_login, offline_switch_local_restart]
+            offline_login, offline_switch_local_restart,
+            local_settings_get, local_settings_save, update_check, update_context, update_run]

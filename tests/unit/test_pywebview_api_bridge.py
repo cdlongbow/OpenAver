@@ -48,7 +48,10 @@ def api_module(monkeypatch):
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.set_window(MagicMock())
+    w = MagicMock()
+    w.get_current_url.return_value = "http://127.0.0.1:8000/"
+    module.set_window(w)
+    module.api._seen_origin = "http://127.0.0.1:8000"
     module.api._trusted = True
     yield module
     module.set_window(None)

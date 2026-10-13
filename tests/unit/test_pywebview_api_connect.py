@@ -6,6 +6,7 @@ client_settings 用真的（寫在 tmp 資料根）；遠端 I/O（client_connec
 import importlib.util
 import json
 import logging
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -16,6 +17,8 @@ import pytest
 import core.client_connect as client_connect
 import core.client_settings as client_settings
 import core.config as core_config
+import core.self_update as self_update
+from core.version import VERSION
 
 SERVER = "http://192.168.1.50:8765"
 OTHER = "http://192.168.1.60:8765"
@@ -40,7 +43,10 @@ def api_module(monkeypatch):
         Path(__file__).parent.parent.parent / "windows" / "pywebview_api.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.set_window(MagicMock())
+    w = MagicMock()
+    w.get_current_url.return_value = "http://127.0.0.1:8000/"
+    module.set_window(w)
+    module.api._seen_origin = "http://127.0.0.1:8000"
     yield module
     module.set_window(None)
 
@@ -647,3 +653,141 @@ def test_offline_retry_reads_url_and_token_as_one_pair(cx, monkeypatch):
     singles.assert_not_called()
     assert pair_calls
     assert cx.preflight.call_args.args == (SERVER, "TA")
+
+
+# ---------------------------------------------------------------------------
+# 168c-T2：這台電腦的設定與更新（5 個新方法）
+# ---------------------------------------------------------------------------
+NEW_CALLS = {
+    "local_settings_get": (),
+    "local_settings_save": ({"player": "C:/x.exe"},),
+    "update_check": (),
+    "update_context": (),
+    "update_run": (),
+}
+CHECK_OK = {"ok": True, "has_update": True, "current_version": "0.0.1",
+            "latest_version": "9.9.9", "download_url": "https://example.test/r"}
+
+
+@pytest.fixture
+def ux(cx, monkeypatch):
+    """新方法的外部口全換 Mock：check_latest／launch_installer／Popen"""
+    cx.check = Mock(return_value=dict(CHECK_OK))
+    cx.launch = Mock()
+    cx.popen = Mock()
+    monkeypatch.setattr(self_update, "check_latest", cx.check)
+    monkeypatch.setattr(self_update, "launch_installer", cx.launch)
+    monkeypatch.setattr(subprocess, "Popen", cx.popen)
+    return cx
+
+
+@pytest.mark.parametrize("method", sorted(NEW_CALLS))
+def test_new_methods_in_local_mode_refuse_with_zero_side_effects(ux, root, method):
+    cfg_before, client_before = config_bytes(root), client_bytes()
+    assert client_before is None  # 本機模式：沒有 client.json
+    assert getattr(ux.api, method)(*NEW_CALLS[method]) == {"ok": False, "reason": "not_client"}
+    ux.popen.assert_not_called()
+    ux.check.assert_not_called()
+    ux.launch.assert_not_called()
+    assert config_bytes(root) == cfg_before and client_bytes() == client_before
+
+
+def test_local_settings_get_shape(ux):
+    write_client(token=TKN, player="C:/p.exe")
+    assert ux.api.local_settings_get() == {
+        "ok": True, "player": "C:/p.exe", "close_action": "ask", "auto_check_update": True}
+
+
+def test_local_settings_save_success_changes_only_that_key(ux):
+    write_client(token=TKN)
+    before = json.loads(client_bytes())
+    assert ux.api.local_settings_save({"auto_check_update": False}) == {"ok": True, "reason": None}
+    after = json.loads(client_bytes())
+    assert after.pop("auto_check_update") is False
+    assert after == before
+
+
+@pytest.mark.parametrize("patch,reason", [
+    ({"video_extensions": [".mp4"]}, "bad_key"),
+    ({"tray_locale": "zh_TW"}, "bad_key"),
+    ({"last_notified_update_version": "9.9.9"}, "bad_key"),
+    ({"player": "C:/ok.exe", "video_extensions": [".mp4"]}, "bad_key"),  # 混合：整份拒、合法鍵也不寫
+    ({"close_action": "explode"}, "bad_value"),
+    (["player"], "bad_value"),
+    (None, "bad_value"),
+])
+def test_local_settings_save_rejects_keys_the_page_may_not_write(ux, patch, reason):
+    write_client(token=TKN)
+    base = client_bytes()
+    assert ux.api.local_settings_save(patch) == {"ok": False, "reason": reason}
+    assert client_bytes() == base
+
+
+def test_local_settings_save_reports_write_failed_when_client_json_unwritable(ux, monkeypatch):
+    write_client(token=TKN)
+    base = client_bytes()
+
+    def boom(_d):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(client_settings, "save_client_settings", boom)
+    assert ux.api.local_settings_save({"auto_check_update": False}) == {"ok": False, "reason": "write_failed"}
+    assert client_bytes() == base
+
+
+def test_update_check_success_shape_uses_this_machines_version(ux):
+    write_client(token=TKN)
+    assert ux.api.update_check() == {
+        "ok": True, "reason": None, "has_update": True, "current_version": VERSION,
+        "latest_version": "9.9.9", "download_url": "https://example.test/r"}
+
+
+@pytest.mark.parametrize("reason", ["timeout", "network", "bad_response"])
+def test_update_check_failure_passes_reason_through(ux, reason):
+    write_client(token=TKN)
+    ux.check.return_value = {"ok": False, "reason": reason}
+    assert ux.api.update_check() == {"ok": False, "reason": reason}
+
+
+@pytest.mark.parametrize("default", [True, False])
+def test_update_context_shape(ux, monkeypatch, default):
+    write_client(token=TKN)
+    monkeypatch.setattr(self_update, "is_default_install", lambda: default)
+    assert ux.api.update_context() == {"ok": True, "is_default_path": default, "current_version": VERSION}
+
+
+def test_update_run_spawns_the_shared_installer_argv(cx, monkeypatch, caplog):
+    write_client(token=TKN)
+    popen = Mock()
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "CREATE_NEW_CONSOLE", 16, raising=False)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    cx.m.set_restart_handler(cx.restart)
+    caplog.set_level(logging.DEBUG)
+    assert cx.api.update_run() == {"ok": True, "reason": None}
+    popen.assert_called_once_with(self_update.installer_argv("win32"), creationflags=16)
+    cx.window.destroy.assert_not_called()
+    cx.restart.assert_not_called()
+    argv_text = " ".join(self_update.installer_argv("win32"))
+    assert argv_text not in caplog.text and "irm" not in caplog.text
+
+
+def test_update_run_launch_failure_reports_launch_failed_without_argv(ux, caplog):
+    write_client(token=TKN)
+    ux.launch.side_effect = FileNotFoundError("powershell.exe")
+    caplog.set_level(logging.DEBUG)
+    assert ux.api.update_run() == {"ok": False, "reason": "launch_failed"}
+    assert "FileNotFoundError" in caplog.text and "powershell" not in caplog.text
+
+
+def test_new_methods_never_leak_token(ux, caplog):
+    write_client(token=TKN)
+    caplog.set_level(logging.DEBUG)
+    replies = [getattr(ux.api, m)(*a) for m, a in NEW_CALLS.items()]
+    ux.launch.side_effect = RuntimeError("x")
+    replies.append(ux.api.update_run())
+    ux.check.return_value = {"ok": False, "reason": "network"}
+    replies.append(ux.api.update_check())
+    for blob in [json.dumps(r) for r in replies] + [caplog.text]:
+        assert TKN not in blob
+    assert all(r["ok"] for r in replies[:5])

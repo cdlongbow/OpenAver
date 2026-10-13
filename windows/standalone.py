@@ -33,7 +33,7 @@ from core import client_settings
 from core.data_root import get_data_root
 from core.desktop_env import desktop_kind
 from core.proxy_policy import cf_window_proxy, current_settings, record_cf_window_proxy_at_start
-from windows import restart, shell_boot
+from windows import restart, shell_boot, shell_sync, update_notice
 from windows.health_probe import (
     CLIENT_HOST,
     PROBE_OK,
@@ -734,6 +734,7 @@ def _register_bridge_seams(window, lifecycle):
     quit_app = _make_quit_app(window, lifecycle)
     pywebview_api.set_restart_handler(lambda: restart.request_restart(quit_app))
     pywebview_api.set_offline_text_provider(shell_boot.offline_texts)
+    shell_sync.install(pywebview_api)
 
 
 def _restart_failed_notice(message):
@@ -779,6 +780,7 @@ def _run_client_mode(logger):
     def startup(w):
         _arm_first_page_mark(w)
         _attach_window_state(w, saved, lifecycle, logger)
+        update_notice.start_background_check()
 
     try:
         _start_gui(startup, window)

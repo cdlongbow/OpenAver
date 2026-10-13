@@ -9,7 +9,7 @@ import contextlib
 import ipaddress
 import os
 import re
-import subprocess
+import subprocess  # noqa: F401 — 既有測試 mock.patch("web.app.subprocess.Popen") 需要此名稱存在
 import sys
 import threading
 
@@ -46,6 +46,7 @@ from core.database import backfill_readonly_nfo_mtime_once
 from core.metatube.state import metatube_state as _mt_startup_state
 from core.access_auth import ensure_schema, load_snapshot, snapshot, verify_ticket
 from core import source_reachability
+from core import self_update
 from core.platform_info import is_synology
 from core.desktop_env import desktop_kind
 
@@ -985,7 +986,7 @@ async def check_update():
     import httpx
 
     current_version = VERSION
-    github_api = "https://api.github.com/repos/slive777/OpenAver/releases/latest"
+    github_api = self_update.GITHUB_LATEST_API
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1035,17 +1036,7 @@ async def get_install_context():
     """取得安裝路徑資訊，供 Help 頁更新 modal 分流使用（僅 desktop App）。"""
     if not (_is_windows_desktop() or _is_mac_desktop()):
         raise HTTPException(status_code=403, detail="此功能僅限桌面應用程式使用")
-    try:
-        exe = Path(sys.executable)
-        if sys.platform == "darwin":
-            install_dir = exe.parent.parent.parent  # python/bin/python3 → OpenAver/
-        else:
-            install_dir = exe.parent.parent          # python\pythonw.exe → OpenAver\
-        default_dir = Path.home() / "OpenAver"
-        is_default_path = install_dir == default_dir
-    except Exception:
-        is_default_path = True  # 偵測失敗視同情況 A（保守）
-    return {"is_default_path": is_default_path}
+    return {"is_default_path": self_update.is_default_install()}
 
 
 @app.post("/api/trigger-update")
@@ -1091,19 +1082,7 @@ async def trigger_update(request: Request):
         )
         raise HTTPException(status_code=403, detail="此功能僅限桌面應用程式使用")
     try:
-        if sys.platform == "win32":
-            subprocess.Popen(
-                ["powershell.exe", "-ExecutionPolicy", "Bypass", "-NoProfile",
-                 "-Command",
-                 "irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex"],
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
-        else:
-            subprocess.Popen(
-                ["osascript", "-e",
-                 "tell application \"Terminal\" to do script "
-                 "\"curl -fsSL https://raw.githubusercontent.com/slive777/OpenAver/main/install.sh | bash\""]
-            )
+        self_update.launch_installer()
     except Exception as e:
         logger.error("trigger-update 啟動外部終端失敗: %s", e)
         raise HTTPException(status_code=500, detail="啟動更新失敗，請查看日誌") from e
