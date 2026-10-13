@@ -7,7 +7,7 @@
 {% endblock %}
 
 {% block content %}
-<div id="settings-components" class="page-layer" x-data="settings" data-lan-ip="{{ lan_ip or '' }}">
+<div id="settings-components" class="page-layer" x-data="settings" data-lan-ip="{{ lan_ip or '' }}" data-shell-mode="{{ shell_mode or '' }}">
     <div class="settings-header">
         <!-- 81b-T1: 左 cluster 包標題 + 膠囊 + 連線 inline 區塊；flex 樣式由 T2 補 -->
         <div class="settings-header-left">
@@ -1442,21 +1442,24 @@
                             <option value="showcase">{{ t('nav.showcase') }}</option>
                         </select>
                     </div>
+                    {% macro local_machine_tag() %}{% if shell_mode == 'client' %}<span class="badge badge-ghost badge-sm local-machine-tag">{{ t('settings.system.this_computer') }}</span><small class="settings-hint">{{ t('settings.system.this_computer_hint') }}</small>{% endif %}{% endmacro %}
                     {% if is_windows_desktop %}
                     <div class="settings-form-row">
-                        <label class="row-label">{{ t('settings.system.close_action_label') }}</label>
-                        <select class="select select-bordered select-sm" id="closeAction" x-model="form.closeAction">
+                        <label class="row-label">{{ t('settings.system.close_action_label') }}{{ local_machine_tag() }}</label>
+                        <select class="select select-bordered select-sm" id="closeAction" x-model="form.closeAction" :disabled="localMachineState === 'unavailable'">
                             <option value="ask">{{ t('settings.system.close_action_ask') }}</option>
                             <option value="tray">{{ t('settings.system.close_action_tray') }}</option>
                             <option value="exit">{{ t('settings.system.close_action_exit') }}</option>
                         </select>
+                        {% if shell_mode == 'client' %}<small class="settings-hint local-machine-unavailable" x-show="localMachineState === 'unavailable'" x-cloak x-text="window.t('settings.system.this_computer_unavailable')"></small>{% endif %}
                     </div>
                     {% endif %}
                     <div class="settings-form-row">
-                        <label class="row-label">{{ t('settings.system.player_label') }}</label>
+                        <label class="row-label">{{ t('settings.system.player_label') }}{{ local_machine_tag() }}</label>
                         <div class="flex-1 flex flex-col gap-1">
                             <input type="text" class="input input-bordered input-sm" id="viewerPlayer"
-                                x-model="form.viewerPlayer" placeholder="{{ t('settings.system.player_placeholder') }}">
+                                x-model="form.viewerPlayer" :disabled="localMachineState === 'unavailable'" placeholder="{{ t('settings.system.player_placeholder') }}">
+                            {% if shell_mode == 'client' %}<small class="settings-hint local-machine-unavailable" x-show="localMachineState === 'unavailable'" x-cloak x-text="window.t('settings.system.this_computer_unavailable')"></small>{% endif %}
                             <small class="settings-hint">{{ t('settings.system.player_hint_prefix') }} C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe</small>
                         </div>
                     </div>

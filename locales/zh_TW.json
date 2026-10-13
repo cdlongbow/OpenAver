@@ -467,6 +467,10 @@
     "toast": {
       "load_current_failed": "載入現有設定失敗",
       "config_saved": "設定已儲存",
+      "config_saved_with_local": "設定已儲存（含這台電腦的設定）",
+      "local_failed_server_saved": "伺服器設定已儲存；這台電腦的設定儲存失敗",
+      "local_saved_server_failed": "這台電腦的設定已儲存；伺服器設定儲存失敗",
+      "local_failed_server_failed": "伺服器與這台電腦的設定都儲存失敗",
       "save_failed": "儲存失敗: {error}",
       "reset_done": "已恢復預設設定",
       "reset_failed": "重置失敗: {error}"
@@ -678,6 +682,9 @@
     "system": {
       "default_page_label": "啟動時開啟頁面",
       "player_label": "影片播放器",
+      "this_computer": "這台電腦",
+      "this_computer_hint": "這個設定存在這台電腦，不是伺服器",
+      "this_computer_unavailable": "暫時讀不到這台電腦的設定，這兩項先不能改",
       "player_placeholder": "留空使用系統預設",
       "player_hint_prefix": "例如:",
       "reset_label": "重置所有設定",

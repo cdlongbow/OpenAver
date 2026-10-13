@@ -279,3 +279,27 @@ def test_update_endpoints_ignore_oa_mode(monkeypatch):
         assert ctx.status_code == 403
         results[label] = (upd.content, ctx.content, upd_q.content)
     assert results["plain"] == results["mode"]
+
+
+# ── TASK-168c-T4: 設定頁 data-shell-mode 與「這台電腦」標籤 ─────────────────
+LOCAL_TAG = "local-machine-tag"
+SETTINGS_SHELL_MARKS = [
+    ("none", "/settings", "", 0),
+    ("windows_client", "/settings?oa_shell=windows&oa_mode=client", "client", 2),
+    ("mac_client", "/settings?oa_shell=mac&oa_mode=client", "client", 1),
+    ("windows_local", "/settings?oa_shell=windows&oa_mode=local", "local", 0),
+    ("windows_evil", "/settings?oa_shell=windows&oa_mode=evil", "", 0),
+]
+
+
+@pytest.mark.parametrize(
+    "mark_id,url,attr,tags",
+    SETTINGS_SHELL_MARKS,
+    ids=[m[0] for m in SETTINGS_SHELL_MARKS],
+)
+def test_settings_shell_mode_attr_and_local_tags(monkeypatch, mark_id, url, attr, tags):
+    _set_server_kind(monkeypatch, None)
+    resp = _fresh_client().get(url)
+    assert resp.status_code == 200
+    assert f'data-shell-mode="{attr}"' in resp.text
+    assert resp.text.count(f'class="badge badge-ghost badge-sm {LOCAL_TAG}"') == tags

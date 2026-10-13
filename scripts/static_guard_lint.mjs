@@ -9199,6 +9199,16 @@ const RULES = [
     scope: /\sdata-row\s([\s\S]*?)id="connect-rows-save"/,
     note: '[lint-guard 168b-T6b-connect_row_single_input] 對照表每列只有右欄一個輸入框（左欄是伺服器路徑、不能手打）→ 多一個 input 使用者會改到伺服器路徑字串、對照永遠對不上' },
 
+  // ---- [168c-T4] 設定頁「這台電腦」兩格不得直接寫進伺服器 payload ----
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string',
+    pattern: ['player: this.form.viewerPlayer.trim()', 'close_action: this.form.closeAction'],
+    stripLineComments: true,
+    note: '[168c-T4-settings-localfields-via-helper] 桌面版連到 NAS 後在設定頁按儲存 → 這台的播放器／關閉行為會被直接寫進 NAS 設定，手機或另一台電腦的設定被換成別台的值（兩欄只能經 applyServerLocalFields 寫入）' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'applyServerLocalFields(',
+    stripLineComments: true,
+    note: '[168c-T4-settings-localfields-via-helper] 設定頁儲存少了 applyServerLocalFields → 桌面版連到 NAS 時按儲存，NAS 的播放器／關閉行為會被這台的值蓋掉' },
+
 ];
 
 // ---- helpers ----
