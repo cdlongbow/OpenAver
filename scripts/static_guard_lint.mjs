@@ -2717,10 +2717,10 @@ const RULES = [
 
   // ---- [168b-T5] client 模式（_run_client_mode）內不得碰本機伺服器／區網監聽／驗證視窗／資料庫 ----
   // forbidden-string 不剝 Python 註解／docstring：_run_client_mode 的註解也不得寫出這六個字面。
-  ...['run_server', 'find_free_port', 'lan_listener', '_build_cf_windows', 'web.app', 'core.database'].map((word) => ({
+  ...['run_server', 'find_free_port', 'lan_listener', 'web.app', 'core.database'].map((word) => ({
     file: 'windows/standalone.py', kind: 'forbidden-string', pattern: word,
     scope: /def _run_client_mode\([^\n]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)+)/,
-    note: '[168b-T5-client-mode-no-local-server] 設成連 NAS 的使用者開殼 → 殼仍在本機起伺服器、開區網監聽、建 JavLibrary／FC2 驗證視窗或開本機資料庫，等於沒切到連線模式，還多一個隱藏視窗行程與重複打外站的 IP',
+    note: '[168b-T5-client-mode-no-local-server] 設成連 NAS 的使用者開殼 → 殼仍在本機起伺服器、開區網監聽、建 JavLibrary／FC2 驗證視窗或開本機資料庫，等於沒切到連線模式，還多一個隱藏視窗行程與重複打外站的 IP（CF 視窗改由 cf_windows.build_cf_windows 建，對 offline 不建窗的守衛在 pytest）',
   })),
 
   // ---- [168b-T8] client.json 寫入／連線狀態賦值／剪貼簿 的單一出口 ----

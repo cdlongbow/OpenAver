@@ -14,6 +14,7 @@ import pytest
 
 from core import client_connect, client_settings
 from core.client_connect import Preflight
+from core.proxy_policy import ProxySettings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WINDOWS_DIR = REPO_ROOT / "windows"
@@ -22,6 +23,7 @@ if str(WINDOWS_DIR) not in sys.path:
 
 import standalone  # noqa: E402
 from tray import CMD_QUIT  # noqa: E402
+from windows.cf_windows import CfWindowSet  # noqa: E402
 
 SERVER = "http://192.168.1.180:8000"
 TOKEN = "TKN-SENTINEL-T5B"
@@ -78,6 +80,53 @@ class _FakeLifecycle:
         self._ev.append("start_tray")
 
 
+class _ClosableWindow:
+    """destroy() 會依序呼叫已掛的 closing handler；任何一個回 False 就取消關閉（pywebview 語意）。"""
+
+    def __init__(self, name, events, windows):
+        self.name, self._ev, self._windows = name, events, windows
+        self.events = types.SimpleNamespace(closing=_FakeEvent(), loaded=_FakeEvent())
+        self.hidden = False
+
+    def hide(self):
+        self.hidden = True
+        self._ev.append(f"{self.name}.hide")
+
+    def expose(self, *fns):
+        pass
+
+    def destroy(self):
+        for fn in list(self.events.closing.handlers):
+            if fn() is False:
+                self._ev.append(f"{self.name}.close_cancelled")
+                return
+        self._ev.append(f"{self.name}.destroy")
+        if self in self._windows:
+            self._windows.remove(self)
+
+
+class _FakeAgent:
+    """CfShellAgent 假件：只記呼叫；start 不開執行緒。"""
+
+    def __init__(self, bag, events, origin, token, windows, **kw):
+        self.origin, self.token, self.windows, self.kw = origin, token, windows, kw
+        self._ev = events
+        bag.agents.append(self)
+
+    def announce(self):
+        self._ev.append("cf.announce")
+        return True
+
+    def start(self):
+        self._ev.append("cf.start")
+
+    def stop(self):
+        self._ev.append("cf.stop")
+
+    def public_status(self):
+        return {"state": "ready", "reason": None, "proxy_note": None, "sites": ["javlibrary"]}
+
+
 SAVED = {"width": 1000, "height": 700, "x": None, "y": None, "maximized": False}
 
 
@@ -112,7 +161,30 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(standalone.webview, "create_window", fake_create_window)
     monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: lifecycle)
-    monkeypatch.setattr(standalone.startup_trace, "mark", lambda k, *a, **kw: e.marks.append(k))
+    monkeypatch.setattr(standalone.startup_trace, "mark",
+                        lambda k, *a, **kw: (e.marks.append(k), events.append(f"mark:{k}")))
+
+    # CF 殼接線假件（168d-T4）：全部可記錄呼叫；agent.start 不開執行緒
+    cf = types.SimpleNamespace(fetch_calls=[], build_calls=[], agents=[], build_result=None,
+                               fetch_result=None)
+    e.cf = cf
+
+    def fake_fetch(url, token):
+        cf.fetch_calls.append((url, token))
+        events.append("cf.fetch")
+        return cf.fetch_result or {"ok": True, "reason": None, "settings": ProxySettings(url="", scope="dmm")}
+
+    def fake_build(logger, settings, local_direct=False):
+        cf.build_calls.append((settings, local_direct))
+        events.append("cf.build")
+        return cf.build_result if cf.build_result is not None else CfWindowSet(local_direct=local_direct)
+
+    monkeypatch.setattr(client_connect, "fetch_proxy_settings", fake_fetch)
+    monkeypatch.setattr(standalone.cf_windows, "build_cf_windows", fake_build)
+    monkeypatch.setattr(standalone.cf_windows, "cf_shell_supported", lambda: True)
+    monkeypatch.setattr(standalone.cf_shell, "CfShellAgent",
+                        lambda origin, token, windows, **kw: _FakeAgent(cf, events, origin, token, windows, **kw))
+    monkeypatch.setattr(standalone.pywebview_api, "_cf_status_provider", None)
 
     fake_ws = types.SimpleNamespace(
         load_state=lambda: dict(SAVED),
@@ -126,7 +198,7 @@ def env(monkeypatch, tmp_path):
     e.spawn = spawn
 
     boom = Mock(side_effect=AssertionError("client mode must not start local server"))
-    for name in ("find_free_port", "run_server", "_build_cf_windows", "_maybe_autostart_lan_listener"):
+    for name in ("find_free_port", "run_server", "_maybe_autostart_lan_listener"):
         monkeypatch.setattr(standalone, name, boom)
     real_start = threading.Thread.start
 
@@ -169,7 +241,7 @@ def _ok_preflight(monkeypatch):
 
 # ---------- client 模式流程 ----------
 
-def test_client_mode_ok_starts_no_local_server_and_no_cf_windows(monkeypatch, env):
+def test_client_mode_ok_starts_no_local_server(monkeypatch, env):
     _client_json()
     _ok_preflight(monkeypatch)
     monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
@@ -201,8 +273,9 @@ def test_client_mode_marks_exactly_two_new_marks_and_no_server_marks(monkeypatch
     standalone._run_client_mode(env.logger)
     assert env.marks[:2] == ["client_preflight_done", "main_window_created"]
     assert "first_page_loaded" in env.marks
-    for forbidden in ("server_thread_started", "server_ready", "cf_windows_created"):
+    for forbidden in ("server_thread_started", "server_ready"):
         assert forbidden not in env.marks
+    assert env.marks.count("cf_windows_created") == 1
 
 
 def test_offline_boot_expects_offline_before_create_window(monkeypatch, env):
@@ -228,6 +301,137 @@ def test_offline_boot_expects_offline_before_create_window(monkeypatch, env):
     assert env.create_calls[0][1] == OFFLINE_PAGE
     assert TOKEN not in str(flag["state_at_create"])
     env.boom.assert_not_called()
+
+
+# ---------- 168d：CF 殼接線（client） ----------
+
+def _cf_state():
+    return standalone.pywebview_api.api._cf_status()
+
+
+def test_client_mode_wires_cf_once_with_same_origin_and_token(monkeypatch, env):
+    _client_json()
+    _ok_preflight(monkeypatch)
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
+    standalone._run_client_mode(env.logger)
+
+    assert env.cf.fetch_calls == [(SERVER, TOKEN)]
+    assert len(env.cf.build_calls) == 1 and len(env.cf.agents) == 1
+    (agent,) = env.cf.agents
+    assert ("trusted", agent.origin) in env.events          # 與 _set_trusted_origin 同一個值（CD-9）
+    assert agent.origin == SERVER and agent.token == TOKEN
+    assert agent.kw["server_remote"] is True and agent.kw["supported"] is True
+    seq = [x for x in env.events if x in ("cf.fetch", "cf.build", "mark:cf_windows_created", "cf.announce",
+                                           "gui_loop_enter", "cf.start", "gui_loop_exit", "cf.stop",
+                                           "shutdown_after_loop", "spawn")]
+    assert seq == ["cf.fetch", "cf.build", "mark:cf_windows_created", "cf.announce", "gui_loop_enter",
+                   "cf.start", "gui_loop_exit", "cf.stop", "shutdown_after_loop", "spawn"]
+    assert standalone.pywebview_api._cf_status_provider == agent.public_status
+
+
+@pytest.mark.parametrize("server,proxy,expected_url,expected_direct", [
+    (SERVER, "http://127.0.0.1:7890", "", True),            # 遠端伺服器＋loopback 代理 → 這台連不到 → 直連
+    (SERVER, "http://10.0.0.5:7890", "http://10.0.0.5:7890", False),
+    ("http://127.0.0.1:8000", "http://127.0.0.1:7890", "http://127.0.0.1:7890", False),   # 伺服器也在本機：原樣
+])
+def test_client_mode_remote_server_loopback_proxy_goes_direct(monkeypatch, env, server, proxy,
+                                                              expected_url, expected_direct):
+    client_settings.save_client_settings({"version": 1, "server": {"url": server, "token": TOKEN}})
+    _ok_preflight(monkeypatch)
+    env.cf.fetch_result = {"ok": True, "reason": None, "settings": ProxySettings(url=proxy, scope="all")}
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
+    standalone._run_client_mode(env.logger)
+    (settings, local_direct), = env.cf.build_calls
+    assert settings.url == expected_url and settings.scope == "all"
+    assert local_direct is expected_direct
+
+
+@pytest.mark.parametrize("fetch_reason,expected", [
+    ("unauthorized", "unauthorized"), ("unreachable", "unreachable"), ("bad_response", "unreachable"),
+    ("timeout", "unreachable"), ("tls", "unreachable"),
+])
+def test_client_mode_cf_settings_failure_builds_no_windows(monkeypatch, env, fetch_reason, expected):
+    _client_json()
+    _ok_preflight(monkeypatch)
+    env.cf.fetch_result = {"ok": False, "reason": fetch_reason, "settings": None}
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
+    standalone._run_client_mode(env.logger)
+    assert env.cf.build_calls == [] and env.cf.agents == []
+    assert _cf_state() == {"state": "not_ready", "reason": expected, "proxy_note": None, "sites": []}
+    assert "gui_loop_enter" in env.events and "mark:cf_windows_created" not in env.events   # 主視窗照常
+
+
+def test_offline_boot_builds_no_cf_windows(monkeypatch, env):
+    _client_json()
+    monkeypatch.setattr(client_connect, "preflight",
+                        lambda url, token: Preflight("offline", "unreachable", {}))
+    boom = Mock(side_effect=AssertionError("offline boot must not touch CF"))
+    monkeypatch.setattr(client_connect, "fetch_proxy_settings", boom)
+    monkeypatch.setattr(standalone.cf_windows, "build_cf_windows", boom)
+    monkeypatch.setattr(standalone.cf_shell, "CfShellAgent", boom)
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
+    standalone._run_client_mode(env.logger)
+    boom.assert_not_called()
+    assert _cf_state()["reason"] == "offline_boot" and _cf_state()["state"] == "not_ready"
+    assert len(env.create_calls) == 1 and "gui_loop_enter" in env.events
+
+
+def test_client_mode_unsupported_platform_builds_no_windows(monkeypatch, env):
+    _client_json()
+    _ok_preflight(monkeypatch)
+    monkeypatch.setattr(standalone.cf_windows, "cf_shell_supported", lambda: False)
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
+    standalone._run_client_mode(env.logger)
+    assert env.cf.fetch_calls == [] and env.cf.build_calls == []
+    (agent,) = env.cf.agents
+    assert agent.kw["supported"] is False
+
+
+def _closable_cf(env, monkeypatch):
+    """主視窗＋兩個 CF 視窗都是會跑 closing handler 的假視窗；回 (main, jl, javten)。"""
+    wins = []
+    main = _ClosableWindow("main", env.events, wins)
+    jl = _ClosableWindow("jl", env.events, wins)
+    javten = _ClosableWindow("javten", env.events, wins)
+    wins.extend([main, jl, javten])
+    monkeypatch.setattr(standalone.webview, "windows", wins, raising=False)
+    monkeypatch.setattr(standalone.webview, "create_window", lambda title, url, **kw: main)
+    env.cf.build_result = CfWindowSet(jl_win=jl, javten_win=javten)
+    return main, jl, javten, wins
+
+
+def test_client_mode_without_lifecycle_main_closing_destroys_cf_windows(monkeypatch, env):
+    _client_json()
+    _ok_preflight(monkeypatch)
+    monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: None)
+    main, jl, javten, wins = _closable_cf(env, monkeypatch)
+
+    def in_loop():
+        jl.destroy()                                         # 使用者按 X：隱藏而不關
+        assert jl in wins and jl.hidden
+        main.destroy()                                       # 關主視窗：CF 視窗放行，GUI 迴圈才會結束
+
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env, in_loop=in_loop))
+    standalone._run_client_mode(env.logger)
+    print("WINDOWS_AFTER_CLOSE:", wins)  # noqa: T201
+    assert wins == []
+    assert "jl.destroy" in env.events and "javten.destroy" in env.events
+
+
+def test_client_mode_with_lifecycle_cf_guards_follow_lifecycle_quitting(monkeypatch, env):
+    _client_json()
+    _ok_preflight(monkeypatch)
+    main, jl, javten, wins = _closable_cf(env, monkeypatch)
+
+    def in_loop():
+        javten.destroy()
+        assert javten in wins                                # quitting 為假 → 攔下
+        env.lifecycle.quitting = True
+        javten.destroy()
+        assert javten not in wins                            # quitting 為真 → 放行
+
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env, in_loop=in_loop))
+    standalone._run_client_mode(env.logger)
 
 
 # ---------- 重啟 ----------
@@ -308,7 +512,8 @@ def test_client_mode_wires_close_handler_and_lifecycle_args(monkeypatch, env):
     monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: captured.setdefault("a", a) and env.lifecycle)
     monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
     standalone._run_client_mode(env.logger)
-    assert captured["a"][1:3] == (None, None) and captured["a"][4] is None
+    assert captured["a"][1:3] == (None, None)   # 預設假件的 CfWindowSet 沒有視窗
+    assert captured["a"][4] is None
     assert env.lifecycle.on_window_closing in env.win.events.closing.handlers
 
 
@@ -476,7 +681,6 @@ def test_main_local_mode_finally_goes_through_shutdown_helper(monkeypatch, env, 
     monkeypatch.setattr(standalone.threading.Thread, "start", lambda self: None)
     monkeypatch.setattr(standalone, "_wait_for_server_or_exit", lambda *a, **k: None)
     monkeypatch.setattr(standalone, "_maybe_autostart_lan_listener", lambda *a: None)
-    monkeypatch.setattr(standalone, "_build_cf_windows", lambda logger: (None, None))
     monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
     monkeypatch.setattr(standalone, "get_logger", lambda name: MagicMock())
     monkeypatch.setattr(standalone, "bootstrap_data_layout", lambda: MagicMock(status="already_complete"))
@@ -493,6 +697,72 @@ def test_main_local_mode_finally_goes_through_shutdown_helper(monkeypatch, env, 
     assert standalone.pywebview_api._offline_text_provider is not None
     assert "client_preflight_done" not in env.marks
     assert env.marks.index("main_window_created") < env.marks.index("cf_windows_created")
+
+
+def _local_main(monkeypatch, env):
+    """本機模式 main() 的共用假件（同上一格）；回傳 events。"""
+    monkeypatch.setattr(standalone, "find_free_port", lambda *a, **k: 49152)
+    monkeypatch.setattr(standalone, "run_server", lambda *a, **k: None)
+    monkeypatch.setattr(standalone.threading.Thread, "start", lambda self: None)
+    monkeypatch.setattr(standalone, "_wait_for_server_or_exit", lambda *a, **k: None)
+    monkeypatch.setattr(standalone, "_maybe_autostart_lan_listener", lambda *a: None)
+    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
+    monkeypatch.setattr(standalone, "get_logger", lambda name: MagicMock())
+    monkeypatch.setattr(standalone, "bootstrap_data_layout", lambda: MagicMock(status="already_complete"))
+    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
+    monkeypatch.setattr(standalone.restart, "wait_for_parent_exit", lambda *a, **k: None)
+    monkeypatch.setattr(standalone.shell_boot, "install_webview_token_filter", lambda: None)
+    monkeypatch.setattr(standalone, "current_settings", lambda: ProxySettings(url="http://proxy.example:8080"))
+    monkeypatch.setitem(sys.modules, "web.app", types.SimpleNamespace(app=object()))
+    monkeypatch.setitem(sys.modules, "web.lan_listener", types.SimpleNamespace(lan_listener=MagicMock()))
+    if not getattr(standalone.webview.start, "_preset", False):
+        monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
+    monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: env.lifecycle)
+    standalone.main()
+    return env.events
+
+
+def test_local_main_cf_wiring_sequence(monkeypatch, env):
+    """本機版：build → mark → announce → GUI 迴圈 → start（startup 內）→ 迴圈返回 → stop → shutdown → spawn。"""
+    events = _local_main(monkeypatch, env)
+    seq = [x for x in events if x in ("cf.build", "mark:cf_windows_created", "cf.announce", "gui_loop_enter",
+                                       "cf.start", "gui_loop_exit", "cf.stop", "shutdown_after_loop", "spawn")]
+    print("EVENTS:", seq)  # noqa: T201  事件序列供 -s 目視
+    assert seq == ["cf.build", "mark:cf_windows_created", "cf.announce", "gui_loop_enter", "cf.start",
+                   "gui_loop_exit", "cf.stop", "shutdown_after_loop", "spawn"]
+    assert env.cf.fetch_calls == []                        # 本機模式不抓伺服器設定
+    assert env.cf.build_calls[0][0].url == "http://proxy.example:8080" and env.cf.build_calls[0][1] is False
+    (agent,) = env.cf.agents
+    assert agent.origin == f"http://{standalone.CLIENT_HOST}:49152"
+    assert agent.token is None and agent.kw["server_remote"] is False and agent.kw["supported"] is True
+    assert standalone.pywebview_api._cf_status_provider == agent.public_status
+
+
+def test_local_main_close_guards_bind_the_built_windows(monkeypatch, env):
+    """本機版：build 回傳的兩個實際視窗都被綁上關閉攔截（未結束時 hide 並取消關閉）。"""
+    wins = []
+    jl = _ClosableWindow("jl", env.events, wins)
+    javten = _ClosableWindow("javten", env.events, wins)
+    wins.extend([jl, javten])
+    env.cf.build_result = CfWindowSet(jl_win=jl, javten_win=javten)
+
+    def in_loop():
+        jl.destroy()
+        javten.destroy()
+
+    start = _fake_start(env, in_loop=in_loop)
+    start._preset = True
+    monkeypatch.setattr(standalone.webview, "start", start)
+    _local_main(monkeypatch, env)
+    assert jl.hidden and javten.hidden and wins == [jl, javten]
+
+
+def test_local_main_unsupported_platform_builds_no_windows(monkeypatch, env):
+    monkeypatch.setattr(standalone.cf_windows, "cf_shell_supported", lambda: False)
+    _local_main(monkeypatch, env)
+    assert env.cf.build_calls == []
+    (agent,) = env.cf.agents
+    assert agent.kw["supported"] is False and agent.windows.jl_win is None
 
 
 # ---------- lifecycle / window state ----------
@@ -633,3 +903,97 @@ def test_launcher_wires_shell_sync_and_update_check():
     assert len(installs) == 1 and len(checks) == 1
     startup = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "startup")
     assert checks[0] in [c for c in ast.walk(startup) if isinstance(c, ast.Call)]
+
+
+# ---------- 168d：dev launcher 的 CF 接線與關閉路徑 ----------
+
+def _launcher(monkeypatch):
+    import importlib
+    launcher = importlib.import_module("launcher")
+    monkeypatch.setitem(launcher._cf_quitting, "v", False)
+    return launcher
+
+
+def _launcher_closable(launcher, monkeypatch, events):
+    wins = []
+    main = _ClosableWindow("main", events, wins)
+    jl = _ClosableWindow("jl", events, wins)
+    javten = _ClosableWindow("javten", events, wins)
+    wins.extend([main, jl, javten])
+    monkeypatch.setattr(launcher.webview, "windows", wins, raising=False)
+    cf_set = CfWindowSet(jl_win=jl, javten_win=javten)
+    launcher.cf_windows.attach_close_guards(cf_set, lambda: launcher._cf_quitting["v"])
+    return main, jl, javten, wins, cf_set
+
+
+def test_launcher_main_closing_lets_cf_windows_close(monkeypatch):
+    launcher = _launcher(monkeypatch)
+    events = []
+    main, jl, javten, wins, cf_set = _launcher_closable(launcher, monkeypatch, events)
+    launcher._wire_main_closing(main, cf_set, launcher._cf_quitting)
+    jl.destroy()
+    assert jl in wins and jl.hidden                          # 關主視窗之前，CF 視窗只隱藏
+    main.destroy()
+    print("LAUNCHER_WINDOWS_AFTER_CLOSE:", wins)  # noqa: T201
+    assert wins == []                                        # GUI 迴圈才會返回（無殘留行程）
+
+
+def test_launcher_destroy_all_windows_releases_cf_guards_first(monkeypatch):
+    launcher = _launcher(monkeypatch)
+    events = []
+    main, jl, javten, wins, cf_set = _launcher_closable(launcher, monkeypatch, events)
+    launcher._destroy_all_windows()
+    assert wins == []
+    assert "jl.close_cancelled" not in events and "javten.close_cancelled" not in events
+
+
+def test_import_launcher_does_not_set_standalone_env(monkeypatch):
+    import importlib
+    monkeypatch.delenv("OPENAVER_STANDALONE", raising=False)
+    import launcher
+    importlib.reload(launcher)
+    import os
+    assert "OPENAVER_STANDALONE" not in os.environ
+
+
+def test_launcher_sets_standalone_env_only_inside_main_block_before_cf_wiring():
+    tree = _launcher_tree()
+    main_if = next(n for n in tree.body if isinstance(n, ast.If)
+                   and isinstance(n.test, ast.Compare) and getattr(n.test.left, "id", "") == "__name__")
+    sets = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(
+        isinstance(t, ast.Subscript) and _chain(t.value) == "os.environ" for t in n.targets)]
+    assert len(sets) == 1 and sets[0] in list(ast.walk(main_if))
+    wire = _calls(tree, "_wire_cf_shell")
+    assert len(wire) == 1 and sets[0].lineno < wire[0].lineno
+    assert not [n for n in tree.body if isinstance(n, ast.Assign) and "environ" in ast.dump(n)]
+
+
+def _boot(kind):
+    return types.SimpleNamespace(kind=kind)
+
+
+def test_launcher_wire_cf_shell_local_fetches_from_local_origin_without_token(monkeypatch, env):
+    launcher = _launcher(monkeypatch)
+    # env 已把 windows.cf_windows／windows.cf_shell 換成假件（launcher 與 standalone 共用同一個模組物件）
+    monkeypatch.setattr(launcher.pywebview_api, "_cf_status_provider", None)
+    _client_json()   # client.json 殘留 token 也不得被本機模式帶出去
+    cf_set, agent = launcher._wire_cf_shell(env.logger, _boot("local"), "http://localhost:8000")
+    assert env.cf.fetch_calls == [("http://localhost:8000", None)]
+    assert agent.origin == "http://localhost:8000" and agent.token is None
+    assert agent.kw["server_remote"] is False
+
+
+def test_launcher_wire_cf_shell_client_uses_saved_pair_and_offline_builds_nothing(monkeypatch, env):
+    launcher = _launcher(monkeypatch)
+    # env 已把 windows.cf_windows／windows.cf_shell 換成假件（launcher 與 standalone 共用同一個模組物件）
+    monkeypatch.setattr(launcher.pywebview_api, "_cf_status_provider", None)
+    _client_json()
+    cf_set, agent = launcher._wire_cf_shell(env.logger, _boot("client"), "http://localhost:8000")
+    assert env.cf.fetch_calls == [(SERVER, TOKEN)]
+    assert agent.origin == SERVER and agent.token == TOKEN and agent.kw["server_remote"] is True
+
+    env.cf.fetch_calls.clear()
+    env.cf.build_calls.clear()
+    cf_set, agent = launcher._wire_cf_shell(env.logger, _boot("offline"), "http://localhost:8000")
+    assert agent is None and env.cf.fetch_calls == [] and env.cf.build_calls == []
+    assert launcher.pywebview_api.api._cf_status()["reason"] == "offline_boot"

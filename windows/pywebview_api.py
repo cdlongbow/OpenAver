@@ -87,6 +87,7 @@ _ROW_TEST_TIMEOUT = 5.0
 _draft = {"origin": None, "token": None}
 _restart_handler = None
 _offline_text_provider = None
+_cf_status_provider = None
 _loaded_hook = None
 _row_busy = threading.Lock()
 _write_lock = threading.Lock()  # client.json 讀改寫的序列化（網路 I/O 不得在鎖內）
@@ -102,6 +103,12 @@ def set_offline_text_provider(fn):
     """註冊小頁文案提供者 fn(reason, host_port) -> dict"""
     global _offline_text_provider
     _offline_text_provider = fn
+
+
+def set_cf_status_provider(fn):
+    """註冊 CF 殼狀態提供者 fn() -> dict（只讀狀態，不得動視窗；未註冊＝連線頁的 cf 為 None）"""
+    global _cf_status_provider
+    _cf_status_provider = fn
 
 
 def set_loaded_hook(fn):
@@ -744,7 +751,18 @@ class Api:
                 "host": client_settings.display_host(url, with_port=True),
                 "has_token": bool(client_settings.server_token()),
                 "path_map": client_settings.saved_path_map(), "version": client_connect.LOCAL_VERSION,
-                "last_ok": client_settings.server_last_ok()}
+                "last_ok": client_settings.server_last_ok(), "cf": self._cf_status()}
+
+    @staticmethod
+    def _cf_status():
+        if _cf_status_provider is None:
+            return None
+        try:
+            status = _cf_status_provider()
+        except Exception as e:
+            logger.warning(f"[pywebview] cf status provider failed ({type(e).__name__})")
+            return None
+        return status if isinstance(status, dict) else None
 
     def connect_probe(self, url):
         """探測伺服器（握手）；換不同 origin 時清掉暫存的登入"""

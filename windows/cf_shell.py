@@ -89,6 +89,7 @@ class CfShellAgent:
         return httpx.Client(
             transport=self._http_transport,
             follow_redirects=False,
+            trust_env=self._server_remote,
         )
 
     def _client(self):

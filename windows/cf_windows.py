@@ -13,6 +13,7 @@ from typing import Any, Callable
 import webview
 from webview2_proxy import ReadyHolder, install as install_webview2_proxy   # sibling import（同 cf_transport_impl）
 
+from core import client_connect, proxy_policy
 from core.data_root import get_data_root
 from core.desktop_env import desktop_kind
 from core.proxy_policy import cf_window_proxy, record_cf_window_proxy_at_start
@@ -37,6 +38,27 @@ class CfWindowSet:
     proxy_ok: bool = True
     proxy_spec: Any = None
     local_direct: bool = False
+
+
+def fetch_client_cf(server_url, token, server_origin):
+    """向伺服器抓代理設定並套本機位址例外（CD-8/9）；殼的 client／dev 本機接線共用，不拋例外。
+
+    回 ``(ok, reason, effective_settings, local_direct, server_remote)``。失敗時 ``ok=False``、
+    ``reason`` 只會是 ``'unauthorized'`` 或 ``'unreachable'``、設定為 ``None``——絕不回預設設定
+    （抓不到＝不建窗，fail-closed）。
+    """
+    r = client_connect.fetch_proxy_settings(server_url, token)
+    if not r.get("ok") or r.get("settings") is None:
+        reason = "unauthorized" if r.get("reason") == "unauthorized" else "unreachable"
+        return False, reason, None, False, False
+    server_remote = proxy_policy.is_remote_origin(server_origin)
+    eff_settings, local_direct = proxy_policy.client_cf_settings(r["settings"], server_remote)
+    return True, None, eff_settings, local_direct, server_remote
+
+
+def cf_status_static(reason):
+    """沒有 agent 的情境（離線啟動、抓不到代理設定）給連線頁的靜態狀態。"""
+    return {"state": "not_ready", "reason": reason, "proxy_note": None, "sites": []}
 
 
 def attach_close_guards(win_set: CfWindowSet, is_quitting: Callable[[], bool]) -> None:

@@ -548,3 +548,18 @@ def test_real_socket_round_trip(token, expected_auth):
         httpd.server_close()
     thread.join(timeout=5)
     assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("server_remote,env_proxy_used", [(False, False), (True, True)])
+def test_local_mode_client_ignores_proxy_env_vars(monkeypatch, server_remote, env_proxy_used):
+    """本機模式（打 127.0.0.1 的自己人）不吃 HTTP_PROXY 環境變數：免得環境代理把本機請求繞出去、AC-1 回歸。"""
+    monkeypatch.setenv('HTTP_PROXY', 'http://env-proxy.invalid:3128')
+    monkeypatch.setenv('http_proxy', 'http://env-proxy.invalid:3128')
+    monkeypatch.setenv('ALL_PROXY', 'http://env-proxy.invalid:3128')
+    agent = cf_shell.CfShellAgent(ORIGIN, None, make_windows(FakeImpl()), shell='windows',
+                                  server_remote=server_remote)
+    client = agent._make_client()
+    try:
+        assert bool(client._mounts) is env_proxy_used
+    finally:
+        client.close()
