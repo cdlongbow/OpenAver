@@ -96,7 +96,6 @@ export function stateConfig() {
         shellMode: '',
         localMachineState: 'off',
         _localSaved: { viewerPlayer: '', closeAction: 'ask' },
-        get localMachine() { return this.localMachineState === 'ready'; },
         lanPort: null,
         publicExposure: false,
 
