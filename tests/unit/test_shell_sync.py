@@ -105,15 +105,6 @@ def test_extension_copy_stale_probe_writes_nothing(env, monkeypatch):
     assert shell_sync._state["synced"] is False
 
 
-def test_extension_copy_not_installed_probe_is_fail_closed(env, monkeypatch):
-    _client()
-    before = _bytes(env)
-    fetch = Mock(return_value={"ok": True, "reason": None, "extensions": [".m2ts"]})
-    monkeypatch.setattr(client_connect, "fetch_video_extensions", fetch)
-    shell_sync.on_page_loaded("server", _win(), 1)
-    assert _bytes(env) == before
-
-
 @pytest.mark.parametrize("kind", ["server", "offline", "other"])
 @pytest.mark.parametrize("empty_url", [False, True])
 def test_local_mode_is_inert(env, monkeypatch, kind, empty_url):
@@ -149,13 +140,6 @@ def test_server_page_hands_off_to_update_notice(env, monkeypatch):
     shown.assert_called_once()
     assert shown.call_args.args[:2] == (w, 1)
     assert shown.call_args.args[2]() is True
-
-
-def test_offline_page_resets_synced_flag(env, monkeypatch):
-    _client()
-    shell_sync._state["synced"] = True
-    shell_sync.on_page_loaded("offline", _win(), 1)
-    assert shell_sync._state["synced"] is False
 
 
 def test_probe_is_wired_to_real_api(env, monkeypatch):

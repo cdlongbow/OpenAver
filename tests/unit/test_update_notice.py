@@ -58,9 +58,10 @@ def _bytes(env):
     return {p.name: p.read_bytes() for p in env.iterdir() if p.is_file()}
 
 
-def test_notice_not_recorded_until_page_confirms_display(env, ctx):
+@pytest.mark.parametrize("not_confirmed", [False, 1, "true", {"ok": True}])  # 只有精確 True 才算顯示過
+def test_notice_not_recorded_until_page_confirms_display(env, ctx, not_confirmed):
     _client()
-    ctx.win.evaluate_js = Mock(side_effect=[False, True])
+    ctx.win.evaluate_js = Mock(side_effect=[not_confirmed, True])
     update_notice.check_once()                       # 結果先到，尚無頁面
     ctx.win.evaluate_js.assert_not_called()
     update_notice.try_show(ctx.win, 1, ctx.is_current)   # load(F)：頁面沒有通知容器
@@ -86,15 +87,6 @@ def test_notice_shows_immediately_when_page_arrived_before_result(env, ctx):
     assert "9.9.9" in ctx.win.evaluate_js.call_args.args[0]
     assert ctx.write.call_count == 1
     assert client_settings.last_notified_update_version() == "9.9.9"
-
-
-@pytest.mark.parametrize("truthy_but_not_true", [1, "true", {"ok": True}])
-def test_notice_only_exact_true_counts_as_shown(env, ctx, truthy_but_not_true):
-    _client()
-    ctx.win.evaluate_js = Mock(return_value=truthy_but_not_true)
-    update_notice.check_once()
-    update_notice.try_show(ctx.win, 1, ctx.is_current)
-    ctx.write.assert_not_called()
 
 
 def test_notice_not_repeated_for_already_recorded_version(env, ctx):

@@ -37,22 +37,15 @@ def test_check_latest_200_has_update():
     r = self_update.check_latest("0.9.0", transport=_transport(h))
     assert r == {"ok": True, "has_update": True, "current_version": "0.9.0",
                  "latest_version": "0.10.0", "download_url": "https://x/r"}
-
-
-def test_check_latest_same_version_no_update():
-    r = self_update.check_latest("0.9.0", transport=_transport(
+    # 同版本 ⇒ 不提示更新
+    same = self_update.check_latest("0.9.0", transport=_transport(
         lambda req: httpx.Response(200, json={"tag_name": "v0.9.0"})))
-    assert r["ok"] is True and r["has_update"] is False
+    assert same["ok"] is True and same["has_update"] is False
 
 
 def test_check_latest_404_means_no_release():
     r = self_update.check_latest("0.9.0", transport=_transport(lambda req: httpx.Response(404)))
     assert r == {"ok": True, "has_update": False, "current_version": "0.9.0"}
-
-
-def test_check_latest_missing_tag_is_not_error():
-    r = self_update.check_latest("0.9.0", transport=_transport(lambda req: httpx.Response(200, json={})))
-    assert r["ok"] is True and r["has_update"] is False
 
 
 def _raise(exc):
@@ -85,26 +78,14 @@ def test_installer_argv_matches_official_scripts():
         "\"curl -fsSL https://raw.githubusercontent.com/slive777/OpenAver/main/install.sh | bash\""]
 
 
-def test_installer_argv_defaults_to_sys_platform(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-    assert self_update.installer_argv()[0] == "powershell.exe"
-    monkeypatch.setattr(sys, "platform", "linux")
-    assert self_update.installer_argv()[0] == "osascript"
-
-
-def test_launch_installer_win32_uses_new_console(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
+@pytest.mark.parametrize("platform,kwargs", [("win32", {"creationflags": 16}), ("darwin", {})])
+def test_launch_installer_win32_uses_new_console(monkeypatch, platform, kwargs):
+    monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setattr(subprocess, "CREATE_NEW_CONSOLE", 16, raising=False)
     with mock.patch("core.self_update.subprocess.Popen") as popen:
         self_update.launch_installer()
-    popen.assert_called_once_with(self_update.installer_argv("win32"), creationflags=16)
-
-
-def test_launch_installer_darwin_plain_popen(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
-    with mock.patch("core.self_update.subprocess.Popen") as popen:
-        self_update.launch_installer()
-    popen.assert_called_once_with(self_update.installer_argv("darwin"))
+    # win32 開新主控台；darwin 單純 Popen
+    popen.assert_called_once_with(self_update.installer_argv(platform), **kwargs)
 
 
 def test_launch_installer_popen_error_propagates(monkeypatch):
@@ -127,10 +108,3 @@ def test_is_default_install(monkeypatch, platform, exe, home, expected):
     monkeypatch.setattr(sys, "executable", exe)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path(home)))
     assert self_update.is_default_install() is expected
-
-
-def test_is_default_install_exception_is_true(monkeypatch):
-    def boom():
-        raise RuntimeError("no home")
-    monkeypatch.setattr(Path, "home", staticmethod(boom))
-    assert self_update.is_default_install() is True

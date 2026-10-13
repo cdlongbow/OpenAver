@@ -229,16 +229,13 @@ test('client bridge local_settings_save failure reverts autoCheckUpdate and toas
   assert.deepEqual(self.toasts, [['help.hero.auto_check_save_failed', 'error']]);
   assert.deepEqual(log.find((l) => l.name === 'local_settings_save').args, [{ auto_check_update: true }]);
   assert.equal(calls.length, 0, '零 PUT /api/config');
-});
-
-test('client bridge local_settings_save success keeps the toggle', async () => {
-  installFetchSpy();
+  // 成功 ⇒ 開關維持、不跳 toast
   installBridge(OK_REPLIES());
-  const self = await boot(CLIENT);
-  self.autoCheckUpdate = true;
-  await self.saveAutoCheckUpdate();
-  assert.equal(self.autoCheckUpdate, true);
-  assert.deepEqual(self.toasts, []);
+  const ok = await boot(CLIENT);
+  ok.autoCheckUpdate = true;
+  await ok.saveAutoCheckUpdate();
+  assert.equal(ok.autoCheckUpdate, true);
+  assert.deepEqual(ok.toasts, []);
 });
 
 test('client mode click before routing is decided waits instead of hitting the server', async () => {
@@ -326,14 +323,11 @@ test('client bridge: update_context failure shows the unknown state, never the s
   assert.equal(self._bridgeMode, true);
   assert.equal(self.appVersion, 'help.js.version_load_failed');
   assert.equal(hit(calls, '/api/version'), 0);
-});
-
-test('client bridge: update_context reply without current_version also shows the unknown state', async () => {
-  const calls = installFetchSpy();
-  const replies = OK_REPLIES();
-  replies.update_context = { ok: true, is_default_path: true };
-  installBridge(replies);
-  const self = await boot(CLIENT);
-  assert.equal(self.appVersion, 'help.js.version_load_failed');
+  // 回覆缺 current_version 也是未知狀態
+  const noVer = OK_REPLIES();
+  noVer.update_context = { ok: true, is_default_path: true };
+  installBridge(noVer);
+  const self2 = await boot(CLIENT);
+  assert.equal(self2.appVersion, 'help.js.version_load_failed');
   assert.equal(hit(calls, '/api/version'), 0);
 });

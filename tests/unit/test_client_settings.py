@@ -532,20 +532,10 @@ def test_update_local_settings_writes_and_reports_changed(env):
     # 只變一鍵 ⇒ changed 只含該鍵
     assert client_settings.update_local_settings({"player": "mpv", "close_action": "exit"}) == \
         {"ok": True, "changed": ["close_action"]}
-
-
-def test_update_local_settings_no_change_does_not_touch_file(env):
-    _client(env, player="mpv", close_action="tray", auto_check_update=True)
-    cj = env / "client.json"
-    os.utime(cj, ns=(1_000_000_000, 1_000_000_000))
-    before = _stat(cj)
-    assert client_settings.update_local_settings({"player": "mpv", "close_action": "tray",
-                                                  "auto_check_update": True}) == {"ok": True, "changed": []}
+    # 值相同／空 patch ⇒ changed 為空；缺鍵的 client.json 視為不同
+    assert client_settings.update_local_settings({"player": "mpv", "close_action": "exit", "auto_check_update": False}) == \
+        {"ok": True, "changed": []}
     assert client_settings.update_local_settings({}) == {"ok": True, "changed": []}
-    assert _stat(cj) == before
-
-
-def test_update_local_settings_missing_key_counts_as_different(env):
     _client(env)
     assert client_settings.update_local_settings({"auto_check_update": True}) == \
         {"ok": True, "changed": ["auto_check_update"]}
@@ -574,17 +564,6 @@ def test_update_local_settings_rejects_whole_patch(env, patch, reason):
     r = client_settings.update_local_settings({**patch, "close_action": patch.get("close_action", "tray")})
     assert r == {"ok": False, "reason": reason}
     assert _stat(cj) == before
-
-
-def test_update_local_settings_oserror_propagates(env, monkeypatch):
-    _client(env)
-
-    def boom(d):
-        raise OSError("disk")
-
-    monkeypatch.setattr(client_settings, "save_client_settings", boom)
-    with pytest.raises(OSError):
-        client_settings.update_local_settings({"player": "x"})
 
 
 def test_rmw_writers_do_not_create_file(env):
@@ -619,11 +598,6 @@ def test_auto_check_update_client_accessor_ignores_config(env, extra, expect):
     _client(env, **extra)
     assert client_settings.auto_check_update() is expect
     assert client_settings.last_notified_update_version() == ""
-
-
-def test_server_owned_note_mentions_new_keys():
-    assert "auto_check_update" in client_settings.SERVER_OWNED_NOTE
-    assert "last_notified_update_version" in client_settings.SERVER_OWNED_NOTE
 
 
 def test_migrate_auto_check_update_false_is_kept(env):

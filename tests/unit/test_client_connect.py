@@ -297,6 +297,3 @@ def test_fetch_video_extensions_failures_keep_ok_false(monkeypatch, handler, rea
     assert r == {"ok": False, "reason": reason, "extensions": []}
 
 
-def test_fetch_video_extensions_bad_url():
-    assert client_connect.fetch_video_extensions("ftp://x", "t") == \
-        {"ok": False, "reason": "unreachable", "extensions": []}

@@ -31,9 +31,7 @@ test('handleShellNotice returns false and never calls show when the page has no 
   setup({ container: false });
   assert.equal(handleShellNotice({ kind: 'update_available', version: '9.9.9' }), false);
   assert.equal(shows.length, 0);
-});
-
-test('handleShellNotice returns false when Alpine.store("toast") is missing', () => {
+  // Alpine.store("toast") 缺失或 Alpine 不存在 ⇒ 同樣 false
   setup({ store: false });
   assert.equal(handleShellNotice({ kind: 'update_available', version: '9.9.9' }), false);
   delete globalThis.Alpine;
@@ -48,14 +46,8 @@ test('handleShellNotice rejects malformed version or kind without showing', () =
     { kind: 'update_available', version: 9 },
     { kind: 'update_available' },
     { kind: 'other', version: '9.9.9' },
+    null, undefined, 'update_available', 42, true, // 非物件
   ];
   for (const p of bad) assert.equal(handleShellNotice(p), false, JSON.stringify(p));
-  assert.equal(shows.length, 0);
-});
-
-test('handleShellNotice rejects non-object payloads', () => {
-  for (const p of [null, undefined, 'update_available', 42, true]) {
-    assert.equal(handleShellNotice(p), false);
-  }
   assert.equal(shows.length, 0);
 });

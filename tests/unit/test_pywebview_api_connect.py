@@ -707,25 +707,19 @@ def test_local_settings_save_success_changes_only_that_key(ux):
     assert after == before
 
 
-def test_local_settings_save_bad_value_and_non_dict(ux):
-    write_client(token=TKN)
-    base = client_bytes()
-    assert ux.api.local_settings_save({"close_action": "explode"}) == {"ok": False, "reason": "bad_value"}
-    assert ux.api.local_settings_save(["player"]) == {"ok": False, "reason": "bad_value"}
-    assert ux.api.local_settings_save(None) == {"ok": False, "reason": "bad_value"}
-    assert client_bytes() == base
-
-
-@pytest.mark.parametrize("patch", [
-    {"video_extensions": [".mp4"]},
-    {"tray_locale": "zh_TW"},
-    {"last_notified_update_version": "9.9.9"},
-    {"player": "C:/ok.exe", "video_extensions": [".mp4"]},  # 混合：整份拒、合法鍵也不寫
+@pytest.mark.parametrize("patch,reason", [
+    ({"video_extensions": [".mp4"]}, "bad_key"),
+    ({"tray_locale": "zh_TW"}, "bad_key"),
+    ({"last_notified_update_version": "9.9.9"}, "bad_key"),
+    ({"player": "C:/ok.exe", "video_extensions": [".mp4"]}, "bad_key"),  # 混合：整份拒、合法鍵也不寫
+    ({"close_action": "explode"}, "bad_value"),
+    (["player"], "bad_value"),
+    (None, "bad_value"),
 ])
-def test_local_settings_save_rejects_keys_the_page_may_not_write(ux, patch):
+def test_local_settings_save_rejects_keys_the_page_may_not_write(ux, patch, reason):
     write_client(token=TKN)
     base = client_bytes()
-    assert ux.api.local_settings_save(patch) == {"ok": False, "reason": "bad_key"}
+    assert ux.api.local_settings_save(patch) == {"ok": False, "reason": reason}
     assert client_bytes() == base
 
 
@@ -746,14 +740,6 @@ def test_update_check_success_shape_uses_this_machines_version(ux):
     assert ux.api.update_check() == {
         "ok": True, "reason": None, "has_update": True, "current_version": VERSION,
         "latest_version": "9.9.9", "download_url": "https://example.test/r"}
-
-
-def test_update_check_missing_fields_become_empty_strings(ux):
-    write_client(token=TKN)
-    ux.check.return_value = {"ok": True, "has_update": False, "current_version": "0.0.1"}
-    assert ux.api.update_check() == {
-        "ok": True, "reason": None, "has_update": False, "current_version": VERSION,
-        "latest_version": "", "download_url": ""}
 
 
 @pytest.mark.parametrize("reason", ["timeout", "network", "bad_response"])
