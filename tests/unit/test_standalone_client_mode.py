@@ -93,6 +93,9 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(standalone.pywebview_api, "_restart_handler", None)
     monkeypatch.setattr(standalone.pywebview_api, "_offline_text_provider", None)
+    monkeypatch.setattr(standalone.pywebview_api, "_loaded_hook", None)
+    e.start_check = Mock(side_effect=lambda: events.append("start_check"))
+    monkeypatch.setattr(standalone.update_notice, "start_background_check", e.start_check)
     monkeypatch.setattr(standalone.restart, "_state", {"requested": False, "spawned": False})
 
     monkeypatch.setattr(standalone.api, "_set_trusted_origin",
@@ -362,6 +365,20 @@ def test_register_bridge_seams_registers_both(env, lifecycle_on):
     assert standalone.restart._state["requested"] is True
 
 
+def test_register_bridge_seams_registers_loaded_hook(env):
+    standalone._register_bridge_seams(env.win, env.lifecycle)
+    assert standalone.pywebview_api._loaded_hook is standalone.shell_sync.on_page_loaded
+
+
+def test_client_mode_starts_update_check_once_after_window_state(monkeypatch, env):
+    _client_json()
+    _ok_preflight(monkeypatch)
+    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
+    standalone._run_client_mode(env.logger)
+    env.start_check.assert_called_once_with()
+    assert env.events.index("start_tray") < env.events.index("start_check") < env.events.index("gui_loop_exit")
+
+
 def test_local_main_path_also_registers_seams():
     src = (WINDOWS_DIR / "standalone.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
@@ -607,3 +624,12 @@ def test_launcher_expect_offline_before_create_window():
     cw = _calls(tree, "webview.create_window")
     assert len(expect) == len(state) == len(cw) == 1
     assert state[0].lineno < cw[0].lineno and expect[0].lineno < cw[0].lineno
+
+
+def test_launcher_wires_shell_sync_and_update_check():
+    tree = _launcher_tree()
+    installs = _calls(tree, "shell_sync.install")
+    checks = _calls(tree, "update_notice.start_background_check")
+    assert len(installs) == 1 and len(checks) == 1
+    startup = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "startup")
+    assert checks[0] in [c for c in ast.walk(startup) if isinstance(c, ast.Call)]

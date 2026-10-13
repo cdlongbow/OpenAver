@@ -24,7 +24,7 @@ import pywebview_api
 import window_state
 from core.logger import setup_logging
 from core import client_settings
-from windows import restart, shell_boot
+from windows import restart, shell_boot, shell_sync, update_notice
 
 startup_trace.mark("modules_loaded")
 
@@ -58,6 +58,7 @@ if __name__ == '__main__':
     window.expose(*pywebview_api.exposed_functions())
     pywebview_api.set_restart_handler(lambda: restart.request_restart(_destroy_all_windows))
     pywebview_api.set_offline_text_provider(shell_boot.offline_texts)
+    shell_sync.install(pywebview_api)
     startup_trace.mark("main_window_created")
 
     def startup(w):
@@ -74,6 +75,7 @@ if __name__ == '__main__':
                 # Codex P2: maximize 失敗時清 live state，否則 on_resized/on_moved
                 # 永遠 early-return，下次啟動仍寫回 maximized=true 形成 sticky failure
                 live["maximized"] = False
+        update_notice.start_background_check()
 
     try:
         webview.start(startup, window)
