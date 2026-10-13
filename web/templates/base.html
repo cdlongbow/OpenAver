@@ -522,13 +522,18 @@
         }
         if (!res.ok) return;
         const c = window.OpenAver && window.OpenAver.conn;
-        if (c) this.connState = c.nextConnState(this.connState, 'ok');
+        let data;
         try {
-            const data = await res.json();
-            this.notifBell.items = data.items ?? [];
-            this.notifBell.unreadCount = data.unread_count ?? 0;
-            this.notifBell.highestLevel = data.highest_unread_level ?? null;
-        } catch (_) {}
+            data = await res.json();
+        } catch (_) {
+            data = null;
+        }
+        const shapeOk = !!data && Array.isArray(data.items);
+        if (c) this.connState = c.nextConnState(this.connState, shapeOk ? 'ok' : 'bad_body');
+        if (!shapeOk) return;
+        this.notifBell.items = data.items;
+        this.notifBell.unreadCount = data.unread_count ?? 0;
+        this.notifBell.highestLevel = data.highest_unread_level ?? null;
     },
     async toggleDrawer(anchorEl) {
         if (this.notifBell.drawerOpen) { return this.closeDrawer(); }

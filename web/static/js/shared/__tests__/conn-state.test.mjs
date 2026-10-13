@@ -21,6 +21,12 @@ test('test_next_conn_state_not_ok_keeps_prev', () => {
     assert.equal(nextConnState('ok', 'weird'), 'ok');
 });
 
+test('test_next_conn_state_bad_body_is_down', () => {
+    // 2xx but body not notifications JSON (e.g. access gate password page) must not read as connected
+    assert.equal(nextConnState('ok', 'bad_body'), 'down');
+    assert.equal(nextConnState('down', 'bad_body'), 'down');
+});
+
 test('test_should_intercept_nav_local_mode_never', () => {
     for (const bridge of [true, false]) {
         for (const state of ['ok', 'down']) {

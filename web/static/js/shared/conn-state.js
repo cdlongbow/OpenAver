@@ -4,12 +4,12 @@
 /**
  * Next connection state after one notification poll.
  * @param {'ok'|'down'} prev
- * @param {'ok'|'error'|'not_ok'} outcome  error = fetch threw; not_ok = non-2xx response
+ * @param {'ok'|'error'|'bad_body'|'not_ok'} outcome  error = fetch threw; bad_body = 2xx but body is not the notifications JSON (e.g. password page); not_ok = non-2xx response
  * @returns {'ok'|'down'}
  */
 export function nextConnState(prev, outcome) {
   if (outcome === 'ok') return 'ok';
-  if (outcome === 'error') return 'down';
+  if (outcome === 'error' || outcome === 'bad_body') return 'down';
   return prev;
 }
 

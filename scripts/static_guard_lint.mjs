@@ -5431,7 +5431,7 @@ const RULES = [
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'insights/main.js', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (main.js script)' },
 
   // ---- [168b-T3] handleNavClick 的離線攔截 mode 必須取自頁面層級的 plug，不取自被點的連結 ----
-  { file: 'web/templates/base.html', kind: 'forbidden-string', pattern: 'currentTarget', note: "[168b-T3] base.html 不得讀 event.currentTarget：除 plug 外的側欄／drawer 連結沒有 data-conn-mode，改讀被點連結會讓「說明」「設定」等在斷線時不被攔，使用者點了直接進一個連不到的空白頁" },
+  { file: 'web/templates/base.html', kind: 'forbidden-string', pattern: 'currentTarget', scope: { anchor: /handleNavClick\s*\(\s*event\s*,\s*href\s*\)\s*\{/, braceBalanced: true }, note: "[168b-T3] base.html 不得讀 event.currentTarget：除 plug 外的側欄／drawer 連結沒有 data-conn-mode，改讀被點連結會讓「說明」「設定」等在斷線時不被攔，使用者點了直接進一個連不到的空白頁" },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: "document.querySelector('a.nav-link--conn')", note: "[168b-T3] handleNavClick 必須從 plug 元素取 mode（單一來源）：少了它，斷線時所有側欄導覽都不會被攔" },
   // ---- [TestInsightsSidebarGuard] 側欄「片庫分析」連結與頒獎台 icon (156a-T4, CD-156-7) ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'href="/insights"', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_link_present — offcanvas 與 desktop sidebar 各一處' },
