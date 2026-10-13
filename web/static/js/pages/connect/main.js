@@ -1,7 +1,7 @@
 // 168b-T6a: connect page (single standalone Alpine component). All remote I/O goes through the shell bridge.
 import { PROBE_ICON_MAP } from '../settings/source-probe-logic.js';
 import {
-    connectActions, probeCode, dotState, kindCode, forgotCode,
+    connectActions, probeCode, dotState, kindCode, forgotCode, cfView,
     mergeRows, staleRows, rulesForSave, rowResultView, pathMapForApply as buildPathMap,
 } from './connect-logic.js';
 
@@ -31,6 +31,7 @@ export function connectPage() {
         savedKind: '',
         lastOk: '',
         shellKind: 'windows',
+        cf: null,
         actionError: '',
         pinError: '',
         moveHintOpen: false,
@@ -79,6 +80,7 @@ export function connectPage() {
             this.savedHost = this.mode === 'client' ? String(state.host || '') : '';
             this.savedRules = Array.isArray(state.path_map) ? state.path_map : [];
             this.urlText = this.savedUrl;
+            this.cf = state.cf ?? null;
             this.bridge = 'ready';
             if (this.mode === 'client' && this.savedUrl) await this.testConnection();
             await this._syncSources();
@@ -376,9 +378,31 @@ export function connectPage() {
         },
 
         cfText() {
-            return this.shellKind === 'mac'
-                ? window.t('connect.cf_mac')
-                : window.t('connect.cf_windows');
+            const v = cfView(this.cf, this.shellKind);
+            if (v.state === 'ready') return window.t('connect.cf_ready');
+            if (v.state === 'unsupported') return window.t('connect.cf_mac');
+            return window.t('connect.cf_not_ready', { reason: this.cfReasonText(v.reason) });
+        },
+
+        cfReasonText(reason) {
+            switch (reason) {
+                case 'starting': return window.t('connect.cf_reason_starting');
+                case 'no_windows': return window.t('connect.cf_reason_no_windows');
+                case 'proxy_unusable': return window.t('connect.cf_reason_proxy_unusable');
+                case 'server_old': return window.t('connect.cf_reason_server_old');
+                case 'unreachable': return window.t('connect.cf_reason_unreachable');
+                case 'unauthorized': return window.t('connect.cf_reason_unauthorized');
+                case 'offline_boot': return window.t('connect.cf_reason_offline_boot');
+                default: return window.t('connect.cf_reason_shell_old');
+            }
+        },
+
+        cfNoteText() {
+            switch (cfView(this.cf, this.shellKind).proxy) {
+                case 'applied': return window.t('connect.cf_proxy_applied');
+                case 'server_local_direct': return window.t('connect.cf_proxy_local_direct');
+                default: return '';
+            }
         },
     };
 }
