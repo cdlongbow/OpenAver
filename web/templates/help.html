@@ -27,7 +27,7 @@
                         <span>{{ t('help.hero.auto_check_toggle') }}</span>
                         <input type="checkbox" class="toggle toggle-primary toggle-sm"
                                x-model="autoCheckUpdate" @change="saveAutoCheckUpdate()"
-                               :disabled="_autoCheckSaving">
+                               :disabled="_autoCheckSaving || _bridgeUnavailable">
                     </label>
                     {% endif %}
                 </h2>

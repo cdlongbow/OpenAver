@@ -1365,6 +1365,7 @@
   },
   "help": {
     "hero": {
+      "this_computer_unavailable": "暫時讀不到這台電腦的更新資訊，請重新開啟說明頁再試",
       "copy_curl": "複製指令",
       "page_title": "使用說明",
       "subtitle": "JAV 影片元數據管理工具",

@@ -81,7 +81,7 @@ test('client mode with an old shell missing update_check routes to server endpoi
   assert.equal(hit(calls, '/api/version'), 1, '舊殼退回 loadVersion');
 });
 
-test('client mode whose bridge never becomes ready falls back to server endpoints', async () => {
+test('client mode whose full bridge never becomes ready is unavailable and never touches the server', async () => {
   const calls = installFetchSpy();
   const log = installBridge(OK_REPLIES(), { ready: false });
   // whenBridgeReady 預設 3 秒逾時：加速它
@@ -90,7 +90,40 @@ test('client mode whose bridge never becomes ready falls back to server endpoint
   try {
     const self = await boot({ ...CLIENT, autoCheckUpdate: 'true' });
     assert.equal(self._bridgeMode, false);
-    assert.equal(log.length, 0);
+    assert.equal(self._bridgeUnavailable, true);
+    assert.equal(self.appVersion, 'help.js.version_load_failed', '不拿伺服器版本冒充');
+
+    self.autoCheckUpdate = false;  // x-model 已翻
+    await self.saveAutoCheckUpdate();
+    assert.equal(self.autoCheckUpdate, true, '沒存到這台 → 還原');
+    assert.equal(self._autoCheckSaving, false);
+
+    await self.checkUpdate();
+    assert.equal(self.errorMsg, 'help.hero.this_computer_unavailable');
+    assert.equal(self.checkDone, true);
+
+    await self.triggerUpdate();
+    assert.equal(self.showUpdateModal, false);
+    await self.confirmUpdate();
+
+    assert.equal(calls.length, 0, `伺服器零請求，實得 ${JSON.stringify(calls.map((c) => c.url))}`);
+    assert.equal(log.length, 0, 'bridge 未就緒不呼叫');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+test('client mode with an old shell that never signals ready still falls back to server endpoints', async () => {
+  const calls = installFetchSpy();
+  const replies = OK_REPLIES();
+  delete replies.update_run;
+  installBridge(replies, { ready: false });
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, ms === 3000 ? 5 : ms, ...a);
+  try {
+    const self = await boot({ ...CLIENT, autoCheckUpdate: 'true' });
+    assert.equal(self._bridgeMode, false);
+    assert.equal(self._bridgeUnavailable, false);
     assert.equal(hit(calls, '/api/version'), 1);
     assert.equal(hit(calls, '/api/check-update'), 1, 'SSR 值判斷的自動檢查');
   } finally {

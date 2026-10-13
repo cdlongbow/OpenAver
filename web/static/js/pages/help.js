@@ -27,6 +27,7 @@ export function helpPage() {
         // 168c-T5: client 模式選路（FE-ALPINE-06：無條件宣告初值）。
         _shellMode: '',
         _bridgeMode: false,
+        _bridgeUnavailable: false,  // 新殼但未就緒：這台讀不到，也不改送伺服器（同設定頁 unavailable）
         _routingReady: null,     // 選路決定的 promise（client 模式才有）
         _clientInitDone: null,   // client 模式 init 後半段（版本／自動檢查）的 promise
 
@@ -61,10 +62,13 @@ export function helpPage() {
         async _decideRoute() {
             const ready = await whenBridgeReady();
             const bridge = window.pywebview?.api ?? null;
-            this._bridgeMode = ready && clientRouting('client', bridge, HELP_BRIDGE_METHODS) === 'bridge';
+            const newShell = clientRouting('client', bridge, HELP_BRIDGE_METHODS) === 'bridge';
+            this._bridgeMode = ready && newShell;
+            this._bridgeUnavailable = !ready && newShell;
         },
 
         async _finishClientInit(ssrAutoCheck) {
+            if (this._bridgeUnavailable) { this.appVersion = window.t('help.js.version_load_failed'); return; }
             let initialAutoCheck = ssrAutoCheck;  // 自動檢查依「初始化讀到的值」且須使用者最終仍開著
             if (!this._bridgeMode) {
                 this.loadVersion();
@@ -94,6 +98,12 @@ export function helpPage() {
                 this._autoCheckSaving = true;  // 選路／初始化等待期間就上鎖，擋並行儲存
                 await this._routingReady;
                 await this._clientInitDone;    // 初始化的覆寫先發生，之後以 desired 為準
+            }
+            if (this._bridgeUnavailable) {
+                this.autoCheckUpdate = !desired;
+                this._autoCheckSaving = false;
+                this.showToast(window.t('help.hero.this_computer_unavailable'), 'error');
+                return;
             }
             if (this._bridgeMode) return this._saveAutoCheckUpdateBridge(desired);
             this._autoCheckSaving = true;  // 擋 checkbox，防兩次快速切換同時有 PUT in-flight
@@ -245,6 +255,11 @@ export function helpPage() {
         async checkUpdate() {
             if (this._shellMode === 'client') await this._routingReady;
             if (this._bridgeMode) return this._checkUpdateBridge();
+            if (this._bridgeUnavailable) {
+                this.errorMsg = window.t('help.hero.this_computer_unavailable');
+                this.checkDone = true;
+                return;
+            }
             this.checkUpdateLoading = true;
             this.checkDone = false;
             this.errorMsg = '';
@@ -269,6 +284,7 @@ export function helpPage() {
         async triggerUpdate() {
             if (this._shellMode === 'client') await this._routingReady;
             if (this._bridgeMode) return this._triggerUpdateBridge();
+            if (this._bridgeUnavailable) return;
             // fetch install-context to determine default path scenario
             try {
                 const resp = await fetch('/api/install-context');
@@ -283,6 +299,7 @@ export function helpPage() {
         async confirmUpdate() {
             if (this._shellMode === 'client') await this._routingReady;
             if (this._bridgeMode) return this._confirmUpdateBridge();
+            if (this._bridgeUnavailable) { this.showUpdateModal = false; return; }
             this.updateLoading = true;
             try {
                 const resp = await fetch('/api/trigger-update', {
