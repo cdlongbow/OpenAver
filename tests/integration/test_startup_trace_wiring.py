@@ -153,6 +153,7 @@ def test_launcher_flushes_after_setup_logging():
     assert "first_page_loaded" in _marks(startup)
 
 
+# [lint-guard: pytest-justified] AST 源碼語意：啟動追蹤標記的呼叫順序
 def test_standalone_client_path_marks_preflight_then_window_and_no_server_marks():
     tree = _tree(STANDALONE)
     client = _func(tree, "_run_client_mode")
@@ -164,6 +165,7 @@ def test_standalone_client_path_marks_preflight_then_window_and_no_server_marks(
     assert startup is not None and _named_calls(startup, "_arm_first_page_mark")
 
 
+# [lint-guard: pytest-justified] AST 源碼語意：啟動追蹤標記的呼叫順序
 def test_launcher_marks_client_preflight_after_flush():
     tree = _tree(LAUNCHER)
     keys = _marks(tree)
