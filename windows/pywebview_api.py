@@ -698,7 +698,7 @@ class Api:
         return {"mode": client_settings.mode(), "url": url,
                 "host": client_settings.display_host(url, with_port=True),
                 "has_token": bool(client_settings.server_token()),
-                "path_map": client_settings.path_map(), "version": client_connect.LOCAL_VERSION,
+                "path_map": client_settings.saved_path_map(), "version": client_connect.LOCAL_VERSION,
                 "last_ok": client_settings.server_last_ok()}
 
     def connect_probe(self, url):
@@ -866,6 +866,8 @@ class Api:
         refused = _not_client()
         if refused:
             return refused
+        if not isinstance(pin, str) or not pin.strip():
+            return _failed("bad_pin")  # 空密碼不送伺服器（會被算一次失敗、全域計數）
         origin = client_settings.canonical_server_url(client_settings.server_url())
         if origin is None:
             return _failed("invalid_url")

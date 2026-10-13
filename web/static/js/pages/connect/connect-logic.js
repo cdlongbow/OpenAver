@@ -131,11 +131,11 @@ const ROW_RESULT_MAP = {
     ok: 'ok',
     not_found: 'fail',
     uncovered: 'fail',
-    timeout: 'fail',
+    timeout: 'slow',
     no_sample: 'note',
 };
 
-/** Row test state code -> ok | fail | note | none. */
+/** Row test state code -> ok | fail | slow | note | none. */
 export function rowResultView(state) {
     return typeof state === 'string' && Object.hasOwn(ROW_RESULT_MAP, state) ? ROW_RESULT_MAP[state] : 'none';
 }

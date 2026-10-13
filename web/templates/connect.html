@@ -117,6 +117,9 @@
                                                 <span>{{ t('connect.rows.not_found') }}</span>
                                             </span>
                                         </template>
+                                        <template x-if="rowResult(row) === 'slow'">
+                                            <span class="connect-line">{{ t('connect.rows.slow') }}</span>
+                                        </template>
                                         <template x-if="rowResult(row) === 'note'">
                                             <span class="connect-line">{{ t('connect.rows.no_sample') }}</span>
                                         </template>

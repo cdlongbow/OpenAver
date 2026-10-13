@@ -89,7 +89,8 @@ test('test_row_result_maps_unavailable_states_to_fail', () => {
     assert.equal(rowResultView('ok'), 'ok');
     assert.equal(rowResultView('not_found'), 'fail');
     assert.equal(rowResultView('uncovered'), 'fail');
-    assert.equal(rowResultView('timeout'), 'fail');
+    assert.equal(rowResultView('timeout'), 'slow');
+    assert.notEqual(rowResultView('timeout'), rowResultView('not_found'));
     assert.equal(rowResultView('no_sample'), 'note');
     assert.equal(rowResultView('empty'), 'none');
     assert.equal(rowResultView('weird'), 'none');

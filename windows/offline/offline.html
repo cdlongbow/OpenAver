@@ -152,6 +152,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 
   function onSubmit() {
     var pin = el('pin-input').value;
+    if (!pin.trim()) { return; }
     setStatus('');
     setBusy(true);
     Promise.resolve(api().offline_login(pin)).then(function (r) {

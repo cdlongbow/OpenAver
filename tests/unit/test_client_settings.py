@@ -414,3 +414,17 @@ def test_min_server_version_not_above_shipped_version():
 
     shipped = tuple(int(x) for x in VERSION.split(".")[:3])
     assert shipped >= client_settings.MIN_SERVER_VERSION
+
+
+def test_saved_path_map_survives_clear_connection_but_path_map_is_empty(env):
+    rules = [{"server": "/a", "local": "Z:\\a"}]
+    _client(env, path_map=rules)
+    client_settings.clear_connection()
+    assert client_settings.path_map() == []
+    assert client_settings.saved_path_map() == rules
+
+
+def test_saved_path_map_missing_or_malformed_is_empty(env):
+    assert client_settings.saved_path_map() == []
+    _client(env, path_map="oops")
+    assert client_settings.saved_path_map() == []

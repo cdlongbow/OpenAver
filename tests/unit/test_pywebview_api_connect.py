@@ -127,6 +127,16 @@ def test_get_state_client_mode_exposes_has_token_not_token(cx):
     assert cx.api.connect_get_state()["last_ok"] == client_settings.server_last_ok() is not None
 
 
+def test_get_state_after_switch_local_still_returns_saved_path_map(cx):
+    write_client(token=TKN)
+    client_settings.clear_connection()
+    assert client_settings.mode() == "local"
+    assert client_settings.path_map() == []  # 本機模式換算維持零規則
+    state = cx.api.connect_get_state()
+    assert state["mode"] == "local"
+    assert state["path_map"] == [{"server": "/volume1/av", "local": "D:/av"}]
+
+
 def test_probe_shape_and_compat_is_plain_dict(cx):
     reply = cx.api.connect_probe(SERVER + "/")
     assert reply == {"ok": True, "reason": None, "version": "0.17.7", "kind": "nas",
@@ -451,6 +461,15 @@ def test_offline_save_url_invalid_writes_nothing(cx):
     before = client_bytes()
     assert cx.api.offline_save_url("a b")["ok"] is False
     assert client_bytes() == before
+
+
+@pytest.mark.parametrize("pin", ["", "   ", "\t\n"])
+def test_offline_login_blank_pin_never_reaches_server(cx, pin):
+    as_offline(cx)
+    write_client()
+    reply = cx.api.offline_login(pin)
+    assert reply["ok"] is False
+    assert cx.login.call_count == 0
 
 
 def test_offline_login_success_saves_token_failure_does_not(cx):

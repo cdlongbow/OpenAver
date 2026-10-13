@@ -138,6 +138,12 @@ def path_map() -> list:
     return pm if isinstance(pm, list) else []
 
 
+def saved_path_map() -> list:
+    """client.json 裡保留的對照表（不看 mode；切回本機後仍在）。只給連線頁預填用，換算請用 path_map()。"""
+    pm = (_load_raw() or {}).get("path_map")
+    return pm if isinstance(pm, list) else []
+
+
 def player_path():
     if mode() == "local":
         try:
