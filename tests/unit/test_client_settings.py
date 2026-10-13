@@ -549,7 +549,6 @@ def test_update_local_settings_writes_and_reports_changed(env):
     ({"close_action": "x"}, "bad_value"),
     ({"auto_check_update": "false"}, "bad_value"),
     ({"auto_check_update": 0}, "bad_value"),
-    ({"video_extensions": []}, "bad_value"),
     ({"video_extensions": [1]}, "bad_value"),
     ({"video_extensions": "mp4"}, "bad_value"),
     ({"tray_locale": "xx"}, "bad_value"),
@@ -564,6 +563,16 @@ def test_update_local_settings_rejects_whole_patch(env, patch, reason):
     r = client_settings.update_local_settings({**patch, "close_action": patch.get("close_action", "tray")})
     assert r == {"ok": False, "reason": reason}
     assert _stat(cj) == before
+
+
+def test_update_local_settings_empty_video_extensions_means_default(env):
+    _client(env, video_extensions=[".zzz"])
+    assert client_settings.video_extensions() == {".zzz"}
+    assert client_settings.update_local_settings({"video_extensions": []}) == \
+        {"ok": True, "changed": ["video_extensions"]}
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["video_extensions"] == []
+    assert client_settings.video_extensions() == set(DEFAULT_VIDEO_EXTENSIONS)
 
 
 def test_rmw_writers_do_not_create_file(env):

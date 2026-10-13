@@ -454,8 +454,8 @@ def _validate_local_value(key: str, value):
         return value if isinstance(value, str) and value in _CLOSE_ACTIONS else _BAD
     if key == "auto_check_update":
         return value if isinstance(value, bool) else _BAD
-    if key == "video_extensions":
-        if not isinstance(value, list) or not value or not all(isinstance(e, str) for e in value):
+    if key == "video_extensions":  # [] 合法：＝用預設（讀取端 fallback）
+        if not isinstance(value, list) or not all(isinstance(e, str) for e in value):
             return _BAD
         return sorted(normalize_extensions(value))
     if key == "tray_locale":

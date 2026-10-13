@@ -89,6 +89,17 @@ def test_extension_copy_success_writes_and_sets_flag(env, monkeypatch):
     assert shell_sync._state["synced"] is True
 
 
+def test_extension_copy_empty_server_list_clears_old_custom(env, monkeypatch):
+    """伺服器清空 ＝ 用預設；client.json 的舊自訂清單必須被清掉並立旗標。"""
+    _client()
+    fetch = Mock(return_value={"ok": True, "reason": None, "extensions": []})
+    monkeypatch.setattr(client_connect, "fetch_video_extensions", fetch)
+    shell_sync.install(_fake_api())
+    shell_sync.on_page_loaded("server", _win(), 1)
+    assert json.loads((env / "client.json").read_text(encoding="utf-8"))["video_extensions"] == []
+    assert shell_sync._state["synced"] is True
+
+
 def test_extension_copy_stale_probe_writes_nothing(env, monkeypatch):
     _client()
     before = _bytes(env)

@@ -275,6 +275,13 @@ def _refuse(req):
     raise httpx.ConnectError("c")
 
 
+def test_fetch_video_extensions_empty_list_is_ok(monkeypatch):
+    """伺服器存 [] ＝「用預設清單」，是合法回應，不是 bad_response。"""
+    _install(monkeypatch, lambda req: _cfg_resp([]))
+    r = client_connect.fetch_video_extensions(URL, "TKN")
+    assert r == {"ok": True, "reason": None, "extensions": []}
+
+
 @pytest.mark.parametrize("handler,reason", [
     (_timeout, "timeout"),
     (_refuse, "unreachable"),
@@ -284,7 +291,6 @@ def _refuse(req):
     (lambda req: httpx.Response(200, content=b"nope"), "bad_response"),
     (lambda req: httpx.Response(200, json={"success": True}), "bad_response"),
     (lambda req: httpx.Response(200, json={"success": True, "data": {"scraper": {}}}), "bad_response"),
-    (lambda req: _cfg_resp([]), "bad_response"),
     (lambda req: _cfg_resp(None), "bad_response"),
     (lambda req: _cfg_resp([".mp4", 5]), "bad_response"),
     (lambda req: httpx.Response(200, json={"data": [1]}), "bad_response"),

@@ -157,7 +157,10 @@ def fetch_sources(url, token) -> dict:
 
 
 def fetch_video_extensions(url, token) -> dict:
-    """從伺服器 ``/api/config`` 抓副檔名清單；任何失敗 ``ok:False``，絕不回預設清單。"""
+    """從伺服器 ``/api/config`` 抓副檔名清單；任何失敗 ``ok:False``，絕不回預設清單。
+
+    空清單 ``[]`` 是合法回應（伺服器存空 ＝ 用預設），回 ``ok:True, extensions:[]``。
+    """
     origin = _origin(url)
     if origin is None:
         return {"ok": False, "reason": "unreachable", "extensions": []}
@@ -174,7 +177,7 @@ def fetch_video_extensions(url, token) -> dict:
     inner = data.get("data") if data is not None and resp.status_code == 200 else None
     scraper = inner.get("scraper") if isinstance(inner, dict) else None
     exts = scraper.get("video_extensions") if isinstance(scraper, dict) else None
-    if not isinstance(exts, list) or not exts or not all(isinstance(e, str) for e in exts):
+    if not isinstance(exts, list) or not all(isinstance(e, str) for e in exts):
         return {"ok": False, "reason": "bad_response", "extensions": []}
     return {"ok": True, "reason": None, "extensions": sorted(normalize_extensions(exts))}
 
