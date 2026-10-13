@@ -12,6 +12,7 @@ import httpx
 from core import client_settings
 from core.logger import get_logger
 from core.version import VERSION as LOCAL_VERSION
+from core.video_extensions import normalize_extensions
 
 logger = get_logger(__name__)
 
@@ -153,6 +154,29 @@ def fetch_sources(url, token) -> dict:
         return {"ok": True, "reason": None, "sources": data["sources"]}
     return {"ok": False, "reason": "unauthorized" if resp.status_code in (401, 403) else "bad_response",
             "sources": []}
+
+
+def fetch_video_extensions(url, token) -> dict:
+    """從伺服器 ``/api/config`` 抓副檔名清單；任何失敗 ``ok:False``，絕不回預設清單。"""
+    origin = _origin(url)
+    if origin is None:
+        return {"ok": False, "reason": "unreachable", "extensions": []}
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    logger.debug(f"[client_connect] fetch_video_extensions {origin} token={'<set>' if token else '<none>'}")
+    with _new_client() as client:
+        try:
+            resp = client.get(f"{origin}/api/config", headers=headers)
+        except httpx.HTTPError as e:
+            return {"ok": False, "reason": _exc_reason(e), "extensions": []}
+    if resp.status_code in (401, 403):
+        return {"ok": False, "reason": "unauthorized", "extensions": []}
+    data = _json(resp)
+    inner = data.get("data") if data is not None and resp.status_code == 200 else None
+    scraper = inner.get("scraper") if isinstance(inner, dict) else None
+    exts = scraper.get("video_extensions") if isinstance(scraper, dict) else None
+    if not isinstance(exts, list) or not exts or not all(isinstance(e, str) for e in exts):
+        return {"ok": False, "reason": "bad_response", "extensions": []}
+    return {"ok": True, "reason": None, "extensions": sorted(normalize_extensions(exts))}
 
 
 def preflight(url, token) -> Preflight:

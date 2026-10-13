@@ -9,6 +9,7 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 import web.app as _web_app
+import core.self_update as _self_update
 
 
 @pytest.fixture
@@ -102,14 +103,14 @@ def test_install_context_path_exception_fallback(client, monkeypatch):
 
     # Path("") 會導致 Path.parent.parent 算出 "." / "." 而非 OSError，
     # 所以改 patch Path 本身拋出例外
-    original_path = _web_app.Path
+    original_path = _self_update.Path
 
     def raise_path(*args, **kwargs):
         if args and args[0] == _web_app.sys.executable:
             raise OSError("simulated path error")
         return original_path(*args, **kwargs)
 
-    monkeypatch.setattr("web.app.Path", raise_path)
+    monkeypatch.setattr("core.self_update.Path", raise_path)
     monkeypatch.setattr(_web_app.sys, "executable", "/some/exe")
 
     resp = client.get("/api/install-context")

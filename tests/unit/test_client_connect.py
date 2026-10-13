@@ -251,3 +251,52 @@ def test_secrets_never_logged(monkeypatch, caplog):
     client_connect.preflight(URL, "TKN-SENTINEL-9")
     client_connect.probe(URL, "TKN-SENTINEL-9")
     assert "TKN-SENTINEL-9" not in caplog.text and "PIN-SENTINEL-1" not in caplog.text
+
+
+# ───────────────────────── 168c-T1：fetch_video_extensions ─────────────────────────
+
+def _cfg_resp(exts):
+    return httpx.Response(200, json={"success": True, "data": {"scraper": {"video_extensions": exts}}})
+
+
+def test_fetch_video_extensions_ok_sorted_normalized_with_bearer(monkeypatch):
+    calls = _install(monkeypatch, lambda req: _cfg_resp(["MP4", "mkv", ".avi"]))
+    r = client_connect.fetch_video_extensions(URL, "TKN")
+    assert r == {"ok": True, "reason": None, "extensions": [".avi", ".mkv", ".mp4"]}
+    assert calls[0].url.path == "/api/config"
+    assert calls[0].headers["authorization"] == "Bearer TKN"
+
+
+def _timeout(req):
+    raise httpx.ReadTimeout("t")
+
+
+def _refuse(req):
+    raise httpx.ConnectError("c")
+
+
+@pytest.mark.parametrize("handler,reason", [
+    (_timeout, "timeout"),
+    (_refuse, "unreachable"),
+    (lambda req: httpx.Response(401, json={"success": False}), "unauthorized"),
+    (lambda req: httpx.Response(403, json={"success": False}), "unauthorized"),
+    (lambda req: httpx.Response(500, json={}), "bad_response"),
+    (lambda req: httpx.Response(200, content=b"nope"), "bad_response"),
+    (lambda req: httpx.Response(200, json={"success": True}), "bad_response"),
+    (lambda req: httpx.Response(200, json={"success": True, "data": {"scraper": {}}}), "bad_response"),
+    (lambda req: _cfg_resp([]), "bad_response"),
+    (lambda req: _cfg_resp(None), "bad_response"),
+    (lambda req: _cfg_resp([".mp4", 5]), "bad_response"),
+    (lambda req: httpx.Response(200, json={"data": [1]}), "bad_response"),
+    (lambda req: httpx.Response(200, json={"data": "oops"}), "bad_response"),
+    (lambda req: httpx.Response(200, json={"data": {"scraper": [1]}}), "bad_response"),
+])
+def test_fetch_video_extensions_failures_keep_ok_false(monkeypatch, handler, reason):
+    _install(monkeypatch, handler)
+    r = client_connect.fetch_video_extensions(URL, "TKN")
+    assert r == {"ok": False, "reason": reason, "extensions": []}
+
+
+def test_fetch_video_extensions_bad_url():
+    assert client_connect.fetch_video_extensions("ftp://x", "t") == \
+        {"ok": False, "reason": "unreachable", "extensions": []}
