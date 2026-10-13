@@ -1,5 +1,9 @@
 // Help 頁面 Alpine.js 元件
 import { toastState } from '../shared/state-toast.js';
+import { whenBridgeReady, callBridge, clientRouting } from '../shared/shell-client.js';
+
+// 168c-T5: 桌面殼 client 模式下，說明頁的更新功能走這台電腦的 bridge；缺任一個（舊殼）就退回伺服器端點。
+const HELP_BRIDGE_METHODS = ['update_check', 'update_context', 'update_run'];
 
 export function helpPage() {
     return {
@@ -20,6 +24,12 @@ export function helpPage() {
         _autoCheckSaving: false,
         _isDesktop: false,
 
+        // 168c-T5: client 模式選路（FE-ALPINE-06：無條件宣告初值）。
+        _shellMode: '',
+        _bridgeMode: false,
+        _routingReady: null,     // 選路決定的 promise（client 模式才有）
+        _clientInitDone: null,   // client 模式 init 後半段（版本／自動檢查）的 promise
+
         // TASK-114b-T4：agent token 顯示區塊。對應 DOM 只在 show_agent_auth 為真時
         // 才會存在（Jinja {% if %}），但依 FE-ALPINE-06 仍必須無條件在此宣告初值。
         agentToken: '',             // 真值；init() 從 .help-agent-token-panel 的 dataset 讀入，
@@ -29,6 +39,8 @@ export function helpPage() {
         maskedTokenDisplay: 'oav_••••••••',  // 固定遮罩字串（不依真值長度計算）
 
         init() {
+            this._shellMode = this.$el.dataset.shellMode || '';
+            if (this._shellMode === 'client') { this._initClient(); return; }
             this.loadVersion();
             this._isDesktop = this.$el.dataset.isDesktop === 'true';
             this.autoCheckUpdate = this.$el.dataset.autoCheckUpdate === 'true';
@@ -36,11 +48,54 @@ export function helpPage() {
             this.agentToken = document.querySelector('.help-agent-token-panel')?.dataset.agentToken || '';
         },
 
+        // client 模式：先等 bridge 就緒再決定走橋或走伺服器（BE-WEBVIEW-06），決定前不打任何伺服器端點。
+        _initClient() {
+            this._isDesktop = this.$el.dataset.isDesktop === 'true';
+            this.autoCheckUpdate = this.$el.dataset.autoCheckUpdate === 'true';
+            this.agentToken = document.querySelector('.help-agent-token-panel')?.dataset.agentToken || '';
+            this._routingReady = this._decideRoute();
+            const ssrAutoCheck = this.autoCheckUpdate;
+            this._clientInitDone = this._routingReady.then(() => this._finishClientInit(ssrAutoCheck));
+        },
+
+        async _decideRoute() {
+            const ready = await whenBridgeReady();
+            const bridge = window.pywebview?.api ?? null;
+            this._bridgeMode = ready && clientRouting('client', bridge, HELP_BRIDGE_METHODS) === 'bridge';
+        },
+
+        async _finishClientInit(ssrAutoCheck) {
+            let initialAutoCheck = ssrAutoCheck;  // 自動檢查依「初始化讀到的值」且須使用者最終仍開著
+            if (!this._bridgeMode) {
+                this.loadVersion();
+            } else {
+                const ctx = await callBridge('update_context');
+                // 這台的版本讀不到就顯示未知，不拿伺服器版本冒充
+                this.appVersion = ctx.ok === true && ctx.current_version
+                    ? `v${ctx.current_version}`
+                    : window.t('help.js.version_load_failed');
+                const local = await callBridge('local_settings_get');
+                // 等待期間使用者若已切換開關，以使用者的值為準，不被舊回覆蓋掉
+                if (this.autoCheckUpdate === ssrAutoCheck
+                    && local.ok === true && typeof local.auto_check_update === 'boolean') {
+                    this.autoCheckUpdate = local.auto_check_update;
+                    initialAutoCheck = local.auto_check_update;
+                }
+            }
+            if (this._isDesktop && initialAutoCheck && this.autoCheckUpdate) this.checkUpdate();
+        },
+
         async saveAutoCheckUpdate() {
             // x-model 已先把 autoCheckUpdate 翻到 desired；PUT 失敗必須還原本地狀態，
             // 否則 UI 顯示「關」但 config 仍「開」→ 下次啟動仍自動查 GitHub，違反 opt-out
             // （比照 settings state-config.js setServerMode 的 success-then-commit / fail-revert）。
             const desired = this.autoCheckUpdate;
+            if (this._shellMode === 'client') {
+                this._autoCheckSaving = true;  // 選路／初始化等待期間就上鎖，擋並行儲存
+                await this._routingReady;
+                await this._clientInitDone;    // 初始化的覆寫先發生，之後以 desired 為準
+            }
+            if (this._bridgeMode) return this._saveAutoCheckUpdateBridge(desired);
             this._autoCheckSaving = true;  // 擋 checkbox，防兩次快速切換同時有 PUT in-flight
             // （server 寫入順序若被打亂，config 會與最後可見的 toggle 狀態相反——兩次 PUT 都
             // success:true，既有 revert-on-failure 邏輯抓不到，見 107 P2 Codex review）
@@ -132,7 +187,64 @@ export function helpPage() {
             ta.remove();
         },
 
+        async _saveAutoCheckUpdateBridge(desired) {
+            this._autoCheckSaving = true;
+            try {
+                const r = await callBridge('local_settings_save', { auto_check_update: desired });
+                if (r.ok === true) {
+                    this.autoCheckUpdate = desired;
+                } else {
+                    this.autoCheckUpdate = !desired;
+                    this.showToast(window.t('help.hero.auto_check_save_failed'), 'error');
+                }
+            } finally {
+                this._autoCheckSaving = false;
+            }
+        },
+
+        async _checkUpdateBridge() {
+            this.checkUpdateLoading = true;
+            this.checkDone = false;
+            this.errorMsg = '';
+            try {
+                const r = await callBridge('update_check');
+                if (r.ok === true && !r.reason) {
+                    this.hasUpdate = !!r.has_update;
+                    this.latestVersion = r.latest_version || '';
+                    this.downloadUrl = r.download_url || '';
+                } else {
+                    this.errorMsg = window.t('help.js.check_update_failed');
+                }
+            } catch (e) {
+                this.errorMsg = window.t('help.js.check_update_failed');
+            } finally {
+                this.checkUpdateLoading = false;
+                this.checkDone = true;
+            }
+        },
+
+        async _triggerUpdateBridge() {
+            const r = await callBridge('update_context');
+            this.isDefaultPath = r.ok === true ? r.is_default_path !== false : true;
+            this.showUpdateModal = true;
+        },
+
+        async _confirmUpdateBridge() {
+            this.updateLoading = true;
+            try {
+                const r = await callBridge('update_run');
+                this._showHelpToast(window.t(r.ok === true
+                    ? 'help.update_modal.toast_success'
+                    : 'help.update_modal.toast_error'));
+            } finally {
+                this.updateLoading = false;
+                this.showUpdateModal = false;
+            }
+        },
+
         async checkUpdate() {
+            if (this._shellMode === 'client') await this._routingReady;
+            if (this._bridgeMode) return this._checkUpdateBridge();
             this.checkUpdateLoading = true;
             this.checkDone = false;
             this.errorMsg = '';
@@ -155,6 +267,8 @@ export function helpPage() {
         },
 
         async triggerUpdate() {
+            if (this._shellMode === 'client') await this._routingReady;
+            if (this._bridgeMode) return this._triggerUpdateBridge();
             // fetch install-context to determine default path scenario
             try {
                 const resp = await fetch('/api/install-context');
@@ -167,6 +281,8 @@ export function helpPage() {
         },
 
         async confirmUpdate() {
+            if (this._shellMode === 'client') await this._routingReady;
+            if (this._bridgeMode) return this._confirmUpdateBridge();
             this.updateLoading = true;
             try {
                 const resp = await fetch('/api/trigger-update', {

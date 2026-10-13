@@ -39,6 +39,9 @@
       "path_uncovered_server": "這個資料夾伺服器看不到：{path}",
       "not_video": "不是影片檔，無法開啟：{path}"
     },
+    "shell": {
+      "update_available": "這台電腦的 OpenAver 有新版 v{version}，到說明頁更新"
+    },
     "browse_dir": {
       "title": "選擇資料夾",
       "select_this": "選取此資料夾",
@@ -1372,6 +1375,9 @@
       "update_available_prefix": "新版本",
       "update_available_suffix": "可用",
       "up_to_date": "已是最新版本",
+      "client_up_to_date": "這台電腦的 OpenAver 已是最新",
+      "client_update_available_prefix": "這台電腦有新版",
+      "client_update_available_suffix": "可用",
       "auto_check_toggle": "啟動時檢查更新",
       "auto_check_save_failed": "設定儲存失敗，請稍後再試",
       "ai_instruction": "貼給 AI agent 就能操作 OpenAver",
@@ -1732,6 +1738,9 @@
     "update_modal": {
       "trigger_btn": "更新",
       "title": "即將開啟安裝視窗",
+      "client_title": "即將更新這台電腦的 OpenAver",
+      "client_case_a_body": "更新的是這台電腦上的 OpenAver，不是伺服器。按下確認後會在這台電腦開啟終端機執行安裝，請先關閉 OpenAver，安裝完成後再自行重新開啟。",
+      "client_case_b_body": "這台電腦的 OpenAver 不是安裝在預設位置。\n安裝程式會先把新版本安裝到預設目錄，安裝期間不需要先關閉目前的 OpenAver。\n\n安裝完成後，請依序操作：\n1. 關閉 OpenAver\n2. 刪除舊安裝目錄中的 python 資料夾\n3. 將新版本的所有檔案複製覆蓋回這台電腦原本的安裝位置\n\n不需要重新安裝或重新設定，直接覆蓋檔案即可使用。",
       "case_a_body": "安裝程式開啟後，請依畫面提示先關閉 OpenAver，再繼續更新。",
       "case_b_body": "您目前不是安裝在預設位置。\n安裝程式會先把新版本安裝到預設目錄，安裝期間不需要先關閉目前的 OpenAver。\n\n安裝完成後，請依序操作：\n1. 關閉 OpenAver\n2. 刪除舊安裝目錄中的 python 資料夾\n3. 將新版本的所有檔案複製覆蓋回原本的安裝位置\n\nOpenAver 不需要重新安裝或重新設定，直接覆蓋檔案即可使用。",
       "cancel_btn": "取消",
