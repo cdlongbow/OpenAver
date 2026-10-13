@@ -2749,6 +2749,25 @@ const RULES = [
     note: '[168b-T8-clipboard-copyoutputpath-uses-shared] 使用者在區網瀏覽器（非安全環境、沒有 navigator.clipboard）的掃描頁按複製輸出路徑 → 直接失敗、不再走備援，貼上是舊內容或沒東西',
   },
 
+  // ---- [168c-T6] 桌面 client 收尾守衛：安裝指令單一來源（CD-168c-7）／client.json 單一寫入出口（CD-168c-2）／導航空窗原生 origin 複查（CD-168c-10） ----
+  // L2 forbidden-string 不剝註解：web／windows／core 的 .py 註解與 docstring 也不得寫出 install.ps1／install.sh（唯一放行 core/self_update.py）。
+  ...['web', 'windows', 'core'].map((dir) => ({
+    file: { dir, ext: ['.py'], recursive: true, ...(dir === 'core' ? { exclude: ['self_update.py'] } : {}) },
+    kind: 'forbidden-string', pattern: /install\.(ps1|sh)/,
+    note: `[168c-T1-installer-command-single-source] ${dir} 內另寫一份安裝指令 → 使用者在桌面殼按「執行更新」跑的腳本與本機版／伺服器版不同，更新動作無法預期（安裝指令只能放 core/self_update.py）`,
+  })),
+  // L3 structure-count 對 .py 剝註解／docstring：註解裡的 save_client_settings( 不計。2 ＝ def 一次 ＋ _rmw 內唯一呼叫。
+  {
+    file: 'core/client_settings.py', kind: 'structure-count', pattern: /save_client_settings\(/, count: 2,
+    note: '[168c-T1-client-json-single-write-funnel] 有人新增繞過 _rmw 共用鎖的 client.json 寫入呼叫（或讓 _rmw 不再落檔）→ 使用者剛存的播放器設定被同時完成的語系同步用舊內容蓋回，畫面說存好了、下次播放還是舊的',
+  },
+  // L5 scope 只涵蓋 _denied 本體（8 格縮排；下一個 4 格縮排的 @staticmethod 截止）；structure-count 剝註解，註解掉的呼叫不算。
+  {
+    file: 'windows/pywebview_api.py', kind: 'structure-count', pattern: '_native_origin(', min: 1,
+    scope: /def _denied\(self, method\):\n((?:        [^\n]*\n|[ \t]*\n)+)/,
+    note: '[168c-T2-denied-rechecks-native-origin] _denied 內少了導航瞬間的原生 origin 複查 → 使用者在受信任頁剛導向外站的空窗內，外站頁面可呼叫「開檔／開資料夾」等 bridge 方法',
+  },
+
   // ---- [163b-T7b] 重開提示的接線（node:test 看不到模板；外觀不守） ----
   {
     file: 'web/templates/settings.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="cfWindowProxyRestartNeeded"/,
