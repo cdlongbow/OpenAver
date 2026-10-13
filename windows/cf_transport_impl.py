@@ -654,9 +654,9 @@ class PyWebViewCfTransport:
         fetch/begin_solve/navigate_and_settle, so this method cannot drift from
         the real failure condition — it reads the same two dicts.
 
-        Why this exists: `standalone.py` deliberately registers a *partial*
+        Why this exists: `build_cf_windows` deliberately hands over a *partial*
         transport when one window fails to build (only javlibrary), so
-        `get_cf_transport() is not None` cannot answer "can THIS source work".
+        "a transport exists" cannot answer "can THIS source work".
         """
         return sorted(k for k in self._wins if not self._dead.get(k, False))
 

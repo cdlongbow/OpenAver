@@ -1,6 +1,6 @@
-"""TASK-163b-T7a A2：windows/webview2_proxy.py 與 standalone._build_cf_windows 接線（純 Linux，全假物件）。
+"""TASK-163b-T7a A2：windows/webview2_proxy.py 與 cf_windows.build_cf_windows 接線（純 Linux，全假物件）。
 
-sibling import 形式照 tests/unit/test_cf_transport_impl.py（standalone 也是這樣取模組）。
+sibling import 形式照 tests/unit/test_cf_transport_impl.py（cf_windows 也是這樣取模組）。
 """
 from __future__ import annotations
 
@@ -10,14 +10,13 @@ import types
 from pathlib import Path
 
 import pytest
-import webview
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WINDOWS_DIR = str(REPO_ROOT / 'windows')
 if WINDOWS_DIR not in sys.path:
     sys.path.insert(0, WINDOWS_DIR)
 
-import standalone  # noqa: E402
+import cf_windows  # noqa: E402
 import webview2_proxy  # noqa: E402
 from cf_transport_impl import PyWebViewCfTransport  # noqa: E402
 from core.cf_transport import CfTransportUnavailable  # noqa: E402
@@ -95,8 +94,8 @@ class FakeBase:
         return 'task'
 
 
-JL_TITLE = standalone.JL_WINDOW_TITLE
-JT_TITLE = standalone.JAVTEN_WINDOW_TITLE
+JL_TITLE = cf_windows.JL_WINDOW_TITLE
+JT_TITLE = cf_windows.JAVTEN_WINDOW_TITLE
 TITLE_TO_KEY = {JL_TITLE: 'javlibrary', JT_TITLE: 'fc-javten'}
 
 
@@ -366,7 +365,7 @@ def test_ready_holder_replays_confirmation_that_arrived_before_bind():
 
 
 # ---------------------------------------------------------------------------
-# standalone._build_cf_windows 接線
+# cf_windows.build_cf_windows 接線
 # ---------------------------------------------------------------------------
 class _FakeWebview:
     def __init__(self):
@@ -381,12 +380,15 @@ class _FakeWebview:
 @pytest.fixture
 def build_env(monkeypatch, tmp_path):
     import core.cf_transport as cft
-    env = types.SimpleNamespace(registered=[], installs=[], records=[], webview=_FakeWebview(), logger=_Logger())
-    monkeypatch.setattr(standalone, 'webview', env.webview)
-    monkeypatch.setattr(standalone, 'get_data_root', lambda: tmp_path)
-    monkeypatch.setattr(standalone, 'current_settings', lambda: 'settings')
-    monkeypatch.setattr(standalone, 'record_cf_window_proxy_at_start', lambda spec: env.records.append(spec))
-    monkeypatch.setattr(cft, 'register_cf_transport', lambda t: env.registered.append(t))
+    env = types.SimpleNamespace(installs=[], records=[], webview=_FakeWebview(), logger=_Logger())
+    monkeypatch.setattr(cf_windows, 'webview', env.webview)
+    monkeypatch.setattr(cf_windows, 'get_data_root', lambda: tmp_path)
+    monkeypatch.setattr(cf_windows, 'record_cf_window_proxy_at_start', lambda spec: env.records.append(spec))
+
+    def _no_register(t):
+        raise AssertionError('build_cf_windows must not register a transport')
+
+    monkeypatch.setattr(cft, 'register_cf_transport', _no_register)
     env.install_result = True
     env.tmp = tmp_path
 
@@ -394,11 +396,11 @@ def build_env(monkeypatch, tmp_path):
         env.installs.append((proxy, udf_root, title_to_key, on_ready))
         return env.install_result
 
-    monkeypatch.setattr(standalone, 'install_webview2_proxy', fake_install)
+    monkeypatch.setattr(cf_windows, 'install_webview2_proxy', fake_install)
 
     def setup(kind, spec):
-        monkeypatch.setattr(standalone, 'desktop_kind', lambda: kind)
-        monkeypatch.setattr(standalone, 'cf_window_proxy', lambda s: spec)
+        monkeypatch.setattr(cf_windows, 'desktop_kind', lambda: kind)
+        monkeypatch.setattr(cf_windows, 'cf_window_proxy', lambda s: spec)
 
     env.setup = setup
     return env
@@ -413,10 +415,11 @@ class _Logger:
 
 def test_no_proxy_path_is_unchanged(build_env):
     build_env.setup('windows', None)
-    jl, jt = standalone._build_cf_windows(build_env.logger)
+    ws = cf_windows.build_cf_windows(build_env.logger, 'settings')
+    jl, jt = ws.jl_win, ws.javten_win
     urls = {t: u for t, u, _, _ in build_env.webview.created}
     assert urls == {JL_TITLE: JAVLIBRARY_ORIGIN, JT_TITLE: 'about:blank'}
-    (transport,) = build_env.registered
+    transport = ws.transport
     assert transport._pending == set()
     assert transport._origins['javlibrary'] == transport._origin(JAVLIBRARY_ORIGIN)
     assert transport.available_sites() == ['fc-javten', 'javlibrary']
@@ -426,10 +429,10 @@ def test_no_proxy_path_is_unchanged(build_env):
 
 def test_applied_proxy_windows_start_on_blank_and_unseeded(build_env):
     build_env.setup('windows', _proxy())
-    standalone._build_cf_windows(build_env.logger)
+    ws = cf_windows.build_cf_windows(build_env.logger, 'settings')
     urls = {t: u for t, u, _, _ in build_env.webview.created}
     assert urls == {JL_TITLE: 'about:blank', JT_TITLE: 'about:blank'}
-    (transport,) = build_env.registered
+    transport = ws.transport
     assert transport._origins['javlibrary'] is None
     assert transport._pending == {'javlibrary', 'fc-javten'}
     assert transport.available_sites() == []
@@ -443,7 +446,7 @@ def test_applied_proxy_windows_start_on_blank_and_unseeded(build_env):
 
 def test_title_map_covers_every_created_window(build_env):
     build_env.setup('windows', _proxy())
-    standalone._build_cf_windows(build_env.logger)
+    cf_windows.build_cf_windows(build_env.logger, 'settings')
     created_titles = {t for t, _, _, _ in build_env.webview.created}
     title_to_key = build_env.installs[0][2]
     assert set(title_to_key) == created_titles
@@ -453,10 +456,11 @@ def test_title_map_covers_every_created_window(build_env):
 def test_install_failure_creates_no_verification_windows(build_env):
     build_env.install_result = False
     build_env.setup('windows', _proxy())
-    jl, jt = standalone._build_cf_windows(build_env.logger)
+    ws = cf_windows.build_cf_windows(build_env.logger, 'settings')
+    jl, jt = ws.jl_win, ws.javten_win
     assert build_env.webview.created == []
     assert (jl, jt) == (None, None)
-    (transport,) = build_env.registered
+    transport = ws.transport
     assert transport.available_sites() == []
     assert build_env.records == [_proxy()]       # install 失敗仍記錄
 
@@ -464,12 +468,12 @@ def test_install_failure_creates_no_verification_windows(build_env):
 def test_mac_never_touches_proxy_machinery(build_env, monkeypatch):
     build_env.setup('mac', _proxy())
     called = []
-    monkeypatch.setattr(standalone, 'cf_window_proxy', lambda s: called.append(1))
-    standalone._build_cf_windows(build_env.logger)
+    monkeypatch.setattr(cf_windows, 'cf_window_proxy', lambda s: called.append(1))
+    ws = cf_windows.build_cf_windows(build_env.logger, 'settings')
     assert build_env.installs == [] and build_env.records == [] and called == []
     urls = {t: u for t, u, _, _ in build_env.webview.created}
     assert urls == {JL_TITLE: JAVLIBRARY_ORIGIN, JT_TITLE: 'about:blank'}
-    (transport,) = build_env.registered
+    transport = ws.transport
     assert transport._pending == set()
 
 
@@ -479,8 +483,8 @@ def test_unreadable_proxy_spec_fails_closed(build_env, monkeypatch):
     def boom(s):
         raise RuntimeError('config broken')
 
-    monkeypatch.setattr(standalone, 'cf_window_proxy', boom)
-    standalone._build_cf_windows(build_env.logger)
+    monkeypatch.setattr(cf_windows, 'cf_window_proxy', boom)
+    ws = cf_windows.build_cf_windows(build_env.logger, 'settings')
     assert build_env.webview.created == []
-    (transport,) = build_env.registered
+    transport = ws.transport
     assert transport.available_sites() == []
