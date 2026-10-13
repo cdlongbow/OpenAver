@@ -43,7 +43,11 @@ def api_instance(api_module, monkeypatch, tmp_path):
     import core.config as core_config
     monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_path / "config.json")
+    w = MagicMock()
+    w.get_current_url.return_value = "http://127.0.0.1:8000/"
+    api_module.set_window(w)
     inst = api_module.Api()
+    inst._seen_origin = "http://127.0.0.1:8000"
     inst._trusted = True
     return inst
 
