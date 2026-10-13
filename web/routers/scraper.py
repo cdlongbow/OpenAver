@@ -7,6 +7,8 @@ Scraper API 路由 - 單檔刮削
 """
 
 import asyncio
+import contextvars
+import functools
 import json
 import os
 from dataclasses import asdict
@@ -33,9 +35,9 @@ from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from web.routers._custom_gate import refusal_for # noqa: PLC2701 — 卡片指定的 web 內部底線模組（165-T7b），同 router 層共用 gate 句表，尚未升格為公開名
 from core.source_config import validate_source_id
 from core.source_settings import is_uncensored_mode_effective
+from core import cf_handoff
 from core.cf_transport import get_cf_transport, CfChallengeRequired, CfTransportUnavailable
 from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
-from core.scrapers.fc2_javten import JAVTEN_ORIGIN
 from core.logger import get_logger
 from core.config import load_config, STEM_IMAGE_MODES
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
@@ -55,10 +57,8 @@ logger = get_logger(__name__)
 # 互動 CF 的 site → origin 查表。值來自各 scraper 模組的公開常數（CD-118a-12）。
 # 新增 manual_only CF 來源時必須同步這張表（F-1 parity 測試會擋漂移）。
 # 查不到不得 .get(source, JAVLIBRARY_ORIGIN)——那正是「解完驗證去刮錯站」的原 bug。
-_CF_SITE_ORIGINS = {
-    'javlibrary': JAVLIBRARY_ORIGIN,
-    'fc-javten': JAVTEN_ORIGIN,
-}
+# 168d：單一來源在 core.cf_handoff.CF_SITE_ORIGINS（殼註冊表與此處共用），這裡留別名給既有呼叫端與 F-1 測試。
+_CF_SITE_ORIGINS = cf_handoff.CF_SITE_ORIGINS
 
 
 def _begin_solve_for_source(source: Optional[str]) -> Optional[str]:
@@ -1069,7 +1069,8 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
 
                     try:
                         loop = asyncio.get_running_loop()
-                        status, payload = await loop.run_in_executor(None, _do_readonly)
+                        _ro_ctx = contextvars.copy_context()
+                        status, payload = await loop.run_in_executor(None, _ro_ctx.run, _do_readonly)
                         if status == 'ok':
                             # CD-147b-5／147b-T4：與可寫同形——fill_missing 才套四項判準；
                             # 其他 mode 維持 success（refresh_full 可能只更新 DB）。⚠️ 前端
@@ -1148,37 +1149,34 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                     if request.mode == "refresh_full":
                         cache_key = (item.number.upper(), effective_source, effective_lang)
                         if cache_key not in scraper_cache:
-                            fetched = await loop.run_in_executor(
-                                None,
-                                lambda n=item.number, es=effective_source, el=effective_lang: search_jav(
-                                    n,
-                                    source=es,
-                                    javbus_lang=el,
-                                ),
+                            _pf_ctx = contextvars.copy_context()
+                            _prefetch = functools.partial(
+                                search_jav, item.number, source=effective_source, javbus_lang=effective_lang,
                             )
+                            fetched = await loop.run_in_executor(None, _pf_ctx.run, _prefetch)
                             # 負向 cache：search_jav 回 None → 存 {}（空 dict falsy）
                             # enrich_single 收到 {} 時 `is None` 為 False（不再搜），
                             # `not scraper_data` 為 True（回錯誤）
                             scraper_cache[cache_key] = fetched if fetched else {}
                         cached_data = scraper_cache[cache_key]
 
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda i=item, sd=cached_data, es=effective_source, el=effective_lang: enrich_single(
-                            file_path=i.file_path,
-                            number=i.number,
-                            mode=request.mode,
-                            write_nfo=request.write_nfo,
-                            write_cover=request.write_cover,
-                            write_extrafanart=request.write_extrafanart,
-                            overwrite_existing=request.overwrite_existing,
-                            external_manager=config.get("scraper", {}).get("external_manager", "off"), nfo_title_format=config.get("scraper", {}).get("nfo_title_format", '[{num}]{title}'),
-                            source=es if es != "auto" else None,
-                            javbus_lang=el,
-                            scraper_data=sd,
-                            path_mappings=_ro_mappings,
-                        ),
+                    _en_ctx = contextvars.copy_context()
+                    _enrich = functools.partial(
+                        enrich_single,
+                        file_path=item.file_path,
+                        number=item.number,
+                        mode=request.mode,
+                        write_nfo=request.write_nfo,
+                        write_cover=request.write_cover,
+                        write_extrafanart=request.write_extrafanart,
+                        overwrite_existing=request.overwrite_existing,
+                        external_manager=config.get("scraper", {}).get("external_manager", "off"), nfo_title_format=config.get("scraper", {}).get("nfo_title_format", '[{num}]{title}'),
+                        source=effective_source if effective_source != "auto" else None,
+                        javbus_lang=effective_lang,
+                        scraper_data=cached_data,
+                        path_mappings=_ro_mappings,
                     )
+                    result = await loop.run_in_executor(None, _en_ctx.run, _enrich)
                     result_dict = asdict(result)
                     if result.success:
                         # CD-147b-5／147b-T4：fill_missing 才套四項判準（與前端 didEnrichSomething

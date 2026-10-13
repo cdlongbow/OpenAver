@@ -1029,6 +1029,7 @@
     "batch_enrich_done_with_errors": "批次補完（部分失敗）",
     "batch_enrich_failed": "批次補完中斷",
     "jl_cf_timeout": "Cloudflare 驗證逾時",
+    "cf_shell_lost": "驗證視窗沒有回應，請重新整理後再試",
     "update_available": "OpenAver 有新版本",
     "auto_organize_summary": "定時整理",
     "auto_organize_aborted": "定時整理已中止",

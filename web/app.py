@@ -6,7 +6,6 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse
 import asyncio
 import contextlib
-import ipaddress
 import os
 import re
 import subprocess  # noqa: F401 — 既有測試 mock.patch("web.app.subprocess.Popen") 需要此名稱存在
@@ -49,6 +48,14 @@ from core import source_reachability
 from core import self_update
 from core.platform_info import is_synology
 from core.desktop_env import desktop_kind
+from core import cf_handoff
+from core.loopback import is_loopback_host
+from core.cf_transport import register_cf_transport
+from web.shell_identity import shell_key
+
+# 168d CD-168d-3／BE-LINT-09：sink 註冊放 module level（不放 lifespan）——所有進入點（含不啟動
+# lifespan 的桌面版與 TestClient）import 時就已註冊。standalone 之後可用自己的 transport 覆蓋。
+register_cf_transport(cf_handoff.transport())
 
 
 # 路徑設定
@@ -316,6 +323,7 @@ from web.routers import settings_link as settings_link_router
 from web.routers import scraper_sources as scraper_sources_router
 from web.routers import settings_metatube as settings_metatube_router
 from web.routers import cf as cf_router
+from web.routers import cf_shell as cf_shell_router
 from web.routers import diagnostics as diagnostics_router
 from web.routers import access as access_router
 from web.routers import client as client_router
@@ -353,6 +361,7 @@ app.include_router(settings_link_router.router)
 app.include_router(scraper_sources_router.router)
 app.include_router(settings_metatube_router.router)
 app.include_router(cf_router.router)
+app.include_router(cf_shell_router.router)
 app.include_router(diagnostics_router.router)
 app.include_router(access_router.router)
 app.include_router(client_router.router)
@@ -646,35 +655,27 @@ async def oa_shell_signal(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def cf_shell_scope(request: Request, call_next):
+    """把請求所屬殼的身分寫進 `cf_handoff.current_key`（CD-168d-4）。
+
+    宣告在 oa_shell_signal 之後＝最外層（BE-API-07）；**不讀 shell_kind**。零 I/O。
+    sync 路由經 anyio threadpool 會帶著這份 context；`ThreadPoolExecutor.submit` 不會
+    （刻意：到不了 manual_only 的 CF 站，見 tests/unit/test_cf_executor_boundary_contract.py）。
+    """
+    token = cf_handoff.current_key.set(shell_key(request))
+    try:
+        return await call_next(request)
+    finally:
+        cf_handoff.current_key.reset(token)
+
+
 def _is_loopback_host(host):
     """判斷 `host` 是否為本機（`/api/trigger-update` 三層護欄 CD-110b-5 用）。
 
-    與 `_LOOPBACK_HOSTS`（:204）的關係：`_LOOPBACK_HOSTS` 是 middleware 的**短路
-    名單**，只收兩個精確字面值，回答的是「要不要跳過讀 config」——這裡**不動它**。
-    本函式回答的是另一個問題：「這個 client／Origin host 是不是本機」，用
-    `ipaddress.is_loopback` 額外涵蓋 `127.0.0.0/8` 其餘位址、IPv4-mapped IPv6
-    （`::ffff:127.0.0.1`），並加收 `localhost` 字面（純位址比對會漏它）。兩者
-    判斷的集合都只可能來自本機，所以本函式是 `_LOOPBACK_HOSTS` 的**嚴格超集**，
-    超集不製造安全缺口；反過來若本函式比 `_LOOPBACK_HOSTS` 更窄，才會出現
-    「middleware 放行但端點誤拒」的桌面自鎖風險。
+    本體在 `core.loopback.is_loopback_host()`（全庫唯一所有者），這裡只委派。
     """
-    if not host:
-        return False
-    if host == "localhost":
-        return True
-    try:
-        addr = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    # IPv4-mapped IPv6（`::ffff:127.0.0.1`）必須先解回 IPv4 才判得對：
-    # 實測 `ipaddress.ip_address('::ffff:127.0.0.1').is_loopback` 是 **False**
-    # （`is_loopback` 只認 `::1`）。dual-stack socket 上的 uvicorn 有機會把本機
-    # 連線的 peer 回報成這個形式，不解就會把桌面版自己鎖在門外——那是 plan-110b
-    # §4 風險表列為「最嚴重」的那一條。解回 IPv4 後 `127.0.0.1` 正常判 True。
-    mapped = getattr(addr, "ipv4_mapped", None)
-    if mapped is not None:
-        addr = mapped
-    return addr.is_loopback
+    return is_loopback_host(host)
 
 
 def _is_loopback_origin(origin):
@@ -782,14 +783,16 @@ def get_common_context(request: Request) -> dict:
     ]
     config['sources'] = list(config.get('sources') or []) + _custom_entries
     # 70-T5：cf_transport_available — standalone 已 register → true；dev/server → false
-    from core.cf_transport import get_cf_transport as _get_cf_transport
-    _cf_transport_available = _get_cf_transport() is not None
+    # 168d CD-168d-5：此請求的殼可用（cf_available_here）且請求自稱桌面殼（oa_shell 只用來窄化，
+    # 授權／歸屬不讀它）才亮；手機／別台瀏覽器即使與殼同 IP 也維持灰。
+    from core.cf_transport import cf_available_here as _cf_available_here
+    _cf_transport_available = _cf_available_here() and getattr(request.state, "shell_kind", None) is not None
 
     # 118a-T9：per-site 可用性。cf_transport_available 是全域布林，答不了「這個來源
     # 能不能用」——standalone 在某個視窗建立失敗時仍會註冊一個只含另一站的 transport。
     # None ＝ 判不出來 → 前端沿用舊的全域旗標（fail-open，見 get_cf_available_sites）。
     from core.cf_transport import get_cf_available_sites as _get_cf_sites
-    _cf_sites = _get_cf_sites()
+    _cf_sites = _get_cf_sites() if _cf_transport_available else []
 
     _server_mode = bool(config.get('general', {}).get('server_mode', False))
 

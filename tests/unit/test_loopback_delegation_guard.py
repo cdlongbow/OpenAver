@@ -71,8 +71,8 @@ def _identity(entry: LedgerEntry) -> str:
 # 帳本只准減不准增。加一條要在 PR diff 上被看見。
 LEDGER: tuple[LedgerEntry, ...] = (
     LedgerEntry(
-        rel="web/app.py",
-        scope="_is_loopback_host",
+        rel="core/loopback.py",
+        scope="is_loopback_host",
         shape="function_body",
         reason=(
             "allow-direction（client）：本機 client 判斷的**單一所有者**；"
@@ -341,7 +341,7 @@ def test_no_new_handwritten_loopback_judgments():
     assert all_hits == [], (
         f"新增手寫 loopback 判斷（{len(all_hits)} 處）：\n"
         + "\n".join(all_hits)
-        + "\n→ allow-direction client 判斷必須委派 web.app._is_loopback_host()"
+        + "\n→ allow-direction client 判斷必須委派 core.loopback.is_loopback_host()（web.app._is_loopback_host 為其委派）"
         "（CD-114a-5）；deny-direction 新殘留須具名入帳並標明方向。"
     )
 

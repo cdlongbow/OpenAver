@@ -95,7 +95,9 @@ def test_bootstrap_injects_cf_sites_when_transport_reports_them(client, temp_con
     patch target 是 core.cf_transport.get_cf_available_sites。
     """
     monkeypatch.setattr("core.cf_transport.get_cf_available_sites", lambda: ["javlibrary"])
-    html = client.get("/search").text
+    # 168d：SSR 窄化——要有殼才亮（?oa_shell=windows）且此請求的殼可用（cf_available_here）。
+    monkeypatch.setattr("core.cf_transport.cf_available_here", lambda: True)
+    html = client.get("/search?oa_shell=windows").text
     # [lint-guard: pytest-justified] 驗的是 get_common_context() → Jinja render 的跨層
     # 序列化結果，不是模板原始碼。static_guard_lint 讀得到模板裡有沒有寫 cf_sites，
     # 讀不到「transport 回報 ['javlibrary'] 時真的 render 出這個值」——要 render 才知道。

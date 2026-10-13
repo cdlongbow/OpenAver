@@ -12,7 +12,6 @@ log 紀律：不記代理位址（可能含 user:pass@），要記只記 scope�
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 from urllib.parse import unquote, urlsplit
@@ -21,6 +20,7 @@ import requests
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from core.desktop_env import desktop_kind
+from core.loopback import is_loopback_host
 
 Conn = str  # 'source_query' | 'image' | 'actress'
 
@@ -204,21 +204,10 @@ def cf_window_proxy_restart_needed() -> bool:
 
 
 def _host_is_loopback(host: Optional[str]) -> bool:
-    """loopback 判斷（BE-SEC-01）：`localhost` 另收、IPv4-mapped IPv6 取 `ipv4_mapped`、
-    無法解析 → False（呼叫端據此「不轉直連」）。"""
+    """去 `[]`／大小寫後委派唯一所有者；空值 → False（呼叫端據此「不轉直連」）。"""
     if not host:
         return False
-    host = host.strip().strip('[]').lower()
-    if host == 'localhost':
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    mapped = getattr(ip, 'ipv4_mapped', None)
-    if mapped is not None:
-        ip = mapped
-    return ip.is_loopback
+    return is_loopback_host(host.strip().strip('[]').lower())
 
 
 def _url_host(url: str) -> Optional[str]:

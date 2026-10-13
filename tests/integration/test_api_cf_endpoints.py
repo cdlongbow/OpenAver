@@ -102,6 +102,71 @@ class TestCfAbandonEndpoint:
             f"emit title_key 應為 'notif.jl_cf_timeout'，實際: {title_key!r}"
 
 
+class TestCfAbandonShellLost:
+    """TASK-168d-T2 / CD-168d-12：abandon 依「這台殼剛失聯」選通知文案。"""
+
+    @pytest.fixture
+    def lost_shell(self, monkeypatch):
+        import time
+
+        from core import cf_handoff
+        from core.cf_transport import get_cf_transport, register_cf_transport
+
+        broker = cf_handoff.Broker()
+        monkeypatch.setattr(cf_handoff, "_broker", broker)
+        prev = get_cf_transport()
+        register_cf_transport(cf_handoff.transport())
+        tok = cf_handoff.current_key.set(cf_handoff._UNSET)
+        broker.register_shell("loopback", ["javlibrary"])
+        # 殼過期（> LIVENESS_S 沒再回報）→ is_ready 立即失敗並記下 shell_lost
+        monkeypatch.setattr(cf_handoff, "_now", lambda: time.monotonic() + cf_handoff.LIVENESS_S + 100)
+        yield broker
+        cf_handoff.current_key.reset(tok)
+        register_cf_transport(prev)
+
+    def test_abandon_after_shell_lost_emits_cf_shell_lost(self, client, mocker, lost_shell):
+        mock_emit = mocker.patch("web.routers.cf.emit_notification")
+        status = client.get("/api/cf/status", params={"key": "javlibrary"})
+        assert status.json() == {"ready": False, "unavailable": True}
+        client.post("/api/cf/abandon")
+        assert mock_emit.call_args.args[:2] == ("warn", "notif.cf_shell_lost")
+        assert mock_emit.call_args.kwargs["task_type"] == "cf_abandon"
+
+    def test_second_abandon_after_consumed_falls_back_to_timeout_text(self, client, mocker, lost_shell):
+        mock_emit = mocker.patch("web.routers.cf.emit_notification")
+        client.get("/api/cf/status", params={"key": "javlibrary"})
+        client.post("/api/cf/abandon")
+        client.post("/api/cf/abandon")
+        titles = [c.args[1] for c in mock_emit.call_args_list]
+        assert titles == ["notif.cf_shell_lost", "notif.jl_cf_timeout"]
+
+    def test_abandon_without_any_loss_keeps_timeout_text(self, client, mocker, lost_shell):
+        mock_emit = mocker.patch("web.routers.cf.emit_notification")
+        client.post("/api/cf/abandon", params={"key": "fc-javten"})
+        assert mock_emit.call_args.args[1] == "notif.jl_cf_timeout"
+
+
+class TestSpecifiedSourceCfErrorSentences:
+    """TASK-168d-T2：指定來源搜尋的 CF 錯誤句依 source 指名（只動句子，不動流程）。"""
+
+    @pytest.mark.parametrize("exc,source,expected", [
+        (CfTransportUnavailable, "javlibrary", "JavLibrary 僅限桌面應用程式（standalone）使用"),
+        (CfChallengeRequired, "javlibrary", "JavLibrary 需要解決 CF 驗證（請使用桌面應用程式）"),
+        (CfTransportUnavailable, "fc-javten", "FC2-javten 僅限桌面應用程式（standalone）使用"),
+        (CfChallengeRequired, "fc-javten", "FC2-javten 需要解決 CF 驗證（請使用桌面應用程式）"),
+    ])
+    def test_error_sentence_names_the_requested_source(self, client, monkeypatch, exc, source, expected):
+        def _boom(*a, **kw):
+            raise exc("x")
+
+        monkeypatch.setattr("core.scraper.search_jav_single_source", _boom)
+        body = client.get("/api/search", params={"mode": "exact", "source": source, "q": "SSIS-001"}).json()
+        assert body["success"] is False
+        assert body["error"] == expected
+        if source == "fc-javten":
+            assert "JavLibrary" not in body["error"]
+
+
 # ── /api/rescrape/preview CF 例外處理 ─────────────────────────────────────────
 
 class TestRescrapePreviewCfExceptions:
