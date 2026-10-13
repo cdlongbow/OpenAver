@@ -6,10 +6,15 @@ Provides a Protocol interface, two exception types, and module-level
 register/get functions so scraper code can call WebView-based CF fetching
 without importing anything from ``windows/``.
 
-DI chain (plan-70b §1.1):
-  windows/cf_transport_impl.py  →  implements CfTransport
-  standalone.py startup          →  calls register_cf_transport()
-  dev launcher.py                →  never calls register → get returns None
+DI chain (plan-168d CD-168d-1):
+  core/cf_handoff.py            →  HandoffCfTransport implements CfTransport;
+                                    the server process (web/app.py) registers it
+                                    at import time, so get_cf_transport() is never
+                                    None there. It hands each call to the shell
+                                    (desktop client / local shell) of the request.
+  windows/cf_transport_impl.py  →  the real WebView backend, lives in the shell
+                                    side agent, not registered on the server.
+  dev launcher / tests          →  may never register → get returns None
                                     → scraper raises CfTransportUnavailable
 """
 from typing import Protocol, Optional
@@ -162,3 +167,23 @@ def get_cf_available_sites() -> Optional[list[str]]:
     except Exception:            # noqa: BLE001 — never let this break page render
         logger.warning("get_cf_available_sites: transport.available_sites() 失敗，改用舊的全域旗標", exc_info=True)
         return None
+
+
+def cf_available_here() -> bool:
+    """Is a CF transport usable for *this request's* shell?
+
+    No transport → False. A transport that exposes ``available_here()`` answers
+    for itself (raising → False). A legacy transport without that method
+    (e.g. test fakes) → True, preserving the old process-wide behaviour.
+    """
+    transport = get_cf_transport()
+    if transport is None:
+        return False
+    fn = getattr(transport, 'available_here', None)
+    if not callable(fn):
+        return True
+    try:
+        return bool(fn())
+    except Exception:            # noqa: BLE001 — never let this break page render
+        logger.warning("cf_available_here: transport.available_here() 失敗", exc_info=True)
+        return False
