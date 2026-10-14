@@ -11,6 +11,7 @@ import httpx
 
 from core import client_settings
 from core.logger import get_logger
+from core.proxy_policy import settings_from_config
 from core.version import VERSION as LOCAL_VERSION
 from core.video_extensions import normalize_extensions
 
@@ -180,6 +181,27 @@ def fetch_video_extensions(url, token) -> dict:
     if not isinstance(exts, list) or not all(isinstance(e, str) for e in exts):
         return {"ok": False, "reason": "bad_response", "extensions": []}
     return {"ok": True, "reason": None, "extensions": sorted(normalize_extensions(exts))}
+
+
+def fetch_proxy_settings(url, token) -> dict:
+    """從伺服器 ``/api/config`` 抓代理設定；任何失敗 ``ok:False``、``settings=None``，絕不回預設設定。"""
+    origin = _origin(url)
+    if origin is None:
+        return {"ok": False, "reason": "unreachable", "settings": None}
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    logger.debug(f"[client_connect] fetch_proxy_settings {origin} token={'<set>' if token else '<none>'}")
+    with _new_client() as client:
+        try:
+            resp = client.get(f"{origin}/api/config", headers=headers)
+        except httpx.HTTPError as e:
+            return {"ok": False, "reason": _exc_reason(e), "settings": None}
+    if resp.status_code in (401, 403):
+        return {"ok": False, "reason": "unauthorized", "settings": None}
+    data = _json(resp)
+    inner = data.get("data") if data is not None and resp.status_code == 200 else None
+    if not isinstance(inner, dict):
+        return {"ok": False, "reason": "bad_response", "settings": None}
+    return {"ok": True, "reason": None, "settings": settings_from_config(inner)}
 
 
 def preflight(url, token) -> Preflight:

@@ -9,6 +9,7 @@ CF transport 控制端點（與 scraper router 語意正交）。
 """
 from fastapi import APIRouter
 
+from core import cf_handoff
 from core.cf_transport import get_cf_transport, CfTransportUnavailable
 from core.logger import get_logger
 from web.routers.notifications import emit_notification
@@ -43,9 +44,12 @@ def cf_abandon(key: str = "javlibrary") -> dict:
         "javlibrary": "notif.jl_cf_timeout",
         "fc-javten": "notif.jl_cf_timeout",
     }
+    # 168d CD-168d-12：這台殼剛失聯（無殼／殼過期／領不到工作）→ 告訴使用者重開殼，
+    # 不是「自己沒點驗證」。key 參數是站台代號；殼身分是 current_key——兩個東西。
+    lost = cf_handoff.consume_failure_here(cf_handoff.current_key.get()) == "shell_lost"
     emit_notification(
         "warn",
-        _title_by_key.get(key, "notif.jl_cf_timeout"),
+        "notif.cf_shell_lost" if lost else _title_by_key.get(key, "notif.jl_cf_timeout"),
         task_type="cf_abandon",
     )
     return {"ok": True}

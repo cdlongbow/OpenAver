@@ -145,3 +145,24 @@ export function pathMapForApply(s) {
     if (s.sourcesState !== 'ok' || s.sourcesFor !== (s.probe && s.probe.url)) return null;
     return rulesForSave(s.rows);
 }
+
+// ---------- CF line (168d-T6) ----------
+
+const CF_STATES = ['ready', 'not_ready', 'unsupported'];
+const CF_REASONS = ['starting', 'no_windows', 'proxy_unusable', 'server_old', 'unreachable', 'unauthorized', 'offline_boot', 'shell_old'];
+const CF_PROXY = ['applied', 'server_local_direct'];
+
+function proxyCode(note) {
+    return CF_PROXY.includes(note) ? note : null;
+}
+
+/** connect_get_state `cf` -> { state, reason, proxy } codes. Bad shape (old shell) degrades to not_ready/shell_old. */
+export function cfView(cf, shellKind) {
+    if (!cf || typeof cf !== 'object') return { state: 'not_ready', reason: 'shell_old', proxy: null };
+    if (!CF_STATES.includes(cf.state)) return { state: 'not_ready', reason: 'shell_old', proxy: null };
+    if (cf.state === 'unsupported') return { state: 'unsupported', reason: null, proxy: null };
+    const proxy = shellKind === 'mac' ? null : proxyCode(cf.proxy_note);
+    if (cf.state === 'ready') return { state: 'ready', reason: null, proxy };
+    const reason = CF_REASONS.includes(cf.reason) ? cf.reason : 'shell_old';
+    return { state: 'not_ready', reason, proxy };
+}

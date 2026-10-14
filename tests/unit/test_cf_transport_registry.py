@@ -61,3 +61,24 @@ def test_transport_available_sites_raises_returns_none_not_propagated():
 
     m.register_cf_transport(BrokenTransport())
     assert m.get_cf_available_sites() is None
+
+
+# ---- cf_available_here()（168d-T1）----
+
+
+
+@pytest.mark.parametrize("answer", [True, False])
+def test_cf_available_here_delegates(answer):
+    class T:
+        def available_here(self): return answer
+
+    m.register_cf_transport(T())
+    assert m.cf_available_here() is answer
+
+
+def test_cf_available_here_exception_false():
+    class T:
+        def available_here(self): raise RuntimeError("boom")
+
+    m.register_cf_transport(T())
+    assert m.cf_available_here() is False

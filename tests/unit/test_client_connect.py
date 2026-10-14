@@ -303,3 +303,51 @@ def test_fetch_video_extensions_failures_keep_ok_false(monkeypatch, handler, rea
     assert r == {"ok": False, "reason": reason, "extensions": []}
 
 
+
+
+# ---- fetch_proxy_settings（168d-T1）----
+
+def _cfg(url="http://127.0.0.1:7890", scope="all"):
+    return {"success": True, "data": {"search": {"proxy_url": url, "proxy_scope": scope}}}
+
+
+def test_fetch_proxy_settings_ok(monkeypatch):
+    calls = _install(monkeypatch, lambda r: httpx.Response(200, json=_cfg()))
+    r = client_connect.fetch_proxy_settings(URL, "tok")
+    assert r["ok"] is True and r["reason"] is None
+    assert (r["settings"].url, r["settings"].scope) == ("http://127.0.0.1:7890", "all")
+    assert calls[0].url.path == "/api/config"
+    assert calls[0].headers["Authorization"] == "Bearer tok"
+
+
+def test_fetch_proxy_settings_empty_proxy_is_valid(monkeypatch):
+    _install(monkeypatch, lambda r: httpx.Response(200, json=_cfg(url="")))
+    r = client_connect.fetch_proxy_settings(URL, None)
+    assert r["ok"] is True and r["settings"].url == ""
+
+
+def _boom(exc):
+    def h(request):
+        raise exc
+    return h
+
+
+@pytest.mark.parametrize("handler,reason", [
+    (_boom(httpx.ConnectTimeout("t")), "timeout"),
+    (_boom(httpx.ConnectError("refused")), "unreachable"),
+    (lambda r: httpx.Response(401, json={}), "unauthorized"),
+    (lambda r: httpx.Response(403, json={}), "unauthorized"),
+    (lambda r: httpx.Response(200, text="not json"), "bad_response"),
+    (lambda r: httpx.Response(200, json={"success": True, "data": "x"}), "bad_response"),
+    (lambda r: httpx.Response(500, json=_cfg()), "bad_response"),
+])
+def test_fetch_proxy_settings_failures_never_return_settings(monkeypatch, handler, reason):
+    _install(monkeypatch, handler)
+    r = client_connect.fetch_proxy_settings(URL, "tok")
+    assert r == {"ok": False, "reason": reason, "settings": None}
+
+
+
+
+def test_fetch_proxy_settings_bad_url():
+    assert client_connect.fetch_proxy_settings("", "t") == {"ok": False, "reason": "unreachable", "settings": None}

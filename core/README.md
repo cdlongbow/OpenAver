@@ -187,6 +187,18 @@ scrapers/
 - `MIN_SERVER_VERSION` 是「連線功能首次出貨版」，必須 ≤ `core/version.py` 的版本（`tests/unit/test_client_settings.py` 守）。
 - `client_connect.py` 負責桌面版與伺服器的版本相容判定，以及向伺服器取影片副檔名（`fetch_video_extensions`）；`client_sources.py` 負責來源清單（連線頁路徑對照用）。
 
+### `cf_handoff.py`（驗證視窗轉交）
+**Cloudflare 驗證視窗的轉交 broker：讓伺服器端的重刮，能請「發出請求的那台電腦的殼」彈出驗證視窗（spec-168d）**
+- 伺服器行程永遠註冊 `HandoffCfTransport`（`web/app.py` module level）；殼不註冊任何 transport，只經 `/api/cf/shell/poll`／`result` 領 job、回結果。
+- job 以「請求所屬殼」的 key 配對；沒有對應的殼時立即失敗，有殼時是有界等待，不會無限卡住。
+- `core` 不 import `web`／`windows`；殼端的建窗在 `windows/cf_windows.py`（單一 builder），殼端輪詢在 `windows/cf_shell.py`。時序常數不在此列，以程式為準。
+- 守衛：lint `[168d-T2-handoff-registered-in-app]`、`[168d-T4-*]`。
+
+### `loopback.py`
+**「host 是不是這台電腦」判斷的共用入口（spec-168d）**
+- `is_loopback_host` 是本機判斷的共用入口;`web.app._is_loopback_host` 與 `core.proxy_policy` 委派它。既有例外(如 `web/routers/config.py` 的 `update_general_field`)見 `tests/unit/test_loopback_delegation_guard.py` 帳本。
+- 由 `tests/unit/test_loopback_delegation_guard.py` 守。
+
 ### `self_update.py`
 **「更新到最新版」的共用核心（spec-168c）：伺服器端點與桌面殼 bridge 共用同一份安裝指令**
 - 伺服器的 `get_install_context`／`trigger_update` 與桌面殼 bridge 的 `update_run` 共用同一份安裝指令與安裝路徑推導；`install.ps1`／`install.sh` 字面只准出現在這支（lint `[168c-T1-installer-command-single-source]`，`web/`、`windows/`、`core/` 其餘 `.py` 連註解都不得寫出）。

@@ -153,3 +153,71 @@ def test_schemeless_address_is_http_for_every_consumer(raw, expected):
     assert s.url == expected
     assert proxy_kwargs('source_query', source_id='javdb', settings=s).get('proxies', {}).get('https', '') == expected
     assert settings_from_config({'search': {'proxy_url': raw, 'proxy_scope': 'all'}}).url == expected
+
+
+# ---- 168d-T1：client_cf_settings／cf_window_proxy_fingerprint／is_remote_origin ----
+
+from core.proxy_policy import (  # noqa: E402
+    CfWindowProxy,
+    cf_window_proxy_fingerprint,
+    client_cf_settings,
+    is_remote_origin,
+)
+
+
+@pytest.mark.parametrize("remote,url,direct", [
+    (True, 'http://127.0.0.1:7890', True),
+    (True, 'http://127.0.0.2:7890', True),
+    (True, 'http://localhost:7890', True),
+    (True, 'socks5://[::1]:1080', True),
+    (True, 'http://[::ffff:127.0.0.1]:7890', True),
+    (True, 'http://192.168.1.5:7890', False),
+    (True, 'http://proxy.example:7890', False),
+    (True, '', False),
+    (True, 'http://[bad:1', False),
+    (False, 'http://127.0.0.1:7890', False),     # 本機模式：不轉直連
+    (False, 'http://192.168.1.5:7890', False),
+])
+def test_client_cf_settings_truth_table(remote, url, direct):
+    s = ProxySettings(url=url, scope='all')
+    out, local_direct = client_cf_settings(s, remote)
+    assert local_direct is direct
+    if direct:
+        assert out.url == '' and out.scope == 'all'
+    else:
+        assert out is s
+
+
+@pytest.mark.parametrize("origin,remote", [
+    ('http://127.0.0.1:8000', False),
+    ('http://localhost:8000', False),
+    ('http://[::1]:8000', False),
+    ('http://[::ffff:127.0.0.1]:8000', False),
+    ('http://192.168.1.190:8765', True),
+    ('https://nas.example.com', True),
+    ('', False),
+    ('http://[bad:1', False),
+])
+def test_is_remote_origin(origin, remote):
+    assert is_remote_origin(origin) is remote
+
+
+def _fp_spec(**kw):
+    base = dict(server='http://h:1', username='u', password='secret', usable=True)
+    base.update(kw)
+    return CfWindowProxy(**base)
+
+
+def test_fingerprint_none_and_equality_and_no_plaintext():
+    assert cf_window_proxy_fingerprint(None) is None
+    fp = cf_window_proxy_fingerprint(_fp_spec())
+    assert fp == cf_window_proxy_fingerprint(_fp_spec())
+    assert 'secret' not in fp and 'h:1' not in fp and 'u' != fp
+
+
+@pytest.mark.parametrize("change", [
+    dict(server='http://h:2'), dict(username='v'), dict(password='other'), dict(usable=False),
+    dict(username=None), dict(password=None),
+])
+def test_fingerprint_differs_on_any_field(change):
+    assert cf_window_proxy_fingerprint(_fp_spec(**change)) != cf_window_proxy_fingerprint(_fp_spec())

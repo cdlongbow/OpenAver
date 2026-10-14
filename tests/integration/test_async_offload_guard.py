@@ -424,7 +424,7 @@ class TestT4OffloadHousePattern:
         assert "def _do_readonly(" in src, (
             "batch-enrich 唯讀改道須抽 nested sync helper `_do_readonly` 承載阻塞 I/O"
         )
-        assert "run_in_executor(None, _do_readonly)" in src, (
+        assert "run_in_executor(None, _ro_ctx.run, _do_readonly)" in src, (
             "`_do_readonly` 必須經 loop.run_in_executor offload —— 不可在 event_generator "
             "直接 body 呼叫（會卡 event loop）"
         )

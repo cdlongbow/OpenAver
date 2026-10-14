@@ -11,6 +11,7 @@ log 紀律：不記代理位址（可能含 user:pass@），要記只記 scope�
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 from urllib.parse import unquote, urlsplit
@@ -19,6 +20,7 @@ import requests
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from core.desktop_env import desktop_kind
+from core.loopback import is_loopback_host
 
 Conn = str  # 'source_query' | 'image' | 'actress'
 
@@ -194,3 +196,50 @@ def cf_window_proxy_restart_needed() -> bool:
     if _cf_window_proxy_at_start is _UNRECORDED:
         return False
     return cf_window_proxy(current_settings()) != _cf_window_proxy_at_start
+
+
+# ---------------------------------------------------------------------------
+# 桌面 client 模式的驗證視窗代理（168d / CD-168d-8）
+# ---------------------------------------------------------------------------
+
+
+def _host_is_loopback(host: Optional[str]) -> bool:
+    """去 `[]`／大小寫後委派唯一所有者；空值 → False（呼叫端據此「不轉直連」）。"""
+    if not host:
+        return False
+    return is_loopback_host(host.strip().strip('[]').lower())
+
+
+def _url_host(url: str) -> Optional[str]:
+    try:
+        return urlsplit(url).hostname
+    except ValueError:
+        return None
+
+
+def is_remote_origin(origin: str) -> bool:
+    """伺服器網址的 host 是否「不是這台」。畸形／空網址 ⇒ False（不當成遠端，不觸發轉直連）。"""
+    host = _url_host(origin or '')
+    if not host:
+        return False
+    return not _host_is_loopback(host)
+
+
+def client_cf_settings(settings: ProxySettings, server_remote: bool) -> tuple[ProxySettings, bool]:
+    """client 模式的本機位址例外：伺服器在遠端、代理位址卻是 loopback ⇒ 這台連不到
+    伺服器那台的 127.0.0.1，改回空設定（直連）。本機模式（server_remote=False）與
+    其他情形原樣回傳。"""
+    if server_remote and settings.url and _host_is_loopback(_url_host(settings.url)):
+        return ProxySettings(url='', scope=settings.scope), True
+    return settings, False
+
+
+def cf_window_proxy_fingerprint(spec: Optional[CfWindowProxy]) -> Optional[str]:
+    """規格指紋（sha256），憑證不以明文離開殼；`None` ＝ 沒套用 ⇒ `None`。"""
+    if spec is None:
+        return None
+    raw = '\x00'.join([spec.server, spec.username or '', spec.password or '',
+                       '1' if spec.usable else '0',
+                       '1' if spec.username is not None else '0',
+                       '1' if spec.password is not None else '0'])
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()

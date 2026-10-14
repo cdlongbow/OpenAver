@@ -2717,10 +2717,10 @@ const RULES = [
 
   // ---- [168b-T5] client 模式（_run_client_mode）內不得碰本機伺服器／區網監聽／驗證視窗／資料庫 ----
   // forbidden-string 不剝 Python 註解／docstring：_run_client_mode 的註解也不得寫出這六個字面。
-  ...['run_server', 'find_free_port', 'lan_listener', '_build_cf_windows', 'web.app', 'core.database'].map((word) => ({
+  ...['run_server', 'find_free_port', 'lan_listener', 'web.app', 'core.database'].map((word) => ({
     file: 'windows/standalone.py', kind: 'forbidden-string', pattern: word,
     scope: /def _run_client_mode\([^\n]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)+)/,
-    note: '[168b-T5-client-mode-no-local-server] 設成連 NAS 的使用者開殼 → 殼仍在本機起伺服器、開區網監聽、建 JavLibrary／FC2 驗證視窗或開本機資料庫，等於沒切到連線模式，還多一個隱藏視窗行程與重複打外站的 IP',
+    note: '[168b-T5-client-mode-no-local-server] 設成連 NAS 的使用者開殼 → 殼仍在本機起伺服器、開區網監聽、建 JavLibrary／FC2 驗證視窗或開本機資料庫，等於沒切到連線模式，還多一個隱藏視窗行程與重複打外站的 IP（CF 視窗改由 cf_windows.build_cf_windows 建，對 offline 不建窗的守衛在 pytest）',
   })),
 
   // ---- [168b-T8] client.json 寫入／連線狀態賦值／剪貼簿 的單一出口 ----
@@ -8667,8 +8667,8 @@ const RULES = [
     pattern: '"cf_transport_available":',
     note: '[lint-guard 162c-test_app_py_get_common_context_cf_transport] get_common_context 須注入 cf_transport_available key — 遷自 test_contract_desktop.py' },
   { file: 'web/app.py', kind: 'required-string',
-    pattern: 'get_cf_transport',
-    note: '[lint-guard 162c-test_app_py_get_common_context_cf_transport] get_common_context 須查 get_cf_transport — 遷自 test_contract_desktop.py' },
+    pattern: 'cf_available_here',
+    note: '[lint-guard 162c-test_app_py_get_common_context_cf_transport] get_common_context 須查 cf_available_here（168d：由 get_cf_transport 改為依此請求的殼判斷）— 遷自 test_contract_desktop.py' },
   { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
     pattern: /\bisJlUnavailable\s*\(s\)\s*\{/,
     note: '[lint-guard 162c-test_state_rescrape_has_isJlUnavailable] 重刮 modal 呼叫 isJlUnavailable 時 state 須定義該方法 — 遷自 test_contract_desktop.py' },
@@ -9230,6 +9230,41 @@ const RULES = [
     pattern: 'applyServerLocalFields(',
     stripLineComments: true,
     note: '[168c-T4-settings-localfields-via-helper] 設定頁儲存少了 applyServerLocalFields → 桌面版連到 NAS 時按儲存，NAS 的播放器／關閉行為會被這台的值蓋掉' },
+
+  // ---- [168d-T7] CF 轉交接線：單一 builder／殼不註冊 transport／app 必須註冊 ----
+  // forbidden-string 不剝 Python 註解：windows/ 內註解不得寫出 `PyWebViewCfTransport(`（半形）與 register_cf_transport。
+  {
+    file: { dir: 'windows', ext: ['.py'], recursive: true, exclude: ['cf_windows.py', 'cf_transport_impl.py'] },
+    kind: 'forbidden-string', pattern: 'PyWebViewCfTransport(',
+    note: '[168d-T4-cf-window-transport-single-builder] 有人在 standalone／launcher 另建一份 transport → dev 殼與打包版走不同路，使用者「dev 殼能用、打包版不能用」或反之，查不出差在哪',
+  },
+  {
+    file: 'windows/cf_windows.py', kind: 'structure-count', pattern: /PyWebViewCfTransport\(/, count: 1,
+    note: '[168d-T4-cf-window-transport-single-builder] cf_windows.py 內建構 transport 的次數不是 1 → 兩份 transport 各記一半視窗狀態（驗證視窗開了卻回報沒開），或 builder 不再建 transport（殼永遠沒有驗證視窗能力，重刮膠囊全灰）',
+  },
+  {
+    file: { dir: 'windows', ext: ['.py'], recursive: true }, kind: 'forbidden-string', pattern: 'register_cf_transport',
+    note: '[168d-T4-no-register-cf-transport-in-windows] 殼行程又直接註冊 transport → 本機版退回行程內直呼，瀏覽器／別台殼可以彈出這台電腦的驗證視窗',
+  },
+  // L3：行首錨定 RegExp，排除行首 `#` 註解；三引號 docstring 內的行首字面不排除（已知限制）（FE-GUARD-27 required 反向）
+  ...[/^register_cf_transport\(cf_handoff\.transport\(\)\)/m, /^async def cf_shell_scope\(/m].map((pattern) => ({
+    file: 'web/app.py', kind: 'required-string', pattern,
+    note: '[168d-T2-handoff-registered-in-app] 少了註冊或 scope middleware → 伺服器端永遠「沒有驗證視窗」，client 殼與本機殼的重刮膠囊全灰，使用者只看到「僅限桌面應用程式」',
+  })),
+  // 殘留守衛：連線頁舊文案（尚未支援・下一版）的 key 已刪，不得回來
+  {
+    file: { dir: 'locales', ext: ['.json'] }, kind: 'forbidden-string', pattern: /"cf_windows"\s*:/,
+    note: '[168d-T7-no-stale-cf-windows-copy] 舊的「尚未支援（下一版）」文案又回到連線頁 → 使用者在已支援 CF 轉交的版本仍看到「下一版才有」，以為驗證視窗功能壞了或沒做',
+  },
+  {
+    file: { dir: 'web/static/js/pages/connect', ext: ['.js'] }, kind: 'forbidden-string', pattern: /connect\.cf_windows\b/,
+    stripLineComments: true,
+    note: '[168d-T7-no-stale-cf-windows-copy] 舊的「尚未支援（下一版）」文案又回到連線頁 → 使用者在已支援 CF 轉交的版本仍看到「下一版才有」，以為驗證視窗功能壞了或沒做',
+  },
+  {
+    file: 'web/templates/connect.html', kind: 'forbidden-string', pattern: /connect\.cf_windows\b/,
+    note: '[168d-T7-no-stale-cf-windows-copy] 舊的「尚未支援（下一版）」文案又回到連線頁 → 使用者在已支援 CF 轉交的版本仍看到「下一版才有」，以為驗證視窗功能壞了或沒做',
+  },
 
 ];
 

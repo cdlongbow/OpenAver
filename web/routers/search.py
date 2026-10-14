@@ -58,6 +58,14 @@ from core.scrapers.utils import SOURCE_NAMES, resolve_route_target
 
 router = APIRouter(prefix="/api", tags=["search"])
 
+
+# 168d：指定來源搜尋的 CF 錯誤句主詞。javlibrary 與舊版逐字相同（含站名後的空格）；其餘來源中性。
+_CF_ERROR_SUBJECT = {"javlibrary": "JavLibrary ", "fc-javten": "FC2-javten "}
+
+
+def _cf_error_subject(source) -> str:
+    return _CF_ERROR_SUBJECT.get(source, "此來源")
+
 # 載入片商前綴對照表（啟動時一次性載入）
 _MAKER_MAPPING = load_prefix_mapping()
 
@@ -230,12 +238,13 @@ def search(
             # no cf_needed). The JavLibrary pill is hidden in search context when
             # cf_transport_available is false (frontend isJlUnavailable), so this path is
             # UI-unreachable; these blocks exist only as a structured 500-guard fallback.
-            # TASK-118a-T4：這條路 UI 不可達（CD-70c-4），字面對 fc-javten 不準，刻意不動。
+            # 168d：錯誤句依 source 指名（javlibrary 字面與舊版逐字相同；fc-javten 換成站名；其餘來源中性）。
+            # 仍不動流程：這條路 UI 不可達（CD-70c-4）。
             except CfChallengeRequired:
                 logger.warning("search: CfChallengeRequired for source=%s q=%s", source, q)
                 return {
                     "success": False,
-                    "error": "JavLibrary 需要解決 CF 驗證（請使用桌面應用程式）",
+                    "error": f"{_cf_error_subject(source)}需要解決 CF 驗證（請使用桌面應用程式）",
                     "data": [],
                     "total": 0,
                     "mode": "exact",
@@ -246,7 +255,7 @@ def search(
                 logger.warning("search: CfTransportUnavailable for source=%s q=%s", source, q)
                 return {
                     "success": False,
-                    "error": "JavLibrary 僅限桌面應用程式（standalone）使用",
+                    "error": f"{_cf_error_subject(source)}僅限桌面應用程式（standalone）使用",
                     "data": [],
                     "total": 0,
                     "mode": "exact",

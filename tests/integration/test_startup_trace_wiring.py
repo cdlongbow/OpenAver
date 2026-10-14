@@ -159,8 +159,8 @@ def test_standalone_client_path_marks_preflight_then_window_and_no_server_marks(
     client = _func(tree, "_run_client_mode")
     assert client is not None
     marks = _marks(client)
-    assert set(marks) == {"client_preflight_done", "main_window_created"}
-    assert marks["client_preflight_done"] < marks["main_window_created"]
+    assert set(marks) == {"client_preflight_done", "main_window_created", "cf_windows_created"}
+    assert marks["client_preflight_done"] < marks["main_window_created"] < marks["cf_windows_created"]
     startup = _func(client, "startup")
     assert startup is not None and _named_calls(startup, "_arm_first_page_mark")
 

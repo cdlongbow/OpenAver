@@ -117,7 +117,38 @@ def as_offline(cx):
 def test_get_state_local_mode(cx):
     assert cx.api.connect_get_state() == {
         "mode": "local", "url": "", "host": "", "has_token": False, "path_map": [],
-        "version": client_connect.LOCAL_VERSION, "last_ok": None}
+        "version": client_connect.LOCAL_VERSION, "last_ok": None, "cf": None}
+
+
+CF_STATUS = {"state": "ready", "reason": None, "proxy_note": None, "sites": ["javlibrary", "fc-javten"]}
+
+
+def test_get_state_cf_comes_from_registered_provider(cx):
+    cx.m.set_cf_status_provider(lambda: dict(CF_STATUS))
+    assert cx.api.connect_get_state()["cf"] == CF_STATUS
+
+
+
+
+@pytest.mark.parametrize("provider", [Mock(side_effect=RuntimeError("boom-detail-xyz")),
+                                      lambda: ["not", "a", "dict"], lambda: None])
+def test_get_state_cf_degrades_to_none(cx, provider, caplog):
+    cx.m.set_cf_status_provider(provider)
+    with caplog.at_level(logging.WARNING):
+        assert cx.api.connect_get_state()["cf"] is None
+    assert "boom-detail-xyz" not in caplog.text   # 只記例外型別
+
+
+def test_get_state_with_real_provider_never_leaks_token(cx):
+    write_client(token=TKN)
+    cx.m.set_cf_status_provider(lambda: dict(CF_STATUS))
+    state = cx.api.connect_get_state()
+    assert state["cf"] == CF_STATUS
+    assert TKN not in json.dumps(state)
+
+
+def test_cf_provider_setter_is_not_exposed_to_the_page(cx):
+    assert "set_cf_status_provider" not in [f.__name__ for f in cx.m.exposed_functions()]
 
 
 def test_get_state_client_mode_exposes_has_token_not_token(cx):
