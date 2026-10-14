@@ -2505,13 +2505,13 @@ const RULES = [
   // 使用者後果：hover 灰化膠囊看到「僅限桌面應用程式」但他人就在桌面版 —— 那正是本 task 要修的矛盾訊息。
   {
     file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
-    pattern: /:title="isJlUnavailable\(s\)\s*\?\s*window\.t\(cfUnavailableMessageKey\(\)\)/,
-    note: '[118a-T9] builtin pill 的 :title（tooltip）未走 cfUnavailableMessageKey() — 灰化膠囊的 tooltip 會回到「僅限桌面應用程式」那句矛盾訊息',
+    pattern: /:title="isJlUnavailable\(s\)\s*\?\s*window\.t\(cfUnavailableMessageKey\(s\.id\)\)/,
+    note: '[118a-T9] builtin pill 的 :title（tooltip）未走 cfUnavailableMessageKey(s.id) — 灰化膠囊的 tooltip 會回到「僅限桌面應用程式」那句矛盾訊息，或在空窗期誤說請重新啟動',
   },
   {
     file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
-    pattern: /@click="isJlUnavailable\(s\)\s*\?\s*showToast\(window\.t\(cfUnavailableMessageKey\(\)\)/,
-    note: '[118a-T9] builtin pill 的 @click（toast）未走 cfUnavailableMessageKey() — 點擊灰化膠囊會回到「僅限桌面應用程式」那句矛盾訊息',
+    pattern: /@click="onCfPillClick\(s\)"/,
+    note: '[118a-T9] 灰化膠囊按下必須走重查＋三態 toast（onCfPillClick），否則空窗期會被誤告知請重新啟動',
   },
 
   // ---- [TestMetatubePickerWiringGuard] 63c-3：進階 picker 接 metatube 真資料（routable gate / metatube 分組未刪，4 個斷言） ----
@@ -8667,8 +8667,8 @@ const RULES = [
     pattern: '"cf_transport_available":',
     note: '[lint-guard 162c-test_app_py_get_common_context_cf_transport] get_common_context 須注入 cf_transport_available key — 遷自 test_contract_desktop.py' },
   { file: 'web/app.py', kind: 'required-string',
-    pattern: 'cf_available_here',
-    note: '[lint-guard 162c-test_app_py_get_common_context_cf_transport] get_common_context 須查 cf_available_here（168d：由 get_cf_transport 改為依此請求的殼判斷）— 遷自 test_contract_desktop.py' },
+    pattern: 'cf_availability_here(request)',
+    note: '[lint-guard 162c-test_app_py_get_common_context_cf_transport] get_common_context 須經 cf_availability_here(request) 判斷（168d：依此請求的殼；168d-fix：規則抽到 web/shell_identity.py 與 /api/cf/availability 共用）— 遷自 test_contract_desktop.py' },
   { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
     pattern: /\bisJlUnavailable\s*\(s\)\s*\{/,
     note: '[lint-guard 162c-test_state_rescrape_has_isJlUnavailable] 重刮 modal 呼叫 isJlUnavailable 時 state 須定義該方法 — 遷自 test_contract_desktop.py' },

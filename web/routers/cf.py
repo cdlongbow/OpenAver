@@ -7,12 +7,13 @@ CF transport 控制端點（與 scraper router 語意正交）。
   GET  /api/cf/status?key=javlibrary  — poll loop 用：transport 是否就緒
   POST /api/cf/abandon?key=javlibrary — 前端逾時/取消；後端 emit 通知
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from core import cf_handoff
 from core.cf_transport import get_cf_transport, CfTransportUnavailable
 from core.logger import get_logger
 from web.routers.notifications import emit_notification
+from web.shell_identity import cf_availability_here
 
 logger = get_logger(__name__)
 
@@ -33,6 +34,15 @@ def cf_status(key: str = "javlibrary") -> dict:
     except Exception:
         logger.exception("cf_status: is_ready(key=%s) 失敗", key)
         return {"ready": False}
+
+
+@router.get("/availability")
+def cf_availability(request: Request) -> dict:
+    """灰化的 CF 膠囊按下時，頁面重查「這台殼現在可不可用」（168d-fix-T2 CD-4）。
+
+    純記憶體讀取，與 SSR 同一份規則；**不得**呼叫 is_ready／submit（那會派工給殼並最多等 10 秒）。
+    """
+    return cf_availability_here(request)
 
 
 @router.post("/abandon")

@@ -42,6 +42,7 @@ class PollBody(BaseModel):
     sites: list[str] = Field(default_factory=list)
     applied_proxy: Optional[str] = None
     server_remote: bool = False
+    preparing: list[str] = Field(default_factory=list)
     hold: int = Field(0, ge=0, le=20)
 
 
@@ -62,7 +63,8 @@ async def poll(body: PollBody, request: Request) -> dict:
     key = _require_key(request)
     broker = cf_handoff.get_broker()  # 請求當下解析，不在 module level 綁定
     sites = [s for s in body.sites if s in cf_handoff.CF_SITE_ORIGINS]
-    broker.register_shell(key, sites, body.applied_proxy, body.shell, body.server_remote)
+    preparing = [s for s in body.preparing if s in cf_handoff.CF_SITE_ORIGINS]
+    broker.register_shell(key, sites, body.applied_proxy, body.shell, body.server_remote, preparing=preparing)
     if body.hold <= 0:
         return {"ok": True, "job": None}
 
