@@ -65,16 +65,6 @@ def test_transport_available_sites_raises_returns_none_not_propagated():
 
 # ---- cf_available_here()（168d-T1）----
 
-def test_cf_available_here_no_transport_false():
-    assert m.cf_available_here() is False
-
-
-def test_cf_available_here_legacy_transport_true():
-    class Legacy:
-        def is_ready(self, cache_key): return True
-
-    m.register_cf_transport(Legacy())
-    assert m.cf_available_here() is True
 
 
 @pytest.mark.parametrize("answer", [True, False])

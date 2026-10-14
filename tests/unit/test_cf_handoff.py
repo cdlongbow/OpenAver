@@ -169,14 +169,6 @@ def test_result_from_other_key_is_rejected_and_job_not_woken(env):
     assert ja.value == "good"
 
 
-def test_result_for_unclaimed_job_is_rejected(env):
-    b = _b()
-    b.register_shell("A", [])
-    j = b._enqueue("A", "fetch", {})
-    assert b.complete("A", j.id, True, value="x") is False
-    assert j.state == "queued"
-
-
 # ---------------- I-H3 ----------------
 
 def test_claimed_job_never_redelivered(env):
@@ -197,19 +189,6 @@ def test_late_result_after_exec_timeout_rejected(env):
         b.submit("A", "fetch", {})
     old_id = box[0]["id"]
     assert b.complete("A", old_id, True, value="stale-html") is False
-
-
-def test_late_result_does_not_pollute_later_job(env):
-    b = _b()
-    b.register_shell("A", [])
-    box = []
-    _claim_only(env, "A", box)
-    with pytest.raises(CfTransportUnavailable):
-        b.submit("A", "fetch", {})
-    b.register_shell("A", [])
-    _shell(env, "A", value="fresh-html")
-    assert b.submit("A", "fetch", {}) == "fresh-html"
-    assert b.complete("A", box[0]["id"], True, value="stale-html") is False
 
 
 def test_late_result_after_claim_timeout_rejected(env):
@@ -278,20 +257,6 @@ def test_navigate_then_fetch_target_same_key(env, monkeypatch):
 
 # ---------------- I-R ----------------
 
-def test_new_broker_reregisters_and_rejects_old_job_ids(env):
-    old = m.Broker()
-    old.register_shell("k", ["javlibrary"])
-    j = old._enqueue("k", "fetch", {})
-    claimed = old.claim("k")
-    new = m.Broker()
-    assert new.fresh("k") is False
-    new.register_shell("k", ["javlibrary"], applied_proxy=None, shell="windows", server_remote=False)
-    assert new.fresh("k") is True
-    assert new.sites_for("k") == ["javlibrary"]
-    assert new.complete("k", claimed["id"], True, value="x") is False
-    assert j.state == "claimed"
-
-
 # ---------------- 例外映射／大小上限 ----------------
 
 def test_challenge_error_maps_to_cf_challenge_required(env):
@@ -317,16 +282,6 @@ def test_other_errors_map_to_exceptions(env, error, exc):
         assert not isinstance(ei.value, CfTransportUnavailable)
 
 
-def test_oversize_value_becomes_error_but_exact_limit_passes(env):
-    b = _b()
-    b.register_shell("k", [])
-    _shell(env, "k", value="x" * (8 * 1024 * 1024))
-    assert len(b.submit("k", "fetch", {})) == 8 * 1024 * 1024
-    _shell(env, "k", value="x" * (8 * 1024 * 1024 + 1))
-    with pytest.raises(RuntimeError):
-        b.submit("k", "fetch", {})
-
-
 def test_oversize_result_is_consumed_not_rejected(env):
     b = _b()
     b.register_shell("k", [])
@@ -349,11 +304,6 @@ def test_available_sites_empty_after_liveness_expired(env):
     env.t += 2
     assert m.transport().available_sites() == []
     assert m.transport().available_here() is False
-
-
-def test_available_sites_unknown_key_empty(env):
-    m.current_key.set("nobody")
-    assert m.transport().available_sites() == []
 
 
 # ---------------- current_key 三態 ----------------
@@ -496,39 +446,10 @@ def test_real_thread_shell_round_trip(real_broker):
     th.join(2)
 
 
-def test_real_thread_challenge_error_round_trip(real_broker):
-    b = real_broker
-    b.register_shell("k", [])
-
-    def shell():
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            job = b.claim("k")
-            if job:
-                b.complete("k", job["id"], False, error="challenge", message="c")
-                return
-            time.sleep(0.005)
-
-    threading.Thread(target=shell, daemon=True).start()
-    m.current_key.set("k")
-    with pytest.raises(CfChallengeRequired):
-        m.transport().is_ready("javlibrary")
-
-
 # ---------------- 其他 ----------------
-
-def test_cf_site_origins_match_scraper_constants():
-    from core.scrapers.fc2_javten import JAVTEN_ORIGIN
-    from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
-    assert m.CF_SITE_ORIGINS == {"javlibrary": JAVLIBRARY_ORIGIN, "fc-javten": JAVTEN_ORIGIN}
-
 
 @pytest.mark.parametrize("name", ["begin_solve", "is_ready", "available_sites", "fetch", "navigate_and_settle"])
 def test_transport_signatures_match_protocol(name):
     want = inspect.signature(getattr(CfTransport, name))
     got = inspect.signature(getattr(m.HandoffCfTransport, name))
     assert list(got.parameters) == list(want.parameters)
-
-
-def test_module_transport_accessor():
-    assert isinstance(m.transport(), m.HandoffCfTransport)

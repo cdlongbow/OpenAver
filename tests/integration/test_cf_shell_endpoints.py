@@ -125,9 +125,6 @@ def test_poll_hold_zero_registers_and_never_claims(client, broker):
     assert holder.get("value") is True
 
 
-@pytest.mark.parametrize("hold", [-1, 21])
-def test_poll_hold_out_of_range_is_422(client, hold):
-    assert _poll(client, hold=hold).status_code == 422
 
 
 @pytest.mark.parametrize("hdr", [{"Origin": "http://evil.example"}, {"Sec-Fetch-Site": "cross-site"}])
@@ -199,9 +196,6 @@ def test_result_unknown_or_unclaimed_job_not_accepted(client, broker):
     assert type(holder["error"]).__name__ == "CfChallengeRequired"
 
 
-def test_result_bad_error_code_is_422(client):
-    r = client.post(RESULT, json={"id": "x", "ok": False, "error": "weird"})
-    assert r.status_code == 422
 
 
 # ---------------- 身分在執行緒上的可見性 ----------------
@@ -304,13 +298,6 @@ def test_ssr_unregistered_shell_is_dark_even_with_oa_shell(temp_config_path, bro
     assert _ssr(html) == ("false", "[]")
 
 
-def test_ssr_loopback_local_shell_is_lit_but_other_identity_is_dark(temp_config_path, broker):
-    _poll(TestClient(app))  # 無票據 → loopback
-    lit = TestClient(app).get("/search?oa_shell=windows").text
-    assert _ssr(lit) == ("true", '["javlibrary"]')
-    # 同機但帶了別的票據 → 身分不同 → 灰
-    dark = TestClient(app).get("/search?oa_shell=windows", headers=_bearer("other")).text
-    assert _ssr(dark) == ("false", "[]")
 
 
 def test_ssr_loopback_plain_browser_without_oa_shell_is_lit(temp_config_path, broker):

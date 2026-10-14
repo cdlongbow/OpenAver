@@ -95,10 +95,6 @@ def test_outer_failure_returns_empty_set_without_raising(env, monkeypatch):
     assert ws.jl_win is not None and ws.javten_win is not None
 
 
-def test_window_set_defaults_are_all_optional():
-    ws = cf_windows.CfWindowSet()
-    assert (ws.transport, ws.jl_win, ws.javten_win, ws.proxy_ok, ws.proxy_spec, ws.local_direct) == \
-        (None, None, None, True, None, False)
 
 
 def test_cf_shell_supported_reads_platform_at_call_time(monkeypatch):

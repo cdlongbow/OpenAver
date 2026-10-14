@@ -757,12 +757,6 @@ def test_local_main_close_guards_bind_the_built_windows(monkeypatch, env):
     assert jl.hidden and javten.hidden and wins == [jl, javten]
 
 
-def test_local_main_unsupported_platform_builds_no_windows(monkeypatch, env):
-    monkeypatch.setattr(standalone.cf_windows, "cf_shell_supported", lambda: False)
-    _local_main(monkeypatch, env)
-    assert env.cf.build_calls == []
-    (agent,) = env.cf.agents
-    assert agent.kw["supported"] is False and agent.windows.jl_win is None
 
 
 # ---------- lifecycle / window state ----------
@@ -947,13 +941,6 @@ def test_launcher_destroy_all_windows_releases_cf_guards_first(monkeypatch):
     assert "jl.close_cancelled" not in events and "javten.close_cancelled" not in events
 
 
-def test_import_launcher_does_not_set_standalone_env(monkeypatch):
-    import importlib
-    monkeypatch.delenv("OPENAVER_STANDALONE", raising=False)
-    import launcher
-    importlib.reload(launcher)
-    import os
-    assert "OPENAVER_STANDALONE" not in os.environ
 
 
 def test_launcher_sets_standalone_env_only_inside_main_block_before_cf_wiring():

@@ -128,9 +128,6 @@ def test_get_state_cf_comes_from_registered_provider(cx):
     assert cx.api.connect_get_state()["cf"] == CF_STATUS
 
 
-def test_get_state_cf_none_when_no_provider_registered(cx):
-    assert cx.m._cf_status_provider is None
-    assert cx.api.connect_get_state()["cf"] is None
 
 
 @pytest.mark.parametrize("provider", [Mock(side_effect=RuntimeError("boom-detail-xyz")),

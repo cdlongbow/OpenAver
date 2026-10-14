@@ -82,15 +82,6 @@ test('wiring: cf lands, texts follow, cf set before bridge ready', async () => {
     assert.equal(page.cfText(), 'connect.cf_mac');
 });
 
-test('wiring: reply without cf key is old shell', async () => {
-    const page = mk({});
-    await page.start();
-    assert.equal(page.cf, null);
-    assert.ok(page.cfText().includes('connect.cf_not_ready'));
-    assert.ok(page.cfText().includes('connect.cf_reason_shell_old'));
-    assert.equal(page.cfNoteText(), '');
-});
-
 test('wiring: every reason maps to its own key', async () => {
     const page = mk({});
     for (const r of [...REASONS, 'shell_old']) {

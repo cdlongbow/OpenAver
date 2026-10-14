@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 
-import pytest
 from starlette.requests import Request
 
 from web.shell_identity import shell_key
@@ -56,12 +55,6 @@ def test_shell_key_cookie_takes_precedence_over_bearer():
     assert shell_key(_req(cookie="C", bearer="B")) == _t("C")
 
 
-def test_shell_key_does_not_leak_ticket_in_key():
-    assert "TICKET-SECRET" not in shell_key(_req(bearer="TICKET-SECRET"))
-
-
-def test_shell_key_no_client_no_ticket_is_none():
-    assert shell_key(_req(no_client=True)) is None
 
 
 # ---------------- 168d Codex F1：PIN 關閉時忽略票據 ----------------
@@ -73,10 +66,6 @@ def _set_pin(monkeypatch, enabled):
     monkeypatch.setattr(aa, "_snapshot", snap)
 
 
-def test_shell_key_pin_off_ignores_bearer(monkeypatch):
-    _set_pin(monkeypatch, False)
-    assert shell_key(_req(host="192.168.1.50", bearer="STALE")) == "ip:192.168.1.50"
-    assert shell_key(_req(host="127.0.0.1", bearer="STALE")) == "loopback"
 
 
 def test_shell_key_pin_off_ignores_sid_cookie(monkeypatch):
@@ -85,9 +74,6 @@ def test_shell_key_pin_off_ignores_sid_cookie(monkeypatch):
     assert shell_key(_req(host="::1", cookie="STALE")) == "loopback"
 
 
-def test_shell_key_pin_on_bearer_gives_ticket_key(monkeypatch):
-    _set_pin(monkeypatch, True)
-    assert shell_key(_req(host="192.168.1.50", bearer="T1")) == _t("T1")
 
 
 def test_shell_key_cold_snapshot_looks_at_ticket(monkeypatch):

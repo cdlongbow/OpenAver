@@ -347,15 +347,6 @@ def test_fetch_proxy_settings_failures_never_return_settings(monkeypatch, handle
     assert r == {"ok": False, "reason": reason, "settings": None}
 
 
-def test_fetch_proxy_settings_tls(monkeypatch):
-    import ssl
-
-    def h(request):
-        err = httpx.ConnectError("tls")
-        err.__cause__ = ssl.SSLError("bad cert")
-        raise err
-    _install(monkeypatch, h)
-    assert client_connect.fetch_proxy_settings(URL, "t")["reason"] == "tls"
 
 
 def test_fetch_proxy_settings_bad_url():

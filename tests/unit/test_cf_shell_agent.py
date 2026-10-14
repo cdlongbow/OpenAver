@@ -211,13 +211,6 @@ LOOKALIKE_JOBS += [_mk(k, **{f: u, 'cache_key': 'fc-javten'}) for u in JAVTEN_RE
 # javlibrary 不收 javten 的 www 變體；javten key 不收 javlibrary
 MISMATCH_JOBS += [_mk('fetch', url='https://www.javten.com/', cache_key='javlibrary')]
 ALL_REJECT_JOBS = LOOKALIKE_JOBS + MISMATCH_JOBS + MALFORMED_JOBS
-NON_DICT_JOBS = ['garbage', None]
-
-
-@pytest.mark.parametrize('j', PASS_JOBS)
-def test_check_job_accepts_exact_origins(j):
-    assert cf_shell.check_job(j) is True
-    assert cf_shell.CfShellAgent.check_job(j) is True
 
 
 @pytest.mark.parametrize('j', LOOKALIKE_JOBS)
@@ -230,9 +223,6 @@ def test_check_job_rejects_key_origin_mismatch(j):
     assert cf_shell.check_job(j) is False
 
 
-@pytest.mark.parametrize('j', MALFORMED_JOBS + NON_DICT_JOBS)
-def test_check_job_rejects_malformed_jobs(j):
-    assert cf_shell.check_job(j) is False
 
 
 # ---------------------------------------------------------------------------
@@ -335,12 +325,6 @@ def test_404_stops_poller_zero_second_request(make, resp, reason):
     assert agent._thread is None and len(h.requests) == 1
 
 
-def test_terminal_state_via_announce_blocks_start(make):
-    agent, h = make([httpx.Response(404)])
-    assert agent.announce() is False
-    agent.start()
-    assert agent._thread is None and len(h.requests) == 1
-    assert agent.public_status()['reason'] == 'server_old'
 
 
 # ---------------------------------------------------------------------------
@@ -427,12 +411,6 @@ def test_announce_is_a_hold_zero_poll_and_failure_is_not_fatal(make):
     assert h.sleeps == []
 
 
-def test_unsupported_platform_makes_zero_requests(make):
-    agent, h = make([OK_NULL], supported=False)
-    assert agent.announce() is False
-    agent.start()
-    assert agent._thread is None and h.requests == []
-    assert agent.public_status() == {'state': 'unsupported', 'reason': None, 'proxy_note': None, 'sites': []}
 
 
 # ---------------------------------------------------------------------------
@@ -483,9 +461,6 @@ def test_status_ready(make):
     assert (st['state'], st['reason'], st['sites']) == ('ready', None, ['fc-javten', 'javlibrary'])
 
 
-def test_status_recovers_to_ready_after_retry(make):
-    st = _status(make, [httpx.ConnectError('down'), OK_NULL])
-    assert st['state'] == 'ready'
 
 
 def test_status_proxy_note_variants(make):

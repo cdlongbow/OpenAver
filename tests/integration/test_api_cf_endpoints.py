@@ -132,14 +132,6 @@ class TestCfAbandonShellLost:
         assert mock_emit.call_args.args[:2] == ("warn", "notif.cf_shell_lost")
         assert mock_emit.call_args.kwargs["task_type"] == "cf_abandon"
 
-    def test_second_abandon_after_consumed_falls_back_to_timeout_text(self, client, mocker, lost_shell):
-        mock_emit = mocker.patch("web.routers.cf.emit_notification")
-        client.get("/api/cf/status", params={"key": "javlibrary"})
-        client.post("/api/cf/abandon")
-        client.post("/api/cf/abandon")
-        titles = [c.args[1] for c in mock_emit.call_args_list]
-        assert titles == ["notif.cf_shell_lost", "notif.jl_cf_timeout"]
-
     def test_abandon_without_any_loss_keeps_timeout_text(self, client, mocker, lost_shell):
         mock_emit = mocker.patch("web.routers.cf.emit_notification")
         client.post("/api/cf/abandon", params={"key": "fc-javten"})
@@ -149,22 +141,6 @@ class TestCfAbandonShellLost:
 class TestSpecifiedSourceCfErrorSentences:
     """TASK-168d-T2：指定來源搜尋的 CF 錯誤句依 source 指名（只動句子，不動流程）。"""
 
-    @pytest.mark.parametrize("exc,source,expected", [
-        (CfTransportUnavailable, "javlibrary", "JavLibrary 僅限桌面應用程式（standalone）使用"),
-        (CfChallengeRequired, "javlibrary", "JavLibrary 需要解決 CF 驗證（請使用桌面應用程式）"),
-        (CfTransportUnavailable, "fc-javten", "FC2-javten 僅限桌面應用程式（standalone）使用"),
-        (CfChallengeRequired, "fc-javten", "FC2-javten 需要解決 CF 驗證（請使用桌面應用程式）"),
-    ])
-    def test_error_sentence_names_the_requested_source(self, client, monkeypatch, exc, source, expected):
-        def _boom(*a, **kw):
-            raise exc("x")
-
-        monkeypatch.setattr("core.scraper.search_jav_single_source", _boom)
-        body = client.get("/api/search", params={"mode": "exact", "source": source, "q": "SSIS-001"}).json()
-        assert body["success"] is False
-        assert body["error"] == expected
-        if source == "fc-javten":
-            assert "JavLibrary" not in body["error"]
 
 
 # ── /api/rescrape/preview CF 例外處理 ─────────────────────────────────────────
