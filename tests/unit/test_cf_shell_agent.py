@@ -435,6 +435,15 @@ def test_status_proxy_unusable(make):
     assert (st['state'], st['reason']) == ('not_ready', 'proxy_unusable')
 
 
+def test_status_unusable_proxy_spec_is_proxy_unusable(make):
+    """代理規格套不上（socks5 帶帳密，usable=False）：即使視窗與 transport 都在，也不是「正在啟動」。"""
+    spec = CfWindowProxy(server='socks5://192.168.1.250:1080', username='u', password='p', usable=False)
+    st = _status(make, [OK_NULL], windows=make_windows(FakeImpl(sites=()), proxy_spec=spec))
+    assert (st['state'], st['reason']) == ('not_ready', 'proxy_unusable')
+    assert st['proxy_note'] is None
+    assert 'socks5' not in repr(st) and '192.168' not in repr(st)
+
+
 def test_status_no_windows(make):
     st = _status(make, [OK_NULL], windows=make_windows(FakeImpl(), jl=False, jt=False))
     assert (st['state'], st['reason']) == ('not_ready', 'no_windows')

@@ -276,10 +276,12 @@ class CfShellAgent:
         transport = windows.transport
         sites = list(transport.available_sites()) if transport is not None else []
         proxy_note = None
+        spec = windows.proxy_spec if self._shell == 'windows' else None
+        spec_unusable = spec is not None and not spec.usable
         if self._shell == 'windows':
             if windows.local_direct:
                 proxy_note = 'server_local_direct'
-            elif windows.proxy_spec is not None and windows.proxy_ok:
+            elif spec is not None and windows.proxy_ok and not spec_unusable:
                 proxy_note = 'applied'
 
         def _st(state, reason):
@@ -287,7 +289,7 @@ class CfShellAgent:
 
         if not self._supported:
             return {'state': 'unsupported', 'reason': None, 'proxy_note': None, 'sites': []}
-        if not windows.proxy_ok:
+        if not windows.proxy_ok or spec_unusable:
             return _st('not_ready', 'proxy_unusable')
         if windows.jl_win is None and windows.javten_win is None:
             return _st('not_ready', 'no_windows')
