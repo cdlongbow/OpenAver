@@ -313,6 +313,42 @@ def test_ssr_loopback_local_shell_is_lit_but_other_identity_is_dark(temp_config_
     assert _ssr(dark) == ("false", "[]")
 
 
+def test_ssr_loopback_plain_browser_without_oa_shell_is_lit(temp_config_path, broker):
+    """168d Codex F2：同機 localhost 一般瀏覽器（不帶 oa_shell）與本機殼同 key=loopback → 維持亮。"""
+    _poll(TestClient(app))  # 本機殼 → loopback
+    html = TestClient(app).get("/search").text
+    assert _ssr(html) == ("true", '["javlibrary"]')
+
+
+def test_ssr_ip_key_plain_browser_without_oa_shell_stays_dark(temp_config_path, broker, monkeypatch):
+    """F2 反向格：PIN 關、區網殼與區網 Chrome 同 IP → key=ip:<host>，不帶 oa_shell 仍灰。"""
+    from core.config import load_config as _real_load
+    monkeypatch.setattr("web.app.load_config", lambda: _real_load() | {
+        "general": {**_real_load().get("general", {}), "server_mode": True}})
+    monkeypatch.setattr(access_auth, "_snapshot", access_auth.AuthSnapshot(
+        enabled=False, pin="", valid_tokens=frozenset(), agent_token=None))
+    _poll(TestClient(app, client=REMOTE_CLIENT))
+    assert broker.sites_for("ip:192.168.1.50") == ["javlibrary"]
+    plain = TestClient(app, client=REMOTE_CLIENT).get("/search").text
+    assert _ssr(plain) == ("false", "[]")
+    shell = TestClient(app, client=REMOTE_CLIENT).get("/search?oa_shell=windows").text
+    assert _ssr(shell) == ("true", '["javlibrary"]')
+
+
+def test_pin_off_stale_bearer_registers_under_ip_key(temp_config_path, broker, monkeypatch):
+    """F1：PIN 關閉後殼端仍帶舊 Bearer → 與頁面（無票）同為 ip:<host>，CF 來源不灰。"""
+    from core.config import load_config as _real_load
+    monkeypatch.setattr("web.app.load_config", lambda: _real_load() | {
+        "general": {**_real_load().get("general", {}), "server_mode": True}})
+    monkeypatch.setattr(access_auth, "_snapshot", access_auth.AuthSnapshot(
+        enabled=False, pin="", valid_tokens=frozenset(), agent_token=None))
+    _poll(TestClient(app, client=REMOTE_CLIENT), headers=_bearer("stale-token"))
+    assert broker.sites_for("ip:192.168.1.50") == ["javlibrary"]
+    assert broker.sites_for(_t("stale-token")) == []
+    html = TestClient(app, client=REMOTE_CLIENT).get("/search?oa_shell=windows").text
+    assert _ssr(html) == ("true", '["javlibrary"]')
+
+
 # ---------------- config 兩處 or ----------------
 
 @pytest.mark.parametrize("patched,expected", [(True, True), (False, False)])

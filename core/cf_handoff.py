@@ -21,6 +21,7 @@ import itertools
 import threading
 import time
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
 from core.logger import get_logger
@@ -30,12 +31,18 @@ from core.proxy_policy import (
     cf_window_proxy_fingerprint,
     client_cf_settings,
 )
-from core.scrapers.fc2_javten import JAVTEN_ORIGIN
+from core.scrapers.fc2_javten import _JAVTEN_ALLOWED_NETLOCS, JAVTEN_ORIGIN
 from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 
 logger = get_logger(__name__)
 
 CF_SITE_ORIGINS = {'javlibrary': JAVLIBRARY_ORIGIN, 'fc-javten': JAVTEN_ORIGIN}
+# 殼端白名單（windows/cf_shell.check_job）：netloc 整串精確屬於集合；scheme 取 CF_SITE_ORIGINS 的。
+# javten 站方會落地 www.，引用 fc2_javten 既有常數不複製。
+CF_SITE_NETLOCS = {
+    'javlibrary': frozenset({urlsplit(JAVLIBRARY_ORIGIN).netloc.lower()}),
+    'fc-javten': frozenset(_JAVTEN_ALLOWED_NETLOCS),
+}
 
 # (claim 逾時, exec 逾時) 秒
 TIMEOUTS = {

@@ -158,6 +158,9 @@ PASS_JOBS = [
     _mk('begin_solve', origin_url=JT, cache_key='fc-javten'),
     _mk('is_ready', cache_key='javlibrary'),
     _mk('is_ready', cache_key='fc-javten'),
+    # 168d Codex F3：javten 站方會落地 www.（fc2_javten 同收兩個 netloc）
+    _mk('fetch', url='https://www.javten.com/search?kw=1', cache_key='fc-javten'),
+    _mk('navigate_and_settle', url='https://WWW.javten.com/', cache_key='fc-javten'),
 ]
 # 通過格期望：impl 方法名與回報值（fake impl 的回傳值）
 EXPECT = {'fetch': ('fetch', '<html>x</html>'), 'navigate_and_settle': ('navigate_and_settle', 'https://javten.com/final'),
@@ -196,6 +199,17 @@ MALFORMED_JOBS = [
     {'id': 'j1', 'kind': ['fetch'], 'args': {}},
     {'id': 'j1'},
 ]
+# F3 反向格：netloc 必須整串屬於集合；port／userinfo／scheme／別站 www 都不行
+JAVTEN_REJECT_URLS = [
+    'https://javten.com.evil.com/', 'https://www.javten.com.evil.com/',
+    'https://javten.com:8443/', 'https://www.javten.com:8443/',
+    'https://u@javten.com/', 'https://u@www.javten.com/',
+    'http://www.javten.com/', 'http://javten.com/',
+]
+LOOKALIKE_JOBS += [_mk(k, **{f: u, 'cache_key': 'fc-javten'}) for u in JAVTEN_REJECT_URLS
+                   for k, f in _URL_FIELD.items()]
+# javlibrary 不收 javten 的 www 變體；javten key 不收 javlibrary
+MISMATCH_JOBS += [_mk('fetch', url='https://www.javten.com/', cache_key='javlibrary')]
 ALL_REJECT_JOBS = LOOKALIKE_JOBS + MISMATCH_JOBS + MALFORMED_JOBS
 NON_DICT_JOBS = ['garbage', None]
 

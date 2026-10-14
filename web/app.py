@@ -786,7 +786,12 @@ def get_common_context(request: Request) -> dict:
     # 168d CD-168d-5：此請求的殼可用（cf_available_here）且請求自稱桌面殼（oa_shell 只用來窄化，
     # 授權／歸屬不讀它）才亮；手機／別台瀏覽器即使與殼同 IP 也維持灰。
     from core.cf_transport import cf_available_here as _cf_available_here
-    _cf_transport_available = _cf_available_here() and getattr(request.state, "shell_kind", None) is not None
+    # 同機 localhost 一般瀏覽器與本機殼同為 loopback key（CD-4／NC-2）→ 不要求 oa_shell；
+    # 非 loopback（ip:／t:）才用 oa_shell 區分同 IP 的殼與區網瀏覽器。_UNSET ≠ 'loopback'。
+    _cf_transport_available = _cf_available_here() and (
+        cf_handoff.current_key.get() == "loopback"
+        or getattr(request.state, "shell_kind", None) is not None
+    )
 
     # 118a-T9：per-site 可用性。cf_transport_available 是全域布林，答不了「這個來源
     # 能不能用」——standalone 在某個視窗建立失敗時仍會註冊一個只含另一站的 transport。

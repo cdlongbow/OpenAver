@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from core.cf_handoff import CF_SITE_ORIGINS, HOLD_S
+from core.cf_handoff import CF_SITE_NETLOCS, CF_SITE_ORIGINS, HOLD_S
 from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
 from core.desktop_env import desktop_kind
 from core.logger import get_logger
@@ -61,7 +61,7 @@ def check_job(job) -> bool:
     except ValueError:
         return False
     origin = urlsplit(CF_SITE_ORIGINS[key])
-    return (parts.scheme.lower(), parts.netloc.lower()) == (origin.scheme, origin.netloc.lower())
+    return parts.scheme.lower() == origin.scheme and parts.netloc.lower() in CF_SITE_NETLOCS[key]
 
 
 class CfShellAgent:
