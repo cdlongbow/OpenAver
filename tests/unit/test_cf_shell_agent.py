@@ -279,7 +279,7 @@ def test_backoff_sequence_then_reset(make):
     assert h.sleeps == [1, 2, 4, 1]
     # 恢復後第一次請求就帶完整登記資料（I-P1）
     assert h.polls[3] == {'shell': 'windows', 'sites': ['fc-javten', 'javlibrary'], 'applied_proxy': None,
-                          'server_remote': False, 'hold': cf_shell.HOLD_S}
+                          'server_remote': False, 'hold': cf_shell.HOLD_S, 'preparing': []}
 
 
 def test_backoff_caps_at_ten_seconds(make):
@@ -380,7 +380,8 @@ def test_poll_body_windows_carries_fingerprint_and_flags(make):
     agent.run()
     assert h.polls[0] == {'shell': 'windows', 'sites': ['javlibrary'],
                           'applied_proxy': cf_window_proxy_fingerprint(spec),
-                          'server_remote': True, 'hold': cf_shell.HOLD_S}
+                          'server_remote': True, 'hold': cf_shell.HOLD_S,
+                          'preparing': []}
 
 
 def test_poll_body_mac_never_reports_proxy(make):

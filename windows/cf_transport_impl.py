@@ -220,6 +220,8 @@ class PyWebViewCfTransport:
         # (proxy applied + native init succeeded). No `pending` ⇒ identical to before.
         self._pending: set[str] = {key for key in (pending or ()) if key in self._wins}
         self._dead: dict[str, bool] = {key: key in self._pending for key in self._wins}
+        # 168d-fix-T1: single change listener (no args); fired after availability changes.
+        self._change_listener = None
         self._cf_urls: dict[str, str | None] = {key: None for key in self._wins}
         # D-0: _origins is seeded here from initial_urls (reflecting where each
         # window already is at construction time) AND written by _navigate()
@@ -301,9 +303,29 @@ class PyWebViewCfTransport:
             # Layer 2 is inert and the death only surfaces as a WebViewException /
             # TimeoutError on the next fetch (caught by the bridge-gate in fetch()/is_ready()).
             logger.info("[CF-DIAG] window 'closed' event fired (site=%s) → _dead=True (Layer 2 active)", key)
+            was_alive = not self._dead.get(key, False)
             self._dead[key] = True
             self._pending.discard(key)
+            if was_alive:
+                self._notify_change()
         return _on_closed
+
+    def set_change_listener(self, cb) -> None:
+        """Register the single availability-change callback (no args; must not block)."""
+        self._change_listener = cb
+
+    def _notify_change(self) -> None:
+        listener = self._change_listener
+        if listener is None:
+            return
+        try:
+            listener()
+        except Exception:  # listener errors must never break the window state machine
+            logger.warning("cf_transport: change listener raised", exc_info=True)
+
+    def preparing_sites(self) -> list[str]:
+        """Site keys whose window is still pending confirmation (read-only view)."""
+        return sorted(self._pending)
 
     def confirm_ready(self, key: str) -> None:
         """Mark a `pending` site usable. No-op unless *key* is still pending, so a
@@ -312,6 +334,7 @@ class PyWebViewCfTransport:
             return
         self._pending.discard(key)
         self._dead[key] = False
+        self._notify_change()
 
     # ------------------------------------------------------------------
     # Bridge-readiness helpers (0.9.9c root-cause work)
