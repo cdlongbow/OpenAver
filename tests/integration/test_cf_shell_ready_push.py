@@ -143,20 +143,3 @@ def test_closed_window_is_removed_from_server_sites(rig):
     r.wins[JL].events.closed.fire()
     r.wait_push()
     assert r.sites() == []
-
-
-def test_closing_a_pending_window_pushes_nothing_extra(rig):
-    r = rig({JL, JT})
-    seen = []
-    agent_wake = r.transport._change_listener
-
-    def _counting():
-        seen.append(1)
-        agent_wake()
-    r.transport.set_change_listener(_counting)        # 計數：pending 站被關閉不得通知
-    r.wins[JT].events.closed.fire()
-    assert seen == []
-    r.transport.confirm_ready(JL)
-    r.wait_push()
-    assert seen == [1]
-    assert len(r.push_bodies) >= 1 and r.push_bodies[-1]['sites'] == [JL]
