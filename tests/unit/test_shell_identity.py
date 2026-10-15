@@ -6,9 +6,20 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
 from starlette.requests import Request
 
+from core import access_auth
 from web.shell_identity import shell_key
+
+
+@pytest.fixture(autouse=True)
+def _reset_access_auth_snapshot():
+    """core.access_auth 的模組級 _snapshot 會被前序測試（跑過 app lifespan）留下 enabled=False，
+    shell_key 在 PIN 關閉時忽略票證 → 本檔前後各重置一次，避免順序相依。"""
+    access_auth.reset_state_for_tests()
+    yield
+    access_auth.reset_state_for_tests()
 
 
 def _req(*, host="127.0.0.1", cookie=None, bearer=None, no_client=False):
