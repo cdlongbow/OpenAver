@@ -51,7 +51,7 @@ from core.desktop_env import desktop_kind
 from core import cf_handoff
 from core.loopback import is_loopback_host
 from core.cf_transport import register_cf_transport
-from web.shell_identity import shell_key
+from web.shell_identity import cf_availability_here, shell_key
 
 # 168d CD-168d-3／BE-LINT-09：sink 註冊放 module level（不放 lifespan）——所有進入點（含不啟動
 # lifespan 的桌面版與 TestClient）import 時就已註冊。standalone 之後可用自己的 transport 覆蓋。
@@ -782,30 +782,18 @@ def get_common_context(request: Request) -> dict:
         for v in _custom_views
     ]
     config['sources'] = list(config.get('sources') or []) + _custom_entries
-    # 70-T5：cf_transport_available — standalone 已 register → true；dev/server → false
-    # 168d CD-168d-5：此請求的殼可用（cf_available_here）且請求自稱桌面殼（oa_shell 只用來窄化，
-    # 授權／歸屬不讀它）才亮；手機／別台瀏覽器即使與殼同 IP 也維持灰。
-    from core.cf_transport import cf_available_here as _cf_available_here
-    # 同機 localhost 一般瀏覽器與本機殼同為 loopback key（CD-4／NC-2）→ 不要求 oa_shell；
-    # 非 loopback（ip:／t:）才用 oa_shell 區分同 IP 的殼與區網瀏覽器。_UNSET ≠ 'loopback'。
-    _cf_transport_available = _cf_available_here() and (
-        cf_handoff.current_key.get() == "loopback"
-        or getattr(request.state, "shell_kind", None) is not None
-    )
-
-    # 118a-T9：per-site 可用性。cf_transport_available 是全域布林，答不了「這個來源
-    # 能不能用」——standalone 在某個視窗建立失敗時仍會註冊一個只含另一站的 transport。
-    # None ＝ 判不出來 → 前端沿用舊的全域旗標（fail-open，見 get_cf_available_sites）。
-    from core.cf_transport import get_cf_available_sites as _get_cf_sites
-    _cf_sites = _get_cf_sites() if _cf_transport_available else []
+    # 70-T5／118a-T9／168d-fix-T2：CF 可用性（available／per-site sites／preparing）的規則只有一份，
+    # 在 web/shell_identity.py::cf_availability_here，SSR 與 /api/cf/availability 共用。
+    _cf_avail = cf_availability_here(request)
 
     _server_mode = bool(config.get('general', {}).get('server_mode', False))
 
     return {
         "request": request,
         "config": config,
-        "cf_transport_available": _cf_transport_available,
-        "cf_sites": _cf_sites,
+        "cf_transport_available": _cf_avail["available"],
+        "cf_sites": _cf_avail["sites"],
+        "cf_preparing": _cf_avail["preparing"],
         "lan_ip": get_lan_ip() if _server_mode else None,
         "theme": config.get('general', {}).get('theme', 'light'),
         "sidebar_collapsed": config.get('general', {}).get('sidebar_collapsed', False),

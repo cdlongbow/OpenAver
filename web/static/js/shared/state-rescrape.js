@@ -98,12 +98,14 @@ export function rescrapeState() {
         _rescraping: false,                // commit 連點 guard（鏡像 _enriching）
         _rescrapeVideo: null,              // commit 時 refreshVideoData 對象（私有，非 lightbox 當前 state）
         _rescrapeCommitSource: null,       // 進 preview 用的 source（commit 沿用，auto→null 映射前原值）
+        _rescrapeOpenGen: 0,               // 168d-fix-T2：開窗世代，openRescrape／closeRescrape 各遞增；onCfPillClick 重查回來後比對，窗已換就不動作
         _switchTarget: null,               // 62c-3：switch-source 入口長壓開窗當下捕捉的 target slot（{listMode,fileIndex,arr,idx,number}），async race 防覆蓋錯卡
 
         /**
          * 開啟彈窗（62b-1 wire ⚙ / 🔍 長壓呼叫；search 入口傳 video=null）。
          */
         openRescrape(video, entryPoint = 'lightbox') {
+            this._rescrapeOpenGen++;
             this.rescrapeOpen = true;
             this.rescrapeStep = 'pick';
             this.rescrapeEntryPoint = entryPoint;
@@ -259,11 +261,35 @@ export function rescrapeState() {
          * 後端本來就分得出這兩種（cf_transport_impl 的 _require_window vs _dead），
          * 是前端把它們壓成同一句才會出現「你人就在桌面版，卻被告知僅限桌面版」。
          */
-        cfUnavailableMessageKey() {
+        cfUnavailableMessageKey(siteId) {
             const adv = window.__ADVANCED_SEARCH__ || {};
+            // 168d-fix-T2：殼回報這個站的視窗「還在準備」→ 請稍候，不是請重開（站名用 includes，FE-ALPINE-14）。
+            if (siteId && Array.isArray(adv.cf_preparing) && adv.cf_preparing.includes(siteId)) return 'showcase.rescrape.cf_window_preparing';
             return adv.cf_transport_available
                 ? 'showcase.rescrape.cf_window_restart'
                 : 'showcase.rescrape.jl_desktop_only';
+        },
+
+        /**
+         * 168d-fix-T2：CF 膠囊按下。快照判灰時先向伺服器重查一次（純記憶體讀、不派工），
+         * 能用就直接重刮；否則依重查（失敗則快照）結果給三態 toast。不輪詢、只在按下時查。
+         */
+        async onCfPillClick(s) {
+            if (!this.isJlUnavailable(s)) return this.rescrapeWithSource(s.id);
+            const gen = this._rescrapeOpenGen;
+            try {
+                const resp = await fetch('/api/cf/availability', { signal: AbortSignal.timeout(3000) });
+                if (!resp.ok) throw new Error('availability ' + resp.status);
+                const data = await resp.json();
+                // 只覆寫三欄；sources 等其他欄位要留著（advanced-picker／rescrape 還在讀）
+                Object.assign(window.__ADVANCED_SEARCH__, { cf_transport_available: !!data.available, cf_sites: data.sites, cf_preparing: data.preparing || [] });
+            } catch (_e) {
+                // 逾時或任何錯誤：沿用快照判斷（含 cf_preparing）
+            }
+            // 重查期間窗已關或換開（世代變了）：全域快照已更新，但不得對「另一次開窗」動作
+            if (gen !== this._rescrapeOpenGen) return;
+            if (!this.isJlUnavailable(s)) return this.rescrapeWithSource(s.id);
+            this.showToast(window.t(this.cfUnavailableMessageKey(s.id)), 'warning');
         },
 
         /**
@@ -731,6 +757,7 @@ export function rescrapeState() {
          * 關閉彈窗（reset transient；_rescrapeVideo/_rescrapeCommitSource 下次 open 覆寫）。
          */
         closeRescrape() {
+            this._rescrapeOpenGen++;
             // 70-T6: 清 CF poll handle（關窗不 POST abandon，語意不同）
             if (this._cfPollHandle !== null) {
                 clearInterval(this._cfPollHandle);

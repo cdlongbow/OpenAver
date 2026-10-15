@@ -56,9 +56,9 @@
                     }"
                     data-enabled="true"
                     :aria-disabled="isJlUnavailable(s) ? 'true' : 'false'"
-                    :title="isJlUnavailable(s) ? window.t(cfUnavailableMessageKey()) : ''"
+                    :title="isJlUnavailable(s) ? window.t(cfUnavailableMessageKey(s.id)) : ''"
                     :disabled="rescrapeLoadingSource !== null && rescrapeLoadingSource !== s.id"
-                    @click="isJlUnavailable(s) ? showToast(window.t(cfUnavailableMessageKey()), 'warning') : rescrapeWithSource(s.id)">
+                    @click="onCfPillClick(s)">
               <span class="pill-spin" x-show="rescrapeLoadingSource === s.id"></span>
               <i class="bi bi-slash-circle slash-icn" x-show="rescrapeLoadingSource !== s.id && !isJlUnavailable(s)" aria-hidden="true"></i>
               {# 品牌名（display_name_raw → display_name_key fallback；不走 i18n，CD-62-12） #}

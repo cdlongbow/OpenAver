@@ -72,6 +72,7 @@ const KNOWN_UNSCANNED_KEYS = [
   // window.t('…jl_desktop_only') 本來是被檢 1 機械守著存在性的，不補進來就是淨損失。
   'showcase.rescrape.jl_desktop_only', //   ← 沒有 transport（dev／區網伺服器）
   'showcase.rescrape.cf_window_restart', // ← 有 transport 但這個站的視窗沒起來／已被摧毀
+  'showcase.rescrape.cf_window_preparing', // ← 168d-fix-T2：殼回報這個站的視窗還在準備
 ];
 
 let hadError = false;

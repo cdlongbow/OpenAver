@@ -98,10 +98,12 @@ class Broker:
         self.last_failure: dict[str, str] = {}
 
     # ---- 註冊表 ----
-    def register_shell(self, key, sites, applied_proxy=None, shell='windows', server_remote=False) -> None:
+    def register_shell(self, key, sites, applied_proxy=None, shell='windows', server_remote=False,
+                       preparing=None) -> None:
         with self._lock:
             self.shells[key] = {
                 'sites': sorted(str(s) for s in (sites or [])),
+                'preparing': sorted(str(s) for s in (preparing or [])),
                 'applied_proxy': applied_proxy,
                 'shell': shell,
                 'server_remote': bool(server_remote),
@@ -121,6 +123,13 @@ class Broker:
         if not self.fresh(key):
             return []
         return list(info['sites'])
+
+    def preparing_for(self, key) -> list[str]:
+        """殼回報「視窗還在準備、尚未就緒」的站；stale／未登記 → []（同 sites_for 的 liveness 約束）。"""
+        info = self.shells.get(key)
+        if info is None:
+            return []
+        return list(info['preparing']) if self.fresh(key) else []
 
     def shell_info(self, key) -> Optional[dict]:
         info = self.shells.get(key)

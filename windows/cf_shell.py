@@ -83,6 +83,12 @@ class CfShellAgent:
         self._thread = None
         self._terminal = None      # None | 'server_old' | 'unauthorized'
         self._last_ok = None       # None（尚無回應）| True | False（最近一次失敗，重試中）
+        self._last_sent_sites = set()   # 伺服器最近確認收下的 sites（只收「與當下相等」的那次）
+        self._sync_wake = threading.Event()
+        self._sync_thread = None
+        transport = windows.transport
+        if transport is not None and hasattr(transport, 'set_change_listener'):
+            transport.set_change_listener(self._wake_sync)
 
     # ---- HTTP ----
     def _make_client(self):
@@ -107,26 +113,31 @@ class CfShellAgent:
     def _headers(self):
         return {'Authorization': f'Bearer {self._token}'} if self._token else {}
 
-    def _exchange(self, path, body, timeout):
-        """送一次請求並分類：回 ('ok', dict) | ('terminal', None) | ('retry', None)。"""
+    def _exchange(self, path, body, timeout, liveness=True):
+        """送一次請求並分類：回 ('ok', dict) | ('terminal', None) | ('retry', None)。
+
+        liveness=False（補送）：失敗只 log，不動 _last_ok／_terminal，連線狀態由長輪詢緒獨自擁有。
+        """
         try:
             resp = self._client().post(self._origin + path, json=body, headers=self._headers(), timeout=timeout)
         except Exception as e:                                       # noqa: BLE001
             logger.warning("CF shell request failed: %s", type(e).__name__)
-            self._last_ok = False
+            self._note_failure(liveness)
             return 'retry', None
         status = resp.status_code
         if status in (404, 405):
-            self._terminal = 'server_old'
+            if liveness:
+                self._terminal = 'server_old'
             logger.warning("CF shell: server has no handoff endpoint (status=%s), poller stops", status)
             return 'terminal', None
         if status in (401, 403) or 300 <= status < 400:
-            self._terminal = 'unauthorized'
+            if liveness:
+                self._terminal = 'unauthorized'
             logger.warning("CF shell: server refused the shell (status=%s), poller stops", status)
             return 'terminal', None
         if status != 200:
             logger.warning("CF shell: unexpected status %s, will retry", status)
-            self._last_ok = False
+            self._note_failure(liveness)
             return 'retry', None
         try:
             data = resp.json()
@@ -134,20 +145,61 @@ class CfShellAgent:
             data = None
         if not isinstance(data, dict) or data.get('ok') is not True:
             logger.warning("CF shell: unexpected response body, will retry")
-            self._last_ok = False
+            self._note_failure(liveness)
             return 'retry', None
+        if path == POLL_PATH:
+            self._record_sent(body)
         return 'ok', data
+
+    def _note_failure(self, liveness):
+        if liveness:
+            self._last_ok = False
+
+    def _current_sites(self):
+        transport = self._windows.transport
+        return list(transport.available_sites()) if transport is not None else []
+
+    def _record_sent(self, body):
+        """伺服器收下這次 poll：只有 body.sites 等於當下 sites 才更新（讀、比、寫同一把鎖）。"""
+        with self._lock:
+            if set(body.get('sites', ())) == set(self._current_sites()):
+                self._last_sent_sites = set(body.get('sites', ()))
+
+    # ---- 就緒補報（視窗狀態一變就立刻 hold=0 登記一次）----
+    def _wake_sync(self):
+        """transport 變更回呼：只 set 事件，不做任何 I/O（事件緒內不得碰網路）。"""
+        self._sync_wake.set()
+
+    def _sync_once(self):
+        if self._stop.is_set():
+            return
+        kind, _ = self._exchange(POLL_PATH, self._poll_body(0), RESULT_TIMEOUT_S, liveness=False)
+        if kind != 'ok':
+            logger.info("CF shell: ready-sync did not reach the server (%s)", kind)
+
+    def _sync_loop(self):
+        while True:
+            self._sync_wake.wait()
+            if self._stop.is_set():
+                return
+            self._sync_wake.clear()
+            try:
+                self._sync_once()
+            except Exception as e:                                   # noqa: BLE001
+                logger.warning("CF shell: ready-sync failed: %s", type(e).__name__)
 
     def _poll_body(self, hold):
         windows = self._windows
         transport = windows.transport
+        preparing = getattr(transport, 'preparing_sites', None)
         return {
             'shell': self._shell,
-            'sites': list(transport.available_sites()) if transport is not None else [],
+            'sites': self._current_sites(),
             'applied_proxy': (cf_window_proxy_fingerprint(windows.proxy_spec)
                               if self._shell == 'windows' else None),
             'server_remote': self._server_remote,
             'hold': hold,
+            'preparing': list(preparing()) if preparing is not None else [],
         }
 
     def _poll_once(self, hold):
@@ -238,10 +290,17 @@ class CfShellAgent:
             self._stop.clear()
             self._thread = threading.Thread(target=self.run, name='cf-shell-poller', daemon=True)
             thread = self._thread
+            sync_thread = None
+            if self._sync_thread is None or not self._sync_thread.is_alive():
+                self._sync_thread = threading.Thread(target=self._sync_loop, name='cf-shell-sync', daemon=True)
+                sync_thread = self._sync_thread
         thread.start()
+        if sync_thread is not None:
+            sync_thread.start()
 
     def stop(self):
         self._stop.set()
+        self._sync_wake.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1)
@@ -273,8 +332,7 @@ class CfShellAgent:
     # ---- 狀態 ----
     def public_status(self) -> dict:
         windows = self._windows
-        transport = windows.transport
-        sites = list(transport.available_sites()) if transport is not None else []
+        sites = self._current_sites()
         proxy_note = None
         spec = windows.proxy_spec if self._shell == 'windows' else None
         spec_unusable = spec is not None and not spec.usable
@@ -297,6 +355,6 @@ class CfShellAgent:
             return _st('not_ready', self._terminal)
         if self._last_ok is False:
             return _st('not_ready', 'unreachable')
-        if self._last_ok is None or not sites:
+        if self._last_ok is None or not sites or not set(sites) <= self._last_sent_sites:
             return _st('not_ready', 'starting')
         return _st('ready', None)
