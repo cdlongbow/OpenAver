@@ -9268,6 +9268,15 @@ const RULES = [
     file: 'web/templates/connect.html', kind: 'forbidden-string', pattern: /connect\.cf_windows\b/,
     note: '[168d-T7-no-stale-cf-windows-copy] 舊的「尚未支援（下一版）」文案又回到連線頁 → 使用者在已支援 CF 轉交的版本仍看到「下一版才有」，以為驗證視窗功能壞了或沒做',
   },
+  // ---- [168e-T6] 殼內 F5／Ctrl+R／Cmd+R：離線小頁只能「重試」、一般頁必須載入 shell-reload ----
+  {
+    file: 'windows/offline/offline.html', kind: 'forbidden-string', pattern: /location\s*\.\s*reload\s*\(/,
+    note: '[lint-guard 168e-T6-offline-no-reload] 離線小頁出現整頁重載 → 使用者在「連不上」小頁按 F5 只是重載小頁、沒有重新連線，主機明明已恢復卻看不到片庫',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'required-string', pattern: 'src="/static/js/shared/shell-reload.js"',
+    note: '[lint-guard 168e-T6-base-loads-shell-reload] base.html 少了 shell-reload 載入行 → 使用者在 App 視窗的所有一般頁按 F5／Ctrl+R／Cmd+R 都沒反應，而測試與 CI 看不出來',
+  },
 
 ];
 
