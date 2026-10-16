@@ -271,7 +271,7 @@ WHITELIST = {"open_file", "open_folder", "open_url",
              "offline_get_state", "offline_retry", "offline_save_url", "offline_login",
              "offline_switch_local_restart",
              "local_settings_get", "local_settings_save", "update_check", "update_context",
-             "update_run"}
+             "update_run", "cf_retry"}
 
 
 def test_exposed_bridge_surface_is_exactly_the_whitelist(api_module):
@@ -597,11 +597,11 @@ def test_offline_state_invalid_url_is_stored_empty(fx):
 
 
 def test_exposed_functions_unchanged_by_scope_machinery(api_module):
-    assert len(api_module.exposed_functions()) == 26
+    assert len(api_module.exposed_functions()) == 27
 
 
 # ---------------------------------------------------------------------------
-# 168b-T4b：27 個方法 × 3 種頁面的 scope 矩陣（期望表為字面值，不由 _SCOPE 衍生）
+# 168b-T4b／168e-T13：28 個方法 × 3 種頁面的 scope 矩陣（期望表為字面值，不由 _SCOPE 衍生）
 # ---------------------------------------------------------------------------
 SCOPE_LITERAL = {
     "select_files": "server", "select_folder": "server", "select_folder_path": "server",
@@ -613,7 +613,7 @@ SCOPE_LITERAL = {
     "offline_get_state": "offline", "offline_retry": "offline", "offline_save_url": "offline",
     "offline_login": "offline", "offline_switch_local_restart": "offline",
     "local_settings_get": "server", "local_settings_save": "server", "update_check": "server",
-    "update_context": "server", "update_run": "server",
+    "update_context": "server", "update_run": "server", "cf_retry": "server",
 }
 NEW_ARGS = {
     "connect_get_state": (), "connect_probe": (SERVER_LAN,), "connect_login": (SERVER_LAN, "1234"),
@@ -623,7 +623,7 @@ NEW_ARGS = {
     "offline_get_state": (), "offline_retry": (), "offline_save_url": (SERVER_LAN,),
     "offline_login": ("1234",), "offline_switch_local_restart": (),
     "local_settings_get": (), "local_settings_save": ({},), "update_check": (),
-    "update_context": (), "update_run": (),
+    "update_context": (), "update_run": (), "cf_retry": (),
 }
 OFFLINE_METHODS = sorted(m for m, k in SCOPE_LITERAL.items() if k == "offline")
 UNTRUSTED_REPLY = {"ok": False, "reason": "untrusted"}
@@ -653,6 +653,8 @@ def mx(fx, tmp_path, monkeypatch):
     monkeypatch.setattr(fx.m, "_stat_path", fx.mocks["stat"])
     fx.mocks["restart"] = Mock()
     fx.m.set_restart_handler(fx.mocks["restart"])
+    fx.mocks["cf_retry"] = Mock(return_value={"ok": True, "cf": {"state": "ready"}})
+    fx.m.set_cf_retry_handler(fx.mocks["cf_retry"])
     fx.mocks["check_latest"] = Mock(return_value={"ok": True, "has_update": False, "current_version": "0.0.0"})
     monkeypatch.setattr(self_update, "check_latest", fx.mocks["check_latest"])
     fx.mocks["launch_installer"] = Mock()
@@ -697,7 +699,7 @@ def _assert_zero_effects(fx):
 
 
 def test_scope_matrix_literal_covers_exactly_the_scope_table(api_module):
-    assert len(SCOPE_LITERAL) == 27
+    assert len(SCOPE_LITERAL) == 28
     assert set(SCOPE_LITERAL) == set(api_module._SCOPE)
     assert {m: api_module._SCOPE[m] for m in SCOPE_LITERAL} == SCOPE_LITERAL
 

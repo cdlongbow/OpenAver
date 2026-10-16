@@ -1682,6 +1682,36 @@ class TestPendingConfirmReady:
         with pytest.raises(CfTransportUnavailable):
             t.is_ready('javlibrary')
 
+    def test_mark_failed_leaves_pending_and_records_failed(self):
+        """168e-T13 CD-4：WebView2 初始化失敗的站不再算「準備中」，改記為失敗。"""
+        t, wins = self._pending_transport()
+        events = []
+        t.set_change_listener(lambda: events.append(1))
+        t.mark_failed('javlibrary')
+        assert t.preparing_sites() == ['fc-javten']
+        assert t.failed_sites() == ['javlibrary']
+        assert t.available_sites() == []
+        assert events == [1]
+        with pytest.raises(CfTransportUnavailable):
+            t.is_ready('javlibrary')
+
+    def test_mark_failed_is_noop_unless_pending(self):
+        t, wins = self._pending_transport()
+        t.confirm_ready('javlibrary')
+        t.mark_failed('javlibrary')                    # 已確認可用：晚到的失敗不得拉掉它
+        wins['fc-javten'].events.closed.fire()
+        t.mark_failed('fc-javten')                     # 已關閉：不是 pending
+        t.mark_failed('no-such-site')
+        assert t.available_sites() == ['javlibrary']
+        assert t.failed_sites() == []
+
+    def test_mark_failed_cannot_be_revived_by_late_confirm(self):
+        t, _ = self._pending_transport()
+        t.mark_failed('javlibrary')
+        t.confirm_ready('javlibrary')
+        assert t.available_sites() == []
+        assert t.failed_sites() == ['javlibrary']
+
     def test_no_pending_behaves_as_before(self):
         t = PyWebViewCfTransport(
             {'javlibrary': FakeWindow(), 'fc-javten': FakeWindow()}, {'javlibrary': JL_ORIGIN})

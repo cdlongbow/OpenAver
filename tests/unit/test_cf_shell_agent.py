@@ -413,6 +413,197 @@ def test_announce_is_a_hold_zero_poll_and_failure_is_not_fatal(make):
 
 
 
+# ---------------------------------------------------------------------------
+# 168e-T13 I-5：逾時分流（announce 3／長輪詢 HOLD_S+10／補送 RESULT_TIMEOUT_S）
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def post_timeouts(monkeypatch):
+    seen = []
+    real_post = httpx.Client.post
+
+    def spy(self, url, *a, **k):
+        seen.append((str(url).rsplit('/', 1)[-1], k.get('timeout')))
+        return real_post(self, url, *a, **k)
+
+    monkeypatch.setattr(httpx.Client, 'post', spy)
+    return seen
+
+
+def test_announce_uses_announce_timeout_not_result_timeout(make, post_timeouts):
+    agent, h = make([OK_NULL])
+    assert cf_shell.ANNOUNCE_TIMEOUT_S == 3
+    assert agent.announce() is True
+    assert post_timeouts == [('poll', cf_shell.ANNOUNCE_TIMEOUT_S)]
+
+
+def test_long_poll_and_ready_sync_timeouts_are_unchanged(make, post_timeouts):
+    from core.cf_handoff import HOLD_S
+    agent, h = make([OK_NULL])
+    agent.run()
+    assert post_timeouts[0] == ('poll', HOLD_S + 10)
+    post_timeouts.clear()
+    agent2, _ = make([OK_NULL])
+    agent2._sync_once()
+    assert post_timeouts == [('poll', cf_shell.RESULT_TIMEOUT_S)]
+
+
+def test_announce_failure_does_not_stop_later_long_poll_registration(make):
+    agent, h = make([httpx.ConnectError('down'), OK_NULL])
+    assert agent.announce() is False
+    agent.run()
+    assert [p['hold'] for p in h.polls][0] == 0
+    assert any(p['hold'] > 0 for p in h.polls)
+    assert agent.public_status()['state'] == 'ready'
+
+
+# ---------------------------------------------------------------------------
+# 168e-T13 B：refresh_now
+# ---------------------------------------------------------------------------
+def _join_poller(agent):
+    t = agent._thread
+    if t is not None:
+        t.join(timeout=5)
+        assert not t.is_alive(), 'poller thread leaked (BE-TEST-45)'
+    st = agent._sync_thread
+    if st is not None:
+        agent._stop.set()
+        agent._sync_wake.set()
+        st.join(timeout=5)
+        assert not st.is_alive(), 'sync thread leaked (BE-TEST-45)'
+
+
+@pytest.mark.parametrize('resp,terminal', [(httpx.Response(404), 'server_old'), (httpx.Response(401), 'unauthorized')])
+def test_refresh_now_clears_recoverable_terminal_and_reregisters(make, post_timeouts, resp, terminal):
+    agent, h = make([resp, OK_NULL])
+    agent.run()
+    assert agent.public_status()['reason'] == terminal
+    try:
+        assert agent.refresh_now() is True
+        assert agent._terminal is None
+        assert h.polls[1]['hold'] == 0                       # 先同步 hold=0 登記
+        _join_poller(agent)                                  # 輪詢緒被重啟並因腳本用盡而收掉
+        assert agent.public_status()['state'] == 'ready'
+    finally:
+        agent.stop()
+        _join_poller(agent)
+
+
+class _ParkedTerminal:
+    """把舊輪詢緒卡在「終態已公布、尚未返回 run()」；之後的長輪詢也停住（模擬真的長輪詢）。"""
+
+    def __init__(self, agent):
+        self.entered, self.release_old, self.park = threading.Event(), threading.Event(), threading.Event()
+        self._first = True
+        self._orig = agent._poll_once
+        agent._poll_once = self
+
+    def __call__(self, hold, timeout=None):
+        if hold == 0:
+            return self._orig(hold, timeout)
+        if self._first:
+            self._first = False
+            out = self._orig(hold, timeout)
+            self.entered.set()
+            if not self.release_old.wait(10):
+                raise AssertionError('old poller never released (BE-TEST-45)')
+            return out
+        self.park.wait(10)
+        return 'ok'
+
+
+def _poller_threads():
+    return [t for t in threading.enumerate() if t.name == 'cf-shell-poller' and t.is_alive()]
+
+
+def _wait_flag(pred, what):
+    import time as _t
+    end = _t.monotonic() + 5
+    while not pred():
+        if _t.monotonic() > end:
+            pytest.fail(what + ' (BE-TEST-45)')
+        _t.sleep(0.005)
+
+
+def test_refresh_now_waits_for_old_terminal_poller_and_leaves_exactly_one_live_poller(make):
+    agent, h = make([httpx.Response(401), OK_NULL, OK_NULL])
+    gate = _ParkedTerminal(agent)
+    agent.start()
+    old = agent._thread
+    out = []
+    refresher = threading.Thread(target=lambda: out.append(agent.refresh_now()), daemon=True)
+    try:
+        assert gate.entered.wait(5), 'old poller never published the terminal'
+        refresher.start()
+        _wait_flag(agent._stop.is_set, 'refresh_now never asked the old poller to exit')
+        gate.release_old.set()
+        refresher.join(5)
+        assert not refresher.is_alive() and out == [True]
+        assert not old.is_alive()
+        assert agent._thread is not old and agent._thread.is_alive()
+        assert _poller_threads() == [agent._thread]
+        assert agent._terminal is None
+    finally:
+        gate.release_old.set()
+        agent._stop.set()
+        gate.park.set()
+        refresher.join(5)
+        _join_poller(agent)
+
+
+def test_refresh_now_reports_failure_when_old_poller_does_not_exit(make, monkeypatch):
+    monkeypatch.setattr(cf_shell, 'REFRESH_JOIN_S', 0.05)
+    agent, h = make([httpx.Response(401), OK_NULL])
+    gate = _ParkedTerminal(agent)
+    agent.start()
+    try:
+        assert gate.entered.wait(5)
+        assert agent.refresh_now() is False                 # 不假裝 ready
+        assert agent._terminal == 'unauthorized'
+    finally:
+        gate.release_old.set()
+        gate.park.set()
+        agent._stop.set()
+        _join_poller(agent)
+
+
+def test_malformed_job_response_wakes_status_waiters(make):
+    agent, h = make([{'ok': True, 'job': 'not-a-dict'}])
+    agent.status_changed.clear()
+    assert agent._poll_once(0) == 'retry'
+    assert agent.status_changed.is_set()
+
+
+def test_refresh_now_sync_registration_uses_announce_timeout(make, post_timeouts):
+    agent, h = make([httpx.Response(404), OK_NULL])
+    agent.run()
+    post_timeouts.clear()
+    try:
+        agent.refresh_now()
+        assert post_timeouts[0] == ('poll', cf_shell.ANNOUNCE_TIMEOUT_S)
+    finally:
+        agent.stop()
+        _join_poller(agent)
+
+
+def test_refresh_now_still_refused_falls_back_to_terminal(make):
+    agent, h = make([httpx.Response(401), httpx.Response(401)])
+    agent.run()
+    try:
+        assert agent.refresh_now() is False
+        assert agent.public_status()['reason'] == 'unauthorized'
+        assert agent._thread is None or not agent._thread.is_alive()
+    finally:
+        agent.stop()
+        _join_poller(agent)
+
+
+def test_refresh_now_unsupported_does_nothing(make):
+    agent, h = make([OK_NULL], supported=False)
+    assert agent.refresh_now() is False
+    assert h.requests == []
+    assert agent.public_status()['state'] == 'unsupported'
+
+
 
 # ---------------------------------------------------------------------------
 # public_status 真值表
@@ -462,6 +653,42 @@ def test_status_ready(make):
     assert (st['state'], st['reason'], st['sites']) == ('ready', None, ['fc-javten', 'javlibrary'])
 
 
+
+
+class FailingImpl(FakeImpl):
+    """有 failed_sites() 的 transport（168e-T13 CD-4）。"""
+
+    def __init__(self, sites=(), failed=()):
+        super().__init__(sites=sites)
+        self.failed = list(failed)
+
+    def failed_sites(self):
+        return list(self.failed)
+
+
+def test_status_webview2_failed_when_no_site_usable_and_some_failed(make):
+    st = _status(make, [OK_NULL], windows=make_windows(FailingImpl(sites=(), failed=('javlibrary', 'fc-javten'))))
+    assert (st['state'], st['reason'], st['sites']) == ('not_ready', 'webview2_failed', [])
+
+
+def test_status_webview2_failed_not_shown_when_one_site_is_usable(make):
+    st = _status(make, [OK_NULL], windows=make_windows(FailingImpl(sites=('javlibrary',), failed=('fc-javten',))))
+    assert (st['state'], st['reason'], st['sites']) == ('ready', None, ['javlibrary'])
+
+
+def test_status_starting_when_nothing_failed_and_sites_empty(make):
+    st = _status(make, [OK_NULL], windows=make_windows(FailingImpl(sites=(), failed=())))
+    assert st['reason'] == 'starting'
+
+
+def test_status_not_ready_until_server_confirms_current_sites(make):
+    """子集判斷獨立場景：最近一次回應成功、視窗也已可用，但伺服器確認收下的 sites 還沒含該站 → 不是 ready。"""
+    impl = FakeImpl(sites=())
+    agent, _ = make([OK_NULL], windows=make_windows(impl))
+    agent.run()                                   # 以空 sites 登記成功：_last_ok=True、_last_sent_sites=∅
+    impl.sites = ['javlibrary']                   # 視窗之後才 confirm_ready
+    st = agent.public_status()
+    assert (st['state'], st['reason']) == ('not_ready', 'starting')
 
 
 def test_status_proxy_note_variants(make):

@@ -165,6 +165,65 @@ def test_begin_quit_destroys_all_cf_windows():
     win_c.destroy.assert_called_once_with()
 
 
+def test_register_cf_windows_adds_late_built_windows_and_quit_destroys_them():
+    """168e-T13：連線頁「重試」補建的驗證視窗登記進來後，托盤「結束」也要銷毀它們
+    （沒登記＝殼行程殘留）。None 值（建窗失敗）不登記；既有視窗不被覆蓋。"""
+    early = MagicMock()
+    late_a, late_b = MagicMock(), MagicMock()
+    lc = DesktopLifecycle(
+        MagicMock(), {'javlibrary': early},
+        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+    )
+    lc.register_cf_windows({'fc-javten': late_a, 'extra': late_b, 'none-site': None})
+    assert 'none-site' not in lc.cf_windows and lc.cf_windows['javlibrary'] is early
+
+    lc._begin_quit()
+
+    for win in (early, late_a, late_b):
+        win.destroy.assert_called_once_with()
+
+
+def _bare_lifecycle():
+    return DesktopLifecycle(
+        MagicMock(), {},
+        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+    )
+
+
+def test_register_cf_windows_after_quit_destroys_late_windows():
+    """168e-T13 F1 順序 (a)：``_begin_quit`` 已跑完才登記的窗要被銷毀（重試的建窗晚於結束）；
+    銷毀失敗不得拋出；None 不處理。"""
+    lc = _bare_lifecycle()
+    lc._begin_quit()
+    late, broken = MagicMock(), MagicMock()
+    broken.destroy.side_effect = RuntimeError("gone")
+    lc.register_cf_windows({'javlibrary': late, 'fc-javten': broken, 'x': None})
+    late.destroy.assert_called_once_with()
+    broken.destroy.assert_called_once_with()
+    assert 'x' not in lc.cf_windows
+
+
+def test_register_cf_windows_quit_arriving_between_publish_and_recheck_still_destroys():
+    """順序 (b)：register 公布（update）之後、複查 quitting 之前，``_begin_quit`` 插進來 →
+    兩邊交錯下新窗至少被銷毀一次，``_begin_quit`` 之後沒有未銷毀的窗。"""
+    lc = _bare_lifecycle()
+
+    class _QuitAfterUpdate(dict):
+        def update(self, *a, **k):
+            super().update(*a, **k)
+            lc._begin_quit()
+
+    lc.cf_windows = _QuitAfterUpdate()
+    late_a, late_b = MagicMock(), MagicMock()
+    lc.register_cf_windows({'javlibrary': late_a, 'fc-javten': late_b})
+    assert lc.quitting is True
+    for win in (late_a, late_b):
+        assert win.destroy.call_count >= 1
+    assert all(w.destroy.call_count >= 1 for w in lc.cf_windows.values())
+
+
 def test_begin_quit_continues_after_one_window_destroy_fails():
     """D-5: each CF window destroy is independently try/except'd — one window's
     destroy() raising must not prevent the others from being destroyed."""

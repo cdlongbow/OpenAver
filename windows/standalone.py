@@ -30,7 +30,7 @@ import pywebview_api
 from tray import CMD_QUIT, DesktopLifecycle, NativeTrayIcon
 from core import client_settings
 from core.proxy_policy import current_settings
-from windows import cf_shell, cf_windows, restart, shell_boot, shell_sync, update_notice
+from windows import cf_boot, cf_shell, cf_windows, restart, shell_boot, shell_sync, update_notice
 from windows.health_probe import (
     CLIENT_HOST,
     PROBE_OK,
@@ -659,30 +659,6 @@ def _make_cf_agent(cf_set, origin, token, server_remote, supported):
     return agent
 
 
-def _wire_client_cf(logger, boot, local_origin):
-    """連線模式的 CF 接線（168d CD-8/9）：回 ``(cf_set, cf_agent 或 None)``。
-
-    只在 preflight 通過（``boot.kind == "client"``）時抓伺服器的代理設定並建視窗；離線啟動、
-    抓不到設定一律不建窗（連線頁拿靜態原因，重開殼才再試）。
-    """
-    if boot.kind == "client":
-        server_url, token = client_settings.server_pair()
-        server_origin = client_settings.server_origin(local_origin)
-        if not cf_windows.cf_shell_supported():
-            empty = cf_windows.CfWindowSet()
-            return empty, _make_cf_agent(empty, server_origin, token, False, False)
-        ok, reason, eff_settings, local_direct, server_remote = cf_windows.fetch_client_cf(
-            server_url, token, server_origin)
-        if ok:
-            cf_set = cf_windows.build_cf_windows(logger, eff_settings, local_direct)
-            return cf_set, _make_cf_agent(cf_set, server_origin, token, server_remote, True)
-        logger.warning("CF settings unavailable (%s), CF windows not built", reason)
-    else:
-        reason = "offline_boot"
-    pywebview_api.set_cf_status_provider(lambda: cf_windows.cf_status_static(reason))
-    return cf_windows.CfWindowSet(), None
-
-
 def _run_client_mode(logger):
     """連線模式：只開殼，不起任何本機服務。"""
     import window_state
@@ -692,10 +668,13 @@ def _run_client_mode(logger):
     startup_trace.mark("client_preflight_done")
     window = _create_main_window(boot, local_origin, saved)
     startup_trace.mark("main_window_created")
-    cf_set, cf_agent = _wire_client_cf(logger, boot, local_origin)
-    if cf_agent is not None:
+    cf = cf_boot.CfShellController(logger, boot.kind, local_origin)
+    pywebview_api.set_cf_status_provider(cf.status)
+    pywebview_api.set_cf_retry_handler(cf.retry)
+    cf.initial()
+    if cf.agent is not None:
         startup_trace.mark("cf_windows_created")
-    lifecycle = _setup_windows_lifecycle(window, cf_set.jl_win, cf_set.javten_win, saved, None)
+    lifecycle = _setup_windows_lifecycle(window, cf.cf_set.jl_win, cf.cf_set.javten_win, saved, None)
     _register_bridge_seams(window, lifecycle)
     cf_quitting = {"v": False}
     if lifecycle is not None:
@@ -704,29 +683,23 @@ def _run_client_mode(logger):
         # 沒有 lifecycle（Mac）：關主視窗要設 quitting 並銷毀隱藏的 CF 視窗，否則視窗計數不歸零、行程殘留
         def _on_main_closing():
             cf_quitting["v"] = True
-            for cf_win in (cf_set.jl_win, cf_set.javten_win):
-                if cf_win is not None:
-                    with contextlib.suppress(Exception):
-                        cf_win.destroy()
+            cf.destroy_all()
 
         window.events.closing += _on_main_closing
-    cf_windows.attach_close_guards(
-        cf_set, lambda: lifecycle.quitting if lifecycle is not None else cf_quitting["v"])
-    if cf_agent is not None:
-        cf_agent.announce()
+    cf.bind(lifecycle, lambda: lifecycle.quitting if lifecycle is not None else cf_quitting["v"])
+    cf.attach_guards()
+    cf.announce_initial()
 
     def startup(w):
         _arm_first_page_mark(w)
         _attach_window_state(w, saved, lifecycle, logger)
-        if cf_agent is not None:
-            cf_agent.start()
+        cf.start()
         update_notice.start_background_check()
 
     try:
         _start_gui(startup, window)
     finally:
-        if cf_agent is not None:
-            cf_agent.stop()
+        cf.stop()
         _shutdown_and_maybe_restart(lifecycle)
 
 
