@@ -32,8 +32,9 @@ class Preflight(NamedTuple):
     probe: dict
 
 
-def _new_client(transport=None) -> httpx.Client:
-    return httpx.Client(timeout=httpx.Timeout(3.0), transport=transport)
+def _new_client(transport=None, timeout=3.0) -> httpx.Client:
+    # trust_env=False：主機在區網，系統／環境代理對它沒有意義（168e CD-1）
+    return httpx.Client(timeout=httpx.Timeout(timeout), transport=transport, trust_env=False)
 
 
 def _parse_version(v):
@@ -145,7 +146,7 @@ def fetch_sources(url, token) -> dict:
     if origin is None:
         return {"ok": False, "reason": "unreachable", "sources": []}
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    with _new_client() as client:
+    with _new_client(timeout=10.0) as client:
         try:
             resp = client.get(f"{origin}/api/client/sources", headers=headers)
         except httpx.HTTPError as e:

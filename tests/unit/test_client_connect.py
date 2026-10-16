@@ -1,5 +1,7 @@
-"""core/client_connect.py 單元測試（168b-T1）。httpx.MockTransport，不開真 socket。"""
+"""core/client_connect.py 單元測試（168b-T1）。httpx.MockTransport；僅 I-6 直連格開本機真 socket。"""
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -19,7 +21,8 @@ def _install(monkeypatch, handler):
         return handler(request)
 
     monkeypatch.setattr(client_connect, "_new_client",
-                        lambda: httpx.Client(transport=httpx.MockTransport(_h), timeout=httpx.Timeout(3.0)))
+                        lambda timeout=3.0: httpx.Client(transport=httpx.MockTransport(_h),
+                                                         timeout=httpx.Timeout(timeout)))
     return calls
 
 
@@ -351,3 +354,101 @@ def test_fetch_proxy_settings_failures_never_return_settings(monkeypatch, handle
 
 def test_fetch_proxy_settings_bad_url():
     assert client_connect.fetch_proxy_settings("", "t") == {"ok": False, "reason": "unreachable", "settings": None}
+
+
+# ---------------------------------------------------------------------------
+# 168e-T1：E37 一律直連（真 HTTP，不走 transport=，否則 httpx 不建代理路由會假綠）
+# ---------------------------------------------------------------------------
+_PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
+def _serve_routes():
+    """本機真 HTTP 假伺服器（127.0.0.1:0）；回 (httpd, port)。呼叫端負責 shutdown／server_close。"""
+    routes = {
+        ("GET", "/api/client/hello"): HELLO,
+        ("POST", "/api/client/token"): {"success": True, "token": "T"},
+        ("GET", "/api/client/sources"): {"success": True, "sources": []},
+        ("GET", "/api/config"): {"data": {"scraper": {"video_extensions": [".mp4"]}}},
+    }
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _reply(self, method):
+            if method == "POST":
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = routes.get((method, self.path))
+            data = json.dumps(body if body is not None else {}).encode()
+            self.send_response(200 if body is not None else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            self._reply("GET")
+
+        def do_POST(self):
+            self._reply("POST")
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, httpd.server_address[1]
+
+
+@pytest.fixture
+def lan_server():
+    httpd, port = _serve_routes()
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@pytest.fixture
+def broken_env_proxy(monkeypatch):
+    for k in _PROXY_VARS:
+        monkeypatch.setenv(k, "http://127.0.0.1:9")
+    for k in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(k, raising=False)
+
+
+@pytest.mark.parametrize("fn,args", [
+    (client_connect.probe, ()),
+    (client_connect.login, ("1234",)),
+    (client_connect.fetch_sources, ("T",)),
+    (client_connect.fetch_video_extensions, ("T",)),
+    (client_connect.fetch_proxy_settings, ("T",)),
+], ids=lambda v: getattr(v, "__name__", None))
+def test_client_connect_ignores_system_proxy(broken_env_proxy, lan_server, fn, args):
+    r = fn(lan_server, *args)
+    assert r["ok"] is True, r
+
+
+# ---------------------------------------------------------------------------
+# 168e-T1：E11 fetch_sources 逾時放寬（MockTransport 讀 request 的 read timeout 模擬延遲，不真 sleep）
+# ---------------------------------------------------------------------------
+def _slow_nas(monkeypatch, delay):
+    real = client_connect._new_client
+
+    def h(request):
+        if delay > request.extensions["timeout"]["read"]:
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(200, json={"success": True, "sources": []})
+
+    monkeypatch.setattr(client_connect, "_new_client",
+                        lambda timeout=3.0: real(transport=httpx.MockTransport(h), timeout=timeout))
+
+
+def test_fetch_sources_tolerates_slow_nas(monkeypatch):
+    _slow_nas(monkeypatch, 5)
+    assert client_connect.fetch_sources(URL, "T")["ok"] is True
+
+
+def test_fetch_sources_still_times_out_at_twelve_seconds(monkeypatch):
+    _slow_nas(monkeypatch, 12)
+    r = client_connect.fetch_sources(URL, "T")
+    assert (r["ok"], r["reason"]) == (False, "timeout")
