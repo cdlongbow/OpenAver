@@ -1886,6 +1886,7 @@
     "apply_apply": "套用並重新啟動 OpenAver",
     "apply_hint_local": "本機伺服器會關掉；本機片庫資料庫不會被動。",
     "apply_hint_client": "改網址或重新輸入密碼後，要按「套用並重新啟動 OpenAver」才會生效。",
+    "switch_local_title": "切回本機模式",
     "switch_local_btn": "切回本機模式並重新啟動 OpenAver",
     "switch_local_hint": "本機伺服器會重新啟動；本機原本那顆資料庫沒被動過；這台電腦的播放器與關閉行為設定保留。",
     "restarting": "正在重新啟動 OpenAver…",
