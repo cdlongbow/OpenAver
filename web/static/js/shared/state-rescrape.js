@@ -689,6 +689,10 @@ export function rescrapeState() {
                 const result = await resp.json();
                 // 窗已換：寫檔其實成功 → 只靜默刷新舊片資料，不 toast、不關窗、不動新窗
                 if (result.success && gen !== this._rescrapeOpenGen) await this.refreshVideoData?.(video);
+                // pre-merge P3-1：寫檔失敗的 toast 不受世代守衛壓制（不碰新窗狀態）
+                if (!result.success && !result.cf_needed && !result.cf_unavailable && gen !== this._rescrapeOpenGen) {
+                    this.showToast(result.error || window.t('showcase.rescrape.fail'), 'error');
+                }
                 if (gen !== this._rescrapeOpenGen) return;   // I-12 confirm
                 // P2-2（Codex PR#89）：confirm 寫檔分支也接 CF——T2 後 javlibrary && detail_url 會走後端
                 // detail 重抓分支，若預覽→確認之間 CF session 過期，後端回 {cf_needed} / {cf_unavailable}
@@ -714,7 +718,10 @@ export function rescrapeState() {
                     this.showToast(result.error || window.t('showcase.rescrape.fail'), 'error');
                 }
             } catch (e) {
-                if (gen !== this._rescrapeOpenGen) return;
+                if (gen !== this._rescrapeOpenGen) {
+                    this.showToast(window.t('showcase.rescrape.fail'), 'error');   // pre-merge P3-1：失敗仍告知，不碰新窗
+                    return;
+                }
                 this.showToast(window.t('showcase.rescrape.fail'), 'error');
             } finally {
                 this._rescraping = false;

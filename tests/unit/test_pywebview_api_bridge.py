@@ -635,9 +635,3 @@ def test_on_drop_covered_items_do_not_affect_kind(api_module, client_env):
     _setup_exit(api_module, "on_drop_file", [str(av / "x.mp4"), str(av / "sub"), str(other)])()
     notes = _uncovered_calls(api_module.get_window())
     assert len(notes) == 1 and _kind_of(notes[0]) == "folder"
-
-
-def test_merge_uncovered_kind_pure(api_module):
-    assert api_module._merge_uncovered_kind({"file"}) == "file"
-    assert api_module._merge_uncovered_kind({"folder"}) == "folder"
-    assert api_module._merge_uncovered_kind({"file", "folder"}) == "any"

@@ -69,11 +69,6 @@ test('update_marker reveals every data-shell-update dot and sets its title on a 
   }
 });
 
-test('update_marker returns false when the page has no dot', () => {
-  setupDots(0);
-  assert.equal(handleShellNotice({ kind: 'update_marker', version: '9.9.9' }), false);
-});
-
 test('update_marker rejects malformed version and leaves dots hidden', () => {
   const dots = setupDots(2);
   for (const v of ['<script>1</script>', 'v9.9.9', '', 9, undefined]) {

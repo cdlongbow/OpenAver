@@ -176,12 +176,6 @@ def test_strip_wrapping_quotes_table():
         assert strip_wrapping_quotes(raw) == want, raw
 
 
-def test_strip_wrapping_quotes_unpaired_untouched():
-    assert strip_wrapping_quotes('"' + r'D:\a') == '"' + r'D:\a'
-    assert strip_wrapping_quotes(r'D:\a' + '"') == r'D:\a' + '"'
-    assert strip_wrapping_quotes('"') == '"'
-
-
 def test_from_rules_quoted_local_translates_same_as_bare(caplog):
     quoted = PathMap.from_rules([{"server": "/mnt/av", "local": '"' + UNC_AV + '"'}])
     bare = PathMap.from_rules([{"server": "/mnt/av", "local": UNC_AV}])

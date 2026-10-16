@@ -165,3 +165,27 @@ test('I-12 gen: refresh landing after reopen does not toast or close the new win
         assert.equal(ctx.rescrapeOpen, true);
     });
 });
+
+for (const [name, impl] of [
+    ['success:false', async () => reply({ success: false, error: 'write failed' })],
+    ['fetch rejects', async () => { throw new Error('boom'); }],
+]) {
+    test(`I-12 gen: confirm failure landing after reopen still toasts once, new window untouched (${name})`, async () => {
+        const g = gate();
+        await withGlobals({ fetchImpl: async () => { await g.p; return impl(); } }, async () => {
+            const ctx = mkCtx();
+            confirmCtx(ctx);
+            const pending = ctx.rescrapeConfirm();
+            ctx.closeRescrape();
+            ctx.openRescrape({ number: 'BBB-222', path: '/x/b.mp4' });
+            g.release();
+            await pending;
+            assert.equal(ctx.toasts.length, 1);
+            assert.equal(ctx.toasts[0][1], 'error');
+            assert.equal(ctx.rescrapeOpen, true);
+            assert.equal(ctx.rescrapeNotFound, false);
+            assert.equal(ctx.rescrapeCfWaiting, false);
+            assert.equal(ctx.refreshed.length, 0);
+        });
+    });
+}

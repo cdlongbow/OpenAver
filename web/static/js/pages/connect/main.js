@@ -2,7 +2,7 @@
 import { PROBE_ICON_MAP } from '../settings/source-probe-logic.js';
 import {
     connectActions, probeCode, dotState, kindCode, forgotCode, cfView,
-    mergeRows, staleRows, rulesForSave, rowResultView, pathMapForApply as buildPathMap,
+    mergeRows, staleRows, rulesForSave, stripWrappingQuotes, rowResultView, pathMapForApply as buildPathMap,
 } from './connect-logic.js';
 
 export function connectPage() {
@@ -224,6 +224,7 @@ export function connectPage() {
             if (this.bridge === 'unavailable') return;
             if (reply && reply.ok === true) {
                 this.savedRules = rules;
+                for (const row of this.rows) row.local = stripWrappingQuotes(row.local);   // CD-9 ③：顯示值與存的一致
                 this.rowsSnapshot = JSON.stringify(rules);
                 Alpine.store('toast').show(window.t('connect.rows.saved'), 'success');
                 return;

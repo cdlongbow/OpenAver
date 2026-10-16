@@ -254,6 +254,15 @@ test('save sends rules, toasts once and clears dirty', async () => {
     assert.equal(page.busy, null);
 });
 
+test('save success strips wrapping quotes from row.local and stays not dirty', async () => {
+    const { page } = await authed({}, 'client');
+    page.rows[1].local = '"/Volumes/fav"';
+    assert.equal(page.actions().canSaveRows, true);
+    await page.saveRows();
+    assert.equal(page.rows[1].local, '/Volumes/fav');
+    assert.equal(page.actions().canSaveRows, false);
+});
+
 test('save failure toasts an error and stays dirty', async () => {
     const { page } = await authed({ connect_save_path_map: async () => ({ ok: false, reason: 'not_client' }) }, 'client');
     page.rows[1].local = '/Volumes/fav';

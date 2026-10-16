@@ -9285,7 +9285,7 @@ const RULES = [
   },
   {
     file: 'locales/zh_TW.json', kind: 'required-string', pattern: /venv\/bin\/python -c .*set_auth\(enabled=False, pin=''\)/,
-    note: '[lint-guard 168e-T7-forgot-linux-command] 連線頁 Linux 忘記密碼句缺了完整重設指令（或與 docs/linux-server.md 不一致）→ 使用者照著貼上去跑卻沒真的關掉密碼，重啟後仍被擋在登入畫面',
+    note: '[lint-guard 168e-T7-forgot-linux-command] zh_TW 的 forgot_linux 必含完整重設指令字串（與 docs/linux-server.md 同一條指令，人工對齊）；缺了 → 使用者照著貼上去跑卻沒真的關掉密碼，重啟後仍被擋在登入畫面',
   },
 ];
 

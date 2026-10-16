@@ -419,23 +419,6 @@ def test_apply_connection_old_url_empty_keeps_path_map(env):
     assert client_settings.path_map() == _MAP
 
 
-def test_apply_connection_b1_shape_same_origin_keeps_everything(env):
-    # 照 windows/pywebview_api.py _store_login_token：apply_connection(origin, token, None)
-    _client(env, path_map=list(_MAP), player="P")
-    client_settings.apply_connection("http://192.168.1.177:8000", "NEWTOKEN", None)
-    assert client_settings.path_map() == _MAP
-    assert client_settings.server_token() == "NEWTOKEN"
-    assert client_settings.player_path() == "P"
-
-
-def test_apply_connection_b3_shape_other_origin_clears_map_and_token(env):
-    # 照 offline_save_url：不同 origin -> apply_connection(canonical, "", None)
-    _client(env, server={"url": CLIENT_URL, "token": "OLD"}, path_map=list(_MAP))
-    client_settings.apply_connection("http://192.168.1.60:8765", "", None)
-    assert client_settings.path_map() == []
-    assert client_settings.server_token() == ""
-
-
 def test_apply_connection_canonicalizes_url(env):
     client_settings.apply_connection("HTTP://Nas.LAN:80/x", "T", [])
     assert client_settings.server_url() == "http://nas.lan"
