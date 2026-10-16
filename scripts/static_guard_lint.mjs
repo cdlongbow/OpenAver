@@ -8656,8 +8656,11 @@ const RULES = [
     pattern: '.then(async (result)',
     note: '[lint-guard 162c-test_open_local_checks_return_value] 開啟失敗仍顯示已開啟 → .then 須檢查 bridge 回傳結果（168a 起為 dict，行為由 bridge-open-wiring.test.mjs 守）' },
   { file: 'web/static/js/shared/open-local.js', kind: 'required-string',
-    pattern: 'displayPath',
-    note: '[lint-guard 162c-test_open_local_cross_platform_path] Windows 剪貼簿路徑須走 displayPath 跨平台格式 — 遷自 test_contract_desktop.py' },
+    pattern: /\bcopyText\(displayPath\)/,
+    note: '[lint-guard 162c-test_open_local_cross_platform_path] 無 bridge（純瀏覽器）分支須複製 pathToDisplay 後的 displayPath；bridge 分支改複製 result.local_path（行為由 bridge-open-wiring.test.mjs 守）' },
+  { file: 'web/static/js/shared/open-local.js', kind: 'required-string',
+    pattern: /\bcopyText\([^\n]*result\.local_path/,
+    note: '[lint-guard 168e-T4] bridge 分支須複製 bridge 回的 local_path（這台電腦的路徑），不是伺服器路徑' },
 
   // 162c: TestJavlibraryPickerT5Guard
   { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string',
