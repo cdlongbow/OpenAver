@@ -36,7 +36,9 @@
     "bridge": {
       "file_not_found": "找不到檔案：{path}",
       "path_uncovered_local": "這台電腦看不到這個位置：{path}",
-      "path_uncovered_server": "這個資料夾伺服器看不到：{path}",
+      "path_uncovered_server_file": "選取或拖入的檔案伺服器看不到：{path}。到連線頁的路徑對照表加上對應，或先把檔案放進主機看得到的共用夾",
+      "path_uncovered_server_folder": "選取或拖入的資料夾伺服器看不到：{path}。到連線頁的路徑對照表加上對應，或先把檔案放進主機看得到的共用夾",
+      "path_uncovered_server_any": "選取或拖入的檔案或資料夾伺服器看不到：{path}。到連線頁的路徑對照表加上對應，或先把檔案放進主機看得到的共用夾",
       "not_video": "不是影片檔，無法開啟：{path}"
     },
     "shell": {

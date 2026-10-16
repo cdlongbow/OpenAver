@@ -388,8 +388,13 @@ def _split_reverse(local_paths):
     return kept, uncovered
 
 
-def _notify_uncovered(method, paths):
-    """每次出口呼叫最多通知一次：保序去重，每個路徑一行 WARNING"""
+def _merge_uncovered_kind(kinds):
+    """被擋清單出現過的種類集合 → 'file'／'folder'；兩種都有（或空）→ 'any'"""
+    return 'any' if len(kinds) != 1 else next(iter(kinds))
+
+
+def _notify_uncovered(method, paths, kind):
+    """每次出口呼叫最多通知一次：保序去重，每個路徑一行 WARNING；kind ∈ file／folder／any"""
     unique = list(dict.fromkeys(paths))
     if not unique:
         return
@@ -398,7 +403,7 @@ def _notify_uncovered(method, paths):
     window = get_window()
     if window is not None:
         paths_json = json.dumps(unique)
-        window.evaluate_js(f'if(typeof handleBridgeUncovered === "function") handleBridgeUncovered({paths_json})')
+        window.evaluate_js(f'if(typeof handleBridgeUncovered === "function") handleBridgeUncovered({paths_json}, {json.dumps(kind)})')
 
 
 class Api:
@@ -577,7 +582,7 @@ class Api:
         if not result:
             return []
         kept, uncovered = _split_reverse(list(result))
-        _notify_uncovered('select_files', uncovered)
+        _notify_uncovered('select_files', uncovered, 'file')
         return kept
 
     def select_folder(self):
@@ -594,7 +599,7 @@ class Api:
         folder_path = result[0]
         folder_kept, uncovered = _split_reverse([folder_path])
         if not folder_kept:
-            _notify_uncovered('select_folder', uncovered)
+            _notify_uncovered('select_folder', uncovered, 'folder')
             return None
         exts = client_settings.video_extensions()
         local_files = []
@@ -603,7 +608,7 @@ class Api:
             if os.path.isfile(file_path) and is_video_file(f, exts):
                 local_files.append(file_path)
         files, uncovered_files = _split_reverse(local_files)
-        _notify_uncovered('select_folder', uncovered_files)
+        _notify_uncovered('select_folder', uncovered_files, 'file')
         return {"folder": folder_kept[0], "files": files}
 
     def select_folder_path(self):
@@ -615,7 +620,7 @@ class Api:
         if not (result and len(result) > 0):
             return None
         kept, uncovered = _split_reverse([result[0]])
-        _notify_uncovered('select_folder_path', uncovered)
+        _notify_uncovered('select_folder_path', uncovered, 'folder')
         return kept[0] if kept else None
 
     def open_file(self, path):
@@ -1032,6 +1037,7 @@ def on_drop(e):
     expanded_paths = []  # 影片檔案路徑（給 search 用）
     folder_paths = []    # 資料夾路徑（給 scanner 用）
     uncovered = []       # 未涵蓋的本機路徑（只通知，不推送）
+    uncovered_kinds = set()  # 被擋清單出現過的種類（file／folder）
 
     exts = client_settings.video_extensions()
 
@@ -1044,6 +1050,8 @@ def on_drop(e):
             folder_kept, folder_uncovered = _split_reverse([win_path])
             folder_paths.extend(folder_kept)
             uncovered.extend(folder_uncovered)
+            if folder_uncovered:
+                uncovered_kinds.add('folder')
             if not folder_kept:
                 continue
             # 資料夾：展開第一層影片檔案（給 search 用）
@@ -1055,10 +1063,14 @@ def on_drop(e):
             kept, file_uncovered = _split_reverse(local_files)
             expanded_paths.extend(kept)
             uncovered.extend(file_uncovered)
+            if file_uncovered:
+                uncovered_kinds.add('file')
         else:
             kept, file_uncovered = _split_reverse([win_path])
             expanded_paths.extend(kept)
             uncovered.extend(file_uncovered)
+            if file_uncovered:
+                uncovered_kinds.add('file')
 
     # 傳送影片檔案路徑（search 頁面用）
     if expanded_paths:
@@ -1070,7 +1082,7 @@ def on_drop(e):
         folders_json = json.dumps(folder_paths)
         window.evaluate_js(f'if(typeof handleFolderDrop === "function") handleFolderDrop({folders_json})')
 
-    _notify_uncovered('on_drop', uncovered)
+    _notify_uncovered('on_drop', uncovered, _merge_uncovered_kind(uncovered_kinds))
 
 
 def bind_events(w):

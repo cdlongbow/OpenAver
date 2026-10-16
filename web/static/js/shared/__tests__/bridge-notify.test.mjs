@@ -2,6 +2,7 @@
 // window.t / Alpine 皆 stub；t 回傳 `key|path` 讓斷言同時看得到 key 與 {path} 參數。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 globalThis.window = globalThis;
 globalThis.window.t = (key, params) => (params && params.path !== undefined ? `${key}|${params.path}` : key);
@@ -83,10 +84,10 @@ test('handleBridgeUncovered 空／非陣列不動作', () => {
 test('handleBridgeUncovered 單筆一則、三筆仍一則（、連接）', () => {
     toastCalls.length = 0;
     handleBridgeUncovered(['\\\\nas\\x']);
-    assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server|\\\\nas\\x', 'error']]);
+    assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server_any|\\\\nas\\x', 'error']]);
     toastCalls.length = 0;
     handleBridgeUncovered(['/a', '/b', '/c']);
-    assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server|/a、/b、/c', 'error']]);
+    assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server_any|/a、/b、/c', 'error']]);
 });
 
 test('handleBridgeUncovered Alpine 未就緒不拋錯', () => {
@@ -104,4 +105,54 @@ test('handleBridgeUncovered Alpine 未就緒不拋錯', () => {
 
 test('載入時掛上 window.handleBridgeUncovered', () => {
     assert.equal(window.handleBridgeUncovered, handleBridgeUncovered);
+});
+
+test('handleBridgeUncovered 依 kind 選 key', () => {
+    for (const [kind, key] of [['file', 'file'], ['folder', 'folder'], ['any', 'any']]) {
+        toastCalls.length = 0;
+        handleBridgeUncovered(['/a'], kind);
+        assert.deepEqual(toastCalls, [[`common.bridge.path_uncovered_server_${key}|/a`, 'error']]);
+    }
+});
+
+test('handleBridgeUncovered 缺 kind 或未知 kind 走 any 文案', () => {
+    for (const kind of [undefined, null, 'bogus', 42]) {
+        toastCalls.length = 0;
+        handleBridgeUncovered(['/a'], kind);
+        assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server_any|/a', 'error']]);
+    }
+});
+
+// 讀真實 zh_TW.json 驗文案字面（上面的 stub 只回 key，驗不到文案）
+function realText(kind) {
+    const zh = JSON.parse(readFileSync(new URL('../../../../../locales/zh_TW.json', import.meta.url), 'utf8'));
+    const saved = globalThis.window.t;
+    globalThis.window.t = (key, params) =>
+        key.split('.').reduce((o, k) => o[k], zh).replace('{path}', params.path);
+    try {
+        toastCalls.length = 0;
+        handleBridgeUncovered(['\\\\nas\\x'], kind);
+        return toastCalls[0][0];
+    } finally {
+        globalThis.window.t = saved;
+    }
+}
+
+test('handleBridgeUncovered kind=file 顯示檔案文案且含路徑對照表', () => {
+    const m = realText('file');
+    assert.ok(m.includes('檔案') && m.includes('路徑對照表') && m.includes('\\\\nas\\x'));
+    assert.ok(!m.includes('資料夾'));
+});
+
+test('handleBridgeUncovered kind=folder 顯示資料夾文案且含路徑對照表', () => {
+    const m = realText('folder');
+    assert.ok(m.includes('資料夾') && m.includes('路徑對照表'));
+    assert.ok(m.startsWith('選取或拖入的資料夾'));
+});
+
+test('handleBridgeUncovered kind=any 文案同時提檔案與資料夾', () => {
+    for (const kind of ['any', undefined]) {
+        const m = realText(kind);
+        assert.ok(m.includes('檔案') && m.includes('資料夾') && m.includes('路徑對照表'));
+    }
 });
