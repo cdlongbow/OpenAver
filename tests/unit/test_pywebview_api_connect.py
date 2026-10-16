@@ -487,7 +487,7 @@ def test_offline_save_url_same_origin_keeps_token_other_origin_drops_it(cx):
     assert client_settings.server_url() == OTHER and client_settings.server_token() == ""
     assert cx.api._trusted_origin == OTHER
     assert cx.api._offline_state["failed_url"] == OTHER
-    assert client_settings.path_map() == [{"server": "/volume1/av", "local": "D:/av"}]
+    assert client_settings.path_map() == []
     for mock in (cx.probe, cx.preflight, cx.login):
         mock.assert_not_called()
 

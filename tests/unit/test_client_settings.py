@@ -368,10 +368,72 @@ def test_clear_connection_then_apply_keeps_preserved_keys(env):
 
 def test_apply_connection_path_map_none_keeps_list_replaces(env):
     _client(env, path_map=[{"server": "/a", "local": "Z:\\a"}])
-    client_settings.apply_connection("http://192.168.1.190:8765", "T", None)
+    client_settings.apply_connection("http://192.168.1.177:8000", "T", None)
     assert client_settings.path_map() == [{"server": "/a", "local": "Z:\\a"}]
     client_settings.apply_connection("http://192.168.1.190:8765", "T", [{"server": "/b", "local": "Y:\\b"}])
     assert client_settings.path_map() == [{"server": "/b", "local": "Y:\\b"}]
+
+
+_MAP = [{"server": "/volume1/video", "local": "D:/video"}]
+
+
+@pytest.mark.parametrize("new_url", [
+    "https://192.168.1.177:8000",   # scheme
+    "http://192.168.1.178:8000",    # host
+    "http://192.168.1.177:8001",    # port
+])
+def test_apply_connection_other_origin_clears_path_map(env, new_url):
+    _client(env, path_map=list(_MAP))
+    assert client_settings.path_map() == _MAP
+    client_settings.apply_connection(new_url, "T", None)
+    assert client_settings.path_map() == []
+
+
+@pytest.mark.parametrize("old_url,new_url", [
+    ("http://192.168.1.177:8000/foo/", "http://192.168.1.177:8000"),
+    ("HTTP://192.168.1.177:8000/x/", "http://192.168.1.177:8000/"),
+    ("http://nas.lan", "http://nas.lan:80"),
+    ("http://nas.lan:80", "http://nas.lan"),
+])
+def test_apply_connection_same_origin_keeps_path_map(env, old_url, new_url):
+    _client(env, server={"url": old_url, "token": ""}, path_map=list(_MAP))
+    assert client_settings.path_map() == _MAP
+    client_settings.apply_connection(new_url, "T", None)
+    assert client_settings.path_map() == _MAP
+
+
+@pytest.mark.parametrize("rules", [[], [{"server": "/b", "local": "Y:/b"}]])
+def test_apply_connection_other_origin_explicit_list_written_as_is(env, rules):
+    _client(env, path_map=list(_MAP))
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", rules)
+    assert client_settings.path_map() == rules
+
+
+def test_apply_connection_old_url_empty_keeps_path_map(env):
+    _client(env, path_map=list(_MAP))
+    client_settings.clear_connection()
+    assert client_settings.mode() == "local"
+    raw = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert raw["server"]["url"] == "" and raw["path_map"] == _MAP
+    client_settings.apply_connection("http://192.168.1.190:8765", "T", None)
+    assert client_settings.path_map() == _MAP
+
+
+def test_apply_connection_b1_shape_same_origin_keeps_everything(env):
+    # 照 windows/pywebview_api.py _store_login_token：apply_connection(origin, token, None)
+    _client(env, path_map=list(_MAP), player="P")
+    client_settings.apply_connection("http://192.168.1.177:8000", "NEWTOKEN", None)
+    assert client_settings.path_map() == _MAP
+    assert client_settings.server_token() == "NEWTOKEN"
+    assert client_settings.player_path() == "P"
+
+
+def test_apply_connection_b3_shape_other_origin_clears_map_and_token(env):
+    # 照 offline_save_url：不同 origin -> apply_connection(canonical, "", None)
+    _client(env, server={"url": CLIENT_URL, "token": "OLD"}, path_map=list(_MAP))
+    client_settings.apply_connection("http://192.168.1.60:8765", "", None)
+    assert client_settings.path_map() == []
+    assert client_settings.server_token() == ""
 
 
 def test_apply_connection_canonicalizes_url(env):
@@ -573,6 +635,17 @@ def test_update_local_settings_empty_video_extensions_means_default(env):
     data = json.loads((env / "client.json").read_text(encoding="utf-8"))
     assert data["video_extensions"] == []
     assert client_settings.video_extensions() == set(DEFAULT_VIDEO_EXTENSIONS)
+
+
+def test_update_local_settings_video_extensions_drops_blank_elements(env):
+    _client(env, video_extensions=[".zzz"])
+    assert client_settings.update_local_settings({"video_extensions": [""]}) == \
+        {"ok": True, "changed": ["video_extensions"]}
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["video_extensions"] == []
+    assert client_settings.update_local_settings({"video_extensions": ["", "  ", "mp4"]})["ok"] is True
+    data = json.loads((env / "client.json").read_text(encoding="utf-8"))
+    assert data["video_extensions"] == [".mp4"]
 
 
 def test_rmw_writers_do_not_create_file(env):

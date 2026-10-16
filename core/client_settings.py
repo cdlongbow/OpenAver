@@ -413,9 +413,12 @@ def apply_connection(url_canonical: str, token, path_map_rules) -> None:
         d["version"] = CLIENT_VERSION
         if was_local:
             d = migrate_local_settings(d)
+        old_url = _server_section(d).get("url")  # 須在覆寫 d["server"] 之前讀
         d["server"] = {**_server_section(d), "url": url, "token": token or ""}
         if path_map_rules is not None:
             d["path_map"] = list(path_map_rules)
+        elif isinstance(old_url, str) and old_url.strip() and canonical_server_url(old_url) != url:
+            d["path_map"] = []  # E42 換主機清空
         elif not isinstance(d.get("path_map"), list):
             d["path_map"] = []
         return d
@@ -457,7 +460,7 @@ def _validate_local_value(key: str, value):
     if key == "video_extensions":  # [] 合法：＝用預設（讀取端 fallback）
         if not isinstance(value, list) or not all(isinstance(e, str) for e in value):
             return _BAD
-        return sorted(normalize_extensions(value))
+        return sorted(normalize_extensions([e for e in value if e.strip()]))
     if key == "tray_locale":
         return value if isinstance(value, str) and value in SUPPORTED_LOCALES else _BAD
     # last_notified_update_version
