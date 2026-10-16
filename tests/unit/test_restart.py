@@ -149,6 +149,43 @@ def test_spawn_failure_notifies_once_and_never_retries(monkeypatch):
     assert isinstance(msg, str) and msg and not msg.startswith("[")
 
 
+def _spawn_fail_notice(monkeypatch):
+    monkeypatch.setattr(restart, "restart_command", lambda *a, **k: ["x"])
+    notify = Mock()
+    restart.request_restart(Mock()).join(5)
+    assert restart.spawn_if_requested(notify_error=notify, popen=Mock(side_effect=OSError("boom"))) is False
+    notify.assert_called_once()
+    return notify.call_args[0][0]
+
+
+def test_spawn_failure_notice_follows_tray_locale(monkeypatch):
+    import core.i18n as i18n
+    from core import client_settings
+    real = i18n.load_locale
+    monkeypatch.setattr(i18n, "load_locale", lambda lang: (
+        {"desktop": {"restart": {"spawn_failed": "EN-SPAWN-FAILED"}}} if lang == "en" else real(lang)))
+    monkeypatch.setattr(client_settings, "tray_locale", lambda: "en")
+    assert _spawn_fail_notice(monkeypatch) == "EN-SPAWN-FAILED"
+
+
+def test_spawn_failure_notice_en_missing_key_falls_back_to_zh_tw(monkeypatch):
+    from core import client_settings
+    monkeypatch.setattr(client_settings, "tray_locale", lambda: "en")
+    msg = _spawn_fail_notice(monkeypatch)
+    assert msg and not msg.startswith("[")
+
+
+def test_spawn_failure_locale_lookup_raising_still_notifies_zh_tw(monkeypatch):
+    from core import client_settings
+
+    def boom():
+        raise RuntimeError("locale lookup failed")
+
+    monkeypatch.setattr(client_settings, "tray_locale", boom)
+    msg = _spawn_fail_notice(monkeypatch)
+    assert msg and not msg.startswith("[")
+
+
 # ---- wait_for_parent_exit ----
 
 def test_wait_for_parent_missing_or_bad_env_returns_immediately():

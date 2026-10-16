@@ -1087,6 +1087,8 @@ def on_drop(e):
             if file_uncovered:
                 uncovered_kinds.add('file')
         else:
+            if not is_video_file(win_path, exts):
+                continue
             kept, file_uncovered = _split_reverse([win_path])
             expanded_paths.extend(kept)
             uncovered.extend(file_uncovered)

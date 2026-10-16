@@ -167,3 +167,36 @@ def test_offline_page_equals_pywebview_api_constant(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.OFFLINE_PAGE == shell_boot.OFFLINE_PAGE
+
+
+# ---- 168e-T15 E44：小頁文案跟隨托盤語系 ----
+
+def _fake_en_locale(monkeypatch, tree):
+    import core.i18n as i18n
+    real = i18n.load_locale
+
+    def fake(lang):
+        return tree if lang == "en" else real(lang)
+
+    monkeypatch.setattr(i18n, "load_locale", fake)
+
+
+def test_offline_texts_follow_tray_locale_en(monkeypatch):
+    names = ("url_label", "retry", "retrying", "switch_local", "password_label", "submit",
+             "bad_url", "bad_pin", "login_failed", "retry_failed")
+    tree = {"desktop": {"offline": {"message": {k: f"EN-{k} {{host}}" for k in
+                                                ("unreachable", "lan_forbidden", "incompatible", "relogin")},
+                                    **{n: f"EN-{n}" for n in names}}}}
+    _fake_en_locale(monkeypatch, tree)
+    monkeypatch.setattr(client_settings, "tray_locale", lambda: "en")
+    texts = shell_boot.offline_texts("unreachable", "h:1")
+    assert texts["message"] == "EN-unreachable h:1"
+    assert texts["retry"] == "EN-retry"
+
+
+def test_offline_texts_en_missing_keys_fall_back_to_zh_tw(monkeypatch):
+    monkeypatch.setattr(client_settings, "tray_locale", lambda: "en")
+    zh = shell_boot.offline_texts("unreachable", "h:1")
+    monkeypatch.setattr(client_settings, "tray_locale", lambda: "zh-TW")
+    assert zh == shell_boot.offline_texts("unreachable", "h:1")
+    assert all(not v.startswith("[") for v in zh.values())

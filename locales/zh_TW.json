@@ -88,6 +88,10 @@
     "restart": {
       "spawn_failed": "無法自動重新啟動 OpenAver，請手動重新開啟。"
     },
+    "cf_window": {
+      "jl_title": "JavLibrary — CF 驗證",
+      "javten_title": "FC2 (javten) — CF 驗證"
+    },
     "tray": {
       "open_app": "開啟 OpenAver",
       "close_behavior": "關閉視窗時",

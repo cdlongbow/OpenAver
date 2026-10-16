@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 
+from core import client_settings
 from core.i18n import t
 from core.logger import get_logger
 
@@ -69,6 +70,14 @@ def _spawn_kwargs():
     return kwargs
 
 
+def _failure_locale():
+    """失敗提示的語系；取不到就退 zh-TW（呼叫點在 except 內，不得再拋）"""
+    try:
+        return client_settings.tray_locale()
+    except Exception:  # noqa: BLE001
+        return "zh-TW"
+
+
 def spawn_if_requested(notify_error=None, popen=None):
     """有重啟請求時起新行程，一次請求恰一次；失敗不重試也不拋"""
     if not _state["requested"]:
@@ -82,7 +91,7 @@ def spawn_if_requested(notify_error=None, popen=None):
     except Exception as e:
         logger.error(f"[restart] spawn failed ({type(e).__name__})")
         if notify_error is not None:
-            notify_error(t("desktop.restart.spawn_failed", "zh-TW"))
+            notify_error(t("desktop.restart.spawn_failed", _failure_locale()))
         return False
     return True
 

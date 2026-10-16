@@ -61,12 +61,13 @@ def resolve_boot(local_origin, shell_kind):
 
 
 def offline_texts(reason, host_port):
-    """小頁文案（固定 zh-TW）；永不拋"""
+    """小頁文案（跟隨托盤語系，缺 key 退 zh-TW）；永不拋"""
     try:
         key = reason if reason in _REASONS else "unreachable"
-        texts = {"message": t(f"desktop.offline.message.{key}", "zh-TW", host=host_port)}
+        locale = client_settings.tray_locale()
+        texts = {"message": t(f"desktop.offline.message.{key}", locale, host=host_port)}
         for name in _TEXT_KEYS:
-            texts[name] = t(f"desktop.offline.{name}", "zh-TW")
+            texts[name] = t(f"desktop.offline.{name}", locale)
         return texts
     except Exception as e:
         logger.warning(f"[shell_boot] offline texts failed ({type(e).__name__})")

@@ -13,14 +13,25 @@ from typing import Any, Callable
 import webview
 from webview2_proxy import ReadyHolder, install as install_webview2_proxy   # sibling import（同 cf_transport_impl）
 
-from core import client_connect, proxy_policy
+from core import client_connect, client_settings, proxy_policy
+from core.i18n import t
 from core.data_root import get_data_root
 from core.desktop_env import desktop_kind
 from core.proxy_policy import cf_window_proxy, record_cf_window_proxy_at_start
 
-# 兩個驗證視窗的標題：單一來源，同時餵給 create_window 與 title_to_key（套用器靠標題認視窗）。
-JL_WINDOW_TITLE = 'JavLibrary — CF 驗證'
-JAVTEN_WINDOW_TITLE = 'FC2 (javten) — CF 驗證'
+
+def window_titles(locale=None):
+    """兩個驗證視窗的標題 (jl, javten)；locale=None 讀托盤語系，取不到退 zh-TW。
+
+    build_cf_windows 入口只算一次，同一組字串餵 create_window 與 title_to_key（套用器靠標題認視窗）。
+    """
+    if locale is None:
+        try:
+            locale = client_settings.tray_locale()
+        except Exception:                                            # noqa: BLE001
+            locale = 'zh-TW'
+    return t('desktop.cf_window.jl_title', locale), t('desktop.cf_window.javten_title', locale)
+
 
 CF_SHELL_SUPPORTED = {'win32': True, 'darwin': True}
 
@@ -76,7 +87,7 @@ def attach_close_guards(win_set: CfWindowSet, is_quitting: Callable[[], bool]) -
             win.events.closing += _make(win)
 
 
-def _prepare_cf_window_proxy(logger, settings):
+def _prepare_cf_window_proxy(logger, settings, titles):
     """Windows desktop only: decide whether the CF windows run through the Proxy field.
 
     Returns (proxy, holder, ok). `proxy` is the CfWindowProxy to apply (None = nothing to
@@ -93,7 +104,7 @@ def _prepare_cf_window_proxy(logger, settings):
     except Exception as e:                                           # noqa: BLE001
         logger.warning("CF window proxy spec unavailable, CF windows disabled: %s", type(e).__name__)
         return None, holder, False
-    title_to_key = {JL_WINDOW_TITLE: 'javlibrary', JAVTEN_WINDOW_TITLE: 'fc-javten'}
+    title_to_key = {titles[0]: 'javlibrary', titles[1]: 'fc-javten'}
     try:
         udf_root = str(get_data_root() / 'webview')
         ok = install_webview2_proxy(proxy, udf_root, title_to_key, holder)
@@ -125,12 +136,13 @@ def build_cf_windows(logger, settings, local_direct: bool = False) -> CfWindowSe
     transport = None
     proxy = None
     proxy_ok = True
+    titles = window_titles()
     try:
         from cf_transport_impl import PyWebViewCfTransport   # sibling import（WINDOWS_DIR 已在 sys.path）
         from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
         # TASK-163b-T7a: Windows desktop + Proxy field "all sources" -> both windows run through
         # the proxy (blank-started, pending until the applier confirms). proxy is None => unchanged.
-        proxy, holder, proxy_ok = _prepare_cf_window_proxy(logger, settings)
+        proxy, holder, proxy_ok = _prepare_cf_window_proxy(logger, settings, titles)
         jl_url = 'about:blank' if proxy is not None else JAVLIBRARY_ORIGIN
         initial_urls = {} if proxy is not None else {'javlibrary': JAVLIBRARY_ORIGIN}
         pending = {'javlibrary', 'fc-javten'} if proxy is not None else set()
@@ -143,7 +155,7 @@ def build_cf_windows(logger, settings, local_direct: bool = False) -> CfWindowSe
         try:
             if proxy_ok:
                 jl_win = webview.create_window(
-                    JL_WINDOW_TITLE, jl_url, width=1200, height=820, hidden=True,
+                    titles[0], jl_url, width=1200, height=820, hidden=True,
                 )
         except Exception as e:                                       # noqa: BLE001
             logger.warning("javlibrary CF 視窗建立失敗，該來源不可用（FC2-javten 不受影響）：%s", e)
@@ -156,7 +168,7 @@ def build_cf_windows(logger, settings, local_direct: bool = False) -> CfWindowSe
         try:
             if proxy_ok:
                 javten_win = webview.create_window(
-                    JAVTEN_WINDOW_TITLE,
+                    titles[1],
                     'about:blank',
                     width=1200, height=820,
                     hidden=True,

@@ -94,8 +94,7 @@ class FakeBase:
         return 'task'
 
 
-JL_TITLE = cf_windows.JL_WINDOW_TITLE
-JT_TITLE = cf_windows.JAVTEN_WINDOW_TITLE
+JL_TITLE, JT_TITLE = cf_windows.window_titles('zh-TW')
 TITLE_TO_KEY = {JL_TITLE: 'javlibrary', JT_TITLE: 'fc-javten'}
 
 
