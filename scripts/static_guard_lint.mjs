@@ -9287,6 +9287,11 @@ const RULES = [
     file: 'locales/zh_TW.json', kind: 'required-string', pattern: /venv\/bin\/python -c .*set_auth\(enabled=False, pin=''\)/,
     note: '[lint-guard 168e-T7-forgot-linux-command] zh_TW 的 forgot_linux 必含完整重設指令字串（與 docs/linux-server.md 同一條指令，人工對齊）；缺了 → 使用者照著貼上去跑卻沒真的關掉密碼，重啟後仍被擋在登入畫面',
   },
+  // ---- [168e-T14] 連線頁「重試」鈕接線 ----
+  {
+    file: 'web/templates/connect.html', kind: 'required-string', pattern: /(?<![\w:.-])@click="retryCf\(\)"/,
+    note: '[lint-guard 168e-T14-connect-retry-wired] 連線頁「重試」鈕少了 @click="retryCf()" → 按鈕還在但點了沒反應，使用者永遠修不好 JavLibrary／FC2-javten 的驗證視窗，而單元測試全綠',
+  },
 ];
 
 // ---- helpers ----

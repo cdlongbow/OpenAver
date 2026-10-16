@@ -155,6 +155,12 @@
 
                 <p id="connect-cf" class="connect-line" x-text="cfText()"></p>
                 <p id="connect-cf-note" class="connect-line" x-show="cfNoteText() !== ''" x-text="cfNoteText()"></p>
+                <div class="connect-row" x-show="actions().showRetryCf" x-cloak>
+                    <button type="button" class="btn btn-sm btn-outline" id="connect-cf-retry"
+                                @click="retryCf()"
+                                :disabled="!actions().canRetryCf">{{ t('connect.cf_retry_btn') }}</button>
+                </div>
+                <p id="connect-cf-retry-error" class="connect-error" x-show="cfRetryErrorText() !== ''" x-text="cfRetryErrorText()"></p>
 
                 <div class="connect-row connect-actions">
                     <button type="button" class="btn btn-sm btn-primary" id="connect-apply-btn"

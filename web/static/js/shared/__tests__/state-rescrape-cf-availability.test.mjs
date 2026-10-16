@@ -117,3 +117,48 @@ test('#11 欄位缺（{}）→ showcase.rescrape.jl_desktop_only', () => {
         assert.equal(result, 'showcase.rescrape.jl_desktop_only');
     });
 });
+
+// ---- 168e-T14: cfUnavailableMessageKey four-way split ----
+function msgKey(adv, siteId) {
+    return withAdvancedSearch(adv, () => {
+        const ctx = rescrapeState();
+        return rescrapeState().cfUnavailableMessageKey.call(ctx, siteId);
+    });
+}
+
+test('preparing wins over available and inShell', () => {
+    const adv = { cf_transport_available: true, cf_sites: [], cf_preparing: ['javlibrary'], in_shell: true };
+    assert.equal(msgKey(adv, 'javlibrary'), 'showcase.rescrape.cf_window_preparing');
+});
+
+test('available transport in shell -> cf_window_restart wins over not_built', () => {
+    const adv = { cf_transport_available: true, cf_sites: [], cf_preparing: [], in_shell: true };
+    assert.equal(msgKey(adv, 'javlibrary'), 'showcase.rescrape.cf_window_restart');
+});
+
+test('in shell without transport -> cf_window_not_built', () => {
+    const adv = { cf_transport_available: false, cf_sites: [], cf_preparing: [], in_shell: true };
+    assert.equal(msgKey(adv, 'javlibrary'), 'showcase.rescrape.cf_window_not_built');
+    assert.equal(msgKey(adv), 'showcase.rescrape.cf_window_not_built');
+});
+
+test('not in shell (or field missing) -> jl_desktop_only', () => {
+    assert.equal(msgKey({ cf_transport_available: false, cf_sites: [], in_shell: false }, 'javlibrary'),
+        'showcase.rescrape.jl_desktop_only');
+    assert.equal(msgKey({ cf_transport_available: false, cf_sites: [] }, 'javlibrary'),
+        'showcase.rescrape.jl_desktop_only');
+});
+
+test('seed: __ADVANCED_SEARCH__.in_shell true -> not_built via rescrapeState()', () => {
+    assert.equal(msgKey({ cf_transport_available: false, cf_sites: [], in_shell: true }),
+        'showcase.rescrape.cf_window_not_built');
+});
+
+test('real zh_TW copy points to the connect page', async () => {
+    const { readFileSync } = await import('node:fs');
+    const loc = JSON.parse(readFileSync(new URL('../../../../../locales/zh_TW.json', import.meta.url), 'utf8'));
+    const r = loc.showcase.rescrape;
+    assert.ok(r.cf_window_not_built.includes('連線') && r.cf_window_not_built.includes('重試'), r.cf_window_not_built);
+    assert.ok(r.cf_window_restart.includes('連線'), r.cf_window_restart);
+    assert.ok(!r.jl_desktop_only.includes('連線') && !r.jl_desktop_only.includes('重試'), r.jl_desktop_only);
+});
