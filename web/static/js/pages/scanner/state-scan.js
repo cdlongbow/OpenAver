@@ -13,6 +13,7 @@ export function stateScan() {
         dirPath,
         // ===== Data State =====
         directories: [],
+        shellMode: '',
         config: {},
         configDirty: false,
 
@@ -172,6 +173,8 @@ export function stateScan() {
 
         // ===== Lifecycle =====
         async init() {
+            // 168e-T5: 殼模式由 SSR data-shell-mode 提供；init() 內 $el 才是根節點（點擊 handler 內是按鈕）
+            this.shellMode = this.$el?.dataset?.shellMode || '';
             // 覆蓋全域函數為 Alpine 版本
             const self = this;
 
@@ -452,7 +455,7 @@ export function stateScan() {
 
         // ===== Folder Management =====
         async selectFolder() {
-            if (typeof window.pywebview === 'undefined' || !window.pywebview.api) {
+            if (this.shellMode === 'client' || typeof window.pywebview === 'undefined' || !window.pywebview.api) {
                 this.openBrowseDir('scanner', (path) => { this.addFolderPath(path); });
                 return;
             }

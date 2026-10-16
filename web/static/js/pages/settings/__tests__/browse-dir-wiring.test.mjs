@@ -67,3 +67,53 @@ test('AC-4: settings does not call openBrowseDir when window.pywebview exists', 
 
   delete window.pywebview;
 });
+
+test('settings client mode opens browse dir and never calls select_folder', async () => {
+  const { openBrowseDir, calls } = makeSpyOpenBrowseDir();
+  let nativeCalls = 0;
+  window.pywebview = {
+    api: { select_folder: async () => { nativeCalls++; return { folder: '/desk/out' }; } },
+  };
+  try {
+    const fakeThis = Object.assign({}, stateUI(), {
+      openBrowseDir,
+      shellMode: 'client',
+      form: { avlistOutputDir: '' },
+      showToast() {},
+    });
+
+    await stateUI().selectOutputFolder.call(fakeThis);
+
+    assert.equal(calls.length, 1, 'client 模式應呼叫 openBrowseDir 一次');
+    assert.equal(calls[0].targetKey, 'settings');
+    assert.equal(nativeCalls, 0, 'client 模式不得開這台電腦的原生對話框');
+    calls[0].onSelect('/mnt/av/x');
+    assert.equal(fakeThis.form.avlistOutputDir, '/mnt/av/x');
+  } finally {
+    delete window.pywebview;
+  }
+});
+
+test('settings local shell mode still calls select_folder', async () => {
+  const { openBrowseDir, calls } = makeSpyOpenBrowseDir();
+  let nativeCalls = 0;
+  window.pywebview = {
+    api: { select_folder: async () => { nativeCalls++; return { folder: '/desk/out' }; } },
+  };
+  try {
+    const fakeThis = Object.assign({}, stateUI(), {
+      openBrowseDir,
+      shellMode: 'local',
+      form: { avlistOutputDir: '' },
+      showToast() {},
+    });
+
+    await stateUI().selectOutputFolder.call(fakeThis);
+
+    assert.equal(calls.length, 0);
+    assert.equal(nativeCalls, 1);
+    assert.equal(fakeThis.form.avlistOutputDir, '/desk/out');
+  } finally {
+    delete window.pywebview;
+  }
+});
