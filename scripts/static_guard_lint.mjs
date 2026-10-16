@@ -9277,7 +9277,15 @@ const RULES = [
     file: 'web/templates/base.html', kind: 'required-string', pattern: 'src="/static/js/shared/shell-reload.js"',
     note: '[lint-guard 168e-T6-base-loads-shell-reload] base.html 少了 shell-reload 載入行 → 使用者在 App 視窗的所有一般頁按 F5／Ctrl+R／Cmd+R 都沒反應，而測試與 CI 看不出來',
   },
-
+  // ---- [168e-T7] 連線頁：搬家占位區塊已刪不得復活；Linux 忘記密碼句必須含完整重設指令 ----
+  {
+    file: 'web/templates/connect.html', kind: 'forbidden-string', pattern: /connect-move|connect\.move_(toggle|hint)|moveHintOpen/,
+    note: '[lint-guard 168e-T7-no-move-zombie] 有人把搬家占位字樣加回連線頁 → 使用者在出貨的 App 裡又看到「把本機片庫搬到伺服器的方法，之後補上」，以為有功能卻點不出東西',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: /venv\/bin\/python -c .*set_auth\(enabled=False, pin=''\)/,
+    note: '[lint-guard 168e-T7-forgot-linux-command] 連線頁 Linux 忘記密碼句缺了完整重設指令（或與 docs/linux-server.md 不一致）→ 使用者照著貼上去跑卻沒真的關掉密碼，重啟後仍被擋在登入畫面',
+  },
 ];
 
 // ---- helpers ----

@@ -34,7 +34,6 @@ export function connectPage() {
         cf: null,
         actionError: '',
         pinError: '',
-        moveHintOpen: false,
         _started: false,
         _kindSeen: false,
         _retried: false,
