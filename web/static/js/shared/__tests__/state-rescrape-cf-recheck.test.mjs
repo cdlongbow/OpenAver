@@ -42,7 +42,7 @@ async function scenario(snapshot, fetchImpl, pill, fn) {
 const ok = (data) => () => Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
 const SRC = [{ id: 'javlibrary' }];
 
-test('I-3: recheck says live -> rescrape once, no toast, snapshot updated', async () => {
+test('I-12 recheck success reassigns rescrapeCfAvail and leaves the global untouched', async () => {
     await scenario(
         { sources: SRC, cf_transport_available: true, cf_sites: [], cf_preparing: [] },
         ok({ available: true, sites: ['javlibrary'], preparing: [] }), JL,
@@ -51,7 +51,10 @@ test('I-3: recheck says live -> rescrape once, no toast, snapshot updated', asyn
             assert.equal(fetchCalls[0][0], '/api/cf/availability');
             assert.deepEqual(rescrapes, ['javlibrary']);
             assert.equal(toasts.length, 0);
-            assert.ok(adv.cf_sites.includes('javlibrary'));
+            assert.deepEqual(ctx.rescrapeCfAvail, { available: true, sites: ['javlibrary'], preparing: [], inShell: false });
+            assert.deepEqual(adv.cf_sites, []);                   // 全域 cf 三欄逐字不變
+            assert.equal(adv.cf_transport_available, true);
+            assert.deepEqual(adv.cf_preparing, []);
             assert.equal(adv.sources, SRC);                       // 不整包重指派
             assert.equal(ctx.isJlUnavailable(JL), false);
             assert.equal(ctx.isJlUnavailable(JT), true);          // 另一站依新快照重算
@@ -62,11 +65,12 @@ test('I-3b: recheck sites:null + available -> fail-open, rescrape', async () => 
     await scenario(
         { sources: SRC, cf_transport_available: false, cf_sites: [], cf_preparing: [] },
         ok({ available: true, sites: null, preparing: [] }), JT,
-        ({ toasts, rescrapes, adv }) => {
+        ({ ctx, toasts, rescrapes, adv }) => {
             assert.deepEqual(rescrapes, ['fc-javten']);
             assert.equal(toasts.length, 0);
-            assert.equal(adv.cf_sites, null);                     // null 原樣保留
-            assert.equal(adv.cf_transport_available, true);
+            assert.equal(ctx.rescrapeCfAvail.sites, null);        // null 原樣保留
+            assert.equal(ctx.rescrapeCfAvail.available, true);
+            assert.deepEqual(adv.cf_sites, []);                   // 全域不再被寫
         });
 });
 
@@ -84,10 +88,11 @@ test('I-4 cell1: recheck says preparing -> toast preparing', async () => {
     await scenario(
         { sources: SRC, cf_transport_available: true, cf_sites: ['javlibrary'], cf_preparing: [] },
         ok({ available: true, sites: ['javlibrary'], preparing: ['fc-javten'] }), JT,
-        ({ toasts, rescrapes, adv }) => {
+        ({ ctx, toasts, rescrapes, adv }) => {
             assert.deepEqual(toasts, [['showcase.rescrape.cf_window_preparing', 'warning']]);
             assert.equal(rescrapes.length, 0);
-            assert.deepEqual(adv.cf_preparing, ['fc-javten']);
+            assert.deepEqual(ctx.rescrapeCfAvail.preparing, ['fc-javten']);
+            assert.deepEqual(adv.cf_preparing, []);               // 全域不再被寫
         });
 });
 
@@ -128,7 +133,7 @@ test('I-4 cell5: cfUnavailableMessageKey without siteId keeps legacy behaviour',
     assert.equal(ctx.cfUnavailableMessageKey('javlibrary'), 'showcase.rescrape.cf_window_preparing');
 });
 
-test('I-6: window reopened during recheck -> no rescrape, no toast, snapshot still updated', async () => {
+test('I-6: window reopened during recheck -> no rescrape, no toast, availability still updated', async () => {
     const origAdv = globalThis.window.__ADVANCED_SEARCH__;
     const origFetch = globalThis.fetch;
     globalThis.window.__ADVANCED_SEARCH__ = { sources: SRC, cf_transport_available: true, cf_sites: [], cf_preparing: [] };
@@ -150,9 +155,33 @@ test('I-6: window reopened during recheck -> no rescrape, no toast, snapshot sti
         await pending;
         assert.equal(rescrapes.length, 0);
         assert.equal(toasts.length, 0);
-        assert.ok(globalThis.window.__ADVANCED_SEARCH__.cf_sites.includes('javlibrary'));
+        assert.ok(ctx.rescrapeCfAvail.sites.includes('javlibrary'));   // 可用性是全域事實，窗換了仍更新
+        assert.deepEqual(globalThis.window.__ADVANCED_SEARCH__.cf_sites, []);
     } finally {
         globalThis.window.__ADVANCED_SEARCH__ = origAdv;
         globalThis.fetch = origFetch;
     }
+});
+
+test('I-12 seed: rescrapeCfAvail seeds from the SSR global; missing global gives defaults', () => {
+    const orig = globalThis.window.__ADVANCED_SEARCH__;
+    try {
+        globalThis.window.__ADVANCED_SEARCH__ = { cf_transport_available: true, cf_sites: ['javlibrary'], cf_preparing: [] };
+        assert.deepEqual(rescrapeState().rescrapeCfAvail, { available: true, sites: ['javlibrary'], preparing: [], inShell: false });
+        globalThis.window.__ADVANCED_SEARCH__ = {};
+        assert.deepEqual(rescrapeState().rescrapeCfAvail, { available: false, sites: null, preparing: [], inShell: false });
+        globalThis.window.__ADVANCED_SEARCH__ = undefined;
+        assert.deepEqual(rescrapeState().rescrapeCfAvail, { available: false, sites: null, preparing: [], inShell: false });
+    } finally {
+        globalThis.window.__ADVANCED_SEARCH__ = orig;
+    }
+});
+
+test('I-12 recheck failure leaves rescrapeCfAvail unchanged', async () => {
+    await scenario(
+        { sources: SRC, cf_transport_available: true, cf_sites: [], cf_preparing: [] },
+        () => Promise.reject(new Error('timeout')), JL,
+        ({ ctx }) => {
+            assert.deepEqual(ctx.rescrapeCfAvail, { available: true, sites: [], preparing: [], inShell: false });
+        });
 });

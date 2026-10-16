@@ -43,6 +43,17 @@ export function stripNumPrefixes(title, number) {
     return s;
 }
 
+/** 168e-T11：由 SSR bootstrap 全域灌 rescrapeCfAvail 初值（缺欄位 → 全預設；sites 非陣列 → null 維持 fail-open）。 */
+function _seedCfAvail() {
+    const adv = window.__ADVANCED_SEARCH__ || {};
+    return {
+        available: !!adv.cf_transport_available,
+        sites: Array.isArray(adv.cf_sites) ? adv.cf_sites : null,
+        preparing: Array.isArray(adv.cf_preparing) ? adv.cf_preparing : [],
+        inShell: !!adv.in_shell,
+    };
+}
+
 export function rescrapeState() {
     return {
         // ── 彈窗狀態（平鋪，對齊 partial 綁定 + mockup） ──
@@ -79,6 +90,9 @@ export function rescrapeState() {
         // 結果面板來源膠囊在 picker 開啟前就要 _resolveSourceName，故不能等 openRescrape 才填，
         // 否則膠囊顯示 raw id（'javbus'）而非顯示名（'JavBus'）。openRescrape 仍每次重灌（belt-and-suspenders）。
         rescrapeSources: (window.__ADVANCED_SEARCH__ && window.__ADVANCED_SEARCH__.sources) || [],
+        // 168e-T11：CF 可用性分片（window.__ADVANCED_SEARCH__ 只當 SSR seed；onCfPillClick 重查成功後整物件重賦值，
+        // 讓 :class／:title 立即重算）。inShell 本 task 只 seed、不消費。
+        rescrapeCfAvail: _seedCfAvail(),
         rescrapeLoadingSource: null,       // string | null（明確，:disabled 純 boolean）
         rescrapePreview: null,             // transient（CD-62-2）
         rescrapeNotFound: false,
@@ -249,9 +263,9 @@ export function rescrapeState() {
          * 把它當成不可用會讓一個能用的 JavLibrary 被灰掉。
          */
         _cfSiteLive(id) {
-            const adv = window.__ADVANCED_SEARCH__ || {};
-            if (Array.isArray(adv.cf_sites)) return adv.cf_sites.includes(id);
-            return !!adv.cf_transport_available;
+            const adv = this.rescrapeCfAvail;
+            if (Array.isArray(adv.sites)) return adv.sites.includes(id);
+            return !!adv.available;
         },
 
         /**
@@ -262,10 +276,10 @@ export function rescrapeState() {
          * 是前端把它們壓成同一句才會出現「你人就在桌面版，卻被告知僅限桌面版」。
          */
         cfUnavailableMessageKey(siteId) {
-            const adv = window.__ADVANCED_SEARCH__ || {};
+            const adv = this.rescrapeCfAvail;
             // 168d-fix-T2：殼回報這個站的視窗「還在準備」→ 請稍候，不是請重開（站名用 includes，FE-ALPINE-14）。
-            if (siteId && Array.isArray(adv.cf_preparing) && adv.cf_preparing.includes(siteId)) return 'showcase.rescrape.cf_window_preparing';
-            return adv.cf_transport_available
+            if (siteId && Array.isArray(adv.preparing) && adv.preparing.includes(siteId)) return 'showcase.rescrape.cf_window_preparing';
+            return adv.available
                 ? 'showcase.rescrape.cf_window_restart'
                 : 'showcase.rescrape.jl_desktop_only';
         },
@@ -281,8 +295,8 @@ export function rescrapeState() {
                 const resp = await fetch('/api/cf/availability', { signal: AbortSignal.timeout(3000) });
                 if (!resp.ok) throw new Error('availability ' + resp.status);
                 const data = await resp.json();
-                // 只覆寫三欄；sources 等其他欄位要留著（advanced-picker／rescrape 還在讀）
-                Object.assign(window.__ADVANCED_SEARCH__, { cf_transport_available: !!data.available, cf_sites: data.sites, cf_preparing: data.preparing || [] });
+                // 168e-T11：整物件重賦值（Alpine 響應式），全域 __ADVANCED_SEARCH__ 只當 seed、不再被寫
+                this.rescrapeCfAvail = { available: !!data.available, sites: data.sites, preparing: data.preparing || [], inShell: this.rescrapeCfAvail.inShell };
             } catch (_e) {
                 // 逾時或任何錯誤：沿用快照判斷（含 cf_preparing）
             }
@@ -408,6 +422,7 @@ export function rescrapeState() {
             }
             this._clearRescrapeErrors();
             this.rescrapeLoadingSource = sourceId;
+            const gen = this._rescrapeOpenGen;   // 168e-T11：await 之後窗已換 → 丟棄（FE-TIMING-08）
             try {
                 const resp = await fetch('/api/rescrape/preview', {
                     method: 'POST',
@@ -418,6 +433,7 @@ export function rescrapeState() {
                     }),
                 });
                 const data = await resp.json();
+                if (gen !== this._rescrapeOpenGen) return;   // I-12 preview
                 // 70-T6（P2 fix）: cf_needed / cf_unavailable 統一在所有入口分支之前處理——
                 // 原本只在 showcase 分支處理，導致 switch-source 入口收到 {cf_needed:true} 時
                 // 因 data.success falsy 而落入 rescrapeNotFound=true，CF flow 從未觸發。
@@ -527,10 +543,11 @@ export function rescrapeState() {
                     this._applyRescrapeFailure(data, sourceId);
                 }
             } catch (e) {
+                if (gen !== this._rescrapeOpenGen) return;
                 this._clearRescrapeErrors();
                 this.rescrapeNotFound = true;
             } finally {
-                this.rescrapeLoadingSource = null;
+                if (gen === this._rescrapeOpenGen) this.rescrapeLoadingSource = null;
             }
         },
 
@@ -606,6 +623,7 @@ export function rescrapeState() {
             if (this._rescraping) return;                            // 連點防護
             if (this.rescrapeCfWaiting) return;                      // P2-2：CF 等待中不可重入（鏡射 rescrapeWithSource :161）
             this._rescraping = true;
+            const gen = this._rescrapeOpenGen;   // 168e-T11：enrich await 之後窗已換 → 丟棄結果卡側動作
             try {
                 if (this.rescrapeEntryPoint === 'search') {
                     // CD-86-9/14：採用選定版本進搜尋結果，不打 enrich-single，不顯示不可逆警告
@@ -650,6 +668,7 @@ export function rescrapeState() {
                 }
                 // lightbox（現況）：需既有檔
                 if (!this._rescrapeVideo || !this._rescrapeVideo.path) return;
+                const video = this._rescrapeVideo;   // await 前捕捉：窗換了仍刷新「那一片」
                 const commitSource = (this._rescrapeCommitSource === 'auto') ? null : this._rescrapeCommitSource;
                 const resp = await fetch('/api/enrich-single', {
                     method: 'POST',
@@ -668,6 +687,9 @@ export function rescrapeState() {
                     }),
                 });
                 const result = await resp.json();
+                // 窗已換：寫檔其實成功 → 只靜默刷新舊片資料，不 toast、不關窗、不動新窗
+                if (result.success && gen !== this._rescrapeOpenGen) await this.refreshVideoData?.(video);
+                if (gen !== this._rescrapeOpenGen) return;   // I-12 confirm
                 // P2-2（Codex PR#89）：confirm 寫檔分支也接 CF——T2 後 javlibrary && detail_url 會走後端
                 // detail 重抓分支，若預覽→確認之間 CF session 過期，後端回 {cf_needed} / {cf_unavailable}
                 // （已 begin_solve）。鏡射 preview（rescrapeWithSource :203-211）：不接 → 卡在模糊「失敗」
@@ -685,12 +707,14 @@ export function rescrapeState() {
                 }
                 if (result.success) {
                     await this.refreshVideoData?.(this._rescrapeVideo);   // CD-62-5（showcase 有、search 無）
+                    if (gen !== this._rescrapeOpenGen) return;   // I-12 confirm-refresh
                     this.showToast(window.t('showcase.rescrape.success'), 'success');
                     this.closeRescrape();
                 } else {
                     this.showToast(result.error || window.t('showcase.rescrape.fail'), 'error');
                 }
             } catch (e) {
+                if (gen !== this._rescrapeOpenGen) return;
                 this.showToast(window.t('showcase.rescrape.fail'), 'error');
             } finally {
                 this._rescraping = false;
@@ -707,6 +731,7 @@ export function rescrapeState() {
                 this._cfPollHandle = null;
             }
             this._cfPollSourceId = sourceId;
+            const gen = this._rescrapeOpenGen;   // 168e-T11：在途輪詢回呼落地時窗已換 → 不動作
             const MAX_POLLS = 150;          // 150 × 2s = 300s = 5 分鐘
             let pollCount = 0;
             this._cfPollHandle = setInterval(async () => {
@@ -718,6 +743,7 @@ export function rescrapeState() {
                 try {
                     const resp = await fetch('/api/cf/status?key=' + encodeURIComponent(sourceId));
                     const data = await resp.json();
+                    if (gen !== this._rescrapeOpenGen) return;   // I-12 poll
                     if (data && data.unavailable) {   // CD-70c-3: transport dead/unavailable → stop polling now
                         this.cancelCfPoll();           // clearInterval + POST /api/cf/abandon (emits 通知)
                         return;
