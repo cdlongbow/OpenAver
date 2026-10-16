@@ -12,7 +12,7 @@ window.addEventListener = () => {};
 const { connectPage } = await import('../main.js');
 const { cfView } = await import('../connect-logic.js');
 
-const REASONS = ['starting', 'no_windows', 'proxy_unusable', 'server_old', 'unreachable', 'unauthorized', 'offline_boot'];
+const REASONS = ['starting', 'no_windows', 'proxy_unusable', 'server_old', 'unreachable', 'unauthorized', 'offline_boot', 'webview2_failed'];
 const OLD = { state: 'not_ready', reason: 'shell_old', proxy: null };
 
 test('cfView treats null cf (old shell) as not_ready shell_old', () => {
@@ -82,6 +82,11 @@ test('wiring: cf lands, texts follow, cf set before bridge ready', async () => {
     assert.equal(page.cfText(), 'connect.cf_mac');
 });
 
+test('cfView keeps webview2_failed', () => {
+    assert.deepEqual(cfView({ state: 'not_ready', reason: 'webview2_failed' }, 'windows'),
+        { state: 'not_ready', reason: 'webview2_failed', proxy: null });
+});
+
 test('wiring: every reason maps to its own key', async () => {
     const page = mk({});
     for (const r of [...REASONS, 'shell_old']) {
@@ -89,3 +94,123 @@ test('wiring: every reason maps to its own key', async () => {
         assert.ok(page.cfText().includes(`connect.cf_reason_${r}`), r);
     }
 });
+
+// ---- 168e-T14: retry button ----
+const NOT_READY = { state: 'not_ready', reason: 'unreachable', proxy_note: null };
+const READY = { state: 'ready', reason: null, proxy_note: null, sites: [] };
+
+async function started(cf = NOT_READY, shellKind = 'windows') {
+    const page = mk({ cf }, shellKind);
+    await page.start();
+    return page;
+}
+
+function withRetry(page, impl) {
+    const calls = [];
+    window.pywebview.api.cf_retry = async (...a) => { calls.push(a); return impl(); };
+    return calls;
+}
+
+test('retry button shows only for not_ready', async () => {
+    const page = await started(NOT_READY);
+    assert.equal(page.actions().showRetryCf, true);
+    assert.equal(page.actions().canRetryCf, true);
+    for (const reason of ['shell_old', 'webview2_failed', 'starting']) {
+        page.cf = { state: 'not_ready', reason };
+        assert.equal(page.actions().showRetryCf, true, reason);
+    }
+    page.cf = READY;
+    assert.equal(page.actions().showRetryCf, false);
+    assert.equal(page.actions().canRetryCf, false);
+    page.cf = { state: 'unsupported' };
+    assert.equal(page.actions().showRetryCf, false);
+    // loading: bridge not ready and cf null must not flash the button
+    const loading = mk({});
+    assert.equal(loading.bridge, 'pending');
+    assert.equal(loading.cf, null);
+    assert.equal(loading.actions().showRetryCf, false);
+    assert.equal(loading.actions().canRetryCf, false);
+});
+
+test('retry button calls cf_retry exactly once', async () => {
+    const page = await started(NOT_READY);
+    const calls = withRetry(page, () => ({ ok: true, cf: READY }));
+    await page.retryCf();
+    assert.equal(calls.length, 1);
+    assert.equal(page.cfBusy, false);
+});
+
+test('retry reply replaces this.cf with the shell\'s answer', async () => {
+    const page = await started(NOT_READY);
+    withRetry(page, () => ({ ok: true, cf: READY }));
+    await page.retryCf();
+    assert.deepEqual(page.cf, READY);
+    assert.equal(page.cfText(), 'connect.cf_ready');
+    assert.equal(page.cfRetryError, '');
+    assert.equal(page.cfRetryErrorText(), '');
+    // a still-not-ready answer also lands (new reason shown)
+    const page2 = await started(NOT_READY);
+    const nr = { state: 'not_ready', reason: 'webview2_failed' };
+    withRetry(page2, () => ({ ok: true, cf: nr }));
+    await page2.retryCf();
+    assert.deepEqual(page2.cf, nr);
+    assert.ok(page2.cfText().includes('connect.cf_reason_webview2_failed'));
+});
+
+test('second click while a retry is in flight calls cf_retry once', async () => {
+    const page = await started(NOT_READY);
+    let resolve;
+    const pending = new Promise((r) => { resolve = r; });
+    const calls = withRetry(page, () => pending);
+    const p1 = page.retryCf();
+    assert.equal(page.cfBusy, true);
+    assert.equal(page.actions().canRetryCf, false);
+    await page.retryCf();
+    assert.equal(calls.length, 1);
+    resolve({ ok: true, cf: READY });
+    await p1;
+    assert.equal(calls.length, 1);
+    assert.equal(page.cfBusy, false);
+    assert.deepEqual(page.cf, READY);
+});
+
+test('retry failures set cfRetryError and leave cf untouched', async () => {
+    const cases = [
+        [{ ok: false, reason: 'busy' }, 'busy', 'connect.cf_retry_busy'],
+        [{ ok: false, reason: 'unavailable' }, 'unavailable', 'connect.cf_retry_unavailable'],
+        [{ ok: false, reason: 'failed' }, 'failed', 'connect.error_generic'],
+        [{ ok: false, reason: 'error' }, 'failed', 'connect.error_generic'],
+        [{ ok: true }, 'failed', 'connect.error_generic'],
+        [{ ok: true, cf: 'x' }, 'failed', 'connect.error_generic'],
+        [null, 'failed', 'connect.error_generic'],
+    ];
+    for (const [reply, code, key] of cases) {
+        const page = await started(NOT_READY);
+        withRetry(page, () => reply);
+        const before = page.cf;
+        await page.retryCf();
+        assert.equal(page.cf, before, JSON.stringify(reply));
+        assert.equal(page.cfRetryError, code, JSON.stringify(reply));
+        assert.equal(page.cfRetryErrorText(), key.startsWith('connect.cf') ? key : 'connect.error_generic');
+        assert.equal(page.cfBusy, false);
+    }
+});
+
+test('retry on an old shell without cf_retry shows unavailable', async () => {
+    const page = await started({ state: 'not_ready', reason: 'shell_old' });
+    delete window.pywebview.api.cf_retry;
+    await page.retryCf();
+    assert.equal(page.cfRetryError, 'unavailable');
+});
+
+test('untrusted retry reply marks bridge unavailable and writes nothing', async () => {
+    const page = await started(NOT_READY);
+    withRetry(page, () => ({ ok: false, reason: 'untrusted' }));
+    const before = page.cf;
+    await page.retryCf();
+    assert.equal(page.bridge, 'unavailable');
+    assert.equal(page.cf, before);
+    assert.equal(page.cfRetryError, '');
+    assert.equal(page.cfBusy, false);
+});
+

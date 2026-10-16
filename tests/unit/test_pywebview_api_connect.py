@@ -151,6 +151,40 @@ def test_cf_provider_setter_is_not_exposed_to_the_page(cx):
     assert "set_cf_status_provider" not in [f.__name__ for f in cx.m.exposed_functions()]
 
 
+def test_cf_retry_handler_setter_is_not_exposed_to_the_page(cx):
+    names = [f.__name__ for f in cx.m.exposed_functions()]
+    assert "set_cf_retry_handler" not in names
+    assert names.count("cf_retry") == 1
+
+
+def test_cf_retry_returns_handler_reply_verbatim(cx):
+    reply = {"ok": True, "cf": {"state": "ready", "reason": None, "proxy_note": None, "sites": ["javlibrary"]}}
+    handler = Mock(return_value=reply)
+    cx.m.set_cf_retry_handler(handler)
+    assert cx.api.cf_retry() == reply
+    handler.assert_called_once_with()
+
+
+def test_cf_retry_without_handler_is_unavailable(cx):
+    assert cx.api.cf_retry() == {"ok": False, "reason": "unavailable"}
+
+
+def test_cf_retry_handler_exception_is_failed_and_log_has_no_detail(cx, monkeypatch):
+    cx.m.set_cf_retry_handler(Mock(side_effect=RuntimeError("SECRET-DETAIL-xyz")))
+    cx.m.logger = MagicMock()
+    assert cx.api.cf_retry() == {"ok": False, "reason": "failed"}
+    logged = " ".join(str(c) for c in cx.m.logger.warning.call_args_list)
+    assert "RuntimeError" in logged and "SECRET-DETAIL-xyz" not in logged
+
+
+def test_cf_retry_denied_on_untrusted_page_without_touching_handler(cx):
+    handler = Mock()
+    cx.m.set_cf_retry_handler(handler)
+    cx.api._page_kind = None
+    assert cx.api.cf_retry() == UNTRUSTED
+    handler.assert_not_called()
+
+
 def test_get_state_client_mode_exposes_has_token_not_token(cx):
     write_client(token=TKN)
     state = cx.api.connect_get_state()

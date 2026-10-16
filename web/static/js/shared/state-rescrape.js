@@ -279,9 +279,9 @@ export function rescrapeState() {
             const adv = this.rescrapeCfAvail;
             // 168d-fix-T2：殼回報這個站的視窗「還在準備」→ 請稍候，不是請重開（站名用 includes，FE-ALPINE-14）。
             if (siteId && Array.isArray(adv.preparing) && adv.preparing.includes(siteId)) return 'showcase.rescrape.cf_window_preparing';
-            return adv.available
-                ? 'showcase.rescrape.cf_window_restart'
-                : 'showcase.rescrape.jl_desktop_only';
+            if (adv.available) return 'showcase.rescrape.cf_window_restart';
+            if (adv.inShell) return 'showcase.rescrape.cf_window_not_built';
+            return 'showcase.rescrape.jl_desktop_only';
         },
 
         /**

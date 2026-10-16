@@ -33,7 +33,7 @@ def env(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
-    monkeypatch.setattr(shell_sync, "_state", {"synced": False, "probe": None})
+    monkeypatch.setattr(shell_sync, "_state", {"synced": False, "probe": None, "in_settings": False})
     monkeypatch.setattr(shell_sync, "_run_async", lambda fn, *a: fn(*a))
 
 
@@ -167,3 +167,79 @@ def test_probe_is_wired_to_real_api(env, monkeypatch):
     assert probe(6) is False
     module.api._page_kind = None
     assert probe(5) is False
+
+
+# ---- 168e-T15：E7 離開設定頁重抄副檔名 ----
+
+def _path_win(path, lang=""):
+    """依 script 分流：pathname 查詢回 path（Exception 實例則拋），其餘回 lang。"""
+    w = MagicMock()
+
+    def _js(script):
+        if script == "location.pathname":
+            if isinstance(path, Exception):
+                raise path
+            return path
+        return lang
+
+    w.evaluate_js.side_effect = _js
+    return w
+
+
+def _setup_copy(env, monkeypatch, exts=(".m2ts", ".mp4")):
+    _client()
+    fetch = Mock(return_value={"ok": True, "reason": None, "extensions": list(exts)})
+    monkeypatch.setattr(client_connect, "fetch_video_extensions", fetch)
+    shell_sync.install(_fake_api())
+    return fetch
+
+
+def test_leaving_settings_page_recopies_extensions(env, monkeypatch):
+    fetch = _setup_copy(env, monkeypatch)
+    shell_sync.on_page_loaded("server", _path_win("/"), 1)
+    assert fetch.call_count == 1 and shell_sync._state["synced"] is True
+    shell_sync.on_page_loaded("server", _path_win("/settings"), 1)
+    assert fetch.call_count == 1  # 進設定頁本身不重抄
+    shell_sync.on_page_loaded("server", _path_win("/search"), 1)
+    assert fetch.call_count == 2
+    assert client_settings.video_extensions() == {".m2ts", ".mp4"}
+
+
+def test_non_settings_to_non_settings_does_not_recopy(env, monkeypatch):
+    fetch = _setup_copy(env, monkeypatch)
+    shell_sync.on_page_loaded("server", _path_win("/"), 1)
+    shell_sync.on_page_loaded("server", _path_win("/search"), 1)
+    assert fetch.call_count == 1
+
+
+def test_pathname_read_failure_neither_resets_nor_raises(env, monkeypatch):
+    fetch = _setup_copy(env, monkeypatch)
+    shell_sync.on_page_loaded("server", _path_win("/settings"), 1)
+    assert shell_sync._state["synced"] is True and fetch.call_count == 1
+    shell_sync.on_page_loaded("server", _path_win(RuntimeError("boom")), 1)
+    assert shell_sync._state["synced"] is True and shell_sync._state["in_settings"] is True
+    assert fetch.call_count == 1
+    shell_sync.on_page_loaded("server", _path_win("/search"), 1)  # 下一次讀得到再判
+    assert fetch.call_count == 2
+
+
+def test_offline_resets_in_settings(env):
+    _client()
+    shell_sync._state["in_settings"] = True
+    shell_sync.on_page_loaded("offline", _win(), 1)
+    assert shell_sync._state["in_settings"] is False
+
+
+# ---- 168e-T15：E6 閘門頁不污染托盤語系 ----
+
+def test_gate_page_marker_returns_none_tray_locale_unchanged(env):
+    _client(tray_locale="zh-TW")
+    shell_sync.sync_tray_locale(_win(None))  # 閘門頁：JS 回 null
+    assert client_settings.tray_locale() == "zh-TW"
+
+
+def test_normal_page_lang_ja_still_syncs(env):
+    _client(tray_locale="zh-TW")
+    shell_sync.sync_tray_locale(_win("ja"))
+    assert client_settings.tray_locale() == "ja"
+

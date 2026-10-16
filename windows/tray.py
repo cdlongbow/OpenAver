@@ -258,6 +258,19 @@ class DesktopLifecycle:
             except Exception:
                 logger.exception("failed to destroy main window from tray")
 
+    def register_cf_windows(self, mapping: dict) -> None:
+        """168e-T13：把「重試」補建的 CF 驗證視窗登記進來（``_begin_quit`` 一併銷毀）；None 不登記。"""
+        wins = {site: win for site, win in mapping.items() if win is not None}
+        # 先公布、後複查（無鎖交接）：與 _begin_quit 的「設 quitting → 銷毀 cf_windows」任一交錯順序下，
+        # 新窗至少被其中一方銷毀；雙方都銷毀也無妨（destroy 對已不存在的視窗是冪等的）
+        self.cf_windows.update(wins)
+        if self.quitting:  # 複查
+            for site, win in wins.items():
+                try:
+                    win.destroy()
+                except Exception:
+                    logger.warning("failed to destroy late CF window (site=%s) on app close", site, exc_info=True)
+
     def _begin_quit(self) -> None:
         if self.quitting:
             return

@@ -119,3 +119,52 @@ def test_close_guards_skip_missing_windows():
     ws = cf_windows.CfWindowSet(jl_win=None, javten_win=_Win())
     cf_windows.attach_close_guards(ws, lambda: False)
     assert len(ws.javten_win.events.closing.handlers) == 1
+
+
+# ---- 168e-T15 E44：驗證視窗標題跟隨托盤語系 ----
+
+def _fake_en_titles(monkeypatch):
+    import core.i18n as i18n
+    real = i18n.load_locale
+    monkeypatch.setattr(i18n, "load_locale", lambda lang: (
+        {"desktop": {"cf_window": {"jl_title": "EN-JL", "javten_title": "EN-JT"}}}
+        if lang == "en" else real(lang)))
+
+
+def test_window_titles_lookup_failure_falls_back_to_zh_tw(monkeypatch):
+    from core import client_settings
+
+    def boom():
+        raise RuntimeError('x')
+
+    monkeypatch.setattr(client_settings, 'tray_locale', boom)
+    assert cf_windows.window_titles() == cf_windows.window_titles('zh-TW')
+
+
+@pytest.mark.parametrize('loc', ['en', 'zh-TW'])
+def test_cf_window_titles_and_title_to_key_are_same_strings(env, monkeypatch, loc):
+    from core import client_settings
+    _fake_en_titles(monkeypatch)
+    monkeypatch.setattr(client_settings, 'tray_locale', lambda: loc)
+    seen = {}
+
+    def _install(proxy, udf_root, title_to_key, holder):
+        seen['map'] = dict(title_to_key)
+        return True
+
+    created = []
+
+    class _WV:
+        def create_window(self, title, url, **kw):
+            created.append((title, kw))
+            return _Win(title, url)
+
+    monkeypatch.setattr(cf_windows, 'install_webview2_proxy', _install)
+    monkeypatch.setattr(cf_windows, 'webview', _WV())
+    cf_windows.build_cf_windows(_Logger(), 's')
+    assert [t for t, _ in created] == [k for k in seen['map']]
+    assert seen['map'][created[0][0]] == 'javlibrary' and seen['map'][created[1][0]] == 'fc-javten'
+    if loc == 'en':
+        assert [t for t, _ in created] == ['EN-JL', 'EN-JT']
+    assert created[0][1] == {'width': 1200, 'height': 820, 'hidden': True}
+    assert 'focus' not in created[1][1]

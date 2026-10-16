@@ -73,6 +73,7 @@ _SCOPE = {
     "update_check": "server",
     "update_context": "server",
     "update_run": "server",
+    "cf_retry": "server",
 }
 
 # 導航空窗複查只在能讀到原生 URL 的平台啟用（其餘維持 168a 現狀）
@@ -88,6 +89,7 @@ _draft = {"origin": None, "token": None}
 _restart_handler = None
 _offline_text_provider = None
 _cf_status_provider = None
+_cf_retry_handler = None
 _loaded_hook = None
 _row_busy = threading.Lock()
 _write_lock = threading.Lock()  # client.json 讀改寫的序列化（網路 I/O 不得在鎖內）
@@ -109,6 +111,12 @@ def set_cf_status_provider(fn):
     """註冊 CF 殼狀態提供者 fn() -> dict（只讀狀態，不得動視窗；未註冊＝連線頁的 cf 為 None）"""
     global _cf_status_provider
     _cf_status_provider = fn
+
+
+def set_cf_retry_handler(fn):
+    """註冊「CF 驗證視窗重試」處理器 fn() -> {ok, cf}（168e-T13；未註冊＝cf_retry 回 unavailable）"""
+    global _cf_retry_handler
+    _cf_retry_handler = fn
 
 
 def set_loaded_hook(fn):
@@ -758,6 +766,19 @@ class Api:
                 "path_map": client_settings.saved_path_map(), "version": client_connect.LOCAL_VERSION,
                 "last_ok": client_settings.server_last_ok(), "cf": self._cf_status()}
 
+    def cf_retry(self):
+        """連線頁「重試」：交給殼端控制器補建／重讀 CF 驗證視窗；回 {ok, cf}（同 connect_get_state 的 cf 形）"""
+        if self._denied("cf_retry"):
+            return _untrusted()
+        if _cf_retry_handler is None:
+            return _failed("unavailable")
+        try:
+            reply = _cf_retry_handler()
+        except Exception as e:
+            logger.warning(f"[pywebview] cf retry handler failed ({type(e).__name__})")
+            return _failed("failed")
+        return reply if isinstance(reply, dict) else _failed("failed")
+
     @staticmethod
     def _cf_status():
         if _cf_status_provider is None:
@@ -1066,6 +1087,8 @@ def on_drop(e):
             if file_uncovered:
                 uncovered_kinds.add('file')
         else:
+            if not is_video_file(win_path, exts):
+                continue
             kept, file_uncovered = _split_reverse([win_path])
             expanded_paths.extend(kept)
             uncovered.extend(file_uncovered)
@@ -1127,6 +1150,10 @@ def select_folder_path():
 
 def connect_get_state():
     return api.connect_get_state()
+
+
+def cf_retry():
+    return api.cf_retry()
 
 
 def connect_probe(url):
@@ -1208,7 +1235,7 @@ def update_run():
 def exposed_functions():
     """給 window.expose(*...) 的 bridge 白名單"""
     return [open_file, open_folder, open_url, select_files, select_folder, select_folder_path,
-            connect_get_state, connect_probe, connect_login, connect_sources, connect_test_row,
+            connect_get_state, cf_retry, connect_probe, connect_login, connect_sources, connect_test_row,
             connect_save_path_map, connect_apply_restart, connect_switch_local_restart,
             connect_show_offline, copy_text, offline_get_state, offline_retry, offline_save_url,
             offline_login, offline_switch_local_restart,

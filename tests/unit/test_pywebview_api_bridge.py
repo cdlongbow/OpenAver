@@ -635,3 +635,19 @@ def test_on_drop_covered_items_do_not_affect_kind(api_module, client_env):
     _setup_exit(api_module, "on_drop_file", [str(av / "x.mp4"), str(av / "sub"), str(other)])()
     notes = _uncovered_calls(api_module.get_window())
     assert len(notes) == 1 and _kind_of(notes[0]) == "folder"
+
+
+def test_on_drop_single_non_video_file_is_dropped_locally(api_module, client_env):
+    av = client_env / "av"
+    call = _setup_exit(api_module, "on_drop_file", [str(av / "doc.txt")])
+    call()
+    window = api_module.get_window()
+    assert not any("handlePyWebViewDrop" in s for s in _js_calls(window))
+    assert _uncovered_calls(window) == []
+
+
+def test_on_drop_single_video_file_still_pushed(api_module, client_env):
+    av = client_env / "av"
+    _setup_exit(api_module, "on_drop_file", [str(av / "doc.txt"), str(av / "x.mp4")])()
+    pushes = [s for s in _js_calls(api_module.get_window()) if "handlePyWebViewDrop" in s]
+    assert len(pushes) == 1 and "/volume1/av/x.mp4" in pushes[0] and "doc.txt" not in pushes[0]

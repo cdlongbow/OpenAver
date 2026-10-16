@@ -37,6 +37,9 @@ export function connectActions(s) {
     const canReloadSources = authOk && s.sourcesState === 'error' && !s.busy;
     const canProbe = s.bridge === 'ready' && !s.busy && !s.restarting && String(s.urlText || '').trim() !== '';
 
+    const showRetryCf = s.bridge === 'ready' && cfView(s.cf, s.shellKind).state === 'not_ready';
+    const canRetryCf = showRetryCf && ready && !s.cfBusy;
+
     return {
         probeFresh: fresh,
         connectable,
@@ -50,6 +53,8 @@ export function connectActions(s) {
         tableVisible: authOk,
         canSaveRows,
         canReloadSources,
+        showRetryCf,
+        canRetryCf,
     };
 }
 
@@ -156,7 +161,7 @@ export function pathMapForApply(s) {
 // ---------- CF line (168d-T6) ----------
 
 const CF_STATES = ['ready', 'not_ready', 'unsupported'];
-const CF_REASONS = ['starting', 'no_windows', 'proxy_unusable', 'server_old', 'unreachable', 'unauthorized', 'offline_boot', 'shell_old'];
+const CF_REASONS = ['starting', 'no_windows', 'proxy_unusable', 'server_old', 'unreachable', 'unauthorized', 'offline_boot', 'webview2_failed', 'shell_old'];
 const CF_PROXY = ['applied', 'server_local_direct'];
 
 function proxyCode(note) {
@@ -172,4 +177,12 @@ export function cfView(cf, shellKind) {
     if (cf.state === 'ready') return { state: 'ready', reason: null, proxy };
     const reason = CF_REASONS.includes(cf.reason) ? cf.reason : 'shell_old';
     return { state: 'not_ready', reason, proxy };
+}
+
+/** cf_retry reply -> busy | unavailable | failed (only called for a reply that is not a usable ok+cf). */
+export function cfRetryErrorCode(reply) {
+    const reason = reply && reply.reason;
+    if (reason === 'busy') return 'busy';
+    if (reason === 'unavailable' || reason === 'no_bridge') return 'unavailable';
+    return 'failed';
 }

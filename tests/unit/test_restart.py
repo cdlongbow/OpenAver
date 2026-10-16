@@ -149,6 +149,26 @@ def test_spawn_failure_notifies_once_and_never_retries(monkeypatch):
     assert isinstance(msg, str) and msg and not msg.startswith("[")
 
 
+def _spawn_fail_notice(monkeypatch):
+    monkeypatch.setattr(restart, "restart_command", lambda *a, **k: ["x"])
+    notify = Mock()
+    restart.request_restart(Mock()).join(5)
+    assert restart.spawn_if_requested(notify_error=notify, popen=Mock(side_effect=OSError("boom"))) is False
+    notify.assert_called_once()
+    return notify.call_args[0][0]
+
+
+def test_spawn_failure_locale_lookup_raising_still_notifies_zh_tw(monkeypatch):
+    from core import client_settings
+
+    def boom():
+        raise RuntimeError("locale lookup failed")
+
+    monkeypatch.setattr(client_settings, "tray_locale", boom)
+    msg = _spawn_fail_notice(monkeypatch)
+    assert msg and not msg.startswith("[")
+
+
 # ---- wait_for_parent_exit ----
 
 def test_wait_for_parent_missing_or_bad_env_returns_immediately():

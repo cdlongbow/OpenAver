@@ -94,8 +94,7 @@ class FakeBase:
         return 'task'
 
 
-JL_TITLE = cf_windows.JL_WINDOW_TITLE
-JT_TITLE = cf_windows.JAVTEN_WINDOW_TITLE
+JL_TITLE, JT_TITLE = cf_windows.window_titles('zh-TW')
 TITLE_TO_KEY = {JL_TITLE: 'javlibrary', JT_TITLE: 'fc-javten'}
 
 
@@ -342,6 +341,66 @@ def test_oracle_all_success_confirms_exactly_once(tmp_path, fake_edge):
     assert transport.available_sites() == ['javlibrary']
     assert all(not [c for c in w.calls if c[0] == 'load_url'] for w in wins.values())
     assert wins['javlibrary'].url == 'about:blank'
+
+
+def _fail_event():
+    return types.SimpleNamespace(IsSuccess=False, InitializationException='boom')
+
+
+def test_native_init_failure_reports_webview2_failed(tmp_path, fake_edge):
+    """168e-T13 CD-4：經套用器回呼驅動（不直呼 ReadyHolder.fail）→ 該站離開 preparing、記為 failed。"""
+    transport, wins, cls = _wired(tmp_path, fake_edge)
+    ctl = cls(JL_TITLE)
+    ctl.EnsureCoreWebView2Async(None)
+    ctl.CoreWebView2InitializationCompleted.fire(ctl, _fail_event())
+    ctl.CoreWebView2InitializationCompleted.fire(ctl, _fail_event())      # 重複只生效一次
+    assert transport.preparing_sites() == ['fc-javten']
+    assert transport.failed_sites() == ['javlibrary']
+    assert transport.available_sites() == []
+
+
+def test_native_init_failure_before_bind_is_replayed_on_bind(tmp_path, fake_edge):
+    holder = webview2_proxy.ReadyHolder()
+    assert webview2_proxy.install(_proxy(), str(tmp_path / 'udf'), TITLE_TO_KEY, holder) is True
+    ctl = fake_edge.WebView2(JT_TITLE)
+    ctl.EnsureCoreWebView2Async(None)
+    ctl.CoreWebView2InitializationCompleted.fire(ctl, _fail_event())      # transport 還沒綁
+    wins = {'javlibrary': _Win(JL_TITLE, 'about:blank'), 'fc-javten': _Win(JT_TITLE, 'about:blank')}
+    transport = PyWebViewCfTransport(wins, {}, pending={'javlibrary', 'fc-javten'})
+    holder.bind(transport)
+    assert transport.failed_sites() == ['fc-javten']
+    assert transport.preparing_sites() == ['javlibrary']
+
+
+def test_native_init_failure_with_plain_callable_does_not_raise(tmp_path, fake_edge):
+    cls, ready = _applied(tmp_path, fake_edge)                       # on_ready 是 list.append，無 .fail
+    ctl = cls(JL_TITLE)
+    ctl.EnsureCoreWebView2Async(None)
+    ctl.CoreWebView2InitializationCompleted.fire(ctl, _fail_event())
+    assert ready == []
+
+
+def test_ready_holder_fail_once_per_key_and_not_after_confirm():
+    h, t = webview2_proxy.ReadyHolder(), _FailT()
+    h.bind(t)
+    h.fail('javlibrary')
+    h.fail('javlibrary')
+    h('fc-javten')
+    h.fail('fc-javten')                                              # 已確認可用的 key 不再報失敗
+    assert t.failed == ['javlibrary']
+    assert t.confirmed == ['fc-javten']
+
+
+class _FailT:
+    def __init__(self):
+        self.confirmed = []
+        self.failed = []
+
+    def confirm_ready(self, key):
+        self.confirmed.append(key)
+
+    def mark_failed(self, key):
+        self.failed.append(key)
 
 
 # ---------------------------------------------------------------------------

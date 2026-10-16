@@ -24,7 +24,7 @@ import pywebview_api
 import window_state
 from core.logger import get_logger, setup_logging
 from core import client_settings
-from windows import cf_shell, cf_windows, restart, shell_boot, shell_sync, update_notice
+from windows import cf_boot, restart, shell_boot, shell_sync, update_notice
 
 startup_trace.mark("modules_loaded")
 
@@ -40,49 +40,14 @@ def _destroy_all_windows():
             w.destroy()
 
 
-def _wire_main_closing(window, cf_set, quitting):
-    """主視窗關閉＝先讓 CF 視窗放行，再銷毀它們（隱藏視窗不銷毀，視窗計數不歸零、行程殘留）。"""
+def _wire_main_closing(window, cf, quitting):
+    """主視窗關閉＝先讓 CF 視窗放行，再銷毀它們（隱藏視窗不銷毀，視窗計數不歸零、行程殘留）。
+    銷毀的是關閉當下控制器持有的視窗（含「重試」補建的），不是啟動時捕捉的。"""
     def _on_main_closing():
         quitting["v"] = True
-        for cf_win in (cf_set.jl_win, cf_set.javten_win):
-            if cf_win is not None:
-                with contextlib.suppress(Exception):
-                    cf_win.destroy()
+        cf.destroy_all()
 
     window.events.closing += _on_main_closing
-
-
-def _cf_agent_for(cf_set, origin, token, server_remote, supported):
-    agent = cf_shell.CfShellAgent(origin=origin, token=token, windows=cf_set,
-                                  server_remote=server_remote, supported=supported)
-    pywebview_api.set_cf_status_provider(agent.public_status)
-    return cf_set, agent
-
-
-def _wire_cf_shell(logger, boot, local_origin):
-    """dev 殼的 CF 接線（168d CD-6）：回 ``(cf_set, cf_agent 或 None)``。
-
-    dev 殼與伺服器是不同行程，所以本機模式也向 ``local_origin`` 抓代理設定（不讀這個行程的 config）；
-    本機模式 token 一律為 None（即使 client.json 殘留 token）。離線啟動／抓不到設定＝不建窗。
-    """
-    if boot.kind == "offline":
-        reason = "offline_boot"
-    else:
-        if boot.kind == "client":
-            server_url, token = client_settings.server_pair()
-            server_origin = client_settings.server_origin(local_origin)
-        else:
-            server_url, token, server_origin = local_origin, None, local_origin
-        if not cf_windows.cf_shell_supported():
-            return _cf_agent_for(cf_windows.CfWindowSet(), server_origin, token, False, False)
-        ok, reason, eff_settings, local_direct, server_remote = cf_windows.fetch_client_cf(
-            server_url, token, server_origin)
-        if ok:
-            cf_set = cf_windows.build_cf_windows(logger, eff_settings, local_direct)
-            return _cf_agent_for(cf_set, server_origin, token, server_remote, True)
-        logger.warning("CF settings unavailable (%s), CF windows not built", reason)
-    pywebview_api.set_cf_status_provider(lambda: cf_windows.cf_status_static(reason))
-    return cf_windows.CfWindowSet(), None
 
 
 if __name__ == '__main__':
@@ -115,11 +80,16 @@ if __name__ == '__main__':
     shell_sync.install(pywebview_api)
     startup_trace.mark("main_window_created")
 
-    cf_set, cf_agent = _wire_cf_shell(logger, boot, local_origin)
-    cf_windows.attach_close_guards(cf_set, lambda: _cf_quitting["v"])
-    _wire_main_closing(window, cf_set, _cf_quitting)
-    if cf_agent is not None:
-        cf_agent.announce()      # webview.start() 之前：首頁渲染時註冊表已有這台殼
+    # dev 殼與伺服器是不同行程，所以本機模式也向 local_origin 抓代理設定（不讀這個行程的 config）；
+    # 本機模式 token 一律為 None（即使 client.json 殘留 token）。離線啟動／抓不到設定＝不建窗。
+    cf = cf_boot.CfShellController(logger, boot.kind, local_origin)
+    pywebview_api.set_cf_status_provider(cf.status)
+    pywebview_api.set_cf_retry_handler(cf.retry)
+    cf.initial()
+    cf.bind(None, lambda: _cf_quitting["v"])
+    cf.attach_guards()
+    _wire_main_closing(window, cf, _cf_quitting)
+    cf.announce_initial()        # webview.start() 之前：首頁渲染時註冊表已有這台殼
 
     def startup(w):
         def on_first_loaded():
@@ -135,13 +105,11 @@ if __name__ == '__main__':
                 # Codex P2: maximize 失敗時清 live state，否則 on_resized/on_moved
                 # 永遠 early-return，下次啟動仍寫回 maximized=true 形成 sticky failure
                 live["maximized"] = False
-        if cf_agent is not None:
-            cf_agent.start()
+        cf.start()
         update_notice.start_background_check()
 
     try:
         webview.start(startup, window)
     finally:
-        if cf_agent is not None:
-            cf_agent.stop()
+        cf.stop()
         restart.spawn_if_requested()

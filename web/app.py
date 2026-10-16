@@ -54,7 +54,7 @@ from core.cf_transport import register_cf_transport
 from web.shell_identity import cf_availability_here, shell_key
 
 # 168d CD-168d-3／BE-LINT-09：sink 註冊放 module level（不放 lifespan）——所有進入點（含不啟動
-# lifespan 的桌面版與 TestClient）import 時就已註冊。standalone 之後可用自己的 transport 覆蓋。
+# lifespan 的桌面版與 TestClient）import 時就已註冊。目前沒有任何路徑覆蓋它；桌面殼的驗證視窗由 windows/cf_shell.py 向主機登記，不走 register_cf_transport。
 register_cf_transport(cf_handoff.transport())
 
 
@@ -807,6 +807,7 @@ def get_common_context(request: Request) -> dict:
         "is_mac_desktop": getattr(request.state, "shell_kind", None) == "mac",
         "is_desktop": getattr(request.state, "shell_kind", None) is not None,
         "shell_mode": getattr(request.state, "shell_mode", None),
+        "in_shell": bool(getattr(request.state, "shell_mode", None)),
         "is_synology": is_synology(),
     }
 

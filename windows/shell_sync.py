@@ -13,7 +13,10 @@ from windows import update_notice
 logger = get_logger(__name__)
 
 # synced：本連線世代的副檔名是否已抄成功；probe：gen -> 「該次載入的頁面是否仍是現在的 server 頁」
-_state = {"synced": False, "probe": None}
+_state = {"synced": False, "probe": None, "in_settings": False}
+
+# 閘門頁（<html data-oa-gate="1">）回 null：它的 lang=en 不是使用者選的介面語言
+PAGE_LANG_JS = "document.documentElement.dataset.oaGate==='1' ? null : document.documentElement.lang"
 
 
 def _run_async(fn, *args):
@@ -28,7 +31,7 @@ def _probe_current(gen):
 def sync_tray_locale(window):
     """把頁面 <html lang> 同步成托盤語系；非白名單值（頁面可偽造）一律忽略。"""
     try:
-        lang = window.evaluate_js("document.documentElement.lang")
+        lang = window.evaluate_js(PAGE_LANG_JS)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[shell_sync] read page lang failed: {type(e).__name__}")
         return
@@ -40,6 +43,21 @@ def sync_tray_locale(window):
         client_settings.update_local_settings({"tray_locale": lang})
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[shell_sync] write tray_locale failed: {type(e).__name__}")
+
+
+def _track_settings_page(window):
+    """離開設定頁 → 清 synced 讓副檔名重抄；路徑讀不到時兩個狀態都不動。"""
+    try:
+        path = window.evaluate_js("location.pathname")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[shell_sync] read page path failed: {type(e).__name__}")
+        return
+    if not isinstance(path, str):
+        return
+    now_settings = path.rstrip("/") == "/settings"
+    if _state["in_settings"] and not now_settings:
+        _state["synced"] = False
+    _state["in_settings"] = now_settings
 
 
 def _copy_extensions(gen):
@@ -63,10 +81,12 @@ def on_page_loaded(kind, window, gen):
         return
     if kind == "offline":
         _state["synced"] = False
+        _state["in_settings"] = False
         return
     if kind != "server":
         return
     sync_tray_locale(window)
+    _track_settings_page(window)
     if not _state["synced"]:
         _run_async(_copy_extensions, gen)
     update_notice.try_show(window, gen, lambda: _probe_current(gen))

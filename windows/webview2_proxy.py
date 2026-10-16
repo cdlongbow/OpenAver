@@ -79,6 +79,8 @@ class ReadyHolder:
         self._transport = None
         self._early: set[str] = set()
         self._done: set[str] = set()
+        self._early_failed: set[str] = set()
+        self._failed_done: set[str] = set()
 
     def __call__(self, key: str) -> None:
         with self._lock:
@@ -91,10 +93,29 @@ class ReadyHolder:
             transport = self._transport
         transport.confirm_ready(key)
 
+    def fail(self, key: str) -> None:
+        """原生初始化失敗：語意同 ``__call__``（未綁定先暫存、bind 補呼叫、每 key 一次）；
+        已確認可用的 key 不再報失敗。"""
+        with self._lock:
+            if key in self._failed_done or key in self._done:
+                return
+            if self._transport is None:
+                self._early_failed.add(key)
+                return
+            self._failed_done.add(key)
+            transport = self._transport
+        transport.mark_failed(key)
+
     def bind(self, transport) -> None:
         with self._lock:
             self._transport = transport
             replay = []
+            replay_failed = []
+            for key in sorted(self._early_failed):
+                if key not in self._failed_done and key not in self._done:
+                    self._failed_done.add(key)
+                    replay_failed.append(key)
+            self._early_failed.clear()
             for key in sorted(self._early):
                 if key not in self._done:
                     self._done.add(key)
@@ -102,11 +123,24 @@ class ReadyHolder:
             self._early.clear()
         for key in replay:
             transport.confirm_ready(key)
+        for key in replay_failed:
+            transport.mark_failed(key)
 
 
 # ---------------------------------------------------------------------------
 # 套用器
 # ---------------------------------------------------------------------------
+
+def _notify_init_failed(on_ready, key: str) -> None:
+    """把原生初始化失敗交給 ``on_ready.fail``（普通函式沒有 fail 屬性就略過；絕不拋）。"""
+    fail = getattr(on_ready, 'fail', None)
+    if fail is None:
+        return
+    try:
+        fail(key)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("CF window '%s': failure report failed (%s)", key, type(e).__name__)
+
 
 def _make_proxied_class(base, proxy, udf: str, title_to_key: dict, on_ready: Callable[[str], None]):
     proxy_host, proxy_port = split_server(proxy.server)
@@ -135,6 +169,7 @@ def _make_proxied_class(base, proxy, udf: str, title_to_key: dict, on_ready: Cal
         def _on_init_done(sender, args) -> None:
             if not getattr(args, 'IsSuccess', False):
                 logger.warning("CF window '%s': native init failed, stays unavailable", key)
+                _notify_init_failed(on_ready, key)
                 return
             if has_auth:
                 try:

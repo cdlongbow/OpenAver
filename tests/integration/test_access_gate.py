@@ -14,6 +14,7 @@ TASK-114a-T2: 認證閘門 middleware（`web.app.access_gate`）行為矩陣。
 不動 tests/integration/test_server_mode_gate.py（唯讀，AC8）。
 """
 import sqlite3
+from html.parser import HTMLParser
 from unittest.mock import patch
 
 import pytest
@@ -496,3 +497,60 @@ class TestCrossSiteApiRequestsRejected:
         r = gated_client.get("/api/health", headers={"Sec-Fetch-Site": "cross-site"})
         assert r.status_code == 200
         assert r.json() == {"status": "ok", "version": VERSION}
+
+
+# ── 168e-T15 E6：真閘門頁帶固定標記（托盤語系同步靠它跳過）──────────────
+
+
+class _HtmlAttrs(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.attrs = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "html" and self.attrs is None:
+            self.attrs = dict(attrs)
+
+
+def test_real_gate_page_carries_oa_gate_marker(gated_client):
+    r = gated_client.get("/search")
+    _assert_masked(r)
+    p = _HtmlAttrs()
+    p.feed(r.text)
+    assert p.attrs is not None
+    assert p.attrs.get("lang") == "en"
+    assert p.attrs.get("data-oa-gate") == "1"
+
+
+def test_real_gate_page_does_not_change_tray_locale(gated_client, tmp_path, monkeypatch):
+    """真閘門頁的 <html> 屬性 + 殼端 PAGE_LANG_JS 契約：lang=en 的閘門頁不得洗掉托盤語系。
+
+    JS 三元式本身的執行驗證歸 T16 ⑦（打包版停在密碼閘門頁）；這裡守兩端契約對得上。
+    """
+    import sys
+    from pathlib import Path
+    from unittest.mock import MagicMock
+    from core import client_settings, config as core_config
+
+    windows_dir = str(Path(__file__).resolve().parents[2] / "windows")
+    if windows_dir not in sys.path:
+        sys.path.insert(0, windows_dir)
+    from windows import shell_sync
+
+    r = gated_client.get("/search")
+    p = _HtmlAttrs()
+    p.feed(r.text)
+    # 以頁面實際屬性模擬 PAGE_LANG_JS 的求值：標記為 '1' 時回 None，否則回 lang
+    js = shell_sync.PAGE_LANG_JS
+    marker_branch = "dataset.oaGate==='1' ? null :" in js
+    lang = None if (marker_branch and p.attrs.get("data-oa-gate") == "1") else p.attrs.get("lang")
+
+    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_path / "config.json")
+    (tmp_path / ".layout.json").write_text('{"version": 1, "complete": true}', encoding="utf-8")
+    client_settings.save_client_settings(
+        {"version": 1, "server": {"url": "http://192.168.1.180:8000", "token": "T"}, "tray_locale": "zh-TW"})
+    w = MagicMock()
+    w.evaluate_js.return_value = lang
+    shell_sync.sync_tray_locale(w)
+    assert client_settings.tray_locale() == "zh-TW"

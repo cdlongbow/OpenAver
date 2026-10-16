@@ -219,6 +219,8 @@ class PyWebViewCfTransport:
         # that way until confirm_ready(key) — their window is not yet known to be usable
         # (proxy applied + native init succeeded). No `pending` ⇒ identical to before.
         self._pending: set[str] = {key for key in (pending or ()) if key in self._wins}
+        # 168e-T13 CD-4: keys whose WebView2 native init failed (left `pending`, stay unavailable).
+        self._failed: set[str] = set()
         self._dead: dict[str, bool] = {key: key in self._pending for key in self._wins}
         # 168d-fix-T1: single change listener (no args); fired after availability changes.
         self._change_listener = None
@@ -326,6 +328,21 @@ class PyWebViewCfTransport:
     def preparing_sites(self) -> list[str]:
         """Site keys whose window is still pending confirmation (read-only view)."""
         return sorted(self._pending)
+
+    def failed_sites(self) -> list[str]:
+        """Site keys whose WebView2 native init failed (read-only view)."""
+        return sorted(self._failed)
+
+    def mark_failed(self, key: str) -> None:
+        """WebView2 native init failed for a `pending` site: it leaves `pending` and is recorded
+        as failed (stays `_dead`). No-op unless *key* is still pending, so a late failure can
+        never take down a window that was confirmed or closed meanwhile."""
+        if key not in self._pending:
+            return
+        self._pending.remove(key)
+        self._failed.add(key)
+        self._dead[key] = True
+        self._notify_change()
 
     def confirm_ready(self, key: str) -> None:
         """Mark a `pending` site usable. No-op unless *key* is still pending, so a

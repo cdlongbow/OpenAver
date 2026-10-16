@@ -88,6 +88,10 @@
     "restart": {
       "spawn_failed": "無法自動重新啟動 OpenAver，請手動重新開啟。"
     },
+    "cf_window": {
+      "jl_title": "JavLibrary — CF 驗證",
+      "javten_title": "FC2 (javten) — CF 驗證"
+    },
     "tray": {
       "open_app": "開啟 OpenAver",
       "close_behavior": "關閉視窗時",
@@ -1085,7 +1089,8 @@
       "success": "已覆蓋寫入（封面 + NFO）",
       "fail": "重新刮削失敗，請稍後再試。",
       "jl_desktop_only": "僅限桌面應用程式（standalone）可用",
-      "cf_window_restart": "這個來源的驗證視窗沒有啟動成功，請重新啟動 OpenAver 再試",
+      "cf_window_restart": "這個來源的驗證視窗沒有啟動成功，請重新啟動 OpenAver 再試。若重啟仍不行，到「連線」頁看原因",
+      "cf_window_not_built": "這台電腦的驗證視窗還沒建好，到「連線」頁按「重試」",
       "cf_window_preparing": "驗證視窗正在準備，請幾秒後再試",
       "jl_cf_solving": "Cloudflare 驗證中……通過後將自動繼續",
       "versions_found": "找到 {count} 部同番號作品",
@@ -1883,8 +1888,12 @@
     "cf_reason_server_old": "伺服器版本不支援",
     "cf_reason_unreachable": "連不到伺服器",
     "cf_reason_unauthorized": "伺服器沒有接受這台電腦，請重新連線",
-    "cf_reason_offline_boot": "啟動時連不到伺服器，請重新開啟 OpenAver",
+    "cf_reason_offline_boot": "啟動時連不到伺服器；主機恢復後按「重試」",
     "cf_reason_shell_old": "這個 App 版本不支援，請更新",
+    "cf_reason_webview2_failed": "這台電腦的 WebView2 初始化失敗，請修復或重新安裝 Microsoft Edge WebView2 Runtime；修好後請重新啟動 OpenAver",
+    "cf_retry_btn": "重試",
+    "cf_retry_busy": "上一次重試還在進行，請稍候再按",
+    "cf_retry_unavailable": "這個 App 版本沒有重試功能，請更新",
     "cf_proxy_applied": "驗證視窗走伺服器設定的代理",
     "cf_proxy_local_direct": "伺服器的代理是它自己的本機位址，這台電腦直連",
     "cf_mac": "JavLibrary／FC2-javten 由這台電腦代為驗證：這台電腦不支援",

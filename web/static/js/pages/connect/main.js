@@ -1,7 +1,7 @@
 // 168b-T6a: connect page (single standalone Alpine component). All remote I/O goes through the shell bridge.
 import { PROBE_ICON_MAP } from '../settings/source-probe-logic.js';
 import {
-    connectActions, probeCode, dotState, kindCode, forgotCode, cfView,
+    connectActions, cfRetryErrorCode, probeCode, dotState, kindCode, forgotCode, cfView,
     mergeRows, staleRows, rulesForSave, stripWrappingQuotes, rowResultView, pathMapForApply as buildPathMap,
 } from './connect-logic.js';
 
@@ -32,6 +32,8 @@ export function connectPage() {
         lastOk: '',
         shellKind: 'windows',
         cf: null,
+        cfBusy: false, // read by connect-logic.js (canRetryCf)
+        cfRetryError: '',
         actionError: '',
         pinError: '',
         _started: false,
@@ -287,6 +289,20 @@ export function connectPage() {
             this.actionError = (reply && reply.reason) || 'failed';
         },
 
+        async retryCf() {
+            if (!this.actions().canRetryCf) return;
+            this.cfBusy = true;
+            this.cfRetryError = '';
+            const reply = await this.call('cf_retry');
+            this.cfBusy = false;
+            if (this.bridge === 'unavailable') return;
+            if (reply && reply.ok === true && reply.cf && typeof reply.cf === 'object') {
+                this.cf = reply.cf;
+                return;
+            }
+            this.cfRetryError = cfRetryErrorCode(reply);
+        },
+
         // --- copy ---
         kindLabel(kind) {
             switch (kindCode(kind)) {
@@ -400,7 +416,17 @@ export function connectPage() {
                 case 'unreachable': return window.t('connect.cf_reason_unreachable');
                 case 'unauthorized': return window.t('connect.cf_reason_unauthorized');
                 case 'offline_boot': return window.t('connect.cf_reason_offline_boot');
+                case 'webview2_failed': return window.t('connect.cf_reason_webview2_failed');
                 default: return window.t('connect.cf_reason_shell_old');
+            }
+        },
+
+        cfRetryErrorText() {
+            switch (this.cfRetryError) {
+                case 'busy': return window.t('connect.cf_retry_busy');
+                case 'unavailable': return window.t('connect.cf_retry_unavailable');
+                case 'failed': return window.t('connect.error_generic');
+                default: return '';
             }
         },
 

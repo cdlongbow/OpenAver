@@ -73,6 +73,7 @@ const KNOWN_UNSCANNED_KEYS = [
   'showcase.rescrape.jl_desktop_only', //   ← 沒有 transport（dev／區網伺服器）
   'showcase.rescrape.cf_window_restart', // ← 有 transport 但這個站的視窗沒起來／已被摧毀
   'showcase.rescrape.cf_window_preparing', // ← 168d-fix-T2：殼回報這個站的視窗還在準備
+  'showcase.rescrape.cf_window_not_built', // ← 168e-T14：App 內但驗證視窗沒建成（SSR in_shell）
 ];
 
 let hadError = false;

@@ -125,3 +125,21 @@ def test_availability_endpoint_dispatches_no_job(temp_config_path, broker, monke
     assert r.status_code == 200
     assert r.json()["available"] is True
     assert calls == []
+
+
+def _in_shell(html: str) -> bool:
+    m = re.search(r"in_shell:\s*(true|false)", html)
+    assert m, "bootstrap 缺 in_shell"
+    return m.group(1) == "true"
+
+
+@pytest.mark.parametrize("path", ["/search", "/showcase"])
+@pytest.mark.parametrize("query,expected", [
+    ("?oa_mode=client", True),
+    ("?oa_mode=local", True),
+    ("", False),
+    ("?oa_mode=bogus", False),
+])
+def test_in_shell_follows_oa_mode(temp_config_path, path, query, expected):
+    html = TestClient(app).get(path + query).text
+    assert _in_shell(html) is expected

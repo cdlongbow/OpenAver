@@ -33,6 +33,8 @@ POLL_PATH = '/api/cf/shell/poll'
 RESULT_PATH = '/api/cf/shell/result'
 BACKOFF_S = (1, 2, 4, 8, 10)
 RESULT_TIMEOUT_S = 10
+REFRESH_JOIN_S = 2           # refresh_now 等舊的終態輪詢緒退出（它不再發 HTTP，很快）
+ANNOUNCE_TIMEOUT_S = 3       # 只套 announce()／refresh_now() 的同步登記：連線很慢時啟動／重試不被拖長
 MAX_WORKERS = 4
 _KINDS = ('is_ready', 'begin_solve', 'fetch', 'navigate_and_settle')
 
@@ -85,6 +87,7 @@ class CfShellAgent:
         self._last_ok = None       # None（尚無回應）| True | False（最近一次失敗，重試中）
         self._last_sent_sites = set()   # 伺服器最近確認收下的 sites（只收「與當下相等」的那次）
         self._sync_wake = threading.Event()
+        self.status_changed = threading.Event()   # public_status 可能變了（重試的等待用：事件，不輪詢）
         self._sync_thread = None
         transport = windows.transport
         if transport is not None and hasattr(transport, 'set_change_listener'):
@@ -128,11 +131,13 @@ class CfShellAgent:
         if status in (404, 405):
             if liveness:
                 self._terminal = 'server_old'
+                self.status_changed.set()
             logger.warning("CF shell: server has no handoff endpoint (status=%s), poller stops", status)
             return 'terminal', None
         if status in (401, 403) or 300 <= status < 400:
             if liveness:
                 self._terminal = 'unauthorized'
+                self.status_changed.set()
             logger.warning("CF shell: server refused the shell (status=%s), poller stops", status)
             return 'terminal', None
         if status != 200:
@@ -154,21 +159,28 @@ class CfShellAgent:
     def _note_failure(self, liveness):
         if liveness:
             self._last_ok = False
+            self.status_changed.set()
 
     def _current_sites(self):
         transport = self._windows.transport
         return list(transport.available_sites()) if transport is not None else []
+
+    def _failed_sites(self):
+        failed = getattr(self._windows.transport, 'failed_sites', None)
+        return list(failed()) if failed is not None else []
 
     def _record_sent(self, body):
         """伺服器收下這次 poll：只有 body.sites 等於當下 sites 才更新（讀、比、寫同一把鎖）。"""
         with self._lock:
             if set(body.get('sites', ())) == set(self._current_sites()):
                 self._last_sent_sites = set(body.get('sites', ()))
+        self.status_changed.set()
 
     # ---- 就緒補報（視窗狀態一變就立刻 hold=0 登記一次）----
     def _wake_sync(self):
         """transport 變更回呼：只 set 事件，不做任何 I/O（事件緒內不得碰網路）。"""
         self._sync_wake.set()
+        self.status_changed.set()
 
     def _sync_once(self):
         if self._stop.is_set():
@@ -202,8 +214,9 @@ class CfShellAgent:
             'preparing': list(preparing()) if preparing is not None else [],
         }
 
-    def _poll_once(self, hold):
-        timeout = HOLD_S + 10 if hold > 0 else RESULT_TIMEOUT_S
+    def _poll_once(self, hold, timeout=None):
+        if timeout is None:
+            timeout = HOLD_S + 10 if hold > 0 else RESULT_TIMEOUT_S
         kind, data = self._exchange(POLL_PATH, self._poll_body(hold), timeout)
         if kind != 'ok':
             return kind
@@ -211,8 +224,10 @@ class CfShellAgent:
         if job is not None and not isinstance(job, dict):
             logger.warning("CF shell: malformed job in response, will retry")
             self._last_ok = False
+            self.status_changed.set()
             return 'retry'
         self._last_ok = True
+        self.status_changed.set()
         if job is not None:
             try:
                 self._pool().submit(self._execute, job)
@@ -279,7 +294,29 @@ class CfShellAgent:
         """同步 hold=0 登記一次；失敗不致命。"""
         if not self._supported or self._terminal is not None:
             return False
-        return self._poll_once(0) == 'ok'
+        return self._poll_once(0, timeout=ANNOUNCE_TIMEOUT_S) == 'ok'
+
+    def refresh_now(self) -> bool:
+        """連線頁「重試」的重讀（168e-T13）：清掉可恢復的終態、同步 hold=0 重新登記一次、
+        輪詢緒不在就重啟。仍被拒就再落回終態（不再卡死）。回「登記是否送達」。"""
+        if not self._supported:
+            return False
+        if self._terminal in ('server_old', 'unauthorized'):
+            # 舊輪詢緒可能已公布終態、尚未返回 run()：先請它退出並等它走完，否則 start() 會因舊緒
+            # 仍 is_alive() 而不起新緒，舊緒隨後退出 → 沒有緒領工作（45 秒後登記失效）
+            self._stop.set()
+            old = self._thread
+            if old is not None and old is not threading.current_thread() and old.is_alive():
+                old.join(timeout=REFRESH_JOIN_S)
+                if old.is_alive():
+                    self._stop.clear()
+                    logger.warning("CF shell: previous poller did not exit, refresh skipped")
+                    return False
+            self._terminal = None
+            self._stop.clear()
+        ok = self._poll_once(0, timeout=ANNOUNCE_TIMEOUT_S) == 'ok'
+        self.start()
+        return ok
 
     def start(self):
         if not self._supported or self._terminal is not None:
@@ -355,6 +392,8 @@ class CfShellAgent:
             return _st('not_ready', self._terminal)
         if self._last_ok is False:
             return _st('not_ready', 'unreachable')
+        if not sites and self._failed_sites():
+            return _st('not_ready', 'webview2_failed')
         if self._last_ok is None or not sites or not set(sites) <= self._last_sent_sites:
             return _st('not_ready', 'starting')
         return _st('ready', None)
