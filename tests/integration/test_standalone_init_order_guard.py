@@ -116,6 +116,15 @@ def _window_title_of(call: ast.Call, consts: dict[str, str]) -> str:
         return first.value
     if isinstance(first, ast.Name):
         return consts.get(first.id, "")
+    # 168e-T15：標題改在 build_cf_windows 入口算一次 `titles = window_titles()`，
+    # 兩窗以 titles[0]（JL）／titles[1]（javten）辨識；索引字面值必須是 0／1，不放寬。
+    if (
+        isinstance(first, ast.Subscript)
+        and isinstance(first.value, ast.Name)
+        and first.value.id == "titles"
+        and isinstance(first.slice, ast.Constant)
+    ):
+        return {0: "JavLibrary", 1: "javten"}.get(first.slice.value, "")
     return ""
 
 
