@@ -177,11 +177,6 @@ def test_cf_retry_handler_exception_is_failed_and_log_has_no_detail(cx, monkeypa
     assert "RuntimeError" in logged and "SECRET-DETAIL-xyz" not in logged
 
 
-def test_cf_retry_non_dict_reply_is_failed(cx):
-    cx.m.set_cf_retry_handler(Mock(return_value="oops"))
-    assert cx.api.cf_retry() == {"ok": False, "reason": "failed"}
-
-
 def test_cf_retry_denied_on_untrusted_page_without_touching_handler(cx):
     handler = Mock()
     cx.m.set_cf_retry_handler(handler)

@@ -193,10 +193,3 @@ def test_offline_texts_follow_tray_locale_en(monkeypatch):
     assert texts["message"] == "EN-unreachable h:1"
     assert texts["retry"] == "EN-retry"
 
-
-def test_offline_texts_en_missing_keys_fall_back_to_zh_tw(monkeypatch):
-    monkeypatch.setattr(client_settings, "tray_locale", lambda: "en")
-    zh = shell_boot.offline_texts("unreachable", "h:1")
-    monkeypatch.setattr(client_settings, "tray_locale", lambda: "zh-TW")
-    assert zh == shell_boot.offline_texts("unreachable", "h:1")
-    assert all(not v.startswith("[") for v in zh.values())

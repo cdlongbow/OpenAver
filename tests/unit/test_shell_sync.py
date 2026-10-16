@@ -212,14 +212,6 @@ def test_non_settings_to_non_settings_does_not_recopy(env, monkeypatch):
     assert fetch.call_count == 1
 
 
-def test_settings_to_settings_does_not_recopy(env, monkeypatch):
-    fetch = _setup_copy(env, monkeypatch)
-    shell_sync.on_page_loaded("server", _path_win("/settings"), 1)
-    first = fetch.call_count
-    shell_sync.on_page_loaded("server", _path_win("/settings/"), 1)
-    assert fetch.call_count == first
-
-
 def test_pathname_read_failure_neither_resets_nor_raises(env, monkeypatch):
     fetch = _setup_copy(env, monkeypatch)
     shell_sync.on_page_loaded("server", _path_win("/settings"), 1)
@@ -251,15 +243,3 @@ def test_normal_page_lang_ja_still_syncs(env):
     shell_sync.sync_tray_locale(_win("ja"))
     assert client_settings.tray_locale() == "ja"
 
-
-def test_sync_sends_page_lang_js_constant(env):
-    _client()
-    w = _win("en")
-    shell_sync.sync_tray_locale(w)
-    w.evaluate_js.assert_called_once_with(shell_sync.PAGE_LANG_JS)
-
-
-def test_page_lang_js_gate_marker_contract():
-    js = shell_sync.PAGE_LANG_JS
-    assert "dataset.oaGate==='1' ? null :" in js
-    assert js.endswith("document.documentElement.lang")

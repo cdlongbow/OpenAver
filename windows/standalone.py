@@ -656,6 +656,7 @@ def _make_cf_agent(cf_set, origin, token, server_remote, supported):
     agent = cf_shell.CfShellAgent(origin=origin, token=token, windows=cf_set,
                                   server_remote=server_remote, supported=supported)
     pywebview_api.set_cf_status_provider(agent.public_status)
+    pywebview_api.set_cf_retry_handler(cf_boot.agent_retry_handler(agent))   # 本機版的「重試」＝重讀，不補建
     return agent
 
 

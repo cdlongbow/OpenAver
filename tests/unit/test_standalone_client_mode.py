@@ -126,6 +126,10 @@ class _FakeAgent:
     def stop(self):
         self._ev.append("cf.stop")
 
+    def refresh_now(self):
+        self._ev.append("cf.refresh_now")
+        return True
+
     def public_status(self):
         return {"state": "ready", "reason": None, "proxy_note": None, "sites": ["javlibrary"]}
 
@@ -781,6 +785,16 @@ def test_local_main_cf_wiring_sequence(monkeypatch, env):
     assert agent.origin == f"http://{standalone.CLIENT_HOST}:49152"
     assert agent.token is None and agent.kw["server_remote"] is False and agent.kw["supported"] is True
     assert standalone.pywebview_api._cf_status_provider == agent.public_status
+
+
+def test_local_main_registers_cf_retry_that_refreshes_the_agent(monkeypatch, env):
+    """本機版連線頁的「重試」不得回 unavailable：重讀 agent（refresh_now 恰一次）並回 {ok, cf}。"""
+    _local_main(monkeypatch, env)
+    handler = standalone.pywebview_api._cf_retry_handler
+    assert handler is not None
+    reply = handler()
+    assert reply["ok"] is True and reply["cf"]["state"] == "ready"
+    assert env.events.count("cf.refresh_now") == 1
 
 
 def test_local_main_close_guards_bind_the_built_windows(monkeypatch, env):

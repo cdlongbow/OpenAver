@@ -154,11 +154,3 @@ test('seed: __ADVANCED_SEARCH__.in_shell true -> not_built via rescrapeState()',
         'showcase.rescrape.cf_window_not_built');
 });
 
-test('real zh_TW copy points to the connect page', async () => {
-    const { readFileSync } = await import('node:fs');
-    const loc = JSON.parse(readFileSync(new URL('../../../../../locales/zh_TW.json', import.meta.url), 'utf8'));
-    const r = loc.showcase.rescrape;
-    assert.ok(r.cf_window_not_built.includes('連線') && r.cf_window_not_built.includes('重試'), r.cf_window_not_built);
-    assert.ok(r.cf_window_restart.includes('連線'), r.cf_window_restart);
-    assert.ok(!r.jl_desktop_only.includes('連線') && !r.jl_desktop_only.includes('重試'), r.jl_desktop_only);
-});

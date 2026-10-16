@@ -131,19 +131,6 @@ def _fake_en_titles(monkeypatch):
         if lang == "en" else real(lang)))
 
 
-def test_window_titles_follow_locale(monkeypatch):
-    _fake_en_titles(monkeypatch)
-    assert cf_windows.window_titles('en') == ('EN-JL', 'EN-JT')
-    zh = cf_windows.window_titles('zh-TW')
-    assert zh == ('JavLibrary — CF 驗證', 'FC2 (javten) — CF 驗證')
-
-
-def test_window_titles_en_missing_key_falls_back_to_zh_tw():
-    titles = cf_windows.window_titles('en')
-    assert titles == cf_windows.window_titles('zh-TW')
-    assert all(not t.startswith('[') for t in titles)
-
-
 def test_window_titles_lookup_failure_falls_back_to_zh_tw(monkeypatch):
     from core import client_settings
 

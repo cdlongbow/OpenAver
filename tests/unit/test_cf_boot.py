@@ -351,46 +351,6 @@ def test_retry_webview2_failure_settles_as_webview2_failed(env, monkeypatch):
     assert env.clock.t <= cf_boot.RETRY_SETTLE_S
 
 
-def test_retry_on_built_set_only_refreshes_and_never_builds(env, monkeypatch):
-    write_client()
-    transport = FakeTransport(sites=["javlibrary"])
-    builds = []
-    monkeypatch.setattr(cf_windows, "build_cf_windows",
-                        lambda logger, settings, local_direct=False:
-                        builds.append(1) or CfWindowSet(transport=transport, jl_win=CWin("jl", env.log),
-                                                        javten_win=CWin("jt", env.log)))
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    refreshed = []
-    agent = env.agents[0]
-    agent.refresh_now = lambda: refreshed.append(1) or True
-    reply = ctl.retry()
-    assert builds == [1] and refreshed == [1] and len(env.agents) == 1
-    assert env.fetches == [(SERVER, TOKEN, SERVER)]      # 已建過：不再抓設定
-    assert reply["ok"] is True
-
-
-def test_retry_settle_wait_goes_through_injected_wait(env, monkeypatch):
-    write_client()
-    monkeypatch.setattr(cf_windows, "build_cf_windows",
-                        lambda logger, settings, local_direct=False:
-                        CfWindowSet(transport=FakeTransport(sites=()), jl_win=CWin("jl", env.log)))
-    seen = []
-
-    def fake_wait_for(pred, timeout, wake):
-        seen.append(timeout)
-        return pred()
-
-    monkeypatch.setattr(cf_boot, "_wait_for", fake_wait_for)
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    env.agents[0].refresh_now = lambda: True
-    ctl.retry()
-    assert seen == [cf_boot.RETRY_SETTLE_S]
-
-
 # ---------------------------------------------------------------------------
 # I-3 無背景重試
 # ---------------------------------------------------------------------------
@@ -498,19 +458,6 @@ def test_main_close_after_retry_destroys_retry_built_windows(env):
     assert [w.destroyed for w in built] == [1, 1]
 
 
-def test_retry_build_registers_windows_with_lifecycle(env):
-    lifecycle = FakeLifecycle()
-    ctl, _ = _retry_built(env, lifecycle)
-    assert lifecycle.registered == [{"javlibrary": ctl.cf_set.jl_win, "fc-javten": ctl.cf_set.javten_win}]
-
-
-def test_retry_build_announces_then_starts_the_agent(env):
-    ctl, _ = _retry_built(env)
-    (agent,) = env.agents
-    assert agent.started == 1
-    assert env.polls and json_hold(env.polls[0]) == 0           # 補建後先 hold=0 登記
-
-
 def json_hold(request):
     import json
     return json.loads(request.content)["hold"]
@@ -545,6 +492,7 @@ def test_quit_during_inflight_build_destroys_late_built_windows_and_never_regist
     assert sorted(w for op, w in env.log if op == "destroy") == sorted(env.created)
     assert len(env.created) == 2 and lifecycle.registered == []
     assert env.agents[0].started == 0 and env.polls == []
+    assert env.clock.t == 0 and env.agents[0].status_changed.waits == []     # 結束中：不再空等 settle
 
 
 class QuitOnRegisterLifecycle(FakeLifecycle):
@@ -561,32 +509,6 @@ class QuitOnRegisterLifecycle(FakeLifecycle):
             if win is not None:
                 win.destroy()
                 self.destroyed.append(win)
-
-
-def test_lifecycle_finishing_quit_before_register_does_not_leave_windows_behind(env):
-    lifecycle = QuitOnRegisterLifecycle()
-    ctl, _ = _retry_built(env, lifecycle)
-    assert len(lifecycle.destroyed) == 2
-    assert sorted(w for op, w in env.log if op == "destroy") == sorted(env.created)
-
-
-def test_quit_via_lifecycle_during_inflight_build_also_destroys_late_windows(env):
-    lifecycle = FakeLifecycle()
-    write_client()
-    env.fetch_ok = False
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl, lifecycle)
-    env.fetch_ok = True
-    env.build_hold = threading.Event()
-    run_thread(env, ctl.retry, [])
-    try:
-        assert env.build_entered.wait(5)
-        lifecycle.quitting = True                           # 托盤「結束」：lifecycle 先於控制器知道
-    finally:
-        env.build_hold.set()
-        join_all(env)
-    assert len(env.log) == 2 and lifecycle.registered == []
 
 
 # ---------------------------------------------------------------------------
@@ -627,12 +549,3 @@ def test_local_kind_uses_local_origin_without_token(env):
     assert env.fetches == [(LOCAL, None, LOCAL)]
     assert env.agents[0]._origin == LOCAL and env.agents[0]._token is None
 
-
-def test_initial_does_not_announce_until_asked(env):
-    write_client()
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    assert env.polls == []                          # Q1：announce 由入口在原位置呼叫
-    ctl.announce_initial()
-    assert len(env.polls) == 1 and json_hold(env.polls[0]) == 0

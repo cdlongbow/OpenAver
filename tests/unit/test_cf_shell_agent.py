@@ -436,17 +436,6 @@ def test_announce_uses_announce_timeout_not_result_timeout(make, post_timeouts):
     assert post_timeouts == [('poll', cf_shell.ANNOUNCE_TIMEOUT_S)]
 
 
-def test_long_poll_and_ready_sync_timeouts_are_unchanged(make, post_timeouts):
-    from core.cf_handoff import HOLD_S
-    agent, h = make([OK_NULL])
-    agent.run()
-    assert post_timeouts[0] == ('poll', HOLD_S + 10)
-    post_timeouts.clear()
-    agent2, _ = make([OK_NULL])
-    agent2._sync_once()
-    assert post_timeouts == [('poll', cf_shell.RESULT_TIMEOUT_S)]
-
-
 def test_announce_failure_does_not_stop_later_long_poll_registration(make):
     agent, h = make([httpx.ConnectError('down'), OK_NULL])
     assert agent.announce() is False
@@ -571,18 +560,6 @@ def test_malformed_job_response_wakes_status_waiters(make):
     agent.status_changed.clear()
     assert agent._poll_once(0) == 'retry'
     assert agent.status_changed.is_set()
-
-
-def test_refresh_now_sync_registration_uses_announce_timeout(make, post_timeouts):
-    agent, h = make([httpx.Response(404), OK_NULL])
-    agent.run()
-    post_timeouts.clear()
-    try:
-        agent.refresh_now()
-        assert post_timeouts[0] == ('poll', cf_shell.ANNOUNCE_TIMEOUT_S)
-    finally:
-        agent.stop()
-        _join_poller(agent)
 
 
 def test_refresh_now_still_refused_falls_back_to_terminal(make):

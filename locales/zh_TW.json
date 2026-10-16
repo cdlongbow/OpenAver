@@ -1890,7 +1890,7 @@
     "cf_reason_unauthorized": "伺服器沒有接受這台電腦，請重新連線",
     "cf_reason_offline_boot": "啟動時連不到伺服器；主機恢復後按「重試」",
     "cf_reason_shell_old": "這個 App 版本不支援，請更新",
-    "cf_reason_webview2_failed": "這台電腦的 WebView2 初始化失敗，請修復或重新安裝 Microsoft Edge WebView2 Runtime",
+    "cf_reason_webview2_failed": "這台電腦的 WebView2 初始化失敗，請修復或重新安裝 Microsoft Edge WebView2 Runtime；修好後請重新啟動 OpenAver",
     "cf_retry_btn": "重試",
     "cf_retry_busy": "上一次重試還在進行，請稍候再按",
     "cf_retry_unavailable": "這個 App 版本沒有重試功能，請更新",

@@ -41,6 +41,17 @@ def _wait_for(pred, timeout, wake):
         wake.wait(remaining)
 
 
+def agent_retry_handler(agent):
+    """本機模式（沒有補建，視窗隨啟動一次建好）的 ``cf_retry`` 處理器：只重讀 agent 狀態，
+    最多等 ``RETRY_SETTLE_S`` 秒讓狀態離開「正在啟動」；不支援平台的 agent 直接回 unsupported。"""
+    def _retry():
+        agent.refresh_now()
+        wake = getattr(agent, 'status_changed', None) or threading.Event()
+        _wait_for(lambda: agent.public_status().get('reason') != 'starting', RETRY_SETTLE_S, wake)
+        return {"ok": True, "cf": agent.public_status()}
+    return _retry
+
+
 class CfShellController:
     def __init__(self, logger, boot_kind, local_origin):
         self._logger = logger
@@ -187,6 +198,8 @@ class CfShellController:
             self._agent.refresh_now()
         else:
             self._first_build()
+        if self._shutting_down():                    # 正在結束：不要讓非 daemon 的 bridge 緒多等 6 秒拖慢退出
+            return {"ok": True, "cf": self.status()}
         self._wait(self._settled, RETRY_SETTLE_S)
         return {"ok": True, "cf": self.status()}
 

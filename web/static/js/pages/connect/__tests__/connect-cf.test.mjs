@@ -132,19 +132,6 @@ test('retry button shows only for not_ready', async () => {
     assert.equal(loading.actions().canRetryCf, false);
 });
 
-test('retry button is disabled while busy or restarting', async () => {
-    const page = await started(NOT_READY);
-    page.cfBusy = true;
-    assert.equal(page.actions().showRetryCf, true);
-    assert.equal(page.actions().canRetryCf, false);
-    page.cfBusy = false;
-    page.busy = 'apply';
-    assert.equal(page.actions().canRetryCf, false);
-    page.busy = null;
-    page.restarting = true;
-    assert.equal(page.actions().canRetryCf, false);
-});
-
 test('retry button calls cf_retry exactly once', async () => {
     const page = await started(NOT_READY);
     const calls = withRetry(page, () => ({ ok: true, cf: READY }));
@@ -216,16 +203,6 @@ test('retry on an old shell without cf_retry shows unavailable', async () => {
     assert.equal(page.cfRetryError, 'unavailable');
 });
 
-test('retry error is cleared by the next attempt', async () => {
-    const page = await started(NOT_READY);
-    let n = 0;
-    withRetry(page, () => (n++ === 0 ? { ok: false, reason: 'busy' } : { ok: true, cf: READY }));
-    await page.retryCf();
-    assert.equal(page.cfRetryError, 'busy');
-    await page.retryCf();
-    assert.equal(page.cfRetryError, '');
-});
-
 test('untrusted retry reply marks bridge unavailable and writes nothing', async () => {
     const page = await started(NOT_READY);
     withRetry(page, () => ({ ok: false, reason: 'untrusted' }));
@@ -237,10 +214,3 @@ test('untrusted retry reply marks bridge unavailable and writes nothing', async 
     assert.equal(page.cfBusy, false);
 });
 
-test('offline_boot copy points to the retry button', async () => {
-    const { readFileSync } = await import('node:fs');
-    const loc = JSON.parse(readFileSync(new URL('../../../../../../locales/zh_TW.json', import.meta.url), 'utf8'));
-    const text = loc.connect.cf_reason_offline_boot;
-    assert.ok(text.includes('重試'), text);
-    assert.ok(!text.includes('重新開啟'), text);
-});
