@@ -42,7 +42,8 @@
       "not_video": "不是影片檔，無法開啟：{path}"
     },
     "shell": {
-      "update_available": "這台電腦的 OpenAver 有新版 v{version}，到說明頁更新"
+      "update_available": "這台電腦的 OpenAver 有新版 v{version}，到說明頁更新",
+      "update_marker_title": "有新版 v{version}，到說明頁更新"
     },
     "browse_dir": {
       "title": "選擇資料夾",

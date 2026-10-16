@@ -5455,6 +5455,7 @@ const RULES = [
   // ---- [168c-T5] 殼的「這台電腦有新版」提醒：base.html 載入 hook、hook 掛上 window ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'shell-notice.js', note: "[168c-T5] base.html 必須載入 shell-notice.js：少了它，殼查到新版後頁面永遠不顯示提醒，且因「顯示成功才記帳」每次重開殼都再查一次" },
   { file: 'web/static/js/shared/shell-notice.js', kind: 'required-string', pattern: 'window.handleShellNotice =', note: "[168c-T5] shell-notice.js 必須把 handleShellNotice 掛上 window：少了它，殼呼叫不到、新版提醒永遠不顯示，且每次重開殼都再查一次" },
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: /(?<![\w:-])data-shell-update/, count: 2, note: "[168e-T12] base.html 兩份「說明」連結（側欄與抽屜）各一顆 data-shell-update 小圓點：少一顆，App 有新版時該處永遠看不到標記，使用者錯過 10 秒提醒後不知道有新版" },
   // ---- [TestInsightsSidebarGuard] 側欄「片庫分析」連結與頒獎台 icon (156a-T4, CD-156-7) ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'href="/insights"', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_link_present — offcanvas 與 desktop sidebar 各一處' },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6z', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_icon_svg_present — 頒獎台 icon 的 path 資料，兩處插入點逐字相同' },
