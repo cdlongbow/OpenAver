@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    connectActions, mergeRows, staleRows, rulesForSave, isRowsDirty, rowResultView, pathMapForApply,
+    connectActions, mergeRows, staleRows, rulesForSave, stripWrappingQuotes, isRowsDirty, rowResultView, pathMapForApply,
 } from '../connect-logic.js';
 
 const SRC = [
@@ -64,6 +64,38 @@ test('test_rules_for_save_excludes_empty_and_trims_in_order', () => {
     ]);
     for (const r of rows) r.local = '';
     assert.deepEqual(rulesForSave(rows), []);
+});
+
+// 與 tests/unit/test_path_translate.py::STRIP_TABLE 同表（輸入 -> 輸出逐字相同）
+const STRIP_TABLE = [
+    ['"\\\\nas\\av"', '\\\\nas\\av'],
+    ['  "D:\\av"  ', 'D:\\av'],
+    ['  D:\\av  ', 'D:\\av'],
+    ['"D:\\av', '"D:\\av'],
+    ['D:\\av"', 'D:\\av"'],
+    ['"', '"'],
+    ['"D:\\a"v"', 'D:\\a"v'],
+    ['""', ''],
+    ['" D:\\av "', 'D:\\av'],
+];
+
+test('rulesForSave 去掉成對引號且與 Python 同表', () => {
+    for (const [raw, want] of STRIP_TABLE) {
+        assert.equal(stripWrappingQuotes(raw), want, raw);
+    }
+    const rows = [
+        { server: '/a', local: '"\\\\nas\\av"' },
+        { server: '/b', local: '""' },
+        { server: '/c', local: '  "D:\\av"  ' },
+        { server: '/d', local: '"D:\\av' },
+    ];
+    assert.deepEqual(rulesForSave(rows), [
+        { server: '/a', local: '\\\\nas\\av' },
+        { server: '/c', local: 'D:\\av' },
+        { server: '/d', local: '"D:\\av' },
+    ]);
+    const snap = JSON.stringify(rulesForSave(rows));
+    assert.equal(isRowsDirty(rows, snap), false);
 });
 
 test('test_removed_stale_rule_not_saved', () => {

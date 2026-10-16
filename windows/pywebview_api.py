@@ -13,7 +13,7 @@ import core.client_connect as client_connect
 import core.client_settings as client_settings
 import core.self_update as self_update
 from core.version import VERSION
-from core.path_translate import Mapped, PathMap, Uncovered, to_local, to_server
+from core.path_translate import Mapped, PathMap, Uncovered, strip_wrapping_quotes, to_local, to_server
 from core.path_utils import file_uri_to_server_path, uri_to_fs_path
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
 from core.logger import get_logger
@@ -213,9 +213,9 @@ def _clean_rules(rules):
     """對照表 → 只留兩欄皆非空字串的列；非 list 回 None（＝不動既有對照表）"""
     if not isinstance(rules, list):
         return None
-    return [{"server": r["server"], "local": r["local"]} for r in rules
+    return [{"server": r["server"], "local": strip_wrapping_quotes(r["local"])} for r in rules
             if isinstance(r, dict) and isinstance(r.get("server"), str) and isinstance(r.get("local"), str)
-            and r["server"].strip() and r["local"].strip()]
+            and r["server"].strip() and strip_wrapping_quotes(r["local"])]
 
 
 def _apply_check(url):

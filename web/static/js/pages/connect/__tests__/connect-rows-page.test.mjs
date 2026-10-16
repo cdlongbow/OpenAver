@@ -1,6 +1,7 @@
 // 168b-T6b: connectPage() path-map table driven by a fake bridge.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 globalThis.window = globalThis;
 globalThis.document = { addEventListener() {} };
@@ -298,4 +299,51 @@ test('row copy helpers', async () => {
     page.rows[0].local = 'x';
     page.rows[0].state = 'no_sample';
     assert.equal(page.rowResult(page.rows[0]), 'note');
+});
+
+// window.t 的假函式會 JSON 轉義反斜線，渲染文字測試改用讀 zh_TW.json 的真格式化器
+const ZH_ROWS = JSON.parse(readFileSync(new URL('../../../../../../locales/zh_TW.json', import.meta.url), 'utf8')).connect.rows;
+async function withRealT(fn) {
+    const orig = window.t;
+    window.t = (key, params = {}) => {
+        const msg = ZH_ROWS[key.replace('connect.rows.', '')];
+        return Object.entries(params).reduce((m, [k, v]) => m.replace(`{${k}}`, () => String(v)), msg);
+    };
+    try { await fn(); } finally { window.t = orig; }
+}
+const FAIL_PATH = '\\\\nas\\av\\日本\\a.mp4';
+
+test('testRow 失敗時渲染出的文字含實際路徑', async () => {
+    const { page } = await authed({ connect_test_row: async () => ({ state: 'not_found', local_path: FAIL_PATH }) });
+    const row = page.rows[0];
+    await page.testRow(row);
+    assert.equal(page.rowResult(row), 'fail');
+    await withRealT(() => {
+        const text = page.rowFailText(row);
+        assert.ok(text.includes(FAIL_PATH));
+        assert.equal(text, '這台電腦看不到這個位置：' + FAIL_PATH);
+    });
+});
+
+test('testRow 失敗但沒有 local_path 時退回舊文案', async () => {
+    const { page } = await authed({ connect_test_row: async () => ({ state: 'uncovered' }) });
+    const row = page.rows[0];
+    await page.testRow(row);
+    assert.equal(page.rowResult(row), 'fail');
+    await withRealT(() => {
+        assert.equal(page.rowFailText(row), '這台電腦看不到這個位置');
+    });
+});
+
+test('改輸入框後失敗路徑被清掉', async () => {
+    const { page } = await authed({ connect_test_row: async () => ({ state: 'not_found', local_path: FAIL_PATH }) });
+    const row = page.rows[0];
+    await page.testRow(row);
+    assert.equal(row.local_path, FAIL_PATH);
+    row.local = 'D:\\other';
+    page.onLocalInput(row);
+    assert.equal(row.local_path, '');
+    await withRealT(() => {
+        assert.equal(page.rowFailText(row), '這台電腦看不到這個位置');
+    });
 });

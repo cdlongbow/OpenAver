@@ -464,6 +464,13 @@ def test_save_path_map_filters_blank_rows_and_touch_last_ok(env):
     assert client_settings.mode() == "client"
 
 
+def test_save_path_map_strips_wrapping_quotes(env):
+    _client(env)
+    client_settings.save_path_map([{"server": "/a", "local": '"' + r"\\nas\av" + '"'},
+                                   {"server": "/b", "local": '""'}])
+    assert client_settings.path_map() == [{"server": "/a", "local": r"\\nas\av"}]
+
+
 def test_apply_connection_never_touches_config(env):
     cfg = _decoy_config(env)
     before = _stat(cfg)

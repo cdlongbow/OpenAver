@@ -23,6 +23,7 @@ from core.atomic_write import atomic_write
 from core.data_root import get_data_root
 from core.i18n import FALLBACK_LOCALE, SUPPORTED_LOCALES
 from core.logger import get_logger
+from core.path_translate import strip_wrapping_quotes
 from core.video_extensions import (
     DEFAULT_VIDEO_EXTENSIONS,
     get_video_extensions,
@@ -439,8 +440,8 @@ def save_path_map(rules) -> None:
         if not isinstance(r, dict):
             continue
         srv, loc = r.get("server"), r.get("local")
-        if isinstance(srv, str) and isinstance(loc, str) and srv.strip() and loc.strip():
-            clean.append({"server": srv, "local": loc})
+        if isinstance(srv, str) and isinstance(loc, str) and srv.strip() and strip_wrapping_quotes(loc):
+            clean.append({"server": srv, "local": strip_wrapping_quotes(loc)})
     _rmw(lambda d: d.__setitem__("path_map", clean))
 
 

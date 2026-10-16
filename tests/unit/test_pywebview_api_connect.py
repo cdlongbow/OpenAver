@@ -254,6 +254,19 @@ def test_test_row_ok_stats_translated_path(cx, monkeypatch):
     assert stat.call_args.args == ("D:\\av\\s\\x.mp4",)
 
 
+def test_test_row_quoted_local_stats_unquoted_path(cx, monkeypatch):
+    stat = Mock(return_value=None)
+    monkeypatch.setattr(cx.m, "_stat_path", stat)
+    assert cx.api.connect_test_row("/volume1/av", '"D:/av"', "/volume1/av/x.mp4") == {"state": "ok"}
+    assert stat.call_args.args == ("D:\\av\\x.mp4",)
+
+
+def test_clean_rules_strips_wrapping_quotes(cx):
+    out = cx.m._clean_rules([{"server": "/a", "local": '"' + r"\\nas\av" + '"'},
+                             {"server": "/b", "local": '""'}])
+    assert out == [{"server": "/a", "local": r"\\nas\av"}]
+
+
 @pytest.mark.parametrize("exc", [FileNotFoundError, PermissionError, OSError])
 def test_test_row_stat_errors_are_not_found_with_local_path(cx, monkeypatch, exc):
     monkeypatch.setattr(cx.m, "_stat_path", Mock(side_effect=exc("x")))

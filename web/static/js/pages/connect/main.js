@@ -202,10 +202,12 @@ export function connectPage() {
             row.testing = false;
             if (this.bridge === 'unavailable') return;
             row.state = reply && typeof reply.state === 'string' ? reply.state : 'timeout';
+            row.local_path = reply && typeof reply.local_path === 'string' ? reply.local_path : '';
         },
 
         onLocalInput(row) {
             row.state = null;
+            row.local_path = '';
             row.testing = false;
             row.testGen++;
         },
@@ -241,6 +243,11 @@ export function connectPage() {
             if (row.readonly) return window.t('connect.rows.readonly');
             if (row.kind === 'favorite') return window.t('connect.rows.favorite');
             return '';
+        },
+
+        rowFailText(row) {
+            if (row.local_path) return window.t('connect.rows.not_found_path', { path: row.local_path });
+            return window.t('connect.rows.not_found');
         },
 
         rowResult(row) {

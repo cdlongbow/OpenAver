@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from core.path_translate import Mapped, PathMap, Uncovered, to_local, to_server
+from core.path_translate import Mapped, PathMap, Uncovered, strip_wrapping_quotes, to_local, to_server
 from core.path_utils import file_uri_to_server_path
 
 UNC_AV = r"\\nas\av"
@@ -155,6 +155,46 @@ class TestFromRules:
         assert pmap.rules == (("/volume1/av", UNC_AV),)
         assert any(rec.levelname == "WARNING" for rec in caplog.records)
         assert to_local("/volume1/av/x", pmap) == Mapped(r"\\nas\av\x", 0)
+
+
+# 與 connect-rows-logic.test.mjs 的 STRIP_TABLE 同表（輸入 → 輸出逐字相同）
+STRIP_TABLE = [
+    ('"' + r'\\nas\av' + '"', r'\\nas\av'),
+    ('  "' + r'D:\av' + '"  ', r'D:\av'),
+    ('  ' + r'D:\av' + '  ', r'D:\av'),
+    ('"' + r'D:\av', '"' + r'D:\av'),
+    (r'D:\av' + '"', r'D:\av' + '"'),
+    ('"', '"'),
+    ('"' + r'D:\a' + '"v"', r'D:\a' + '"v'),
+    ('""', ''),
+    ('" ' + r'D:\av' + ' "', r'D:\av'),
+]
+
+
+def test_strip_wrapping_quotes_table():
+    for raw, want in STRIP_TABLE:
+        assert strip_wrapping_quotes(raw) == want, raw
+
+
+def test_strip_wrapping_quotes_unpaired_untouched():
+    assert strip_wrapping_quotes('"' + r'D:\a') == '"' + r'D:\a'
+    assert strip_wrapping_quotes(r'D:\a' + '"') == r'D:\a' + '"'
+    assert strip_wrapping_quotes('"') == '"'
+
+
+def test_from_rules_quoted_local_translates_same_as_bare(caplog):
+    quoted = PathMap.from_rules([{"server": "/mnt/av", "local": '"' + UNC_AV + '"'}])
+    bare = PathMap.from_rules([{"server": "/mnt/av", "local": UNC_AV}])
+    got = to_local("/mnt/av/日本/a.mp4", quoted)
+    assert got == to_local("/mnt/av/日本/a.mp4", bare)
+    assert got == Mapped(r"\\nas\av\日本\a.mp4", 0)
+    back = to_server(r"\\nas\av\日本\a.mp4", quoted)
+    assert back == to_server(r"\\nas\av\日本\a.mp4", bare)
+    assert back == Mapped("/mnt/av/日本/a.mp4", 0)
+    with caplog.at_level("WARNING"):
+        empty = PathMap.from_rules([{"server": "/mnt/av", "local": '""'}])
+    assert empty.rules == ()
+    assert any(rec.levelname == "WARNING" for rec in caplog.records)
 
 
 class TestPurity:

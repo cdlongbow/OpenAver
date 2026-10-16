@@ -114,7 +114,7 @@
                                         <template x-if="rowResult(row) === 'fail'">
                                             <span class="connect-row-fail">
                                                 <span class="source-pill-probe" data-state="unreachable"><i :class="failIcon()"></i></span>
-                                                <span>{{ t('connect.rows.not_found') }}</span>
+                                                <span x-text="rowFailText(row)"></span>
                                             </span>
                                         </template>
                                         <template x-if="rowResult(row) === 'slow'">
