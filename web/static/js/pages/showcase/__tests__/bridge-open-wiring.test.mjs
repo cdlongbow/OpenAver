@@ -123,9 +123,88 @@ test('openLocal 剪貼簿成功＋not_found：只有帶路徑 error toast、無�
 }));
 
 test('openLocal 剪貼簿成功＋ok:true：沿用既有成功文案', withClipboard(async () => {
-    setApi(() => Promise.resolve({ ok: true, reason: null }), 'open_folder');
+    setApi(() => Promise.resolve({ ok: true, reason: null, local_path: 'D:\\AV\\A.mp4' }), 'open_folder');
     const self = fakeThis();
     openLocal.call(self, 'D:\\AV\\A.mp4');
     await tick();
     assert.deepEqual(self.toasts, [['common.open_local.folder_opened_copied', 'success']]);
+}));
+
+// 168e-T4：剪貼簿 spy 會記錄每次寫入的內容
+function withClipboardSpy(fn) {
+    return async () => {
+        const writes = [];
+        Object.defineProperty(globalThis, 'navigator', {
+            value: { clipboard: { writeText: (s) => { writes.push(s); return Promise.resolve(); } } },
+            configurable: true, writable: true,
+        });
+        try { await fn(writes); } finally { delete globalThis.navigator; delete globalThis.window.pywebview; }
+    };
+}
+
+test('openLocal bridge ok：剪貼簿是這台電腦的資料夾路徑', withClipboardSpy(async (writes) => {
+    const cases = [
+        ['D:\\av\\a\\b.mp4', 'D:\\av\\a'],
+        ['/Volumes/av/a/b.mp4', '/Volumes/av/a'],
+    ];
+    for (const [localPath, expected] of cases) {
+        writes.length = 0;
+        setApi(() => Promise.resolve({ ok: true, reason: null, local_path: localPath, server_path: '/mnt/av/a/b.mp4' }), 'open_folder');
+        const self = fakeThis();
+        openLocal.call(self, '/mnt/av/a/b.mp4');
+        await tick();
+        assert.deepEqual(self.toasts, [['common.open_local.folder_opened_copied', 'success']]);
+        assert.deepEqual(writes, [expected]);
+    }
+}));
+
+test('openLocal bridge ok：local_path 缺失則不複製', withClipboardSpy(async (writes) => {
+    setApi(() => Promise.resolve({ ok: true, reason: null }), 'open_folder');
+    const self = fakeThis();
+    openLocal.call(self, '/mnt/av/a/b.mp4');
+    await tick();
+    assert.deepEqual(self.toasts, [['common.open_local.folder_opened', 'success']]);
+    assert.deepEqual(writes, []);
+}));
+
+test('openLocal bridge 失敗：不動剪貼簿', withClipboardSpy(async (writes) => {
+    const err = console.error;
+    console.error = () => {};
+    const replies = [
+        () => Promise.resolve({ ok: false, reason: 'failed' }),
+        () => Promise.resolve(null),
+        () => Promise.reject(new Error('boom')),
+    ];
+    for (const reply of replies) {
+        writes.length = 0;
+        setApi(reply, 'open_folder');
+        const self = fakeThis();
+        openLocal.call(self, '/mnt/av/a/b.mp4');
+        await tick();
+        assert.deepEqual(self.toasts, [['common.open_local.folder_open_failed', 'error']]);
+        assert.deepEqual(writes, []);
+    }
+    console.error = err;
+}));
+
+test('openLocal bridge 具名原因：不動剪貼簿', withClipboardSpy(async (writes) => {
+    for (const reason of ['not_found', 'uncovered']) {
+        writes.length = 0;
+        setApi(() => Promise.resolve({ ok: false, reason, local_path: 'D:\\av\\a\\b.mp4', server_path: '/mnt/av/a/b.mp4' }), 'open_folder');
+        const self = fakeThis();
+        openLocal.call(self, '/mnt/av/a/b.mp4');
+        await tick();
+        assert.equal(self.toasts.length, 1);
+        assert.equal(self.toasts[0][1], 'error');
+        assert.deepEqual(writes, []);
+    }
+}));
+
+test('openLocal 無 bridge：複製 pathToDisplay 後的資料夾', withClipboardSpy(async (writes) => {
+    delete globalThis.window.pywebview;
+    const self = fakeThis();
+    openLocal.call(self, 'file:///C:/AV/A.mp4');
+    await tick();
+    assert.deepEqual(writes, ['C:\\AV']);
+    assert.deepEqual(self.toasts, [['common.open_local.path_copied|C:\\AV', 'success']]);
 }));

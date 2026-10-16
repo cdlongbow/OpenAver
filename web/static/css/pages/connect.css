@@ -13,7 +13,8 @@
 }
 
 .connect-card {
-    padding: 1rem 1.25rem;
+    border-radius: var(--radius-lg);
+    overflow: visible;
     background: color-mix(in oklch, var(--color-base-200) 80%, transparent);
     border: 1px solid var(--stroke-default);
     box-shadow:
@@ -21,8 +22,36 @@
         var(--fluent-shadow-4);
 }
 
+.connect-card-header {
+    background: color-mix(in oklch, var(--color-base-content) 2%, transparent);
+    border-bottom: 1px solid var(--stroke-subtle);
+    font-weight: 600;
+    padding: 1rem 1.25rem;
+}
+
+.connect-card-header i {
+    color: var(--accent);
+    margin-right: 0.5rem;
+}
+
+.connect-card-header .connect-title {
+    font-size: inherit;
+    font-weight: inherit;
+    margin: 0;
+}
+
+.connect-card .card-body {
+    padding: 1.25rem;
+    gap: 0;
+}
+
 [data-theme="dim"] .connect-card {
     background: color-mix(in oklch, var(--color-base-200) 60%, transparent);
+}
+
+[data-theme="dim"] .connect-card-header {
+    background: var(--glass-panel-header-tint);
+    border-bottom-color: var(--glass-panel-header-border);
 }
 
 .connect-title {
@@ -66,10 +95,6 @@
 
 .connect-probe-dot {
     cursor: default;
-}
-
-.connect-move {
-    padding: 0 0.25rem;
 }
 
 /* ========== Path-map table (168b-T6b) ========== */

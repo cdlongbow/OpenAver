@@ -400,6 +400,23 @@
         .sidebar .nav-link__unread-dot.is-warn    { background: var(--color-warning); }
         .sidebar .nav-link__unread-dot.is-error   { background: var(--color-error); }
 
+        /* 168e-T12: 常駐更新標記（殼送 update_marker 才解除 hidden）。不得設 display，否則蓋過 UA 的 [hidden] */
+        .sidebar .nav-link--help,
+        .offcanvas-nav .nav-link--help {
+            position: relative;
+        }
+        .sidebar .nav-link__update-dot,
+        .offcanvas-nav .nav-link__update-dot {
+            position: absolute;
+            top: 8px;
+            left: 28px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-info);
+            border: 1.5px solid var(--sidebar-bg, transparent);
+        }
+
         /* 168b-T3: connection plug (local = inherited grey; client ok = green + dot; client down = red + broken shape) */
         .sidebar .nav-link--conn,
         .offcanvas-nav .nav-link--conn {
@@ -675,9 +692,10 @@
                     </a>
                 </li>
                 <li class="nav-item mt-3">
-                    <a class="nav-link {% if page == 'help' %}active{% endif %}" href="/help"
+                    <a class="nav-link nav-link--help {% if page == 'help' %}active{% endif %}" href="/help"
                        @click="handleNavClick($event, $el.href)">
                         <i class="bi bi-question-circle"></i> {{ t('nav.help') }}
+                        <span class="nav-link__update-dot" data-shell-update hidden aria-hidden="true"></span>
                     </a>
                 </li>
                 {% if is_desktop %}
@@ -780,9 +798,10 @@
                 </button>
             </li>
             <li class="nav-item">
-                <a class="nav-link {% if page == 'help' %}active{% endif %}" href="/help" title="{{ t('nav.help_title') }}"
+                <a class="nav-link nav-link--help {% if page == 'help' %}active{% endif %}" href="/help" title="{{ t('nav.help_title') }}"
                    @click="handleNavClick($event, $el.href)">
                     <i class="bi bi-question-circle"></i>
+                    <span class="nav-link__update-dot" data-shell-update hidden aria-hidden="true"></span>
                     <span class="nav-text">{{ t('nav.help') }}</span>
                 </a>
             </li>
@@ -855,6 +874,8 @@
     <script type="module" src="/static/js/shared/bridge-notify.js"></script>
     <!-- 168c-T5: 殼 → 頁面的「這台電腦有新版」提醒 hook -->
     <script type="module" src="/static/js/shared/shell-notice.js"></script>
+    <!-- 168e-T6: shell reload hook -->
+    <script type="module" src="/static/js/shared/shell-reload.js"></script>
     <script type="module" src="/static/js/shared/conn-state.js"></script>
     <!-- Help Popover — 說明浮層共用元件（131b-T4） -->
     <script type="module" src="/static/js/components/help-popover.js"></script>

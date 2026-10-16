@@ -5455,6 +5455,7 @@ const RULES = [
   // ---- [168c-T5] 殼的「這台電腦有新版」提醒：base.html 載入 hook、hook 掛上 window ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'shell-notice.js', note: "[168c-T5] base.html 必須載入 shell-notice.js：少了它，殼查到新版後頁面永遠不顯示提醒，且因「顯示成功才記帳」每次重開殼都再查一次" },
   { file: 'web/static/js/shared/shell-notice.js', kind: 'required-string', pattern: 'window.handleShellNotice =', note: "[168c-T5] shell-notice.js 必須把 handleShellNotice 掛上 window：少了它，殼呼叫不到、新版提醒永遠不顯示，且每次重開殼都再查一次" },
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: /(?<![\w:-])data-shell-update/, count: 2, note: "[168e-T12] base.html 兩份「說明」連結（側欄與抽屜）各一顆 data-shell-update 小圓點：少一顆，App 有新版時該處永遠看不到標記，使用者錯過 10 秒提醒後不知道有新版" },
   // ---- [TestInsightsSidebarGuard] 側欄「片庫分析」連結與頒獎台 icon (156a-T4, CD-156-7) ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'href="/insights"', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_link_present — offcanvas 與 desktop sidebar 各一處' },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6z', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_icon_svg_present — 頒獎台 icon 的 path 資料，兩處插入點逐字相同' },
@@ -8656,8 +8657,11 @@ const RULES = [
     pattern: '.then(async (result)',
     note: '[lint-guard 162c-test_open_local_checks_return_value] 開啟失敗仍顯示已開啟 → .then 須檢查 bridge 回傳結果（168a 起為 dict，行為由 bridge-open-wiring.test.mjs 守）' },
   { file: 'web/static/js/shared/open-local.js', kind: 'required-string',
-    pattern: 'displayPath',
-    note: '[lint-guard 162c-test_open_local_cross_platform_path] Windows 剪貼簿路徑須走 displayPath 跨平台格式 — 遷自 test_contract_desktop.py' },
+    pattern: /\bcopyText\(displayPath\)/,
+    note: '[lint-guard 162c-test_open_local_cross_platform_path] 無 bridge（純瀏覽器）分支須複製 pathToDisplay 後的 displayPath；bridge 分支改複製 result.local_path（行為由 bridge-open-wiring.test.mjs 守）' },
+  { file: 'web/static/js/shared/open-local.js', kind: 'required-string',
+    pattern: /\bcopyText\([^\n]*result\.local_path/,
+    note: '[lint-guard 168e-T4] bridge 分支須複製 bridge 回的 local_path（這台電腦的路徑），不是伺服器路徑' },
 
   // 162c: TestJavlibraryPickerT5Guard
   { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string',
@@ -9265,7 +9269,24 @@ const RULES = [
     file: 'web/templates/connect.html', kind: 'forbidden-string', pattern: /connect\.cf_windows\b/,
     note: '[168d-T7-no-stale-cf-windows-copy] 舊的「尚未支援（下一版）」文案又回到連線頁 → 使用者在已支援 CF 轉交的版本仍看到「下一版才有」，以為驗證視窗功能壞了或沒做',
   },
-
+  // ---- [168e-T6] 殼內 F5／Ctrl+R／Cmd+R：離線小頁只能「重試」、一般頁必須載入 shell-reload ----
+  {
+    file: 'windows/offline/offline.html', kind: 'forbidden-string', pattern: /location\s*\.\s*reload\s*\(/,
+    note: '[lint-guard 168e-T6-offline-no-reload] 離線小頁出現整頁重載 → 使用者在「連不上」小頁按 F5 只是重載小頁、沒有重新連線，主機明明已恢復卻看不到片庫',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'required-string', pattern: 'src="/static/js/shared/shell-reload.js"',
+    note: '[lint-guard 168e-T6-base-loads-shell-reload] base.html 少了 shell-reload 載入行 → 使用者在 App 視窗的所有一般頁按 F5／Ctrl+R／Cmd+R 都沒反應，而測試與 CI 看不出來',
+  },
+  // ---- [168e-T7] 連線頁：搬家占位區塊已刪不得復活；Linux 忘記密碼句必須含完整重設指令 ----
+  {
+    file: 'web/templates/connect.html', kind: 'forbidden-string', pattern: /connect-move|connect\.move_(toggle|hint)|moveHintOpen/,
+    note: '[lint-guard 168e-T7-no-move-zombie] 有人把搬家占位字樣加回連線頁 → 使用者在出貨的 App 裡又看到「把本機片庫搬到伺服器的方法，之後補上」，以為有功能卻點不出東西',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: /venv\/bin\/python -c .*set_auth\(enabled=False, pin=''\)/,
+    note: '[lint-guard 168e-T7-forgot-linux-command] zh_TW 的 forgot_linux 必含完整重設指令字串（與 docs/linux-server.md 同一條指令，人工對齊）；缺了 → 使用者照著貼上去跑卻沒真的關掉密碼，重啟後仍被擋在登入畫面',
+  },
 ];
 
 // ---- helpers ----

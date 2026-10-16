@@ -36,11 +36,14 @@
     "bridge": {
       "file_not_found": "找不到檔案：{path}",
       "path_uncovered_local": "這台電腦看不到這個位置：{path}",
-      "path_uncovered_server": "這個資料夾伺服器看不到：{path}",
+      "path_uncovered_server_file": "選取或拖入的檔案伺服器看不到：{path}。到連線頁的路徑對照表加上對應，或先把檔案放進主機看得到的共用夾",
+      "path_uncovered_server_folder": "選取或拖入的資料夾伺服器看不到：{path}。到連線頁的路徑對照表加上對應，或先把檔案放進主機看得到的共用夾",
+      "path_uncovered_server_any": "選取或拖入的檔案或資料夾伺服器看不到：{path}。到連線頁的路徑對照表加上對應，或先把檔案放進主機看得到的共用夾",
       "not_video": "不是影片檔，無法開啟：{path}"
     },
     "shell": {
-      "update_available": "這台電腦的 OpenAver 有新版 v{version}，到說明頁更新"
+      "update_available": "這台電腦的 OpenAver 有新版 v{version}，到說明頁更新",
+      "update_marker_title": "有新版 v{version}，到說明頁更新"
     },
     "browse_dir": {
       "title": "選擇資料夾",
@@ -78,7 +81,7 @@
       "password_label": "密碼",
       "submit": "送出",
       "bad_url": "網址格式不正確",
-      "bad_pin": "密碼不正確",
+      "bad_pin": "密碼不對，或主機暫時鎖定，請稍後再試",
       "login_failed": "登入失敗，請稍後再試",
       "retry_failed": "仍然連不上，請確認伺服器已開機、網址正確"
     },
@@ -1693,6 +1696,11 @@
       "how_copy": "點「複製」把網址傳到手機，或用瀏覽器內建「傳送到其他裝置」，在手機瀏覽器打開即可。",
       "how_off": "切回「單機」就完全關閉對外，區網裝置立刻連不到。",
       "how_shared_folder": "用桌面版連線到伺服器時，要整理的新片必須先放進伺服器看得到的共用資料夾，不能直接從這台電腦的下載夾整理，否則會看到「這個資料夾伺服器看不到」。",
+      "client_h6": "從桌面 App 連線",
+      "client_entry": "在桌面版側欄點「連線」，輸入伺服器網址後按「測試連線」，再按「切換並重新啟動 OpenAver」，這台電腦就會改用伺服器上的片庫。",
+      "client_password": "伺服器若設了密碼，連線頁會要你輸入；忘記密碼時，請到伺服器那一端重設。",
+      "client_map": "想在這台電腦播放影片、整理新片，請到連線頁的「路徑對照表」填寫：左欄是伺服器上的資料夾，右欄填這台電腦看到的路徑（例如網路磁碟 \\\\192.168.1.190\\av），填好按「儲存對照表」。",
+      "client_back_local": "想回到自己這台電腦的片庫，在同一個連線頁按「切回本機模式並重新啟動 OpenAver」；本機原本的資料庫不會被動。",
       "h6_security": "安全提醒",
       "security_lan": "僅限信任的 Wi-Fi / 區網使用（本程式不設帳號密碼，LAN-only）。",
       "security_lan_auth": "已設定密碼保護，僅限信任的 Wi-Fi / 區網使用（其他裝置需要輸入密碼才能連入，agent 則需要 token）。",
@@ -1861,11 +1869,11 @@
     "result_not_openaver": "這不是 OpenAver 伺服器，或版本較舊",
     "password_label": "密碼",
     "login_btn": "確認密碼",
-    "pin_bad": "密碼不對",
+    "pin_bad": "密碼不對，或主機暫時鎖定，請稍後再試",
     "pin_failed": "無法確認密碼，請再試一次",
     "nopassword": "這台伺服器沒有設密碼，區網上任何人都能操作",
     "forgot_synology": "到套件中心重新安裝 OpenAver 會清除密碼",
-    "forgot_linux": "照 docs/linux-server.md 的重設指令",
+    "forgot_linux": "在主機的 OpenAver 資料夾執行這行，再重啟主機：venv/bin/python -c \"from core.access_auth import set_auth; set_auth(enabled=False, pin='')\"",
     "forgot_desktop": "到那台電腦的設定頁改",
     "cf_ready": "JavLibrary／FC2-javten 由這台電腦代為驗證：已就緒",
     "cf_not_ready": "JavLibrary／FC2-javten 由這台電腦代為驗證：未就緒（{reason}）",
@@ -1884,12 +1892,11 @@
     "apply_apply": "套用並重新啟動 OpenAver",
     "apply_hint_local": "本機伺服器會關掉；本機片庫資料庫不會被動。",
     "apply_hint_client": "改網址或重新輸入密碼後，要按「套用並重新啟動 OpenAver」才會生效。",
+    "switch_local_title": "切回本機模式",
     "switch_local_btn": "切回本機模式並重新啟動 OpenAver",
     "switch_local_hint": "本機伺服器會重新啟動；本機原本那顆資料庫沒被動過；這台電腦的播放器與關閉行為設定保留。",
     "restarting": "正在重新啟動 OpenAver…",
     "error_generic": "操作失敗，請再試一次",
-    "move_toggle": "想把本機片庫搬到伺服器？",
-    "move_hint": "把本機片庫搬到伺服器的方法，之後補上",
     "rows": {
       "title": "路徑對照表",
       "intro": "左欄是伺服器上的資料夾，右欄填這台電腦看到的路徑，可以先留空、之後再填。",
@@ -1900,6 +1907,7 @@
       "test_btn": "測試",
       "found": "找得到",
       "not_found": "這台電腦看不到這個位置",
+      "not_found_path": "這台電腦看不到這個位置：{path}",
       "slow": "這個位置回應太慢或連不到，請確認路徑後再測一次",
       "no_sample": "這個來源裡沒有可測試的影片",
       "loading": "正在讀取伺服器的掃描來源…",

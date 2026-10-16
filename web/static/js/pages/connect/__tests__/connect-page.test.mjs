@@ -348,7 +348,7 @@ test('template exposes the contract ids', () => {
     for (const id of ['connect-nobridge', 'connect-status-card', 'connect-url', 'connect-test-btn',
         'connect-probe-result', 'connect-pin', 'connect-login-btn', 'connect-pin-error', 'connect-forgot',
         'connect-nopassword', 'connect-cf', 'connect-apply-btn', 'connect-switch-local-btn',
-        'connect-action-error', 'connect-restarting', 'connect-move-toggle']) {
+        'connect-action-error', 'connect-restarting']) {
         assert.ok(html.includes(`id="${id}"`), id);
     }
 });

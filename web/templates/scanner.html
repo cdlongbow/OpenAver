@@ -14,6 +14,7 @@
 {% block content %}
 <div class="page-layer">
 <div class="avlist-container ds-gallery-composition" x-data="scanner"
+     data-shell-mode="{{ shell_mode or '' }}"
      @dragover.document.prevent="handleDragOver($event)"
      @drop.document.prevent="handleDrop($event)"
      @keydown.escape.window="dirtyCheckModalOpen && dirtyCheckCancel(); missingConfirmModalOpen && cancelLargeMissingEnrich(); deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal(); deleteTagAliasGroupModalOpen && cancelDeleteTagAliasGroupModal(); copyFailModalOpen && closeCopyFailModal(); readonlyConfirmModalOpen && readonlyConfirmCancel();">

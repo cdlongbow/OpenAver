@@ -42,11 +42,21 @@ class PathMap:
         for raw in rules or ():
             server = raw.get("server") if isinstance(raw, dict) else None
             local = raw.get("local") if isinstance(raw, dict) else None
+            if isinstance(local, str):
+                local = strip_wrapping_quotes(local)
             if isinstance(server, str) and isinstance(local, str) and server and local:
                 kept.append((server, local))
             else:
                 logger.warning("path_translate: skip incomplete rule %r", raw)
         return cls(rules=tuple(kept))
+
+
+def strip_wrapping_quotes(value):
+    """去頭尾空白；頭尾為成對的雙引號就去掉那一對（Win11「複製為路徑」會帶引號）。"""
+    s = value.strip()
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        return s[1:-1].strip()
+    return s
 
 
 def _norm(value: str) -> str:

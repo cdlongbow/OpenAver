@@ -182,6 +182,16 @@ button:disabled { opacity: 0.55; cursor: default; }
   el('pin-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') { onSubmit(); } });
   el('url-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') { onRetry(); } });
 
+  document.addEventListener('keydown', function (e) {
+    if (!window.pywebview) { return; }
+    var isF5 = e.key === 'F5';
+    var isCtrlR = (e.ctrlKey || e.metaKey) && typeof e.key === 'string' && e.key.toLowerCase() === 'r';
+    if (!isF5 && !isCtrlR) { return; }
+    e.preventDefault();
+    var btn = el('retry-btn');
+    if (btn && !btn.hidden && !btn.disabled) { btn.click(); }
+  });
+
   window.addEventListener('oabridgeready', start);
   window.addEventListener('pywebviewready', start);
   start();

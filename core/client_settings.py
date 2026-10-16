@@ -23,6 +23,7 @@ from core.atomic_write import atomic_write
 from core.data_root import get_data_root
 from core.i18n import FALLBACK_LOCALE, SUPPORTED_LOCALES
 from core.logger import get_logger
+from core.path_translate import strip_wrapping_quotes
 from core.video_extensions import (
     DEFAULT_VIDEO_EXTENSIONS,
     get_video_extensions,
@@ -413,9 +414,12 @@ def apply_connection(url_canonical: str, token, path_map_rules) -> None:
         d["version"] = CLIENT_VERSION
         if was_local:
             d = migrate_local_settings(d)
+        old_url = _server_section(d).get("url")  # 須在覆寫 d["server"] 之前讀
         d["server"] = {**_server_section(d), "url": url, "token": token or ""}
         if path_map_rules is not None:
             d["path_map"] = list(path_map_rules)
+        elif isinstance(old_url, str) and old_url.strip() and canonical_server_url(old_url) != url:
+            d["path_map"] = []  # E42 換主機清空
         elif not isinstance(d.get("path_map"), list):
             d["path_map"] = []
         return d
@@ -436,8 +440,8 @@ def save_path_map(rules) -> None:
         if not isinstance(r, dict):
             continue
         srv, loc = r.get("server"), r.get("local")
-        if isinstance(srv, str) and isinstance(loc, str) and srv.strip() and loc.strip():
-            clean.append({"server": srv, "local": loc})
+        if isinstance(srv, str) and isinstance(loc, str) and srv.strip() and strip_wrapping_quotes(loc):
+            clean.append({"server": srv, "local": strip_wrapping_quotes(loc)})
     _rmw(lambda d: d.__setitem__("path_map", clean))
 
 
@@ -457,7 +461,7 @@ def _validate_local_value(key: str, value):
     if key == "video_extensions":  # [] 合法：＝用預設（讀取端 fallback）
         if not isinstance(value, list) or not all(isinstance(e, str) for e in value):
             return _BAD
-        return sorted(normalize_extensions(value))
+        return sorted(normalize_extensions([e for e in value if e.strip()]))
     if key == "tray_locale":
         return value if isinstance(value, str) and value in SUPPORTED_LOCALES else _BAD
     # last_notified_update_version

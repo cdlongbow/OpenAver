@@ -2,7 +2,7 @@
 import { PROBE_ICON_MAP } from '../settings/source-probe-logic.js';
 import {
     connectActions, probeCode, dotState, kindCode, forgotCode, cfView,
-    mergeRows, staleRows, rulesForSave, rowResultView, pathMapForApply as buildPathMap,
+    mergeRows, staleRows, rulesForSave, stripWrappingQuotes, rowResultView, pathMapForApply as buildPathMap,
 } from './connect-logic.js';
 
 export function connectPage() {
@@ -34,7 +34,6 @@ export function connectPage() {
         cf: null,
         actionError: '',
         pinError: '',
-        moveHintOpen: false,
         _started: false,
         _kindSeen: false,
         _retried: false,
@@ -202,10 +201,12 @@ export function connectPage() {
             row.testing = false;
             if (this.bridge === 'unavailable') return;
             row.state = reply && typeof reply.state === 'string' ? reply.state : 'timeout';
+            row.local_path = reply && typeof reply.local_path === 'string' ? reply.local_path : '';
         },
 
         onLocalInput(row) {
             row.state = null;
+            row.local_path = '';
             row.testing = false;
             row.testGen++;
         },
@@ -223,6 +224,7 @@ export function connectPage() {
             if (this.bridge === 'unavailable') return;
             if (reply && reply.ok === true) {
                 this.savedRules = rules;
+                for (const row of this.rows) row.local = stripWrappingQuotes(row.local);   // CD-9 ③：顯示值與存的一致
                 this.rowsSnapshot = JSON.stringify(rules);
                 Alpine.store('toast').show(window.t('connect.rows.saved'), 'success');
                 return;
@@ -241,6 +243,11 @@ export function connectPage() {
             if (row.readonly) return window.t('connect.rows.readonly');
             if (row.kind === 'favorite') return window.t('connect.rows.favorite');
             return '';
+        },
+
+        rowFailText(row) {
+            if (row.local_path) return window.t('connect.rows.not_found_path', { path: row.local_path });
+            return window.t('connect.rows.not_found');
         },
 
         rowResult(row) {

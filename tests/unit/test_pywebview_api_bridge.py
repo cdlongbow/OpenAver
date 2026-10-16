@@ -499,3 +499,139 @@ def test_bridge_flows_leave_database_untouched(api_module, client_env, no_launch
                    str(local_av / "x.mp4"), str(other / "y.mp4"), str(local_av / "sub"))
     assert dump() == before
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 168e-T8: FS 呼叫計數鎖（被擋提示依對象；判斷種類不得新增任何檔案系統呼叫）
+# ---------------------------------------------------------------------------
+def _run_with_fs_spy(api_module, monkeypatch, call):
+    """只在出口呼叫那一段包 spy：isdir／isfile／listdir 記錄後轉呼叫真函式，其餘 FS 函式被呼叫即 fail"""
+    import os
+    real = {"isdir": os.path.isdir, "isfile": os.path.isfile, "listdir": os.listdir, "stat": os.stat}
+    seen = {"isdir": [], "isfile": [], "listdir": [], "stat": []}
+    state = {"inside": 0}
+
+    def wrap(name):
+        def spy(p, *a, **k):
+            seen[name].append(str(p))
+            state["inside"] += 1
+            try:
+                return real[name](p, *a, **k)
+            finally:
+                state["inside"] -= 1
+        return spy
+
+    def forbid(name):
+        def f(*a, **k):
+            pytest.fail(f"unexpected FS call: {name}{a!r}")
+        return f
+
+    def guarded_stat(*a, **k):
+        if state["inside"] == 0:
+            seen["stat"].append(Path(a[0]).name)  # 設定檔讀取（修前即有），只記檔名
+        return real["stat"](*a, **k)
+
+    monkeypatch.setattr(api_module, "logger", MagicMock())
+    with monkeypatch.context() as m:
+        m.setattr(os.path, "isdir", wrap("isdir"))
+        m.setattr(os.path, "isfile", wrap("isfile"))
+        m.setattr(os, "listdir", wrap("listdir"))
+        m.setattr(os.path, "exists", forbid("exists"))
+        m.setattr(os.path, "islink", forbid("islink"))
+        m.setattr(os, "scandir", forbid("scandir"))
+        m.setattr(os, "access", forbid("access"))
+        m.setattr(os, "stat", guarded_stat)
+        call()
+    assert set(seen["stat"]) <= {"client.json"}, seen["stat"]
+    return seen
+
+
+def test_reverse_exits_fs_call_set_unchanged(api_module, client_env, monkeypatch):
+    av, other = client_env / "av", client_env / "other"
+    # select_folder：資料夾涵蓋，列出內部檔案
+    call = _setup_exit(api_module, "select_folder", [str(av / "sub")])
+    s = _run_with_fs_spy(api_module, monkeypatch, call)
+    assert s["listdir"] == [str(av / "sub")]
+    assert len(s["isfile"]) == len(__import__("os").listdir(av / "sub"))
+    assert s["isdir"] == []
+    # on_drop 混合：被擋檔案＋被擋資料夾＋涵蓋資料夾
+    call = _setup_exit(api_module, "on_drop_file", [str(other / "y.mp4"), str(other), str(av / "sub")])
+    s = _run_with_fs_spy(api_module, monkeypatch, call)
+    assert s["isdir"] == [str(other / "y.mp4"), str(other), str(av / "sub")]
+    assert s["listdir"] == [str(av / "sub")]
+    assert len(s["isfile"]) == len(__import__("os").listdir(av / "sub"))
+    # 被擋出口不額外探測
+    call = _setup_exit(api_module, "select_files", [str(other / "y.mp4")])
+    s = _run_with_fs_spy(api_module, monkeypatch, call)
+    assert (s["isdir"], s["isfile"], s["listdir"], set(s["stat"]) - {"client.json"}) == ([], [], [], set())
+    call = _setup_exit(api_module, "select_folder", [str(other)])
+    s = _run_with_fs_spy(api_module, monkeypatch, call)
+    assert (s["isdir"], s["isfile"], s["listdir"], set(s["stat"]) - {"client.json"}) == ([], [], [], set())
+
+
+# ---------------------------------------------------------------------------
+# 168e-T8: 被擋提示的 kind（file／folder／any）
+# ---------------------------------------------------------------------------
+def _kind_of(note):
+    """從推給 JS 的腳本字串取第二參數字面（逐字比對結尾，不用 `in`）"""
+    for k in ("file", "folder", "any"):
+        if note.endswith(f', "{k}")'):
+            return k
+    return None
+
+
+def test_select_files_blocked_notifies_kind_file(api_module, client_env):
+    unc = str(client_env / "other" / "y.mp4")
+    _setup_exit(api_module, "select_files", [unc])()
+    notes = _uncovered_calls(api_module.get_window())
+    assert len(notes) == 1 and _kind_of(notes[0]) == "file"
+
+
+def test_select_folder_blocked_notifies_kind_folder(api_module, client_env):
+    _setup_exit(api_module, "select_folder", [str(client_env / "other")])()
+    notes = _uncovered_calls(api_module.get_window())
+    assert len(notes) == 1 and _kind_of(notes[0]) == "folder"
+
+
+def test_select_folder_path_blocked_notifies_kind_folder(api_module, client_env):
+    _setup_exit(api_module, "select_folder_path", [str(client_env / "other")])()
+    notes = _uncovered_calls(api_module.get_window())
+    assert len(notes) == 1 and _kind_of(notes[0]) == "folder"
+
+
+def test_select_folder_covered_but_inner_video_blocked_notifies_kind_file(api_module, client_env, monkeypatch):
+    sub = client_env / "av" / "sub"
+    real = api_module.bridge_unresolve
+
+    def fake(p):
+        return Uncovered() if str(p).endswith("a.mp4") else real(p)
+
+    monkeypatch.setattr(api_module, "bridge_unresolve", fake)
+    ret = _setup_exit(api_module, "select_folder", [str(sub)])()
+    assert ret["folder"] == "/volume1/av/sub"
+    notes = _uncovered_calls(api_module.get_window())
+    assert len(notes) == 1 and _kind_of(notes[0]) == "file"
+
+
+def test_on_drop_only_blocked_file_notifies_kind_file(api_module, client_env):
+    _setup_exit(api_module, "on_drop_file", [str(client_env / "other" / "y.mp4")])()
+    assert _kind_of(_uncovered_calls(api_module.get_window())[0]) == "file"
+
+
+def test_on_drop_only_blocked_folder_notifies_kind_folder(api_module, client_env):
+    _setup_exit(api_module, "on_drop_folder", [str(client_env / "other")])()
+    assert _kind_of(_uncovered_calls(api_module.get_window())[0]) == "folder"
+
+
+def test_on_drop_mixed_file_and_folder_notifies_kind_any(api_module, client_env):
+    other = client_env / "other"
+    _setup_exit(api_module, "on_drop_file", [str(other / "y.mp4"), str(other)])()
+    notes = _uncovered_calls(api_module.get_window())
+    assert len(notes) == 1 and _kind_of(notes[0]) == "any"
+
+
+def test_on_drop_covered_items_do_not_affect_kind(api_module, client_env):
+    av, other = client_env / "av", client_env / "other"
+    _setup_exit(api_module, "on_drop_file", [str(av / "x.mp4"), str(av / "sub"), str(other)])()
+    notes = _uncovered_calls(api_module.get_window())
+    assert len(notes) == 1 and _kind_of(notes[0]) == "folder"

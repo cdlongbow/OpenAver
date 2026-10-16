@@ -301,8 +301,31 @@ def test_settings_shell_mode_attr_and_local_tags(monkeypatch, mark_id, url, attr
     _set_server_kind(monkeypatch, None)
     resp = _fresh_client().get(url)
     assert resp.status_code == 200
+    # [lint-guard: pytest-justified] SSR 依 oa_mode query／cookie 渲染四格（client／local／空／壞值轉義），lint 只掃模板原始碼看不到渲染結果
     assert f'data-shell-mode="{attr}"' in resp.text
     assert resp.text.count(f'class="badge badge-ghost badge-sm {LOCAL_TAG}"') == tags
+
+
+# ── TASK-168e-T5: 掃描頁 data-shell-mode SSR 屬性 ────────────────────────
+SCANNER_SHELL_MARKS = [
+    ("none", "/scanner", ""),
+    ("windows_client", "/scanner?oa_shell=windows&oa_mode=client", "client"),
+    ("windows_local", "/scanner?oa_shell=windows&oa_mode=local", "local"),
+    ("windows_evil", "/scanner?oa_shell=windows&oa_mode=evil", ""),
+]
+
+
+@pytest.mark.parametrize(
+    "mark_id,url,attr",
+    SCANNER_SHELL_MARKS,
+    ids=[m[0] for m in SCANNER_SHELL_MARKS],
+)
+def test_scanner_shell_mode_attr(monkeypatch, mark_id, url, attr):
+    _set_server_kind(monkeypatch, None)
+    resp = _fresh_client().get(url)
+    assert resp.status_code == 200
+    # [lint-guard: pytest-justified] SSR 依 oa_mode query／cookie 渲染四格（client／local／空／壞值轉義），lint 只掃模板原始碼看不到渲染結果
+    assert f'data-shell-mode="{attr}"' in resp.text
 
 
 # ── TASK-168c-T5: 說明頁 data-shell-mode 與更新確認窗的 client 標題 ─────────
@@ -323,6 +346,7 @@ def test_help_shell_mode_attr_and_client_modal(monkeypatch, mark_id, url, attr, 
     _set_server_kind(monkeypatch, None)
     resp = _fresh_client().get(url)
     assert resp.status_code == 200
+    # [lint-guard: pytest-justified] SSR 依 oa_mode query／cookie 渲染四格（client／local／空／壞值轉義），lint 只掃模板原始碼看不到渲染結果
     assert f'data-shell-mode="{attr}"' in resp.text
     # 更新確認窗在 {% if is_desktop %} 內：client 標題的 x-show 節點 ⇔ 有桌面殼標記
     assert resp.text.count('class="fluent-modal-title" x-show="_bridgeMode"') == (1 if has_modal else 0)

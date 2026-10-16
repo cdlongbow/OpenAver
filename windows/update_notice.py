@@ -15,8 +15,12 @@ _VERSION_RE = re.compile(r"\d+(\.\d+)*")
 _SCRIPT = ("typeof window.handleShellNotice==='function' && "
            "window.handleShellNotice({kind:'update_available',version:%s})")
 
-# pending：待顯示的新版本字串；page：最近一次載入的 (window, gen, is_current)
-_state = {"pending": None, "page": None}
+_MARKER_SCRIPT = ("typeof window.handleShellNotice==='function' && "
+                  "window.handleShellNotice({kind:'update_marker',version:%s})")
+
+# pending：待顯示的新版本字串；marker：App 本次執行期間有新版（不受 toast 去重影響）；
+# page：最近一次載入的 (window, gen, is_current)
+_state = {"pending": None, "marker": None, "page": None}
 _lock = threading.Lock()
 
 
@@ -40,7 +44,12 @@ def check_once():
     latest = result.get("latest_version")
     if not isinstance(latest, str) or not _VERSION_RE.fullmatch(latest):
         return
+    with _lock:
+        _state["marker"] = latest
+        page = _state["page"]
     if latest == client_settings.last_notified_update_version():
+        if page is not None:
+            _send_marker(page[0], page[2])
         return
     with _lock:
         _state["pending"] = latest
@@ -49,7 +58,24 @@ def check_once():
         _show(*page)
 
 
-def _show(window, gen, is_current):
+def _emit_marker_locked(window):
+    """呼叫端須持有 _lock 且已確認 is_current()；回傳值與例外都不影響記帳。"""
+    latest = _state["marker"]
+    if latest is None:
+        return
+    try:
+        window.evaluate_js(_MARKER_SCRIPT % json.dumps(latest))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[update_notice] marker failed: {type(e).__name__}")
+
+
+def _send_marker(window, is_current):
+    with _lock:
+        if is_current():
+            _emit_marker_locked(window)
+
+
+def _show(window, gen, is_current, with_marker=True):
     with _lock:
         latest = _state["pending"]
         if latest is None or not is_current():
@@ -60,6 +86,8 @@ def _show(window, gen, is_current):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[update_notice] show failed: {type(e).__name__}")
             return
+        if with_marker:
+            _emit_marker_locked(window)
         if shown is True:
             _state["pending"] = None
             try:
@@ -75,7 +103,8 @@ def try_show(window, gen, is_current):
     with _lock:
         if is_current():
             _state["page"] = (window, gen, is_current)
-    _show(window, gen, is_current)
+    _send_marker(window, is_current)
+    _show(window, gen, is_current, with_marker=False)
 
 
 def start_background_check():

@@ -88,7 +88,7 @@ export function forgotCode(kind) {
 
 function toRow(server, kind, readonly, sample, local, stale) {
     return {
-        server, kind, readonly, sample, local, state: null, testing: false, testGen: 0, removed: false, stale,
+        server, kind, readonly, sample, local, local_path: '', state: null, testing: false, testGen: 0, removed: false, stale,
     };
 }
 
@@ -110,13 +110,20 @@ export function staleRows(sources, savedRules) {
     return saved.filter((r) => !paths.has(r.server)).map(toStaleRow);
 }
 
+/** Same rule as core.path_translate.strip_wrapping_quotes: trim, then drop one wrapping pair of double quotes. */
+export function stripWrappingQuotes(value) {
+    const s = String(value).trim();
+    if (s.length >= 2 && s[0] === '"' && s[s.length - 1] === '"') return s.slice(1, -1).trim();
+    return s;
+}
+
 /** Rules to persist: skip removed rows and rows with an empty side. */
 export function rulesForSave(rows) {
     const out = [];
     for (const row of rows) {
         if (row.removed === true) continue;
         const server = String(row.server).trim();
-        const local = String(row.local).trim();
+        const local = stripWrappingQuotes(row.local);
         if (server === '' || local === '') continue;
         out.push({ server: row.server, local });
     }

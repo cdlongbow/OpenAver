@@ -549,9 +549,9 @@ def test_real_socket_round_trip(token, expected_auth):
     assert not thread.is_alive()
 
 
-@pytest.mark.parametrize("server_remote,env_proxy_used", [(False, False), (True, True)])
+@pytest.mark.parametrize("server_remote,env_proxy_used", [(False, False), (True, False)])
 def test_local_mode_client_ignores_proxy_env_vars(monkeypatch, server_remote, env_proxy_used):
-    """本機模式（打 127.0.0.1 的自己人）不吃 HTTP_PROXY 環境變數：免得環境代理把本機請求繞出去、AC-1 回歸。"""
+    """client 路徑一律直連：不論 server_remote，都不吃 HTTP_PROXY 環境變數（168e E37，主機在區網）。"""
     monkeypatch.setenv('HTTP_PROXY', 'http://env-proxy.invalid:3128')
     monkeypatch.setenv('http_proxy', 'http://env-proxy.invalid:3128')
     monkeypatch.setenv('ALL_PROXY', 'http://env-proxy.invalid:3128')
@@ -562,3 +562,20 @@ def test_local_mode_client_ignores_proxy_env_vars(monkeypatch, server_remote, en
         assert bool(client._mounts) is env_proxy_used
     finally:
         client.close()
+
+
+def test_cf_shell_client_ignores_system_proxy(monkeypatch):
+    """168e-T1 E37：環境代理壞掉（127.0.0.1:9）時，遠端模式的 poll 仍直連本機真 HTTP 假伺服器。"""
+    for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'):
+        monkeypatch.setenv(k, 'http://127.0.0.1:9')
+    for k in ('NO_PROXY', 'no_proxy'):
+        monkeypatch.delenv(k, raising=False)
+    httpd = _start_server(_Srv())
+    agent = cf_shell.CfShellAgent(f'http://127.0.0.1:{httpd.server_address[1]}', 'T',
+                                  make_windows(FakeImpl()), shell='windows', server_remote=True)
+    try:
+        assert agent._poll_once(0) == 'ok'
+    finally:
+        agent.stop()
+        httpd.shutdown()
+        httpd.server_close()

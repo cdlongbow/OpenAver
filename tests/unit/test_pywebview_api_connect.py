@@ -254,6 +254,19 @@ def test_test_row_ok_stats_translated_path(cx, monkeypatch):
     assert stat.call_args.args == ("D:\\av\\s\\x.mp4",)
 
 
+def test_test_row_quoted_local_stats_unquoted_path(cx, monkeypatch):
+    stat = Mock(return_value=None)
+    monkeypatch.setattr(cx.m, "_stat_path", stat)
+    assert cx.api.connect_test_row("/volume1/av", '"D:/av"', "/volume1/av/x.mp4") == {"state": "ok"}
+    assert stat.call_args.args == ("D:\\av\\x.mp4",)
+
+
+def test_clean_rules_strips_wrapping_quotes(cx):
+    out = cx.m._clean_rules([{"server": "/a", "local": '"' + r"\\nas\av" + '"'},
+                             {"server": "/b", "local": '""'}])
+    assert out == [{"server": "/a", "local": r"\\nas\av"}]
+
+
 @pytest.mark.parametrize("exc", [FileNotFoundError, PermissionError, OSError])
 def test_test_row_stat_errors_are_not_found_with_local_path(cx, monkeypatch, exc):
     monkeypatch.setattr(cx.m, "_stat_path", Mock(side_effect=exc("x")))
@@ -487,7 +500,7 @@ def test_offline_save_url_same_origin_keeps_token_other_origin_drops_it(cx):
     assert client_settings.server_url() == OTHER and client_settings.server_token() == ""
     assert cx.api._trusted_origin == OTHER
     assert cx.api._offline_state["failed_url"] == OTHER
-    assert client_settings.path_map() == [{"server": "/volume1/av", "local": "D:/av"}]
+    assert client_settings.path_map() == []
     for mock in (cx.probe, cx.preflight, cx.login):
         mock.assert_not_called()
 

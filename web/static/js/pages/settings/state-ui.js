@@ -31,7 +31,7 @@ export function stateUI() {
 
         // ===== Methods =====
         async selectOutputFolder() {
-            if (typeof window.pywebview === 'undefined' || !window.pywebview.api) {
+            if (this.shellMode === 'client' || typeof window.pywebview === 'undefined' || !window.pywebview.api) {
                 this.openBrowseDir('settings', (path) => { this.form.avlistOutputDir = path; });
                 return;
             }
