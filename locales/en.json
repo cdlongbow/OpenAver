@@ -520,7 +520,6 @@
       "download_sample_images_hint": "Download stills to extrafanart/ during organize (requires Create Folder enabled)",
       "strm_mapping": {
         "title": "Playback-side path mapping",
-        "intro": "When Emby / Jellyfin / Kodi runs on another machine and sees the source under a different path, use these rules to replace the \"local scan prefix\" with the \"playback-side prefix.\" With no rules, the strm is written with the local path as-is.",
         "local_placeholder": "Local prefix (e.g. Z:\\115)",
         "remote_placeholder": "Playback-side prefix (e.g. /volume1/movie)",
         "add_rule": "Add rule",
@@ -1419,7 +1418,6 @@
       "h6_strm_deploy": "Read-only source + letting Emby / Jellyfin / Kodi find your titles (cross-machine setup)",
       "strm_deploy_step1": "After mounting the read-only cloud drive / NAS share on the OpenAver machine, check that folder as \"Read-only\" in the Scanner — OpenAver won't touch any file inside (no moving, renaming, or writing).",
       "strm_deploy_step2": "Under \"Output to,\" specify a folder <strong>this machine can write to</strong> (which can be a writable NAS share mounted on this machine) — the generated <code>.strm</code> + NFO + covers go here, and you point Emby / Jellyfin / Kodi at it to build the library. This output folder is not the read-only source itself.",
-      "strm_deploy_step3": "If the machine that plays them sees the read-only source under a different path than OpenAver does (e.g. <code>Z:\\115</code> on OpenAver, <code>/volume1/115</code> on the NAS), add a matching rule under \"Playback-side path mapping\" on the <strong>Settings page</strong>; otherwise the <code>.strm</code> will point to a path the player can't find.",
       "strm_deploy_step4": "If you later change the mapping rules, the existing <code>.strm</code> files are rewritten automatically in one pass — no need to rebuild the whole library.",
       "h6_multiversion": "Multi-version manual merge (native Emby / Jellyfin feature)",
       "multiversion_intro": "Merging multiple versions of the same title (censored / uncensored leak / subtitled) into one entry with a version dropdown in Emby or Jellyfin is a feature both support natively (the same {folder name} - {label} rule), not exclusive to either. Just arrange the files manually as below:",

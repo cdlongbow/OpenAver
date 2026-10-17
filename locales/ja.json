@@ -520,7 +520,6 @@
       "download_sample_images_hint": "整理時にスクリーンショットを extrafanart/ にダウンロード（「フォルダー作成」が必要）",
       "strm_mapping": {
         "title": "再生側パスの置換",
-        "intro": "Emby／Jellyfin／Kodi が別のマシンにあり、見えるソースパスがこのマシンと異なる場合、これらのルールで「このマシンのスキャン接頭辞」を「再生側の接頭辞」に置き換えます。ルールがない場合、strm にはこのマシンのパスがそのまま書き込まれます。",
         "local_placeholder": "このマシンの接頭辞（例：Z:\\115）",
         "remote_placeholder": "再生側の接頭辞（例：/volume1/movie）",
         "add_rule": "ルールを追加",
@@ -1419,7 +1418,6 @@
       "h6_strm_deploy": "読み取り専用ソース + Emby／Jellyfin／Kodi に作品をスキャンさせる（マシンをまたぐ配置）",
       "strm_deploy_step1": "読み取り専用のオンラインストレージ／NAS 共有を OpenAver のマシンにマウントしたら、Scanner でそのフォルダーを「読み取り専用」にチェックします——OpenAver は中のファイルを一切変更しません（移動・リネーム・書き込みなし）。",
       "strm_deploy_step2": "「出力先」に<strong>このマシンで書き込める</strong>フォルダー（このマシンにマウントした NAS の書き込み可能な共有でも可）を指定します——生成される <code>.strm</code>＋NFO＋表紙がここに置かれ、それを Emby／Jellyfin／Kodi に指定してライブラリを作らせます。この出力フォルダーは読み取り専用ソースそのものではありません。",
-      "strm_deploy_step3": "再生するマシンから見た読み取り専用ソースのパスが OpenAver から見たパスと異なる場合（例：OpenAver 上では <code>Z:\\115</code>、NAS 上では <code>/volume1/115</code>）、<strong>設定ページ</strong>の「再生側パスの置換」に対応するルールを1つ追加してください。そうしないと <code>.strm</code> が再生側で見つからないパスを指してしまいます。",
       "strm_deploy_step4": "その後マッピングルールを変更すると、既存の <code>.strm</code> が一括で自動的に書き換えられ、ライブラリ全体を作り直す必要はありません。",
       "h6_multiversion": "同一作品の複数版（流出 / 4K / 字幕）を Emby/Jellyfin で結合するには？",
       "multiversion_intro": "複数版の結合は Emby と Jellyfin がともにネイティブ対応する機能です（同じ「フォルダ名 - ラベル」規則）。各版を品番名のフォルダに入れ、ファイル名をフォルダ名で始め「 - ラベル」を付けます：",

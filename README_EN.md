@@ -163,7 +163,7 @@ OpenAver has four main pages:
 Want to plug a NAS or cloud mount into Jellyfin/Emby/Kodi without copying terabytes of original files? Mark that source **read-only**.
 
 - **Not a single byte of the source is touched**: the NFO, covers, and stills OpenAver fetches are all written to a local output folder you choose.
-- **`.strm` feeds your media player directly**: a tiny file that only says where the video actually is — Emby/Jellyfin/Kodi play the original file directly, no copying needed.
+- **`.strm` feeds your media player directly**: a tiny file that only says where the video actually is — Emby/Kodi play the original file directly, no copying needed. Since Jellyfin 10.11.7, a `.strm` file can only point to a URL (http / https / rtsp / rtp); a `.strm` that holds a disk path is never played, no matter which machine the disk is on. Emby and Kodi are not affected. If your cloud drive is already served over HTTP (for example through Alist / OpenList), set the playback side of "Playback-side path mapping" to that URL prefix (e.g. `/volume1/cloud` → `http://nas:5244/d/115`).
 - **Works even when the two machines see different paths**: set up a replacement rule and it rewrites paths automatically; existing `.strm` files get updated too.
 
 ### 🌐 AI Translation
@@ -221,7 +221,7 @@ Works with any function-calling AI tool:
 Yes. Organizing also generates the NFO and cover art (poster/fanart) they read, and once they scan that folder, the cover and metadata show up correctly. OpenAver handles finding titles, fetching metadata, and browsing by cover and actress; they handle playback, and you don't need them installed either — OpenAver alone is enough to browse your whole collection.
 
 **My videos are on a NAS or cloud drive and I don't want them moved or changed — can I still use OpenAver?**
-Yes — mark that folder as "read-only." The original files are never moved or changed; fetched data files and covers go to a separate local output folder, and it can also generate `.strm` files so your media player streams the originals directly. Works for a NAS, a cloud drive mounted as a disk, or an external drive.
+Yes — mark that folder as "read-only." The original files are never moved or changed; fetched data files and covers go to a separate local output folder, and it can also generate `.strm` files so Emby/Kodi can stream the originals directly (since Jellyfin 10.11.7 a `.strm` can only point to a URL, so one holding a disk path won't play there — see the read-only section above). Works for a NAS, a cloud drive mounted as a disk, or an external drive.
 
 **Will OpenAver move, rename, or delete my files?**
 Files are only moved or renamed when you press "Organize," and it never deletes; a same-name file at the target warns you first. Search, browsing, and scanning are all read-only; filling in missing metadata only adds an NFO and cover, the video itself is never touched.
