@@ -3,7 +3,7 @@ import os
 
 from core.desktop_env import desktop_kind
 
-DSM_PERMISSION_HINT = "片庫是 DSM 共用資料夾：控制台 → 共用資料夾 → 編輯 → 權限 → 系統內部使用者帳號 → openaver-svc 勾可讀寫；片庫是掛載的遠端資料夾：到提供分享的那台機器確認權限"
+DSM_PERMISSION_HINT = "片庫是 DSM 共用資料夾：控制台 → 共用資料夾 → 編輯 → 權限 → 系統內部使用者帳號 → openaver-svc 勾可讀寫；片庫是掛載的遠端資料夾：除了上面那步，也要到提供分享的那台機器確認權限"
 
 
 def is_synology() -> bool:
