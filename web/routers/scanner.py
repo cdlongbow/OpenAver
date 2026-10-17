@@ -234,15 +234,24 @@ def _permission_denied_warning(directory: str) -> str:
     return warning
 
 
+# Windows 網路類 winerror：BAD_NETPATH／NETNAME_DELETED／NETWORK_UNREACHABLE 類（67 刻意不列、3 走「不存在」）
+_NETWORK_WINERRORS = frozenset({53, 64, 1222, 1231})
+
+
 def _scan_root_skip_message(directory: str, normalized_dir: str) -> Optional[str]:
-    """根目錄不可存取時回傳警告；可存取時回傳 None。"""
+    """根目錄不可存取時回傳警告；可存取時回傳 None。
+
+    白名單：只有明確的「不存在」才說資料夾不存在，其餘 OSError 一律「無法存取」（NAS 斷線不誤導成打錯字）。
+    """
     try:
         os.stat(normalized_dir)
-    except (FileNotFoundError, NotADirectoryError):
-        return f"資料夾不存在: {directory}"
     except PermissionError:
         return _permission_denied_warning(directory)
-    except (OSError, ValueError):  # 與 os.path.exists 一致：畸形路徑也只跳過這個來源
+    except OSError as exc:
+        if isinstance(exc, (FileNotFoundError, NotADirectoryError)) and getattr(exc, "winerror", None) not in _NETWORK_WINERRORS:
+            return f"資料夾不存在: {directory}"
+        return f"無法存取: {directory}"
+    except ValueError:  # 與 os.path.exists 一致：畸形路徑也只跳過這個來源
         return f"資料夾不存在: {directory}"
     return None
 

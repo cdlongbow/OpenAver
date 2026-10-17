@@ -90,6 +90,62 @@ class TestScannerAPI:
         assert not any("沒有權限" in m for m in missing_messages)
         assert len(repo.get_mtime_index()) == before
 
+    def test_scan_root_unreachable_host_distinguished_from_missing(
+        self, client, tmp_path, monkeypatch, parse_sse_events,
+    ):
+        import errno
+        from core.database import init_db, VideoRepository, Video
+
+        scan_dir = tmp_path / "nas_share"
+        scan_dir.mkdir()
+        video = scan_dir / "existing.mp4"
+        video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        uri = to_file_uri(str(video))
+        repo.upsert(Video(path=uri, number="EXIST-001", title="既存影片", mtime=video.stat().st_mtime, nfo_mtime=0.0))
+        before = len(repo.get_mtime_index())
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.scanner.is_synology", lambda: False)
+
+        real_stat = os.stat
+        target = os.path.normpath(str(scan_dir))
+        hits = []
+
+        def fake_stat(path, *a, **kw):
+            if isinstance(path, (str, os.PathLike)) and os.path.normpath(os.fspath(path)) == target:
+                hits.append(path)
+                raise OSError(errno.EHOSTDOWN, "Host is down")
+            return real_stat(path, *a, **kw)
+
+        monkeypatch.setattr(os, "stat", fake_stat)
+
+        def messages(directory):
+            monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
+                "gallery": {"directories": [str(directory)], "output_dir": str(output_dir),
+                            "path_mappings": {}, "min_size_mb": 0},
+                "general": {"theme": "light"},
+                "scraper": {"video_extensions": [".mp4"]},
+            })
+            response = client.get("/api/gallery/generate")
+            assert response.status_code == 200
+            return [e.get("message", "") for e in parse_sse_events(response.text) if e.get("type") == "log"]
+
+        down_messages = messages(scan_dir)
+        assert hits, "os.stat 注入沒有打到目標路徑"
+        assert any(f"無法存取: {scan_dir}" in m for m in down_messages), down_messages
+        assert not any("資料夾不存在" in m for m in down_messages), down_messages
+        assert len(repo.get_mtime_index()) == before
+        assert uri in repo.get_mtime_index()
+
+        missing_messages = messages(tmp_path / "never_created")
+        assert any("資料夾不存在" in m for m in missing_messages), missing_messages
+        assert not any("無法存取" in m for m in missing_messages), missing_messages
+        assert len(repo.get_mtime_index()) == before
+
     @pytest.mark.skipif(
         os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
         reason="chmod 000 requires POSIX non-root DAC enforcement",

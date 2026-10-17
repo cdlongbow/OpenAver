@@ -489,3 +489,33 @@ async def test_fresh_boot_clock_still_schedules_first_probe(sr):
         assert sr._reprobe_task is not None
         assert sr._in_flight is True
         await sr._reprobe_task
+
+
+# ── TASK-169-T2 ────────────────────────────────────────────────────────
+
+
+def test_exists_wait_covers_dsm_disconnect_and_keeps_fuse(sr):
+    """探測等待要大於 NAS 掛載回斷線錯誤的 ~10 秒，且單一死來源 (2W+R) 吃不掉保險絲。"""
+    assert sr._EXISTS_WAIT_S > 10.0
+    assert 2 * sr._EXISTS_WAIT_S + sr._RETRY_SLEEP_S < sr._FIRST_PROBE_WAIT_S
+
+
+@pytest.mark.asyncio
+async def test_slow_negative_probe_is_unreachable_not_unknown(sr, monkeypatch):
+    """慢但終究回否定（True＝missing）→ unreachable，不是 unknown。"""
+    monkeypatch.setattr(sr, "_EXISTS_WAIT_S", 1.0)
+
+    def slow_negative(_path):
+        time.sleep(0.3)
+        return True
+
+    path = "/mnt/slow-nas"
+    with (
+        patch.object(sr, "load_config", return_value={"gallery": {}}),
+        patch.object(sr, "iter_gallery_sources", return_value=_sources(path)),
+        patch.object(sr, "_scandir_probe", side_effect=slow_negative),
+        patch.object(sr.asyncio, "sleep", new_callable=AsyncMock),
+    ):
+        await sr.schedule_reprobe_if_stale()
+        await sr._reprobe_task
+        assert sr.get_snapshot().get(path) == "unreachable"

@@ -520,7 +520,6 @@
       "download_sample_images_hint": "整理时自动下载剧照至 extrafanart/ 子目录（需启用「建立文件夹」）",
       "strm_mapping": {
         "title": "播放端路径替换",
-        "intro": "当 Emby／Jellyfin／Kodi 在另一台机器、看到的来源路径与本机不同时，用这些规则把「本机扫描前缀」替换成「播放端前缀」。没有规则时 strm 直接写本机路径。",
         "local_placeholder": "本机前缀（例：Z:\\115）",
         "remote_placeholder": "播放端前缀（例：/volume1/movie）",
         "add_rule": "新增规则",
@@ -1419,7 +1418,6 @@
       "h6_strm_deploy": "只读来源 + 让 Emby／Jellyfin／Kodi 扫到片（跨机器部署）",
       "strm_deploy_step1": "把只读网盘／NAS 共享挂到 OpenAver 这台后，在 Scanner 把该文件夹勾成「只读」——OpenAver 不会动里面任何文件（不搬移、不改名、不写入）。",
       "strm_deploy_step2": "在「输出到」指定一个<strong>这台能写入</strong>的文件夹（可以是挂载到这台的 NAS 可写共享）——生成的 <code>.strm</code>＋NFO＋封面会放这里，再让 Emby／Jellyfin／Kodi 指向它建媒体库。这个输出夹不是只读来源本身。",
-      "strm_deploy_step3": "若播放的那台机器看到的只读来源路径跟 OpenAver 看到的不一样（例如 OpenAver 上是 <code>Z:\\115</code>、NAS 上是 <code>/volume1/115</code>），到<strong>设置页</strong>的「播放端路径替换」加一条对应规则，否则 <code>.strm</code> 会指向播放端找不到的路径。",
       "strm_deploy_step4": "之后改了映射规则，既有的 <code>.strm</code> 会自动一次改写，不用重建整个媒体库。",
       "h6_multiversion": "同片多版本（流出 / 4K / 中文字幕）怎么在 Emby/Jellyfin 合并？",
       "multiversion_intro": "多版本合并是 Emby 与 Jellyfin 共同支持的原生功能（同一套「文件夹名 - 标签」规则），不是哪一家独有。把同一片各版本放进以番号命名的文件夹，文件名都以文件夹名开头加「 - 标签」：",
