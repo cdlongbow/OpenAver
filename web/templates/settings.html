@@ -687,7 +687,7 @@
                                        ? t('settings.favorite_folder.linked_text')
                                        : t('settings.favorite_folder.not_linked_text')">
                             </small>
-                            <small class="settings-hint">{{ t('settings.search.favorite_folder_example_prefix') | safe }}</small>
+                            <small class="settings-hint">{% if is_synology %}{{ t('settings.search.favorite_folder_example_prefix_synology') | safe }}{% else %}{{ t('settings.search.favorite_folder_example_prefix') | safe }}{% endif %}</small>
                         </div>
                     </div>
 
