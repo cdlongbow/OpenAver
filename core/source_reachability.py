@@ -2,7 +2,7 @@
 
 Probe means are a closed set of two (CD-2):
   - UNC ``\\\\host\\...`` → TCP connect to port 445 (2s timeout)
-  - everything else → ``os.scandir(root)`` in a worker thread (5s wait)
+  - everything else → ``os.scandir(root)`` in a worker thread (20s wait)
 
 Public API:
   - ``get_snapshot()`` — pure memory read; safe from sync threadpool endpoints
@@ -32,7 +32,7 @@ logger = get_logger(__name__)
 _TTL_HEALTHY = 600.0
 _TTL_DEGRADED = 60.0
 _TCP_TIMEOUT_S = 2.0
-_EXISTS_WAIT_S = 5.0
+_EXISTS_WAIT_S = 20.0
 _RETRY_SLEEP_S = 1.0
 _FIRST_PROBE_WAIT_S = 120.0
 
@@ -127,7 +127,7 @@ async def wait_for_first_probe(timeout: float = _FIRST_PROBE_WAIT_S) -> None:
     sequential, so its total duration scales with source count and is not a
     number this function can guess correctly. What actually bounds the wait
     is the task itself finishing: every individual probe has its own timeout
-    (TCP 2s x2 + 1s retry-sleep, or exists 5s x2 + 1s), and ``_probe_all``
+    (TCP 2s x2 + 1s retry-sleep, or exists 20s x2 + 1s), and ``_probe_all``
     always writes the snapshot in its ``finally`` block, so the shielded
     ``await`` below resolves as soon as that happens, however long it took.
 
