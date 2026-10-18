@@ -407,3 +407,40 @@ async def test_request_translation_log_oracle_no_key(caplog):
     assert "authentication_error" in joined
     assert "invalid x-api-key" in joined
     assert FAKE_KEY not in joined
+
+
+# ============ 金鑰含空白／換行（Codex P1：不得洩漏進 log／message）============
+
+_ILLEGAL_MSG = "Illegal header value b'sk-ant-FAKE-abc123\\n'"
+
+
+def test_build_headers_strips_key_whitespace():
+    assert build_headers("  sk-ant-x \n")["x-api-key"] == "sk-ant-x"
+
+
+@pytest.mark.asyncio
+async def test_request_translation_illegal_key_header_no_leak(caplog):
+    import logging
+    client = _mock_async_client(post_side_effect=httpx.LocalProtocolError(_ILLEGAL_MSG))
+    with caplog.at_level(logging.DEBUG):
+        with patch("core.anthropic_client.httpx.AsyncClient", return_value=client):
+            with pytest.raises(AnthropicError) as ei:
+                await request_translation(FAKE_KEY, DEFAULT_CLAUDE_MODEL, "p", timeout=1)
+    assert ei.value.kind == "auth_failed"
+    assert ei.value.error_type == "invalid_api_key_format"
+    assert "sk-ant-FAKE" not in ei.value.message
+    assert "sk-ant-FAKE" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_list_models_illegal_key_header_no_leak(caplog):
+    import logging
+    client = _mock_async_client(get_side_effect=httpx.LocalProtocolError(_ILLEGAL_MSG))
+    with caplog.at_level(logging.DEBUG):
+        with patch("core.anthropic_client.httpx.AsyncClient", return_value=client):
+            with pytest.raises(AnthropicError) as ei:
+                await list_models(FAKE_KEY, timeout=1)
+    assert ei.value.kind == "auth_failed"
+    assert ei.value.error_type == "invalid_api_key_format"
+    assert "sk-ant-FAKE" not in ei.value.message
+    assert "sk-ant-FAKE" not in caplog.text

@@ -19,6 +19,7 @@ ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_CLAUDE_MODEL = "claude-haiku-5-5"
 MAX_TOKENS = 1024
+_ILLEGAL_KEY_MESSAGE = "API Key contains illegal characters (whitespace/newline)"
 
 
 class AnthropicError(Exception):
@@ -57,7 +58,7 @@ def _log_and_build_error(
 
 def build_headers(api_key: str) -> dict[str, str]:
     return {
-        "x-api-key": api_key,
+        "x-api-key": api_key.strip(),
         "anthropic-version": ANTHROPIC_VERSION,
         "content-type": "application/json",
     }
@@ -164,6 +165,14 @@ async def request_translation(
             "",
             str(e),
         ) from e
+    except httpx.LocalProtocolError:
+        # 金鑰含空白／換行 → h11 拒送；str(e) 內含金鑰，絕不可進 message／log
+        raise _log_and_build_error(
+            "auth_failed",
+            None,
+            "invalid_api_key_format",
+            _ILLEGAL_KEY_MESSAGE,
+        ) from None
     except (httpx.HTTPError, OSError) as e:
         raise _log_and_build_error(
             "connection_failed",
@@ -213,6 +222,14 @@ async def list_models(api_key: str, *, timeout: float) -> dict:
             "",
             str(e),
         ) from e
+    except httpx.LocalProtocolError:
+        # 金鑰含空白／換行 → h11 拒送；str(e) 內含金鑰，絕不可進 message／log
+        raise _log_and_build_error(
+            "auth_failed",
+            None,
+            "invalid_api_key_format",
+            _ILLEGAL_KEY_MESSAGE,
+        ) from None
     except (httpx.HTTPError, OSError) as e:
         raise _log_and_build_error(
             "connection_failed",
