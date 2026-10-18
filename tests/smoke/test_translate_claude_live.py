@@ -59,6 +59,10 @@ async def test_model_list_haiku_sonnet():
     assert models, "pick_translate_models 回空清單"
     assert all("haiku" in m.lower() or "sonnet" in m.lower() for m in models)
     assert any("haiku" in m.lower() for m in models)
+    raw = {m.get("id"): m for m in data.get("data", []) if isinstance(m, dict)}
+    for mid in models:
+        supported = ((raw[mid].get("capabilities") or {}).get("effort") or {}).get("supported")
+        assert supported is not False, f"{mid} 不支援 effort 卻進了清單"
 
 
 @NEED_KEY

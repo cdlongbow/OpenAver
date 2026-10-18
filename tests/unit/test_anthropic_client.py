@@ -444,3 +444,16 @@ async def test_list_models_illegal_key_header_no_leak(caplog):
     assert ei.value.error_type == "invalid_api_key_format"
     assert "sk-ant-FAKE" not in ei.value.message
     assert "sk-ant-FAKE" not in caplog.text
+
+
+def test_pick_models_excludes_effort_unsupported():
+    data = {"data": [
+        {"id": "claude-haiku-5-5", "created_at": "2026-09-01T00:00:00Z",
+         "capabilities": {"effort": {"supported": True}}},
+        {"id": "claude-haiku-4-5-20251001", "created_at": "2025-10-01T00:00:00Z",
+         "capabilities": {"effort": {"supported": False}}},
+        {"id": "claude-haiku-legacy-nocaps", "created_at": "2025-01-01T00:00:00Z"},
+        {"id": "claude-opus-5", "created_at": "2026-09-02T00:00:00Z",
+         "capabilities": {"effort": {"supported": True}}},
+    ]}
+    assert pick_translate_models(data) == ["claude-haiku-5-5", "claude-haiku-legacy-nocaps"]

@@ -127,6 +127,14 @@ def classify_http_error(resp: httpx.Response) -> AnthropicError:
     return _log_and_build_error("http_error", status, err_type, message)
 
 
+def _supports_effort(item: dict) -> bool:
+    """capabilities.effort.supported 明確為 False 才排除；欄位缺或形狀不明 → 保留（fail-open）。"""
+    caps = item.get("capabilities")
+    effort = caps.get("effort") if isinstance(caps, dict) else None
+    supported = effort.get("supported") if isinstance(effort, dict) else None
+    return supported is not False
+
+
 def pick_translate_models(data: dict) -> list[str]:
     """過濾 haiku／sonnet，依 created_at 新到舊排，回傳 id 陣列。"""
     raw = data.get("data") or []
@@ -135,7 +143,7 @@ def pick_translate_models(data: dict) -> list[str]:
         if not isinstance(m, dict):
             continue
         mid = str(m.get("id") or "").lower()
-        if "haiku" in mid or "sonnet" in mid:
+        if ("haiku" in mid or "sonnet" in mid) and _supports_effort(m):
             items.append(m)
     items.sort(key=lambda m: m.get("created_at") or "", reverse=True)
     return [str(m["id"]) for m in items]
