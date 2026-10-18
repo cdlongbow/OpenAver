@@ -1,3 +1,5 @@
+import { pickClaudeModel } from './claude-model-pick.js';
+
 export function stateProviders() {
     return {
         // ===== Provider Status State =====
@@ -13,6 +15,11 @@ export function stateProviders() {
         openaiUseCustomModel: false,
         fetchingOpenaiModels: false,
         testingOpenaiTranslate: false,
+        claudeStatus: '',
+        claudeModelStatus: '',
+        claudeModels: [],
+        fetchingClaudeModels: false,
+        testingClaudeTranslate: false,
 
         // Test buttons loading state
         testOllamaLoading: false,
@@ -302,6 +309,107 @@ export function stateProviders() {
                 this.openaiModelStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.openai_translate_failed')}</span>`;
             } finally {
                 this.testingOpenaiTranslate = false;
+            }
+        },
+
+        async fetchClaudeModels({ source = 'manual' } = {}) {
+            const apiKey = this.form.claudeApiKey;
+
+            if (!apiKey) {
+                this.claudeStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.enter_api_key')}</span>`;
+                return;
+            }
+
+            this.fetchingClaudeModels = true;
+            this.claudeStatus = `<span class="text-base-content/50">${window.t('settings.status.connecting')}</span>`;
+
+            try {
+                const response = await fetch('/api/claude/models', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+
+                const data = await response.json();
+
+                if (data.success && data.models && data.models.length > 0) {
+                    this.claudeModels = data.models;
+                    this.claudeStatus = `<span class="text-success"><i class="bi bi-check-circle"></i> ${window.t('settings.status.connected_n_models', {count: data.models.length})}</span>`;
+
+                    const picked = pickClaudeModel(
+                        this.form.claudeModel,
+                        data.models,
+                        data.latest_haiku,
+                        data.default_model
+                    );
+                    if (picked !== this.form.claudeModel) {
+                        this.form.claudeModel = picked;
+                        // auto-assign 不算用戶修改，同步快照避免 isDirty 誤判
+                        if (this.savedState) this.savedState.claudeModel = this.form.claudeModel;
+                    }
+                } else {
+                    // 不清空 claudeModels — 保留舊清單
+                    const failClass = source === 'manual' ? 'text-error' : 'text-warning';
+                    const failIcon = source === 'manual' ? 'bi-x-circle' : 'bi-exclamation-circle';
+                    const errorKey = `settings.status.claude_${data.error || 'connection_failed'}`;
+                    this.claudeStatus = `<span class="${failClass}"><i class="bi ${failIcon}"></i> ${window.t(errorKey)}</span>`;
+                }
+            } catch (error) {
+                // 不清空 claudeModels — 保留舊清單
+                this.claudeStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.claude_connection_failed')}</span>`;
+            } finally {
+                this.fetchingClaudeModels = false;
+            }
+        },
+
+        async testClaudeTranslation() {
+            const apiKey = this.form.claudeApiKey;
+            const model = this.form.claudeModel;
+
+            if (!apiKey) {
+                this.claudeModelStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.enter_api_key_first')}</span>`;
+                return;
+            }
+
+            if (!model) {
+                this.claudeModelStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.select_model')}</span>`;
+                return;
+            }
+
+            this.testingClaudeTranslate = true;
+            this.claudeModelStatus = `<span class="text-base-content/50">${window.t('settings.status.testing_translation')}</span>`;
+
+            try {
+                const response = await fetch('/api/claude/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        model: model
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    const escapeHtml = (text) => {
+                        const div = document.createElement('div');
+                        div.textContent = text;
+                        return div.innerHTML;
+                    };
+                    if (data.translation === 'ja_skip') {
+                        this.claudeModelStatus = `<span class="text-info"><i class="bi bi-info-circle"></i> ${window.t('settings.status.ja_skip')}</span>`;
+                    } else {
+                        this.claudeModelStatus = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${window.t('settings.status.translation_success', {translation: escapeHtml(data.translation)})}</span>`;
+                    }
+                } else {
+                    const errorKey = `settings.status.claude_${data.error || 'translate_failed'}`;
+                    this.claudeModelStatus = `<span class="text-error"><i class="bi bi-exclamation-triangle-fill"></i> ${window.t(errorKey)}</span>`;
+                }
+            } catch (error) {
+                this.claudeModelStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.claude_translate_failed')}</span>`;
+            } finally {
+                this.testingClaudeTranslate = false;
             }
         },
     };

@@ -6,8 +6,6 @@ render_config_secrets deep-copy, and SECRET_FIELDS inventory (B1–B12, B14).
 
 import copy
 
-import pytest
-
 from core.secret_fields import (
     SECRET_FIELDS,
     mask_secret,
@@ -122,6 +120,10 @@ def _sample_cfg() -> dict:
                 "api_key": "sk-test-roundtrip",
                 "model": "gpt-4o",
             },
+            "claude": {
+                "api_key": "sk-test-roundtrip",
+                "model": "claude-haiku-5-5",
+            },
         },
         "metatube": {
             "enabled": True,
@@ -143,6 +145,7 @@ class TestRenderConfigSecrets:
         cfg = _sample_cfg()
         original_openai = cfg["translate"]["openai"]["api_key"]
         original_gemini = cfg["translate"]["gemini"]["api_key"]
+        original_claude = cfg["translate"]["claude"]["api_key"]
         original_token = cfg["metatube"]["token"]
         cfg_id = id(cfg)
 
@@ -151,11 +154,12 @@ class TestRenderConfigSecrets:
         assert id(rendered) != cfg_id
         assert cfg["translate"]["openai"]["api_key"] == original_openai
         assert cfg["translate"]["gemini"]["api_key"] == original_gemini
+        assert cfg["translate"]["claude"]["api_key"] == original_claude
         assert cfg["metatube"]["token"] == original_token
         assert cfg["translate"]["openai"]["api_key"] == "sk-test-roundtrip"
 
-    def test_masks_three_secret_paths_rest_deep_equal(self):
-        """B12: three SECRET_FIELDS paths masked; everything else deep-equal."""
+    def test_masks_four_secret_paths_rest_deep_equal(self):
+        """B12: four SECRET_FIELDS paths masked; everything else deep-equal."""
         cfg = _sample_cfg()
         baseline = copy.deepcopy(cfg)
         rendered = render_config_secrets(cfg)
@@ -166,12 +170,16 @@ class TestRenderConfigSecrets:
         assert rendered["translate"]["gemini"]["api_key"] == mask_secret(
             "sk-test-roundtrip"
         )
+        assert rendered["translate"]["claude"]["api_key"] == mask_secret(
+            "sk-test-roundtrip"
+        )
         assert rendered["metatube"]["token"] == mask_secret("mt-secret-token-xyz")
 
         # Restore masked paths and compare deep equality for the rest.
         restored = copy.deepcopy(rendered)
         restored["translate"]["openai"]["api_key"] = baseline["translate"]["openai"]["api_key"]
         restored["translate"]["gemini"]["api_key"] = baseline["translate"]["gemini"]["api_key"]
+        restored["translate"]["claude"]["api_key"] = baseline["translate"]["claude"]["api_key"]
         restored["metatube"]["token"] = baseline["metatube"]["token"]
         assert restored == baseline
 
@@ -188,24 +196,27 @@ class TestRenderConfigSecrets:
             "translate": {
                 "gemini": {"api_key": ""},
                 "openai": {"api_key": ""},
+                "claude": {"api_key": ""},
             },
             "metatube": {"token": ""},
         }
         rendered = render_config_secrets(cfg)
         assert rendered["translate"]["gemini"]["api_key"] == ""
         assert rendered["translate"]["openai"]["api_key"] == ""
+        assert rendered["translate"]["claude"]["api_key"] == ""
         assert rendered["metatube"]["token"] == ""
 
 
 # ============ B14: SECRET_FIELDS inventory ============
 
 class TestSecretFieldsInventory:
-    def test_exactly_three_paths_pinned(self):
-        """B14: SECRET_FIELDS is exactly the three opaque credential paths."""
+    def test_exactly_four_paths_pinned(self):
+        """B14: SECRET_FIELDS is exactly the four opaque credential paths."""
         assert SECRET_FIELDS == (
             "translate.gemini.api_key",
             "translate.openai.api_key",
+            "translate.claude.api_key",
             "metatube.token",
         )
         assert isinstance(SECRET_FIELDS, tuple)
-        assert len(SECRET_FIELDS) == 3
+        assert len(SECRET_FIELDS) == 4

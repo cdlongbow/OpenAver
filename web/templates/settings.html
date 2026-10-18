@@ -711,6 +711,7 @@
                                 :disabled="!form.translateEnabled">
                                 <option value="ollama">Ollama{{ t('settings.translate.ollama_local') }}</option>
                                 <option value="gemini">Gemini{{ t('settings.translate.gemini_cloud') }}</option>
+                                <option value="claude">Claude{{ t('settings.translate.claude_cloud') }}</option>
                                 <option value="openai" x-text="t('settings.translate.openai_compatible')">OpenAI Compatible</option>
                             </select>
                         </div>
@@ -827,6 +828,69 @@
                                         </button>
                                     </div>
                                     <small class="settings-hint" x-html="geminiModelStatus"></small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Claude 設定 -->
+                        <div id="claudeFields" x-show="form.translateProvider === 'claude'" x-cloak>
+                            <div class="settings-form-row">
+                                <label class="row-label">API Key</label>
+                                <div class="flex-1 flex flex-col gap-1">
+                                    <div class="variable-input-group">
+                                        <input type="password" class="input input-bordered input-sm flex-1" id="claudeApiKey"
+                                            x-model="form.claudeApiKey"
+                                            :placeholder="window.t('settings.translate.claude_api_key_placeholder')"
+                                            :disabled="!form.translateEnabled">
+                                        <button class="btn btn-sm btn-outline" type="button" id="testClaudeBtn"
+                                            @click="fetchClaudeModels()"
+                                            :disabled="!form.translateEnabled || fetchingClaudeModels">
+                                            <span x-show="fetchingClaudeModels" class="loading loading-spinner loading-sm"></span>
+                                            <template x-if="!fetchingClaudeModels">
+                                                <i class="bi bi-plug"></i>
+                                            </template>
+                                            <span x-text="fetchingClaudeModels ? '' : ' ' + window.t('settings.action.test')"></span>
+                                        </button>
+                                    </div>
+                                    <small class="settings-hint" x-html="claudeStatus"></small>
+                                    <small class="settings-hint" x-text="window.t('settings.translate.claude_api_key_hint')"></small>
+
+                                    <!-- 安全警告（不含 item3：連到 Google AI Studio，不適用） -->
+                                    <div class="alert alert-warning api-key-alert" role="alert">
+                                        <i class="bi bi-exclamation-triangle-fill"></i>
+                                        <div class="alert-content">
+                                            <strong>{{ t('settings.translate.security_title') }}</strong>
+                                            <ul class="alert-list">
+                                                <li>{{ t('settings.translate.security_item1') }}</li>
+                                                <li>{{ t('settings.translate.security_item2') }}</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="settings-form-row">
+                                <label class="row-label">{{ t('settings.translate.model_label') }}</label>
+                                <div class="flex-1 flex flex-col gap-1">
+                                    <div class="variable-input-group">
+                                        <select class="select select-bordered select-sm flex-1" id="claudeModel"
+                                            x-model="form.claudeModel" :disabled="!form.translateEnabled || claudeModels.length === 0">
+                                            <option value="" disabled x-show="claudeModels.length === 0">{{ t('settings.translate.test_apikey_placeholder') }}</option>
+                                            <template x-for="model in claudeModels" :key="model">
+                                                <option :value="model" x-text="model"></option>
+                                            </template>
+                                        </select>
+                                        <button class="btn btn-sm btn-outline" type="button" id="testClaudeTranslateBtn"
+                                            @click="testClaudeTranslation()" title="{{ t('settings.translate.test_translation_title') }}"
+                                            :disabled="!form.translateEnabled || claudeModels.length === 0 || testingClaudeTranslate">
+                                            <span x-show="testingClaudeTranslate" class="loading loading-spinner loading-sm"></span>
+                                            <template x-if="!testingClaudeTranslate">
+                                                <i class="bi bi-chat-dots"></i>
+                                            </template>
+                                            <span x-text="testingClaudeTranslate ? '' : ' ' + window.t('settings.action.test')"></span>
+                                        </button>
+                                    </div>
+                                    <small class="settings-hint" x-html="claudeModelStatus"></small>
                                 </div>
                             </div>
                         </div>

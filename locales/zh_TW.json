@@ -575,6 +575,7 @@
       "provider_label": "翻譯服務",
       "ollama_local": "（本地）",
       "gemini_cloud": "（Google 雲端）",
+      "claude_cloud": "（Anthropic 雲端）",
       "model_label": "模型",
       "test_connection_placeholder": "請先測試連線",
       "test_model_title": "測試模型",
@@ -586,6 +587,8 @@
       "security_item2": "請勿將 config.json 分享給他人",
       "security_item3_prefix": "如需撤銷，請前往",
       "security_item3_suffix": "重新生成",
+      "claude_api_key_hint": "到 Anthropic Console 建立 API Key（sk-ant- 開頭）。Claude 訂閱方案的登入不能直接用在這裡。",
+      "claude_api_key_placeholder": "sk-ant-...",
       "openai_compatible": "OpenAI 相容",
       "openai_api_key_placeholder": "留空 = 不送 Authorization header",
       "openai_api_key_hint": "本地 LLM 可留空，雲端服務需填入 API Key",
@@ -765,6 +768,16 @@
       "openai_api_error": "API 回傳錯誤",
       "openai_translate_failed": "翻譯測試失敗",
       "openai_unknown_response_format": "未知的回應格式",
+      "claude_auth_failed": "認證失敗，請檢查 API Key",
+      "claude_missing_key": "認證失敗，請檢查 API Key",
+      "claude_forbidden": "無存取權限",
+      "claude_not_found": "模型不存在，請按『測試』重新選擇",
+      "claude_rate_limited": "額度不足或請求太頻繁",
+      "claude_connection_failed": "連線失敗",
+      "claude_connection_timeout": "連線逾時",
+      "claude_http_error": "HTTP 請求失敗",
+      "claude_missing_model": "請先選擇模型",
+      "claude_translate_failed": "翻譯測試失敗",
       "ja_skip": "日文模式：跳過翻譯"
     }
   },
@@ -1745,7 +1758,8 @@
       "dmm_blocked_try_jp_proxy": "若 DMM 顯示拒絕連線，部分地區需要日本 IP：可在<strong>設定頁</strong> → Proxy 欄位填入日本 IP 代理，或改連日本 VPN。",
       "translate_ollama": "<strong>Ollama</strong>：確認 Ollama 應用程式已啟動（Windows 需手動開啟）",
       "translate_gemini": "<strong>Gemini</strong>：確認 API Key 已在<strong>設定頁</strong>正確設定",
-      "translate_openai": "<strong>OpenAI Compatible</strong>：確認 Base URL 和模型名稱正確"
+      "translate_openai": "<strong>OpenAI Compatible</strong>：確認 Base URL 和模型名稱正確",
+      "translate_claude": "<strong>Claude</strong>：金鑰請到 Anthropic Console 申請（<code>sk-ant-</code> 開頭），並在<strong>設定頁</strong>正確貼上；Claude 訂閱帳號登入不能用，必須用 API 金鑰。若模型清單抓不到，請先檢查金鑰是否正確"
     },
     "js": {
       "version_load_failed": "無法載入",

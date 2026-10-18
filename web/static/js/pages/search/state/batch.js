@@ -2,6 +2,8 @@
  * SearchState - Batch Mixin
  * 包含：批次操作（searchAll, scrapeAll, scrapeSingle）
  */
+import { isCloudTranslateProvider } from '../../../shared/translate-provider.js';
+
 // T4: 追蹤正在批次翻譯的片索引（從 core.js 搬移）
 const batchTranslatingIndices = new Set();
 
@@ -320,7 +322,7 @@ export function searchStateBatch() {
         ts.success = 0;
         ts.failed = 0;
 
-        const isGemini = this.appConfig?.translate?.provider === 'gemini';
+        const isCloud = isCloudTranslateProvider(this.appConfig?.translate?.provider);
         let aborted = false;
 
         for (const result of translatableResults) {
@@ -364,7 +366,7 @@ export function searchStateBatch() {
 
             ts.processed++;
 
-            if (isGemini && ts.processed < ts.total) {
+            if (isCloud && ts.processed < ts.total) {
                 await new Promise(resolve => setTimeout(resolve, 300));
             }
         }

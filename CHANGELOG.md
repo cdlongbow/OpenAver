@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.9] - 2026-10-18
+
+> AI 翻譯多了 Claude 引擎：貼上 Anthropic API Key 就能用，模型清單自動抓、只列 Haiku 與 Sonnet。OpenAI 相容引擎在搜尋頁改成和 Gemini 一樣的操作方式。
+
+### Added
+
+#### 🤖 AI 翻譯新增 Claude 引擎
+- 設定頁「翻譯服務」多了 Claude 選項，貼上 Anthropic API Key 後按「測試」，會自動抓取可用模型清單。
+- 清單只列 Haiku 與 Sonnet 兩個系列，並自動選用最新的 Haiku（速度快、費用低，翻譯夠用）。
+- 模型欄旁有「測試」按鈕，可以先試翻一句確認能用。
+- 預設模型是 `claude-haiku-5-5`，不按測試、直接填好金鑰也能翻譯。
+- 出錯時會分成四種說法：金鑰錯誤、模型不存在、額度用完或被限流、連不到 Anthropic。
+- 說明頁「疑難排解」新增一條 Claude 翻譯失敗時的檢查方式。
+- 金鑰前後帶到空白會自動去掉；含不合法字元時只顯示「認證失敗」，金鑰內容不會寫進 `debug.log`。
+
+### Changed
+- OpenAI 相容引擎在搜尋頁改成和 Gemini 同一種操作：單片「翻譯」翻的是正在看的這一片（已翻過再按一次會重新翻譯，不再跳到下一片）；「全部翻譯」每片之間會停 0.3 秒，避免被服務端限流。Ollama 的行為不變。
+
 ## [0.17.8] - 2026-10-17
 
 > NAS 掛著另一台機器的分享、那台關機時，瀏覽頁狀態列現在會說「無法存取」、掃描也不再誤說「資料夾不存在」；整理失敗的權限指引同時涵蓋 DSM 共用資料夾與遠端掛載；Jellyfin 10.11.7 起 `.strm` 只能指向網址，說明書改口並給逃生口。Synology 維持 beta。

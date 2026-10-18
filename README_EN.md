@@ -46,7 +46,7 @@ Point OpenAver at the folder where you keep your videos and it turns them into a
 | **Scrape sources** | Queries 8 sources at once (JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX); 2 more archive sources need manual verification; advanced users can add Metatube for 30+ total |
 | **Media player output** | Organizing can generate the NFO and covers Jellyfin/Emby/Kodi need; works even for videos on a NAS you never move |
 | **AI control** | AI tools like Claude Code/Cursor can organize your library directly from instructions |
-| **AI translation** | Ollama (local, free)/Gemini/OpenAI-compatible endpoints |
+| **AI translation** | Ollama (local, free)/Gemini/Claude/OpenAI-compatible endpoints |
 | **License** | MIT, 100% local, no account, no cloud |
 
 ## Screenshots
@@ -169,7 +169,7 @@ Want to plug a NAS or cloud mount into Jellyfin/Emby/Kodi without copying teraby
 ### 🌐 AI Translation
 
 - One click translates Japanese titles into your UI language.
-- Supports **Ollama** (local, free), **Gemini Flash**, and **OpenAI-compatible endpoints**.
+- Supports **Ollama** (local, free), **Gemini Flash**, **Claude**, and **OpenAI-compatible endpoints**.
 
 ### 🔌 Metatube Federation (Advanced, Optional)
 
@@ -311,7 +311,7 @@ OpenAver/
 │   ├── readonly_producer.py  # Read-only source → NFO/cover/.strm output
 │   ├── path_utils.py   # Cross-platform path handling (file:// URI)
 │   ├── i18n.py         # i18n core (t() / fallback chain)
-│   └── translate_service.py  # AI translation (Ollama/Gemini/OpenAI Compatible)
+│   └── translate_service.py  # AI translation (Ollama/Gemini/Claude/OpenAI Compatible)
 ├── locales/            # 4-locale JSON (zh_TW/zh_CN/ja/en)
 ├── tests/              # Test suite (Pytest)
 └── windows/            # Windows launcher (PyWebView)

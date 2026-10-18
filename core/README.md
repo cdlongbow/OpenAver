@@ -84,6 +84,7 @@ scrapers/
 - `GeminiTranslateService` - Google Gemini API 翻譯。
   - 內建 `safetySettings` (BLOCK_NONE) 避免內容過濾。
   - 批次翻譯改為逐片調用以提高成功率。
+- `ClaudeTranslateService` - Anthropic Claude API 翻譯（請求／回應細節在 `anthropic_client.py`）。
 - 工廠函數 `create_translate_service()` 根據配置創建服務。
 
 ### `version.py`

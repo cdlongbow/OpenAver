@@ -53,6 +53,10 @@
     "gemini": {
       "api_key": "",
       "model": "gemini-flash-lite-latest"
+    },
+    "claude": {
+      "api_key": "",
+      "model": "claude-haiku-5-5"
     }
   },
   "gallery": {
