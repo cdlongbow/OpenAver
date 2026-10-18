@@ -46,7 +46,7 @@ Optionally exports NFO + covers to Jellyfin/Emby/Kodi. AI-operable REST API, 9,0
 | **抓資料的來源** | 同時查 8 家（JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX）；另 2 家需手動驗證；進階接 Metatube 合計 30+ |
 | **給播放軟體用** | 整理時可產出 Jellyfin/Emby/Kodi 要的 NFO 與封面；NAS 上的片不搬也能用 |
 | **AI 操作** | Claude Code/Cursor 等 AI 工具可以直接下指令整理片庫 |
-| **AI 翻譯** | Ollama（本地免費）/Gemini/OpenAI 相容端點 |
+| **AI 翻譯** | Ollama（本地免費）/Gemini/Claude/OpenAI 相容端點 |
 | **授權** | MIT，100% 本機，無帳號、無雲端 |
 
 ## 截圖預覽
@@ -169,7 +169,7 @@ OpenAver 有四個主要頁面：
 ### 🌐 AI 翻譯
 
 - 日文片名一鍵翻成你的介面語言。
-- 支援 **Ollama**（本地免費）、**Gemini Flash**、**OpenAI 相容端點**。
+- 支援 **Ollama**（本地免費）、**Gemini Flash**、**Claude**、**OpenAI 相容端點**。
 
 ### 🔌 Metatube 聯邦（進階選配）
 
@@ -311,7 +311,7 @@ OpenAver/
 │   ├── readonly_producer.py  # 唯讀來源 → NFO/封面/.strm 輸出
 │   ├── path_utils.py   # 跨平台路徑處理 (file:// URI)
 │   ├── i18n.py         # 多語系翻譯核心 (t() / fallback chain)
-│   └── translate_service.py  # AI 翻譯 (Ollama/Gemini/OpenAI Compatible)
+│   └── translate_service.py  # AI 翻譯 (Ollama/Gemini/Claude/OpenAI Compatible)
 ├── locales/            # 四語系 JSON (zh_TW/zh_CN/ja/en)
 ├── tests/              # 測試代碼 (Pytest)
 └── windows/            # Windows 啟動器 (PyWebView)
