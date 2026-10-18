@@ -25,6 +25,12 @@ from typing import List, Dict, Optional
 import httpx
 import re
 
+from core.anthropic_client import (
+    DEFAULT_CLAUDE_MODEL,
+    AnthropicError,
+    request_translation,
+)
+
 
 # ============ 語言 Prompt 模板 ============
 
@@ -443,6 +449,74 @@ class OpenAICompatibleTranslateService(TranslateService):
         return results
 
 
+def build_cloud_translate_prompt(title: str, target_language: str) -> str:
+    """組出與現行 Gemini／OpenAI 逐字相同的雲端翻譯 prompt。"""
+    lang_data = LANGUAGE_PROMPTS.get(target_language, LANGUAGE_PROMPTS["zh-TW"])
+    instruction = lang_data["gemini_instruction"]
+    rules = lang_data["gemini_rules"]
+    return f"""你是專業的影視資料庫管理員與翻譯引擎。這是既有日文文字的逐字翻譯任務，{instruction}。
+
+原文：
+{title}
+
+翻譯要求：
+{rules}
+"""
+
+
+class ClaudeTranslateService(TranslateService):
+    """Anthropic Claude Messages API 翻譯服務"""
+
+    def __init__(self, config: Dict, target_language: str = "zh-TW"):
+        """
+        Args:
+            config: Claude 配置字典
+                {
+                    "api_key": "sk-ant-...",
+                    "model": "claude-haiku-5-5"
+                }
+            target_language: 目標語言代碼（zh-TW / zh-CN / en / ja）
+        """
+        self.api_key = config.get("api_key", "")
+        self.model = config.get("model") or DEFAULT_CLAUDE_MODEL
+        self.target_language = target_language
+
+        if not self.api_key:
+            raise ValueError("Claude API Key is required")
+
+    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；ja 短路；AnthropicError／其他例外回空字串。"""
+        if self.target_language == "ja":
+            return title
+
+        prompt = build_cloud_translate_prompt(title, self.target_language)
+
+        try:
+            return await request_translation(
+                self.api_key,
+                self.model,
+                prompt,
+                timeout=30,
+            )
+        except AnthropicError:
+            return ""
+        except Exception as e:
+            logger.error("[Claude] Single translation failed: %s", e)
+            return ""
+
+    async def translate_batch(self, titles: List[str], context: Optional[Dict] = None) -> List[str]:
+        """批次翻譯 - 逐片呼叫 translate_single。"""
+        if not titles:
+            return []
+
+        results = []
+        for title in titles:
+            result = await self.translate_single(title, context)
+            results.append(result)
+
+        return results
+
+
 def create_translate_service(config: Dict, target_language: str = "zh-TW") -> TranslateService:
     """
     創建翻譯服務實例（工廠函數）
@@ -450,9 +524,10 @@ def create_translate_service(config: Dict, target_language: str = "zh-TW") -> Tr
     Args:
         config: translate 配置字典
             {
-                "provider": "ollama" | "gemini" | "openai",
+                "provider": "ollama" | "gemini" | "openai" | "claude",
                 "ollama": {...},
                 "gemini": {...},
+                "claude": {...},
                 "openai": {...}
             }
         target_language: 目標語言代碼（zh-TW / zh-CN / en / ja），預設 zh-TW
@@ -476,6 +551,10 @@ def create_translate_service(config: Dict, target_language: str = "zh-TW") -> Tr
     elif provider == "openai":
         openai_config = config.get("openai", {})
         return OpenAICompatibleTranslateService(openai_config, target_language)
+
+    elif provider == "claude":
+        claude_config = config.get("claude", {})
+        return ClaudeTranslateService(claude_config, target_language)
 
     else:
         raise ValueError(f"Unknown translate provider: {provider}")
