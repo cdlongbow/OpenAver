@@ -48,12 +48,15 @@ def extract_text(data: dict) -> str:
         message = {}
 
     finish_reason = choice.get("finish_reason")
-    if finish_reason == "content_filter":
-        raise build_error(TAG, "blocked", None, "content_filter", "finish_reason=content_filter")
+    if finish_reason in ("content_filter", "refusal"):
+        raise build_error(TAG, "blocked", None, str(finish_reason), f"finish_reason={finish_reason}")
     if message.get("refusal"):
         raise build_error(TAG, "blocked", None, "refusal", "message.refusal present")
     if finish_reason == "length":
         raise build_error(TAG, "truncated", None, "length", "finish_reason=length")
+    if finish_reason not in (None, "", "stop"):
+        # fail-closed：未知終止原因（error／insufficient_system_resource…）帶部分內容不得當成功
+        raise build_error(TAG, "truncated", None, str(finish_reason), f"finish_reason={finish_reason}")
 
     content = message.get("content")
     text = content.strip() if isinstance(content, str) else ""

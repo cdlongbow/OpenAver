@@ -93,6 +93,13 @@ def test_max_tokens_is_truncated():
     assert ei.value.kind == "truncated"
 
 
+def test_unknown_finish_reason_with_partial_text_is_truncated():
+    """整理流程撞到服務商中途停筆（RECITATION 等）→ 半截片名不得寫進資料夾名與 NFO。"""
+    with pytest.raises(TranslateError) as ei:
+        extract_text(_cand([{"text": "半句"}], finish="RECITATION"))
+    assert ei.value.kind == "truncated"
+
+
 def test_prohibited_content_is_blocked():
     with pytest.raises(TranslateError) as ei:
         extract_text({"candidates": [{"finishReason": "PROHIBITED_CONTENT"}]})

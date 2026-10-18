@@ -58,6 +58,9 @@ def extract_text(data: dict) -> str:
         raise build_error(TAG, "blocked", None, str(finish_reason), f"finishReason={finish_reason}")
     if finish_reason == "MAX_TOKENS":
         raise build_error(TAG, "truncated", None, "MAX_TOKENS", "finishReason=MAX_TOKENS")
+    if finish_reason not in (None, "", "STOP"):
+        # fail-closed：未知終止原因（RECITATION／OTHER…）帶部分文字不得當成功
+        raise build_error(TAG, "truncated", None, str(finish_reason), f"finishReason={finish_reason}")
 
     content = cand.get("content")
     parts = content.get("parts") if isinstance(content, dict) else None

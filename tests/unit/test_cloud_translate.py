@@ -102,6 +102,20 @@ async def test_cloud_request_illegal_key_no_leak(caplog):
 
 
 @pytest.mark.asyncio
+async def test_cloud_request_non_ascii_key_is_auth_failed(caplog):
+    """使用者貼進全形字金鑰 → 歸「認證失敗」而非例外穿出；金鑰不進訊息／log。"""
+    post = AsyncMock(side_effect=UnicodeEncodeError("ascii", "ＡKEY", 0, 1, "ordinal not in range"))
+    cm, _ = _mock_client(post=post)
+    with patch("core.cloud_translate.httpx.AsyncClient", return_value=cm):
+        with pytest.raises(TranslateError) as ei:
+            await cloud_request("T", "post", "https://x", headers={}, timeout=1, json={})
+    e = ei.value
+    assert e.kind == "auth_failed"
+    assert "ＡKEY" not in e.message
+    assert "ＡKEY" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_cloud_request_timeout():
     cm, _ = _mock_client(post=AsyncMock(side_effect=httpx.ReadTimeout("slow")))
     with patch("core.cloud_translate.httpx.AsyncClient", return_value=cm):

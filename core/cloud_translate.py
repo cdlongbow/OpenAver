@@ -18,7 +18,7 @@ from core.logger import get_logger
 logger = get_logger(__name__)
 
 CLOUD_TRANSLATE_TIMEOUT = 60
-_ILLEGAL_KEY_MESSAGE = "API Key contains illegal characters (whitespace/newline)"
+_ILLEGAL_KEY_MESSAGE = "API Key contains illegal characters (whitespace/newline/non-ascii)"
 _MESSAGE_LIMIT = 300
 _MAX_CLEAN_PASSES = 10
 
@@ -123,8 +123,8 @@ async def cloud_request(
             return await client.get(url, headers=headers, params=params)
     except httpx.TimeoutException as e:
         raise build_error(tag, "connection_timeout", None, "", str(e)) from e
-    except httpx.LocalProtocolError:
-        # 金鑰含空白／換行 → h11 拒送；str(e) 內含金鑰，絕不可進 message／log
+    except (httpx.LocalProtocolError, UnicodeEncodeError):
+        # 金鑰含空白／換行／非 ASCII → h11／httpx 拒送；str(e) 內含金鑰，絕不可進 message／log
         raise build_error(
             tag, "auth_failed", None, "invalid_api_key_format", _ILLEGAL_KEY_MESSAGE
         ) from None

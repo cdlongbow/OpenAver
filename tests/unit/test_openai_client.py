@@ -95,6 +95,13 @@ def test_length_is_truncated():
     assert ei.value.kind == "truncated"
 
 
+def test_unknown_finish_reason_with_partial_text_is_truncated():
+    """整理流程撞到服務商中途停筆（error 等）→ 半截片名不得寫進資料夾名與 NFO。"""
+    with pytest.raises(TranslateError) as ei:
+        extract_text(_choice("半句", finish="error"))
+    assert ei.value.kind == "truncated"
+
+
 def test_content_filter_is_blocked():
     with pytest.raises(TranslateError) as ei:
         extract_text(_choice("x", finish="content_filter"))
