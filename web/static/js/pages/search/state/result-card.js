@@ -3,6 +3,7 @@
  * 包含：結果卡片顯示、編輯、翻譯、標籤、本地狀態
  */
 import { openLocal } from '@/shared/open-local.js';
+import { isCloudTranslateProvider } from '@/shared/translate-provider.js';
 
 // TASK-106-T3 CD-106-8: 純函式，module-level named export（非 this.-bound method）
 // 三分隔符 `、`/`，`（U+FF0C 全形逗號）/`,`，對齊 core/scrapers/actress/wiki_ja.py:108 先例。
@@ -228,12 +229,12 @@ export function searchStateResultCard() {
 
     /**
      * 核心翻譯邏輯（從 core.js._translateWithAI 搬移）
-     * Gemini 模式：只翻譯當前片
+     * 雲端模式（Gemini／OpenAI／Claude）：只翻譯當前片
      * Ollama 模式：批次翻譯從當前位置開始的 1 片
      */
     async _translateWithAILogic() {
-        // === Gemini 模式：只翻譯當前片 ===
-        if (this.appConfig?.translate?.provider === 'gemini') {
+        // === 雲端模式（Gemini／OpenAI／Claude）：只翻譯當前片 ===
+        if (isCloudTranslateProvider(this.appConfig?.translate?.provider)) {
             let currentResult = null;
 
             if (this.listMode === 'file' && this.fileList[this.currentFileIndex]) {
@@ -259,7 +260,7 @@ export function searchStateResultCard() {
                 throw new Error(result.error || window.t('search.error.translate_failed_generic'));
             }
 
-            return;  // Gemini 模式結束
+            return;  // 雲端模式結束
         }
 
         // === Ollama 模式：批次翻譯 1 片 ===
