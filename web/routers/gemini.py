@@ -8,7 +8,9 @@ Gemini API 路由 - 提供測試和模型查詢功能
 from core.logger import get_logger
 from core.config import load_config
 from core.secret_fields import read_secret, resolve_secret
-from core.translate_service import LANGUAGE_PROMPTS
+from core.cloud_translate import CLOUD_TRANSLATE_TIMEOUT, TranslateError, settings_error_key
+from core.gemini_client import request_translation
+from core.translate_service import build_cloud_translate_prompt
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -58,7 +60,7 @@ class TestTranslateResponse(BaseModel):
     """測試翻譯響應"""
     success: bool
     translation: str = ""
-    error: str = ""  # Google 的原始錯誤訊息
+    error: str = ""  # error key（settings.status.gemini_<key>）
 
 
 @router.post("/test", response_model=TestResponse)
@@ -157,100 +159,32 @@ async def test_gemini_connection(request: TestRequest):
 
 @router.post("/test-translate", response_model=TestTranslateResponse)
 async def test_gemini_translate(request: TestTranslateRequest):
-    """
-    測試 Gemini 實際翻譯功能
-
-    使用安全的測試標題驗證翻譯能力，並返回 Google 的實際錯誤訊息
-
-    Args:
-        request: 包含 API Key 和 Model 的請求
-
-    Returns:
-        TestTranslateResponse: 包含翻譯結果或 Google 的錯誤訊息
-    """
-    if not request.api_key:
-        raise HTTPException(status_code=400, detail="API Key is required")
-
-    # 使用安全的測試標題（不會觸發內容過濾）
-    test_title = "新人女優デビュー"
-
+    """測試 Gemini 翻譯；與搜尋頁真翻譯共用 request_translation 路徑。"""
     config = await asyncio.to_thread(load_config)
     key = resolve_secret(request.api_key, read_secret(config, "translate.gemini.api_key"))
+
+    if not key:
+        return TestTranslateResponse(success=False, error="missing_key")
+
     locale = config.get("general", {}).get("locale", "zh-TW")
-    lang_config = LANGUAGE_PROMPTS.get(locale, LANGUAGE_PROMPTS["zh-TW"])
-    lang_name = lang_config["name"]
+    if locale == "ja":
+        return TestTranslateResponse(success=True, translation="ja_skip")
+
+    # 安全的測試標題（不會觸發內容過濾）
+    test_title = "新人女優デビュー"
+    prompt = build_cloud_translate_prompt(test_title, locale)
 
     try:
-        # 構建翻譯請求
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{request.model}:generateContent"
-        headers = {"x-goog-api-key": key}
-        payload = {
-            "contents": [{"parts": [{"text": f"請將以下日文翻譯成{lang_name}：{test_title}"}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "maxOutputTokens": 50
-            }
-        }
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-
-        data = response.json()
-
-        # 檢查響應結構
-        if "candidates" in data and data["candidates"]:
-            # 成功
-            translation = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return TestTranslateResponse(
-                success=True,
-                translation=translation
-            )
-
-        elif "error" in data:
-            # API 錯誤（返回 Google 的原始錯誤訊息）
-            error_msg = data["error"].get("message", "Unknown error")
-            return TestTranslateResponse(
-                success=False,
-                error=error_msg
-            )
-
-        elif "promptFeedback" in data:
-            # 內容過濾
-            block_reason = data.get("promptFeedback", {}).get("blockReason", "UNKNOWN")
-            return TestTranslateResponse(
-                success=False,
-                error=f"內容被過濾: {block_reason}"
-            )
-
-        else:
-            # 未知響應格式
-            return TestTranslateResponse(
-                success=False,
-                error="未知的響應格式"
-            )
-
-    except httpx.HTTPStatusError as e:
-        # HTTP 錯誤
-        try:
-            error_data = e.response.json()
-            error_msg = error_data.get("error", {}).get("message", f"HTTP {e.response.status_code}")
-        except Exception:
-            error_msg = f"HTTP {e.response.status_code}"
-
+        translation = await request_translation(
+            key, request.model, prompt, timeout=CLOUD_TRANSLATE_TIMEOUT
+        )
+        return TestTranslateResponse(success=True, translation=translation)
+    except TranslateError as e:
         return TestTranslateResponse(
             success=False,
-            error=error_msg
+            error=settings_error_key(e.kind),
         )
-
-    except httpx.TimeoutException:
-        return TestTranslateResponse(
-            success=False,
-            error="連接超時（10秒）"
-        )
-
     except Exception as e:
-        logger.error("測試 Gemini 翻譯失敗: %s", e)
-        return TestTranslateResponse(
-            success=False,
-            error="測試 Gemini 翻譯失敗"
-        )
+        # 不記 str(e)：例外訊息可能夾帶金鑰
+        logger.error("[Gemini] 測試翻譯失敗: %s", type(e).__name__)
+        return TestTranslateResponse(success=False, error="translate_failed")

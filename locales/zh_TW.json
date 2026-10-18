@@ -779,6 +779,16 @@
       "claude_missing_model": "請先選擇模型",
       "claude_translate_failed": "翻譯測試失敗",
       "claude_blocked": "這個測試片名被服務商的內容審查擋下了；換模型通常沒用，可改用其他翻譯服務",
+      "gemini_auth_failed": "認證失敗，請檢查 API Key",
+      "gemini_missing_key": "認證失敗，請檢查 API Key",
+      "gemini_forbidden": "無存取權限",
+      "gemini_not_found": "模型不存在，請按『測試』重新選擇",
+      "gemini_rate_limited": "額度不足或請求太頻繁",
+      "gemini_connection_failed": "連線失敗",
+      "gemini_connection_timeout": "連線逾時",
+      "gemini_http_error": "HTTP 請求失敗",
+      "gemini_translate_failed": "翻譯測試失敗",
+      "gemini_blocked": "這個測試片名被服務商的內容審查擋下了；換模型通常沒用，可改用其他翻譯服務",
       "ja_skip": "日文模式：跳過翻譯"
     }
   },

@@ -195,12 +195,22 @@ export function stateProviders() {
                 const data = await response.json();
 
                 if (data.success) {
-                    this.geminiModelStatus = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${window.t('settings.status.translation_success', {translation: data.translation})}</span>`;
+                    const escapeHtml = (text) => {
+                        const div = document.createElement('div');
+                        div.textContent = text;
+                        return div.innerHTML;
+                    };
+                    if (data.translation === 'ja_skip') {
+                        this.geminiModelStatus = `<span class="text-info"><i class="bi bi-info-circle"></i> ${window.t('settings.status.ja_skip')}</span>`;
+                    } else {
+                        this.geminiModelStatus = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${window.t('settings.status.translation_success', {translation: escapeHtml(data.translation)})}</span>`;
+                    }
                 } else {
-                    this.geminiModelStatus = `<span class="text-error"><i class="bi bi-exclamation-triangle-fill"></i> ${data.error}</span>`;
+                    const errorKey = `settings.status.gemini_${data.error || 'translate_failed'}`;
+                    this.geminiModelStatus = `<span class="text-error"><i class="bi bi-exclamation-triangle-fill"></i> ${window.t(errorKey)}</span>`;
                 }
             } catch (error) {
-                this.geminiModelStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.test_failed', {msg: error.message})}</span>`;
+                this.geminiModelStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${window.t('settings.status.gemini_translate_failed')}</span>`;
             } finally {
                 this.testGeminiTranslateLoading = false;
             }
