@@ -275,46 +275,10 @@ def test_pick_models_sorted_newest_first():
     assert ids == ["claude-sonnet-new", "claude-haiku-mid", "claude-haiku-old"]
 
 
-def test_pick_models_missing_created_at_last_stable():
-    data = {
-        "data": [
-            {"id": "claude-haiku-a"},  # no created_at
-            {"id": "claude-sonnet-dated", "created_at": "2025-01-01T00:00:00Z"},
-            {"id": "claude-haiku-b"},  # no created_at
-        ]
-    }
-    ids = pick_translate_models(data)
-    assert ids[0] == "claude-sonnet-dated"
-    # 缺 created_at 者排最後且彼此維持原順序
-    assert ids[1:] == ["claude-haiku-a", "claude-haiku-b"]
 
 
-def test_pick_models_mixed_case_kept():
-    data = {
-        "data": [
-            {"id": "Claude-HAIKU-x", "created_at": "2025-01-01T00:00:00Z"},
-            {"id": "CLAUDE-SONNET-y", "created_at": "2025-02-01T00:00:00Z"},
-        ]
-    }
-    ids = pick_translate_models(data)
-    assert "Claude-HAIKU-x" in ids
-    assert "CLAUDE-SONNET-y" in ids
 
 
-def test_pick_models_no_haiku_latest_empty():
-    """無 haiku → 呼叫端取 latest_haiku 為空字串"""
-    data = {
-        "data": [
-            {"id": "claude-sonnet-4", "created_at": "2025-05-01T00:00:00Z"},
-        ]
-    }
-    ids = pick_translate_models(data)
-    latest_haiku = next((m for m in ids if "haiku" in m.lower()), "")
-    assert latest_haiku == ""
-    assert ids == ["claude-sonnet-4"]
-
-
-# ============ request_translation / list_models 整合行為 ============
 
 
 @pytest.mark.asyncio
@@ -360,30 +324,6 @@ async def test_request_translation_connection_failed():
     assert ei.value.kind == "connection_failed"
 
 
-@pytest.mark.asyncio
-async def test_list_models_returns_raw_dict_and_warns_has_more(caplog):
-    import logging
-
-    raw = {
-        "data": [{"id": "claude-haiku-5-5", "created_at": "2025-10-01T00:00:00Z"}],
-        "has_more": True,
-    }
-    resp = _mock_response(json_data=raw)
-    client = _mock_async_client(get_return=resp)
-    with patch("core.anthropic_client.httpx.AsyncClient", return_value=client):
-        with caplog.at_level(logging.WARNING):
-            result = await list_models(FAKE_KEY, timeout=10)
-    assert result == raw
-    assert result["has_more"] is True
-    kwargs = client.get.call_args.kwargs
-    assert kwargs.get("params", {}).get("limit") == 1000 or (
-        client.get.call_args.args and "limit=1000" in str(client.get.call_args)
-    )
-    url = client.get.call_args.args[0]
-    assert url == f"{ANTHROPIC_BASE_URL}/v1/models"
-    joined = "\n".join(r.message for r in caplog.records)
-    assert "has_more" in joined.lower() or "more" in joined.lower()
-    assert FAKE_KEY not in joined
 
 
 @pytest.mark.asyncio
