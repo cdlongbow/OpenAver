@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from core.cloud_translate import TranslateError, finalize_translation
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,21 +23,8 @@ MAX_TOKENS = 1024
 _ILLEGAL_KEY_MESSAGE = "API Key contains illegal characters (whitespace/newline)"
 
 
-class AnthropicError(Exception):
+class AnthropicError(TranslateError):
     """Anthropic API 失敗（HTTP／連線／回應判定）。"""
-
-    def __init__(
-        self,
-        kind: str,
-        status: int | None,
-        error_type: str,
-        message: str,
-    ) -> None:
-        self.kind = kind
-        self.status = status
-        self.error_type = error_type
-        self.message = message
-        super().__init__(message)
 
 
 def _log_and_build_error(
@@ -93,7 +81,10 @@ def extract_text(data: dict) -> str:
     text = "".join(parts).strip()
     if not text:
         raise _log_and_build_error("empty_response", None, "", "empty text content")
-    return text
+    try:
+        return finalize_translation("Claude", text)
+    except TranslateError as e:
+        raise AnthropicError(e.kind, e.status, e.error_type, e.message) from None
 
 
 def classify_http_error(resp: httpx.Response) -> AnthropicError:

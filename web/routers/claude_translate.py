@@ -21,6 +21,7 @@ from core.anthropic_client import (
     pick_translate_models,
     request_translation,
 )
+from core.cloud_translate import settings_error_key
 from core.config import load_config
 from core.logger import get_logger
 from core.secret_fields import read_secret, resolve_secret
@@ -29,22 +30,6 @@ from core.translate_service import build_cloud_translate_prompt
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/claude", tags=["claude"])
-
-# CD-170-5：AnthropicError.kind → 前端 error key（每個 kind 一行；未知退 translate_failed）
-ERROR_KIND_MAP = {
-    "auth_failed": "auth_failed",
-    "forbidden": "forbidden",
-    "not_found": "not_found",
-    "rate_limited": "rate_limited",
-    "connection_timeout": "connection_timeout",
-    "connection_failed": "connection_failed",
-    "http_error": "http_error",
-    "refused": "translate_failed",
-    "truncated": "translate_failed",
-    "empty_response": "translate_failed",
-    "api_error": "translate_failed",
-}
-
 
 class ModelsRequest(BaseModel):
     api_key: str = ""
@@ -67,10 +52,6 @@ class TestTranslateResponse(BaseModel):
     success: bool
     translation: str = ""
     error: str = ""
-
-
-def _map_error_kind(kind: str) -> str:
-    return ERROR_KIND_MAP.get(kind, "translate_failed")
 
 
 def _resolve_claude_key(request_key: str, config: dict) -> str:
@@ -105,7 +86,7 @@ async def fetch_claude_models(request: ModelsRequest):
         return ModelsResponse(
             success=False,
             default_model=default_model,
-            error=_map_error_kind(e.kind),
+            error=settings_error_key(e.kind),
         )
     except Exception:
         logger.error("[Claude] 查詢模型列表失敗", exc_info=True)
@@ -143,7 +124,7 @@ async def test_claude_translate(request: TestTranslateRequest):
     except AnthropicError as e:
         return TestTranslateResponse(
             success=False,
-            error=_map_error_kind(e.kind),
+            error=settings_error_key(e.kind),
         )
     except Exception:
         logger.error("[Claude] 測試翻譯失敗", exc_info=True)
