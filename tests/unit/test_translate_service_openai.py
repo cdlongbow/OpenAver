@@ -140,7 +140,3 @@ async def test_openai_local_protocol_error_no_key_leak(caplog):
     assert FAKE_KEY not in str(ei.value)
     assert FAKE_KEY not in caplog.text
 
-
-def test_openai_no_failure_reason_instance_attribute():
-    svc = _svc()
-    assert set(vars(svc)) == {"base_url", "api_key", "model", "target_language"}

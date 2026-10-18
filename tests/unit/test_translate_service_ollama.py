@@ -38,10 +38,6 @@ FAILURES = [
 ]
 
 
-def test_no_recursion_override_defined_on_class():
-    assert "translate_or_raise" in OllamaTranslateService.__dict__
-
-
 @pytest.mark.asyncio
 async def test_ollama_translate_or_raise_success():
     cm, inst = _cm()

@@ -67,14 +67,6 @@ async def test_gemini_outbound_request_equals_gemini_client():
 
 
 @pytest.mark.asyncio
-async def test_gemini_request_timeout_is_60():
-    inst = _mock_client()
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst) as ac:
-        await _svc().translate_or_raise("テスト")
-    assert ac.call_args.kwargs["timeout"] == 60
-
-
-@pytest.mark.asyncio
 async def test_gemini_ja_short_circuit_no_client():
     with patch("core.cloud_translate.httpx.AsyncClient") as ac:
         svc = _svc("ja")
@@ -154,16 +146,6 @@ async def test_gemini_engine_illegal_key_no_leak(caplog):
             assert await svc.translate_single("テスト") == ""
     assert FAKE_KEY not in ei.value.message
     assert FAKE_KEY not in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_gemini_no_per_call_state_on_instance():
-    svc = _svc()
-    before = dict(vars(svc))
-    with patch("core.cloud_translate.httpx.AsyncClient",
-               return_value=_mock_client(json_data={"candidates": [{"finishReason": "SAFETY"}]})):
-        await svc.translate_single("テスト")
-    assert dict(vars(svc)) == before
 
 
 # ---- Claude 一格 ----

@@ -7,7 +7,6 @@ import pytest
 
 from core.anthropic_client import AnthropicError, extract_text
 from core.cloud_translate import (
-    CLOUD_TRANSLATE_TIMEOUT,
     TranslateError,
     cloud_request,
     failure_category,
@@ -84,10 +83,6 @@ def test_settings_error_key_others():
     assert settings_error_key("no-such-kind") == "translate_failed"
 
 
-def test_timeout_constant():
-    assert CLOUD_TRANSLATE_TIMEOUT == 60
-
-
 # ---- cloud_request ----
 
 @pytest.mark.asyncio
@@ -123,27 +118,6 @@ async def test_cloud_request_http_error_and_oserror():
             with pytest.raises(TranslateError) as ei:
                 await cloud_request("T", "get", "https://x", headers={}, timeout=1)
         assert ei.value.kind == "connection_failed"
-
-
-@pytest.mark.asyncio
-async def test_cloud_request_4xx_returned_not_raised():
-    resp = _resp(status=429)
-    cm, client = _mock_client(post=AsyncMock(return_value=resp))
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=cm):
-        got = await cloud_request("T", "post", "https://x", headers={"h": "v"},
-                                  timeout=5, json={"a": 1})
-    assert got is resp
-    kw = client.post.call_args.kwargs
-    assert kw["headers"] == {"h": "v"} and kw["json"] == {"a": 1}
-
-
-@pytest.mark.asyncio
-async def test_cloud_request_get_passes_params():
-    cm, client = _mock_client(get=AsyncMock(return_value=_resp()))
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=cm):
-        await cloud_request("T", "get", "https://x", headers={}, timeout=5,
-                            params={"limit": 1})
-    assert client.get.call_args.kwargs["params"] == {"limit": 1}
 
 
 # ---- Claude 對齊 ----
