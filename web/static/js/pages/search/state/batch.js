@@ -2,7 +2,7 @@
  * SearchState - Batch Mixin
  * 包含：批次操作（searchAll, scrapeAll, scrapeSingle）
  */
-import { isCloudTranslateProvider } from '../../../shared/translate-provider.js';
+import { isCloudTranslateProvider, translateAllSummary } from '../../../shared/translate-provider.js';
 
 // T4: 追蹤正在批次翻譯的片索引（從 core.js 搬移）
 const batchTranslatingIndices = new Set();
@@ -324,6 +324,8 @@ export function searchStateBatch() {
 
         const isCloud = isCloudTranslateProvider(this.appConfig?.translate?.provider);
         let aborted = false;
+        let blocked = 0;
+        let limited = 0;
 
         for (const result of translatableResults) {
             if (ts.isPaused) {
@@ -358,6 +360,8 @@ export function searchStateBatch() {
                     ts.success++;
                 } else {
                     ts.failed++;
+                    if (data.reason === 'blocked') blocked++;
+                    else if (data.reason === 'rate_limited') limited++;
                 }
             } catch (err) {
                 if (err.name === 'AbortError') { aborted = true; break; }  // T4.3: 離頁 abort → 結束 loop
@@ -375,7 +379,7 @@ export function searchStateBatch() {
         ts.isProcessing = false;
         ts.isPaused = false;
         if (!aborted) {  // T4.3: abort 時不顯示 toast（DOM 可能已不可用）
-            this.showToast(window.t('search.toast.translate_batch_done', { success: ts.success, failed: ts.failed }), ts.failed > 0 ? 'warning' : 'success');
+            this.showToast(translateAllSummary((k, p) => window.t(k, p), { success: ts.success, failed: ts.failed, blocked, limited }), ts.failed > 0 ? 'warning' : 'success');
         }
         ts.total = 0;
     },
