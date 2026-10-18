@@ -9,10 +9,11 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-# CD-114c-1: three opaque secrets. Single inventory for render_config_secrets.
+# CD-114c-1: four opaque secrets. Single inventory for render_config_secrets.
 SECRET_FIELDS: tuple[str, ...] = (
     "translate.gemini.api_key",
     "translate.openai.api_key",
+    "translate.claude.api_key",
     "metatube.token",
 )
 

@@ -133,6 +133,12 @@ class OpenAIConfig(BaseModel):
     use_custom_model: bool = False
 
 
+class ClaudeConfig(BaseModel):
+    """串接結構：Claude 配置"""
+    api_key: str = ""
+    model: str = "claude-haiku-5-5"
+
+
 class MetatubeConfig(BaseModel):
     """串接結構：Metatube HTTP server 配置（CD-63b-3）"""
     enabled: bool = False  # 使用者在 Settings › Advanced 啟用 metatube（CD-63b-3）
@@ -143,13 +149,14 @@ class MetatubeConfig(BaseModel):
 
 class TranslateConfig(BaseModel):
     enabled: bool = False
-    provider: str = "ollama"  # "ollama" | "gemini" | "openai"
+    provider: str = "ollama"  # "ollama" | "gemini" | "openai" | "claude"
     batch_size: int = 10  # 批次翻譯大小
 
     # 嵌套結構
     ollama: OllamaConfig = OllamaConfig()
     gemini: GeminiConfig = GeminiConfig()
     openai: OpenAIConfig = OpenAIConfig()
+    claude: ClaudeConfig = ClaudeConfig()
 
     # 舊字段（保留向後兼容）
     ollama_url: Optional[str] = None
@@ -438,6 +445,15 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
                 }
                 need_save = True
                 logger.info("[Config] 遷移配置：添加 OpenAI Compatible 支持")
+
+            # TASK-170-T2：確保 claude 嵌套存在（Claude 支援遷移）
+            if 'claude' not in t:
+                t['claude'] = {
+                    'api_key': '',
+                    'model': 'claude-haiku-5-5'
+                }
+                need_save = True
+                logger.info("[Config] 遷移配置：添加 Claude 支持")
 
         # Migration: folder_format → folder_layers（舊版只存 folder_format）
         s = raw_config.get('scraper', {})

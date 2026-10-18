@@ -901,6 +901,103 @@ class TestMigrationOpenAI:
             "use_custom_model=True 應能從 config 正確讀回，否則重載後 custom 模式丟失"
 
 
+# ============ test_migration_claude ============
+
+class TestMigrationClaude:
+    """Claude 嵌套補齊 migration 與預設值對帳（TASK-170-T2）"""
+
+    def test_translate_claude_nest_added_when_missing(self, tmp_path, monkeypatch):
+        """舊檔 translate 缺 claude → 載入後補入預設值並落盤"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "translate": {
+                "enabled": True,
+                "provider": "ollama",
+            }
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert "claude" in result["translate"], "translate 應補齊 claude 嵌套"
+        claude = result["translate"]["claude"]
+        assert claude["api_key"] == ""
+        assert claude["model"] == "claude-haiku-5-5"
+
+        # 驗證落盤
+        disk_data = _read_config(config_path)
+        assert "claude" in disk_data["translate"], "磁碟上的 translate 應補齊 claude 嵌套"
+        assert disk_data["translate"]["claude"] == {
+            "api_key": "",
+            "model": "claude-haiku-5-5",
+        }
+
+    def test_translate_claude_not_overwrite_existing(self, tmp_path, monkeypatch):
+        """舊檔已有 claude 設定 → 載入後不覆蓋用戶設定"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "translate": {
+                "enabled": True,
+                "provider": "claude",
+                "claude": {
+                    "api_key": "sk-ant-test",
+                    "model": "claude-3-7-sonnet",
+                }
+            }
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        claude = result["translate"]["claude"]
+        assert claude["api_key"] == "sk-ant-test"
+        assert claude["model"] == "claude-3-7-sonnet"
+
+    def test_translate_claude_migration_preserves_provider(self, tmp_path, monkeypatch):
+        """舊檔 provider 為 openai → migration 後 provider 仍為 openai"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "translate": {
+                "enabled": True,
+                "provider": "openai",
+            }
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["translate"]["provider"] == "openai"
+        assert "claude" in result["translate"]
+
+    def test_claude_default_values_reconciliation(self, tmp_path, monkeypatch):
+        """對帳測試：ClaudeConfig().model、migration 補出的 model、config.default.json 的 model 三者均為 'claude-haiku-5-5'，default.json 的 api_key 為 ''"""
+        ClaudeConfig = getattr(core_config, "ClaudeConfig", None)
+        assert ClaudeConfig is not None, "core.config 應定義 ClaudeConfig"
+
+        # 1. ClaudeConfig().model
+        assert ClaudeConfig().model == "claude-haiku-5-5"
+
+        # 2. migration 補出的 model
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"translate": {"enabled": False}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "non_existent_default.json")
+        migrated = load_config()
+        assert "claude" in migrated["translate"]
+        assert migrated["translate"]["claude"]["model"] == "claude-haiku-5-5"
+
+        # 3. web/config.default.json 的 translate.claude
+        default_path = Path(__file__).resolve().parents[2] / "web" / "config.default.json"
+        with open(default_path, "r", encoding="utf-8") as f:
+            default_json = json.load(f)
+        assert "claude" in default_json["translate"]
+        assert default_json["translate"]["claude"]["model"] == "claude-haiku-5-5"
+        assert default_json["translate"]["claude"]["api_key"] == ""
+
+
 # ============ test_migration_sources ============
 
 class TestMigrationSources:
@@ -1187,7 +1284,7 @@ class TestMutateConfigAndAtomicWrite:
 
     def test_mutate_config_no_lost_update(self, tmp_path, monkeypatch):
         """兩次序列 mutate_config（不同欄位）→ 兩者皆持久化（RMW 在單一 critical section）。"""
-        config_path = self._patch_paths(tmp_path, monkeypatch)
+        self._patch_paths(tmp_path, monkeypatch)
         save_config({"general": {}})
 
         core_config.mutate_config(
