@@ -81,7 +81,7 @@ async def test_gemini_connection(request: TestRequest):
         raise HTTPException(status_code=400, detail="API Key is required")
 
     config = await asyncio.to_thread(load_config)
-    key = resolve_secret(request.api_key, read_secret(config, "translate.gemini.api_key"))
+    key = resolve_secret(request.api_key, read_secret(config, "translate.gemini.api_key")).strip()
 
     try:
         # 調用 Gemini API 獲取模型列表
@@ -137,6 +137,13 @@ async def test_gemini_connection(request: TestRequest):
         return TestResponse(
             success=False,
             error="Connection timeout"
+        )
+
+    except httpx.LocalProtocolError:
+        # 金鑰含空白／換行 → h11 拒送；str(e) 內含金鑰，不可 log／回傳
+        return TestResponse(
+            success=False,
+            error="Invalid API Key"
         )
 
     except Exception as e:

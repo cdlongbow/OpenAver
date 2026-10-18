@@ -14,6 +14,7 @@ import threading
 import httpx
 
 from core.config import load_config
+from core.cloud_translate import TranslateError, failure_category
 from core.translate_service import create_translate_service
 from core.scrapers.utils import has_japanese
 from core.logger import get_logger
@@ -108,10 +109,10 @@ async def translate_title(request: TranslateRequest) -> dict:
                 "actors": request.actors or [],
                 "number": request.number or ""
             }
-            result = await translate_service.translate_single(request.text, context)
+            result = await translate_service.translate_or_raise(request.text, context)
 
             if not result:
-                return {"success": False, "error": "翻譯結果為空"}
+                return {"success": False, "error": "翻譯結果為空", "reason": "other"}
 
             return {
                 "success": True,
@@ -119,13 +120,15 @@ async def translate_title(request: TranslateRequest) -> dict:
                 "mode": request.mode
             }
 
+        except TranslateError as e:
+            return {"success": False, "error": "翻譯結果為空", "reason": failure_category(e.kind)}
         except ValueError as e:
             # API Key 未設定等配置錯誤
             logger.exception("翻譯設定錯誤: %s", e)
-            return {"success": False, "error": "翻譯設定錯誤，請檢查 API Key 設定"}
+            return {"success": False, "error": "翻譯設定錯誤，請檢查 API Key 設定", "reason": "other"}
         except Exception as e:
             logger.exception("翻譯失敗: %s", e)
-            return {"success": False, "error": "翻譯失敗"}
+            return {"success": False, "error": "翻譯失敗", "reason": "other"}
 
     # === optimize 模式：使用 Ollama 清理標題 ===
     # 兼容嵌套結構和舊扁平結構
