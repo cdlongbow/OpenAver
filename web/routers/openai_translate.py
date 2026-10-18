@@ -9,7 +9,9 @@ OpenAI Compatible API 路由 - 提供模型查詢和翻譯測試功能
 from core.logger import get_logger
 from core.config import load_config
 from core.secret_fields import read_secret, resolve_secret
-from core.translate_service import LANGUAGE_PROMPTS
+from core.translate_service import build_cloud_translate_prompt
+from core.cloud_translate import CLOUD_TRANSLATE_TIMEOUT, TranslateError, settings_error_key
+from core.openai_client import request_translation
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -69,6 +71,7 @@ async def fetch_openai_models(request: ModelsRequest):
 
     config = await asyncio.to_thread(load_config)
     key = resolve_secret(request.api_key, read_secret(config, "translate.openai.api_key"))
+    key = (key or "").strip()
 
     base_url = request.base_url.rstrip("/")
     headers = {}
@@ -104,6 +107,11 @@ async def fetch_openai_models(request: ModelsRequest):
     except httpx.TimeoutException:
         logger.warning("[OpenAI] 查詢模型列表逾時")
         return ModelsResponse(success=False, error="connection_timeout")
+
+    except httpx.LocalProtocolError:
+        # 金鑰含非法字元（如換行）：例外字串會帶出金鑰，不 log、不回傳
+        logger.warning("[OpenAI] API Key 格式不合法")
+        return ModelsResponse(success=False, error="auth_failed")
 
     except Exception as e:
         logger.warning("[OpenAI] 查詢模型列表失敗: %s", e)
@@ -143,75 +151,20 @@ async def test_openai_translate(request: TestTranslateRequest):
             translation="ja_skip"
         )
 
-    lang_data = LANGUAGE_PROMPTS.get(locale, LANGUAGE_PROMPTS["zh-TW"])
-    instruction = lang_data["gemini_instruction"]
-    rules = lang_data["gemini_rules"]
-
-    prompt = f"""你是專業的影視資料庫管理員與翻譯引擎。這是既有日文文字的逐字翻譯任務，{instruction}。
-
-原文：
-{test_title}
-
-翻譯要求：
-{rules}
-"""
-
-    base_url = request.base_url.rstrip("/")
-    headers = {"Content-Type": "application/json"}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-
-    payload = {
-        "model": request.model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_completion_tokens": 100,  # 不用 max_tokens：OpenAI reasoning models（gpt-5.x / o-series）會回 400
-    }
+    prompt = build_cloud_translate_prompt(test_title, locale)
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions",
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-
-        data = response.json()
-
-        choices = data.get("choices")
-        if choices and len(choices) > 0:
-            translation = choices[0]["message"]["content"].strip()
-            if not translation:
-                return TestTranslateResponse(success=False, error="empty_response")
-            return TestTranslateResponse(success=True, translation=translation)
-
-        elif "error" in data:
-            logger.warning("[OpenAI] 測試翻譯 API 回傳錯誤: %s", data["error"])
-            return TestTranslateResponse(success=False, error="api_error")
-
-        else:
-            return TestTranslateResponse(success=False, error="unknown_response_format")
-
-    except httpx.HTTPStatusError as e:
-        sc = e.response.status_code
-        if sc == 401:
-            error_key = "auth_failed"
-        elif sc == 403:
-            error_key = "forbidden"
-        elif sc == 404:
-            error_key = "not_found"
-        elif sc == 429:
-            error_key = "rate_limited"
-        else:
-            error_key = "http_error"
-        logger.warning("[OpenAI] 請求失敗: HTTP %s", sc)
-        return TestTranslateResponse(success=False, error=error_key)
-
-    except httpx.TimeoutException:
-        logger.warning("[OpenAI] 測試翻譯逾時")
-        return TestTranslateResponse(success=False, error="connection_timeout")
-
+        translation = await request_translation(
+            request.base_url,
+            key,
+            request.model,
+            prompt,
+            timeout=CLOUD_TRANSLATE_TIMEOUT,
+        )
+        return TestTranslateResponse(success=True, translation=translation)
+    except TranslateError as e:
+        return TestTranslateResponse(success=False, error=settings_error_key(e.kind))
     except Exception as e:
-        logger.error("[OpenAI] 測試翻譯失敗: %s", e)
+        # 只記型別名：例外字串可能含金鑰
+        logger.error("[OpenAI] 測試翻譯失敗: %s", type(e).__name__)
         return TestTranslateResponse(success=False, error="translate_failed")

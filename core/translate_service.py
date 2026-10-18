@@ -25,7 +25,7 @@ from typing import List, Dict, Optional
 import httpx
 import re
 
-from core import gemini_client
+from core import gemini_client, openai_client
 from core.anthropic_client import (
     DEFAULT_CLAUDE_MODEL,
     request_translation,
@@ -308,59 +308,35 @@ class OpenAICompatibleTranslateService(TranslateService):
         self.model = config.get("model") or "gpt-4o-mini"
         self.target_language = target_language
 
-    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
-        """
-        單片翻譯
-
-        使用 OpenAI Chat Completions API 格式
-        """
+    async def translate_or_raise(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；ja 短路；失敗拋 TranslateError。"""
         # ja 短路：不呼叫 API，直接回傳原文
         if self.target_language == "ja":
             return title
 
-        lang_data = LANGUAGE_PROMPTS.get(self.target_language, LANGUAGE_PROMPTS["zh-TW"])
-        instruction = lang_data["gemini_instruction"]
-        rules = lang_data["gemini_rules"]
-
-        prompt = f"""你是專業的影視資料庫管理員與翻譯引擎。這是既有日文文字的逐字翻譯任務，{instruction}。
-
-原文：
-{title}
-
-翻譯要求：
-{rules}
-"""
-
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "max_completion_tokens": 100,  # 不用 max_tokens：OpenAI reasoning models（gpt-5.x / o-series）會回 400
-        }
+        prompt = build_cloud_translate_prompt(title, self.target_language)
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload
-                )
-                resp.raise_for_status()
-
-            data = resp.json()
-            choices = data.get("choices")
-            if not choices:
-                logger.error("[OpenAI] Response missing 'choices': %s", data)
-                return ""
-            result = choices[0]["message"]["content"].strip()
-            return result
-
+            return await openai_client.request_translation(
+                self.base_url,
+                self.api_key,
+                self.model,
+                prompt,
+                timeout=CLOUD_TRANSLATE_TIMEOUT,
+            )
+        except TranslateError:
+            raise
         except Exception as e:
-            logger.error("[OpenAI] Single translation failed: %s", e)
+            # 只記型別名：例外字串可能含金鑰
+            raise build_error(
+                "OpenAI", "api_error", None, type(e).__name__, "translation request failed"
+            ) from None
+
+    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；任何失敗回空字串。"""
+        try:
+            return await self.translate_or_raise(title, context)
+        except TranslateError:
             return ""
 
     async def translate_batch(self, titles: List[str], context: Optional[Dict] = None) -> List[str]:

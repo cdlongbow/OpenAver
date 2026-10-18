@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,13 +13,18 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from core.translate_service import ClaudeTranslateService, GeminiTranslateService
+from core.translate_service import (
+    ClaudeTranslateService,
+    GeminiTranslateService,
+    OpenAICompatibleTranslateService,
+)
 from web.app import app
 
 client = TestClient(app)
 
 KEY = "PARITY-KEY-aaaa"
 TITLE = "新人女優デビュー"
+BASE = "https://api.example.com/v1"
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,7 @@ class Row:
     config: Callable[[], dict]
     model: str
     success_body: dict
+    extra_body: dict = field(default_factory=dict)  # 端點額外要的 body 欄位
 
 
 ROWS = [
@@ -51,6 +57,18 @@ ROWS = [
         config=lambda: {"general": {"locale": "zh-TW"}, "translate": {"claude": {"api_key": KEY}}},
         model="claude-haiku-5-5",
         success_body={"content": [{"type": "text", "text": "新人女優出道"}], "stop_reason": "end_turn"},
+    ),
+    Row(
+        id="openai",
+        make_service=lambda m, loc: OpenAICompatibleTranslateService(
+            {"base_url": BASE, "api_key": KEY, "model": m}, loc
+        ),
+        endpoint="/api/openai/test",
+        config_target="web.routers.openai_translate.load_config",
+        config=lambda: {"general": {"locale": "zh-TW"}, "translate": {"openai": {"api_key": KEY}}},
+        model="gpt-4o-mini",
+        success_body={"choices": [{"message": {"content": "新人女優出道"}, "finish_reason": "stop"}]},
+        extra_body={"base_url": BASE},
     ),
 ]
 
@@ -87,7 +105,7 @@ async def test_test_button_matches_translate_single(row: Row):
         # TestClient 為同步，放到執行緒避免卡 event loop
         import asyncio
         resp = await asyncio.to_thread(
-            client.post, row.endpoint, json={"api_key": KEY, "model": row.model}
+            client.post, row.endpoint, json={"api_key": KEY, "model": row.model, **row.extra_body}
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is True, resp.json()
@@ -100,3 +118,5 @@ async def test_test_button_matches_translate_single(row: Row):
     if row.id == "gemini":
         assert "safetySettings" in button_sent[2]
         assert "generationConfig" not in button_sent[2]
+    if row.id == "openai":
+        assert set(button_sent[2].keys()) == {"model", "messages"}

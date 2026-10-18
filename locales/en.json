@@ -647,9 +647,7 @@
       "openai_missing_base_url": "Please enter Base URL",
       "openai_missing_model": "Please enter model name",
       "openai_connection_timeout": "Connection timeout",
-      "openai_api_error": "API returned an error",
       "openai_translate_failed": "Translation test failed",
-      "openai_unknown_response_format": "Unknown response format",
       "ja_skip": "Japanese mode: translation skipped"
     }
   },
