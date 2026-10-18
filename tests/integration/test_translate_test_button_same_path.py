@@ -14,8 +14,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.translate_service import (
+    LANGUAGE_PROMPTS,
     ClaudeTranslateService,
     GeminiTranslateService,
+    OllamaTranslateService,
     OpenAICompatibleTranslateService,
 )
 from web.app import app
@@ -25,6 +27,7 @@ client = TestClient(app)
 KEY = "PARITY-KEY-aaaa"
 TITLE = "新人女優デビュー"
 BASE = "https://api.example.com/v1"
+OLLAMA_URL = "http://ollama.test:11434"
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class Row:
     model: str
     success_body: dict
     extra_body: dict = field(default_factory=dict)  # 端點額外要的 body 欄位
+    compare_headers: bool = True  # Ollama 不送 headers
 
 
 ROWS = [
@@ -70,6 +74,17 @@ ROWS = [
         success_body={"choices": [{"message": {"content": "新人女優出道"}, "finish_reason": "stop"}]},
         extra_body={"base_url": BASE},
     ),
+    Row(
+        id="ollama",
+        make_service=lambda m, loc: OllamaTranslateService({"url": OLLAMA_URL, "model": m}, loc),
+        endpoint="/api/ollama/test",
+        config_target="web.routers.config.load_config",
+        config=lambda: {"general": {"locale": "zh-TW"}},
+        model="qwen3:8b",
+        success_body={"message": {"content": "新人女優出道"}},
+        extra_body={"url": OLLAMA_URL},
+        compare_headers=False,
+    ),
 ]
 
 
@@ -86,9 +101,10 @@ def _mock_client(body: dict):
     return cm, mock_client
 
 
-def _sent(mock_post) -> tuple:
+def _sent(mock_post, compare_headers: bool = True) -> tuple:
     c = mock_post.call_args_list[-1]
-    return c.args[0], dict(c.kwargs["headers"]), c.kwargs["json"]
+    headers = dict(c.kwargs["headers"]) if compare_headers else None
+    return c.args[0], headers, c.kwargs["json"]
 
 
 @pytest.mark.parametrize("row", ROWS, ids=[r.id for r in ROWS])
@@ -100,7 +116,7 @@ async def test_test_button_matches_translate_single(row: Row):
         result = await service.translate_single(TITLE)
         assert result, "引擎應回譯文"
         assert mock_client.post.call_count == 1
-        engine_sent = _sent(mock_client.post)
+        engine_sent = _sent(mock_client.post, row.compare_headers)
 
         # TestClient 為同步，放到執行緒避免卡 event loop
         import asyncio
@@ -110,7 +126,7 @@ async def test_test_button_matches_translate_single(row: Row):
         assert resp.status_code == 200
         assert resp.json()["success"] is True, resp.json()
         assert mock_client.post.call_count == 2
-        button_sent = _sent(mock_client.post)
+        button_sent = _sent(mock_client.post, row.compare_headers)
 
     assert button_sent[0] == engine_sent[0]
     assert button_sent[1] == engine_sent[1]
@@ -120,3 +136,25 @@ async def test_test_button_matches_translate_single(row: Row):
         assert "generationConfig" not in button_sent[2]
     if row.id == "openai":
         assert set(button_sent[2].keys()) == {"model", "messages"}
+
+
+async def test_ollama_payload_verbatim():
+    """Ollama 外送參數一字不變（spec §3）：url／json／kwargs key／timeout。"""
+    cm, mock_client = _mock_client({"message": {"content": "新人女優出道"}})
+    lang = LANGUAGE_PROMPTS["zh-TW"]
+    with patch("core.cloud_translate.httpx.AsyncClient", return_value=cm) as ac:
+        svc = OllamaTranslateService({"url": OLLAMA_URL, "model": "qwen3:8b"}, "zh-TW")
+        assert await svc.translate_single(TITLE)
+    assert ac.call_args.kwargs["timeout"] == 30
+    call = mock_client.post.call_args
+    assert call.args[0] == f"{OLLAMA_URL}/api/chat"
+    assert set(call.kwargs.keys()) == {"json"}
+    assert call.kwargs["json"] == {
+        "model": "qwen3:8b",
+        "messages": [
+            {"role": "system", "content": lang["ollama_system"]},
+            {"role": "user", "content": "範例：" + lang["ollama_example"] + "\n\n請翻譯：" + TITLE},
+        ],
+        "stream": False,
+        "options": {"num_predict": 500, "temperature": 0.3},
+    }

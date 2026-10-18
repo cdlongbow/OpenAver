@@ -121,12 +121,8 @@ class OllamaTranslateService(TranslateService):
         self.model = config.get("model") or "qwen3:8b"
         self.target_language = target_language
 
-    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
-        """
-        單片翻譯
-
-        適用場景：用戶查看第 1 片時立即翻譯
-        """
+    async def translate_or_raise(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；ja 短路；失敗拋 TranslateError（請求內容與改前逐字相同）。"""
         # ja 短路：不呼叫 API，直接回傳原文
         if self.target_language == "ja":
             return title
@@ -164,10 +160,34 @@ class OllamaTranslateService(TranslateService):
 
             # 清理輸出
             result = self._clean_output(result)
-
-            return result if result else ""
-
+        except TranslateError:
+            raise
+        except httpx.TimeoutException as e:
+            raise build_error(
+                "Ollama", "connection_timeout", None, type(e).__name__, "request timed out"
+            ) from None
+        except httpx.ConnectError as e:
+            raise build_error(
+                "Ollama", "connection_failed", None, type(e).__name__, "cannot connect"
+            ) from None
         except Exception as e:
+            raise build_error(
+                "Ollama", "api_error", None, type(e).__name__, str(e)
+            ) from None
+
+        if not result:
+            raise build_error("Ollama", "empty_response", None, "", "translation is empty")
+        return result
+
+    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
+        """
+        單片翻譯
+
+        適用場景：用戶查看第 1 片時立即翻譯；任何失敗回空字串。
+        """
+        try:
+            return await self.translate_or_raise(title, context)
+        except TranslateError as e:
             logger.error(f"[Ollama] Single translation failed: {e}")
             return ""
 

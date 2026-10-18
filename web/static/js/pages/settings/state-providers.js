@@ -111,7 +111,16 @@ export function stateProviders() {
                 const result = await resp.json();
 
                 if (result.success) {
-                    this.modelStatus = `<span class="text-success"><i class="bi bi-check-circle"></i> ${result.result}</span>`;
+                    const escapeHtml = (text) => {
+                        const div = document.createElement('div');
+                        div.textContent = text;
+                        return div.innerHTML;
+                    };
+                    if (result.result === 'ja_skip') {
+                        this.modelStatus = `<span class="text-info"><i class="bi bi-info-circle"></i> ${window.t('settings.status.ja_skip')}</span>`;
+                    } else {
+                        this.modelStatus = `<span class="text-success"><i class="bi bi-check-circle"></i> ${escapeHtml(result.result)}</span>`;
+                    }
                 } else {
                     this.modelStatus = `<span class="text-error"><i class="bi bi-x-circle"></i> ${result.error}</span>`;
                 }

@@ -55,7 +55,8 @@ from core.generate_state import (
 from core.readonly_source import is_path_readonly, _canonical_source_prefix  # noqa: PLC2701 — purge 端點（_switch_external_manager_locked）需要跟 readonly_source 內部判斷唯讀來源用同一套路徑正規化，避免重複實作對同一髒路徑判定漂移（呼叫點 config.py:362 的既有行內註解已寫明「杜絕重複實作漂移」）
 from core.readonly_assets import _write_strm  # noqa: PLC2701 — .strm 重寫端點直接呼叫 producer 內部的單片寫入 primitive，比對 _produce_one 已收斂的單片/批次雙呼叫點模式（109），避免在 router 層重寫一份 .strm 寫入邏輯
 from core.source_config import MAX_ENABLED_SOURCES
-from core.translate_service import LANGUAGE_PROMPTS
+from core.translate_service import OllamaTranslateService
+from core.cloud_translate import TranslateError
 from core.platform_info import is_synology
 from core import cf_handoff
 from core.proxy_policy import cf_window_proxy_restart_needed, current_settings
@@ -692,45 +693,30 @@ class OllamaTestRequest(BaseModel):
     model: str
 
 
+_OLLAMA_TEST_ERRORS = {
+    "connection_timeout": "連線逾時",
+    "connection_failed": "無法連線到 Ollama",
+    "empty_response": "模型無回應",
+}
+
+
 @router.post("/ollama/test")
 async def test_ollama_model(request: OllamaTestRequest) -> dict:
-    """測試 Ollama 模型是否能正常回應"""
+    """測試 Ollama 模型是否能正常回應（與搜尋頁真翻譯共用引擎請求）"""
     try:
         url = request.url.rstrip('/')
 
         config = await asyncio.to_thread(load_config)
         locale = config.get("general", {}).get("locale", "zh-TW")
-        lang_config = LANGUAGE_PROMPTS.get(locale, LANGUAGE_PROMPTS["zh-TW"])
-        lang_name = lang_config["name"]
+        if locale == "ja":
+            return {"success": True, "result": "ja_skip"}
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{url}/api/chat",
-                json={
-                    "model": request.model,
-                    "messages": [
-                        {"role": "user", "content": f"將以下日文翻譯成{lang_name}，只輸出翻譯結果：新人女優デビュー"}
-                    ],
-                    "stream": False,
-                    "options": {
-                        "num_predict": 500,  # think mode 需要足夠 token（翻譯本身 ~20 tok，其餘供推理）
-                        "temperature": 0.3
-                    }
-                }
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        service = OllamaTranslateService({"url": url, "model": request.model}, locale)
+        result = await service.translate_or_raise("新人女優デビュー")
+        return {"success": True, "result": f"回應：{result}"}
 
-            result = data.get("message", {}).get("content", "").strip()
-            if result:
-                return {"success": True, "result": f"回應：{result}"}
-            else:
-                return {"success": False, "error": "模型無回應"}
-
-    except httpx.TimeoutException:
-        return {"success": False, "error": "連線逾時"}
-    except httpx.ConnectError:
-        return {"success": False, "error": "無法連線到 Ollama"}
+    except TranslateError as e:
+        return {"success": False, "error": _OLLAMA_TEST_ERRORS.get(e.kind, "測試模型失敗")}
     except Exception as e:
         logger.error("測試 Ollama 模型失敗: %s", e)
         return {"success": False, "error": "測試模型失敗"}

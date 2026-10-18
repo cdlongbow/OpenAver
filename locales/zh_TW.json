@@ -1773,7 +1773,9 @@
       "translate_ollama": "<strong>Ollama</strong>：確認 Ollama 應用程式已啟動（Windows 需手動開啟）",
       "translate_gemini": "<strong>Gemini</strong>：確認 API Key 已在<strong>設定頁</strong>正確設定",
       "translate_openai": "<strong>OpenAI Compatible</strong>：確認 Base URL 和模型名稱正確",
-      "translate_claude": "<strong>Claude</strong>：金鑰請到 Anthropic Console 申請（<code>sk-ant-</code> 開頭），並在<strong>設定頁</strong>正確貼上；Claude 訂閱帳號登入不能用，必須用 API 金鑰。若模型清單抓不到，請先檢查金鑰是否正確"
+      "translate_claude": "<strong>Claude</strong>：金鑰請到 Anthropic Console 申請（<code>sk-ant-</code> 開頭），並在<strong>設定頁</strong>正確貼上；Claude 訂閱帳號登入不能用，必須用 API 金鑰。若模型清單抓不到，請先檢查金鑰是否正確",
+      "translate_blocked": "<strong>測試成功，但有些片翻不出來</strong>：多半是翻譯服務商的內容審查（Gemini 最常見，換成 Gemma 也一樣會擋）。可改用 Claude 或本機 Ollama",
+      "translate_manual_model": "<strong>OpenAI 相容</strong>：模型清單抓不到但服務可用時，下拉選「自訂...」直接手打模型名稱"
     },
     "js": {
       "version_load_failed": "無法載入",
