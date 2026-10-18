@@ -24,6 +24,9 @@ GEMINI_NEW = "gemini-new-key-zzzz"
 OPENAI_NEW = "sk-openai-new-yyyy"
 METATUBE_NEW = "mt-token-new-xxxx"
 
+CLAUDE_PLAIN = "sk-ant-claude-secret-dddd"
+CLAUDE_NEW = "sk-ant-claude-new-wwww"
+
 CONNECT_URL = "http://192.168.1.10:8080"
 
 
@@ -475,3 +478,107 @@ class TestR6OpenAITest:
         assert resp.json()["success"] is True
         headers = mock_client.post.call_args.kwargs["headers"]
         assert headers["Authorization"] == f"Bearer {OPENAI_NEW}"
+
+
+class TestR6ClaudeModels:
+    def test_r6cm1_mask_uses_stored(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("claude", {})["api_key"] = CLAUDE_PLAIN
+        save_config(cfg)
+
+        mask = mask_secret(CLAUDE_PLAIN)
+        assert CLAUDE_PLAIN != mask
+
+        mock_cm, mock_client = _make_mock_httpx_client(
+            get_response=_ok_http_response(
+                {"data": [{"id": "claude-haiku-4", "created_at": "2025-03-01T00:00:00Z"}]}
+            )
+        )
+        with patch("core.anthropic_client.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/claude/models",
+                json={"api_key": mask},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        mock_client.get.assert_called_once()
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert headers["x-api-key"] == CLAUDE_PLAIN
+
+    def test_r6cm2_new_plaintext_uses_incoming(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("claude", {})["api_key"] = CLAUDE_PLAIN
+        save_config(cfg)
+
+        mock_cm, mock_client = _make_mock_httpx_client(
+            get_response=_ok_http_response(
+                {"data": [{"id": "claude-haiku-4", "created_at": "2025-03-01T00:00:00Z"}]}
+            )
+        )
+        with patch("core.anthropic_client.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/claude/models",
+                json={"api_key": CLAUDE_NEW},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert headers["x-api-key"] == CLAUDE_NEW
+
+
+class TestR6ClaudeTest:
+    def test_r6ct1_mask_uses_stored(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("claude", {})["api_key"] = CLAUDE_PLAIN
+        cfg.setdefault("general", {})["locale"] = "zh-TW"
+        save_config(cfg)
+
+        mask = mask_secret(CLAUDE_PLAIN)
+        assert CLAUDE_PLAIN != mask
+
+        upstream = {
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "新人女演員出道"}],
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(
+            post_response=_ok_http_response(upstream)
+        )
+        with patch("core.anthropic_client.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/claude/test",
+                json={
+                    "api_key": mask,
+                    "model": "claude-haiku-5-5",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        mock_client.post.assert_called_once()
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers["x-api-key"] == CLAUDE_PLAIN
+
+    def test_r6ct2_new_plaintext_uses_incoming(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("claude", {})["api_key"] = CLAUDE_PLAIN
+        cfg.setdefault("general", {})["locale"] = "zh-TW"
+        save_config(cfg)
+
+        upstream = {
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "新人女演員出道"}],
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(
+            post_response=_ok_http_response(upstream)
+        )
+        with patch("core.anthropic_client.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/claude/test",
+                json={
+                    "api_key": CLAUDE_NEW,
+                    "model": "claude-haiku-5-5",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers["x-api-key"] == CLAUDE_NEW

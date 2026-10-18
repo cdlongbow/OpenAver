@@ -129,7 +129,7 @@ class TestDenyByDefault:
         ("GET", "/static/css/theme.css"),
     ]
 
-    # 24 支 router 代表端點（每個 router 註冊各抽一支，見 task card「router
+    # 25 支 router 代表端點（每個 router 註冊各抽一支，見 task card「router
     # prefix 清單」）。
     ROUTER_ENDPOINTS = [
         ("GET", "/api/proxy-image"),
@@ -139,6 +139,7 @@ class TestDenyByDefault:
         ("GET", "/api/gallery/generate"),
         ("POST", "/api/gemini/test"),
         ("POST", "/api/openai/models"),
+        ("POST", "/api/claude/models"),
         ("POST", "/api/parse-filename"),
         ("GET", "/api/showcase/videos"),
         ("GET", "/api/capabilities"),
