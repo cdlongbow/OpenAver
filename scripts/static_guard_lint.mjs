@@ -1221,6 +1221,7 @@ const RULES = [
     'settingsForm', 'saveBtn',
     'translateEnabled', 'translateProvider', 'translateOptions',
     'ollamaUrl', 'ollamaModel', 'geminiApiKey', 'geminiModel',
+    'claudeFields', 'claudeApiKey', 'claudeModel',
     'ollamaFields', 'geminiFields', 'openaiFields',
     'searchFavoriteFolder', 'avlistOutputDir', 'avlistOutputFilename',
     'avlistMinSize', 'defaultPage', 'viewerPlayer',

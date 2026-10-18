@@ -41,6 +41,8 @@ export function stateConfig() {
             openaiBaseUrl: '',
             openaiApiKey: '',
             openaiModel: 'gpt-4o-mini',
+            claudeApiKey: '',
+            claudeModel: 'claude-haiku-5-5',
 
             // Scraper
             createFolder: true,
@@ -712,6 +714,11 @@ export function stateConfig() {
                     this.form.openaiModel = config.translate.openai?.model || 'gpt-4o-mini';
                     this.openaiUseCustomModel = config.translate.openai?.use_custom_model || false;
 
+                    // Claude
+                    this.form.claudeApiKey = config.translate.claude?.api_key || '';
+                    this.form.claudeModel = config.translate.claude?.model || 'claude-haiku-5-5';
+                    this.claudeModels = [this.form.claudeModel];
+
                     // 自動測試 Gemini（如果有 API Key 且是 gemini provider）
                     if (config.translate.gemini?.api_key && config.translate.provider === 'gemini') {
                         setTimeout(() => this.testGeminiConnection(), 100);
@@ -720,6 +727,11 @@ export function stateConfig() {
                     // 自動 fetch OpenAI models（如果有 base_url 且是 openai provider）
                     if (config.translate.openai?.base_url && config.translate.provider === 'openai') {
                         setTimeout(() => this.fetchOpenAIModels({ source: 'auto' }), 100);
+                    }
+
+                    // 自動 fetch Claude models（如果有 API Key 且是 claude provider）
+                    if (config.translate.claude?.api_key && config.translate.provider === 'claude') {
+                        setTimeout(() => this.fetchClaudeModels({ source: 'auto' }), 100);
                     }
 
                     // Scraper
@@ -1077,6 +1089,10 @@ export function stateConfig() {
                         api_key: this.form.openaiApiKey,
                         model: this.form.openaiModel.trim() || 'gpt-4o-mini',
                         use_custom_model: this.openaiUseCustomModel
+                    },
+                    claude: {
+                        api_key: this.form.claudeApiKey,
+                        model: this.form.claudeModel || 'claude-haiku-5-5'
                     }
                 };
 
