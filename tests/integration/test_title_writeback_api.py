@@ -101,9 +101,10 @@ def setup_readonly_title_env(tmp_db, tmp_path, monkeypatch, *,
     repo = VideoRepository(tmp_db)
     repo.upsert(_video(uri, output_dir=output_dir_uri))
     config = {
-        "gallery": {"directories": [{"path": str(src_dir), "readonly": True, "output_path": ""}],
+        "gallery": {"directories": [{"path": str(src_dir), "readonly": True,
+                                     "output_path": str(tmp_path / "ro_out")}],
                     "path_mappings": {}},
-        "scraper": {},
+        "scraper": {"external_manager": "jellyfin"},
     }
     return _wire(monkeypatch, tmp_db, config), repo, src_dir, out_dir, uri
 
@@ -427,4 +428,23 @@ def test_path_outside_gallery_dirs_returns_not_found(monkeypatch, tmp_db, tmp_pa
     before_db, before_nfo = _row_state(repo, uri), nfo.read_bytes()
     data = _post(client, uri, ZH_TITLE).json()
     assert data["success"] is False and data["error"] == "not_found"
+    assert _row_state(repo, uri) == before_db and nfo.read_bytes() == before_nfo
+
+
+def test_readonly_output_dir_outside_current_root_returns_no_nfo(monkeypatch, tmp_db, tmp_path):
+    """唯讀列的 output_dir 在舊輸出根、設定的輸出根已換到別處 → no_nfo，舊夾 NFO 與 DB 不動。"""
+    client, repo, src, out, uri = setup_readonly_title_env(tmp_db, tmp_path, monkeypatch)
+    new_root = tmp_path / "new_out_root"
+    new_root.mkdir()
+    config = {
+        "gallery": {"directories": [{"path": str(src), "readonly": True,
+                                     "output_path": str(new_root)}],
+                    "path_mappings": {}},
+        "scraper": {"external_manager": "jellyfin"},
+    }
+    monkeypatch.setattr("web.routers.showcase.load_config", lambda: config)
+    nfo = out / "ABC-123.nfo"
+    before_db, before_nfo = _row_state(repo, uri), nfo.read_bytes()
+    data = _post(client, uri, ZH_TITLE).json()
+    assert data["success"] is False and data["error"] == "no_nfo"
     assert _row_state(repo, uri) == before_db and nfo.read_bytes() == before_nfo
