@@ -676,6 +676,7 @@ class TestProperNounRule:
         system = LANGUAGE_PROMPTS[lang]["ollama_system"]
         assert self.RULE in system
         assert lang_name in system
+        assert "人名、品牌名除外" in system
 
     def test_zh_tw_gemini_rules_keep_proper_nouns(self):
         self._check_cloud("zh-TW", "4. 只輸出翻譯結果，不要額外說明")

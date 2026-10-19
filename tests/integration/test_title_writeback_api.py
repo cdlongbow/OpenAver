@@ -448,3 +448,21 @@ def test_readonly_output_dir_outside_current_root_returns_no_nfo(monkeypatch, tm
     data = _post(client, uri, ZH_TITLE).json()
     assert data["success"] is False and data["error"] == "no_nfo"
     assert _row_state(repo, uri) == before_db and nfo.read_bytes() == before_nfo
+
+
+def test_control_chars_stripped_identically_in_nfo_db_response(monkeypatch, tmp_db, tmp_path):
+    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
+    data = _post(client, uri, "譯文\x01標題", original_title="原\x02文").json()
+    assert data["success"] is True
+    assert data["title"] == "譯文標題" and data["original_title"] == "原文"
+    row = repo.get_by_path(uri)
+    assert (row.title, row.original_title) == ("譯文標題", "原文")
+    texts = _nfo_texts(nfo)
+    assert texts["title"] == "[ABC-123]譯文標題" and texts["originaltitle"] == "原文"
+
+
+def test_control_chars_only_title_returns_title_empty(monkeypatch, tmp_db, tmp_path):
+    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
+    before_db = _row_state(repo, uri)
+    assert _post(client, uri, "\x01\x02").json()["error"] == "title_empty"
+    assert _row_state(repo, uri) == before_db

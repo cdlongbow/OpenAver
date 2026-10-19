@@ -15,6 +15,9 @@ from core.nfo_updater import set_element_text
 from core.nfo_utils import sanitize_nfo_bytes
 from core.organizer import _strip_illegal_xml_chars
 
+# 公開別名：路由層寫 DB 前用同一支淨化函式（NFO 與 DB 同值）
+strip_illegal_xml_chars = _strip_illegal_xml_chars
+
 _DEFAULT_FORMAT = '[{num}]{title}'
 
 

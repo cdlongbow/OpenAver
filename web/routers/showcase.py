@@ -34,7 +34,9 @@ from core.scrapers.utils import has_japanese
 from core.nfo_stat import nfo_mtime_or_none
 from core.nfo_title_format import build_display_title
 from core.readonly_paths import resolve_owning_output_root
-from core.title_writeback import NfoNotFoundError, NfoParseError, rewrite_nfo_titles
+from core.title_writeback import (
+    NfoNotFoundError, NfoParseError, rewrite_nfo_titles, strip_illegal_xml_chars,
+)
 from core.focal import device_state, format_focal, parse_focal
 from core.focal.subprocess_runner import run_detection
 from core import thumbnail_cache
@@ -563,12 +565,12 @@ def _write_title_nfo(nfo_path: str, video, body: str, new_original: str, fmt: st
 def _apply_title_writeback(repo, video, req, config: dict, path_mappings: dict) -> dict:
     fmt = config.get("scraper", {}).get("nfo_title_format", '[{num}]{title}')
     _display, body = build_display_title(
-        video.number or '', req.title.strip(), '', video.actresses, video.maker,
-        video.release_date, fmt,
+        video.number or '', strip_illegal_xml_chars(req.title).strip(), '',
+        video.actresses, video.maker, video.release_date, fmt,
     )
     if not body:
         return _title_fail("title_empty")
-    new_original = _new_original_title(req, video)
+    new_original = strip_illegal_xml_chars(_new_original_title(req, video))
 
     nfo_path, loc_err = _locate_title_nfo(video, config, path_mappings)
     if nfo_path is None:
