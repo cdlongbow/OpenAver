@@ -604,7 +604,9 @@ def write_video_title(req: TitleWritebackRequest):
         if video is None:
             return _title_fail("not_found")
         config = load_config()
-        _uris, path_mappings = get_configured_gallery_dirs(config)
+        configured_dir_uris, path_mappings = get_configured_gallery_dirs(config)
+        if not any(is_path_under_dir(video.path, uri) for uri in configured_dir_uris):
+            return _title_fail("not_found")
         return _apply_title_writeback(repo, video, req, config, path_mappings)
     except ValueError:
         return _title_fail("invalid_path")

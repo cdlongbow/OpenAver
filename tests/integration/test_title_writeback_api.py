@@ -416,3 +416,15 @@ def test_readonly_unreadable_output_dir_returns_nfo_unreadable(monkeypatch, tmp_
         out.chmod(0o755)
     assert data["success"] is False and data["error"] == "nfo_unreadable"
     assert _row_state(repo, uri) == before_db and _snap(src) == before_src
+
+
+def test_path_outside_gallery_dirs_returns_not_found(monkeypatch, tmp_db, tmp_path):
+    """DB 有列、NFO 存在，但該片不在設定的片庫目錄內 → not_found，NFO 與 DB 皆不變。"""
+    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
+    other = tmp_path / "other_lib"
+    other.mkdir()
+    monkeypatch.setattr("web.routers.showcase.load_config", lambda: _plain_config(other))
+    before_db, before_nfo = _row_state(repo, uri), nfo.read_bytes()
+    data = _post(client, uri, ZH_TITLE).json()
+    assert data["success"] is False and data["error"] == "not_found"
+    assert _row_state(repo, uri) == before_db and nfo.read_bytes() == before_nfo
