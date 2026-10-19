@@ -653,3 +653,38 @@ class TestGeminiTranslateSingleBranches:
             result = await service.translate_single("テスト")
 
         assert result == "翻譯結果"
+
+
+class TestProperNounRule:
+    """172-T6：zh-TW／zh-CN 翻譯 prompt 要求人名、品牌名保留原文"""
+
+    RULE = "人名、品牌名保留原文"
+
+    def _check_cloud(self, lang, rule4):
+        from core.translate_service import LANGUAGE_PROMPTS, build_cloud_translate_prompt
+        rules = LANGUAGE_PROMPTS[lang]["gemini_rules"]
+        prompt = build_cloud_translate_prompt("新人女優デビュー", lang)
+        assert self.RULE in rules
+        assert self.RULE in prompt
+        assert rule4 in rules
+        assert rules.index(rule4) < rules.index(self.RULE)
+        assert rule4 in prompt
+        assert prompt.index(rule4) < prompt.index(self.RULE)
+
+    def _check_ollama(self, lang, lang_name):
+        from core.translate_service import LANGUAGE_PROMPTS
+        system = LANGUAGE_PROMPTS[lang]["ollama_system"]
+        assert self.RULE in system
+        assert lang_name in system
+
+    def test_zh_tw_gemini_rules_keep_proper_nouns(self):
+        self._check_cloud("zh-TW", "4. 只輸出翻譯結果，不要額外說明")
+
+    def test_zh_cn_gemini_rules_keep_proper_nouns(self):
+        self._check_cloud("zh-CN", "4. 只输出翻译结果，不要额外说明")
+
+    def test_zh_tw_ollama_system_keep_proper_nouns(self):
+        self._check_ollama("zh-TW", "繁體中文")
+
+    def test_zh_cn_ollama_system_keep_proper_nouns(self):
+        self._check_ollama("zh-CN", "简体中文")
