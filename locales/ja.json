@@ -7,7 +7,11 @@
     "help": "ヘルプ",
     "help_title": "使い方",
     "settings": "設定",
-    "toggle_sidebar": "開閉"
+    "toggle_sidebar": "開閉",
+    "connect": "接続",
+    "connect_title": "接続：このPCで自分のサーバーを実行中",
+    "connect_ok_title": "{host} に接続済み",
+    "connect_down_title": "{host} に接続できません"
   },
   "common": {
     "locale": {
@@ -48,6 +52,18 @@
       "copy_failed": "コピーに失敗しました。リストのテキストを手動で選択してコピーしてください",
       "close": "閉じる",
       "count": "合計 {count} 本"
+    },
+    "bridge": {
+      "file_not_found": "ファイルが見つかりません：{path}",
+      "path_uncovered_local": "このPCからはこの場所が見えません：{path}",
+      "path_uncovered_server_file": "選択またはドロップしたファイルがサーバーから見えません：{path}。接続ページのパス対応表に対応を追加するか、先にファイルをサーバーから見える共有フォルダに置いてください",
+      "path_uncovered_server_folder": "選択またはドロップしたフォルダがサーバーから見えません：{path}。接続ページのパス対応表に対応を追加するか、先にファイルをサーバーから見える共有フォルダに置いてください",
+      "path_uncovered_server_any": "選択またはドロップしたファイルまたはフォルダがサーバーから見えません：{path}。接続ページのパス対応表に対応を追加するか、先にファイルをサーバーから見える共有フォルダに置いてください",
+      "not_video": "動画ファイルではないため開けません：{path}"
+    },
+    "shell": {
+      "update_available": "このPCの OpenAver に新バージョン v{version} があります。ヘルプページで更新してください",
+      "update_marker_title": "新バージョン v{version} があります。ヘルプページで更新してください"
     }
   },
   "desktop": {
@@ -69,6 +85,31 @@
       "cancel": "キャンセル",
       "do_not_show_again": "今後この確認を表示しない",
       "fallback_message": "「はい」で OpenAver を終了、「いいえ」で通知領域に最小化、「キャンセル」で戻ります。"
+    },
+    "offline": {
+      "message": {
+        "unreachable": "{host} に接続できません",
+        "lan_forbidden": "{host} に接続できません：サーバーがLAN接続を許可していません",
+        "incompatible": "{host} の OpenAver はこのPCのバージョンと互換性がありません",
+        "relogin": "パスワードが変更されました。もう一度入力してください"
+      },
+      "url_label": "サーバーURL",
+      "retry": "再試行",
+      "retrying": "接続中…",
+      "switch_local": "ローカルに戻して OpenAver を再起動",
+      "password_label": "パスワード",
+      "submit": "送信",
+      "bad_url": "URLの形式が正しくありません",
+      "bad_pin": "パスワードが違うか、サーバーが一時的にロックされています。しばらくしてからもう一度お試しください",
+      "login_failed": "ログインに失敗しました。しばらくしてからもう一度お試しください",
+      "retry_failed": "まだ接続できません。サーバーが起動しているか、URLが正しいかご確認ください"
+    },
+    "restart": {
+      "spawn_failed": "OpenAver を自動で再起動できませんでした。手動で開き直してください。"
+    },
+    "cf_window": {
+      "jl_title": "JavLibrary — CF 認証",
+      "javten_title": "FC2 (javten) — CF 認証"
     }
   },
   "search": {
@@ -296,7 +337,11 @@
       "fields_defaulted": "⚠️ {fields} の情報を取得できず、デフォルト値を使用しました",
       "from_source": "{name} より",
       "wishlist_already_owned": "この作品はすでにあなたのライブラリにあります",
-      "wishlist_added_offscreen": "ブックマークに追加しました"
+      "wishlist_added_offscreen": "ブックマークに追加しました",
+      "translate_blocked": "この作品のタイトルは翻訳サービスのコンテンツ審査で拒否されました。モデルを変えても効果がないことが多いため、他の翻訳サービス（Claude やローカルの Ollama など）をお試しください",
+      "translate_rate_limited": "翻訳の利用枠を使い切ったか、リクエストが多すぎます。しばらくしてからもう一度お試しいただくか、プランの利用枠をご確認ください",
+      "translate_batch_blocked_suffix": "（うち {blocked} 件は翻訳サービスのコンテンツ審査でブロックされました。他の翻訳サービスをお試しください）",
+      "translate_batch_limited_suffix": "（{limited} 件は利用枠またはレート制限に達しました。しばらくしてからもう一度お試しください）"
     },
     "duplicate": {
       "title": "ファイルが重複しています",
@@ -360,7 +405,64 @@
       "mt_probe_hint_reason3": "サイトリニューアルで metatube scraper が機能しなくなったソース（JAV321 / KIN8 など、お使いの環境とは無関係）。",
       "mt_connect_failed": "接続に失敗しました：{error}",
       "mt_promote_unavailable_warning": "このソースは現在到達不可ですが、Active Row に追加しました。データを取得できない可能性があります",
-      "mt_probe_failed_pill_hint": "このソースは現在到達不可です。追加後にデータを取得できない可能性があります。先に「再テスト」で確認することをお勧めします"
+      "mt_probe_failed_pill_hint": "このソースは現在到達不可です。追加後にデータを取得できない可能性があります。先に「再テスト」で確認することをお勧めします",
+      "probe_btn": "接続テスト",
+      "probe_summary": "{ok}／{total} 接続可",
+      "probe_failed": "接続テストに失敗しました。しばらくしてからもう一度お試しください",
+      "probe_state_ok": "OK",
+      "probe_state_blocked": "ブロック",
+      "probe_state_unreachable": "接続不可",
+      "probe_state_skipped": "未テスト",
+      "probe_reason_ok": "接続は正常です",
+      "probe_reason_cf_challenge": "サイト側が人間認証を要求しています",
+      "probe_reason_http_status": "サイト側がリクエストを拒否しました",
+      "probe_reason_http_status_code": "サイト側がリクエストを拒否しました（HTTP {status}）",
+      "probe_reason_app_rejected": "サイト側がこの検索チャネルを拒否しました",
+      "probe_reason_proxy": "プロキシが応答しないか、アドレスが正しくありません",
+      "probe_reason_timeout": "接続がタイムアウトしました",
+      "probe_reason_tls": "暗号化接続に失敗しました",
+      "probe_reason_dns": "ドメイン名を解決できませんでした",
+      "probe_reason_network": "ネットワーク接続に失敗しました",
+      "probe_reason_error": "テスト中に内部エラーが発生しました",
+      "probe_reason_windows_verifier": "Windows の認証ウィンドウが必要なため、ここではテストしません",
+      "probe_reason_self_hosted": "自前の metatube のため、このプロキシは経由しません",
+      "probe_reason_unknown": "不明なソースです",
+      "probe_reason_unprobeable": "このソースはまだテストに対応していません",
+      "probe_reason_proxy_auth_unsupported": "この2サイトの認証ウィンドウは、ID・パスワード付きの socks5 プロキシに対応していないため、未テストです",
+      "probe_reason_mac_system_proxy": "macOS 版はシステムのプロキシに従うため、未テストです",
+      "probe_reason_verifier_not_started": "認証ウィンドウが起動していません。OpenAver を再起動してください",
+      "probe_reason_custom_use_verify": "カスタムソースは「検証」を使ってください",
+      "probe_reason_generic": "原因不明",
+      "custom_status_passed": "検証合格",
+      "custom_status_failed": "検証失敗",
+      "custom_status_load_failed": "読み込めません",
+      "custom_status_unverified": "未検証",
+      "custom_status_verifying": "検証中…",
+      "custom_verb_equal": "期待値：",
+      "custom_verb_contains": "含むべき：",
+      "custom_verb_include": "含むべき：",
+      "custom_verb_exclude": "含んではいけない：",
+      "custom_verb_max": "最大",
+      "custom_line_passed": "検証合格 · {time}",
+      "custom_line_failed": "検証失敗 · {time} · 第 {n} 項（{number}）：{key} {verb}「{expected}」、実際は「{actual}」",
+      "custom_line_failed_bare": "検証失敗 · {time}",
+      "custom_line_more": "（ほか {count} 件）",
+      "custom_line_load_failed": "読み込めません：{reason}",
+      "custom_verify_btn": "検証",
+      "custom_remove_btn": "削除",
+      "custom_badge_title": "カスタムソース",
+      "custom_remove_title": "カスタムソースを削除",
+      "custom_remove_body": "「{name}」を削除しますか？ソースファイルと検証記録も一緒に削除されます。すでに NFO に書き込まれたソース名は変更されず、以後は元の id が表示されます。",
+      "custom_remove_confirm": "削除",
+      "custom_error_busy": "別のソースを検証中です。しばらくしてからもう一度お試しください",
+      "custom_error_changed": "検証中にこのソースが変更されました。もう一度検証してください",
+      "custom_error_generic": "操作に失敗しました。しばらくしてからもう一度お試しください",
+      "probe_line": "{state}：{reason}",
+      "probe_line_advice": "{state}：{reason}（{advice}）",
+      "probe_line_host": "{state}（{host}）：{reason}",
+      "probe_line_host_advice": "{state}（{host}）：{reason}（{advice}）",
+      "probe_tip": "{name}：{line}",
+      "probe_advice_jp_ip": "地域によっては日本のIPが必要です。Proxy 欄で設定できます"
     },
     "advanced_search": {
       "metatube_keyword_hint": "Metatube ソースは女優 / キーワード検索に対応していません。完全な番号を入力することをお勧めします。",
@@ -381,7 +483,11 @@
       "config_saved": "設定を保存しました",
       "save_failed": "保存に失敗しました: {error}",
       "reset_done": "デフォルト設定に戻しました",
-      "reset_failed": "リセットに失敗しました: {error}"
+      "reset_failed": "リセットに失敗しました: {error}",
+      "config_saved_with_local": "設定を保存しました（このPCの設定を含む）",
+      "local_failed_server_saved": "サーバーの設定は保存しました。このPCの設定の保存には失敗しました",
+      "local_saved_server_failed": "このPCの設定は保存しました。サーバーの設定の保存には失敗しました",
+      "local_failed_server_failed": "サーバーとこのPCの設定、どちらも保存に失敗しました"
     },
     "header": {
       "title": "設定",
@@ -457,7 +563,16 @@
       "favorite_folder_hint": "よく使うフォルダをワンクリックで読み込み",
       "favorite_folder_placeholder": "空欄 = システムのダウンロードフォルダ",
       "favorite_folder_placeholder_server": "空欄 = お気に入りフォルダを使わない",
-      "favorite_folder_example_prefix": "例：C:\\Users\\&lt;ユーザー名&gt;\\Downloads"
+      "favorite_folder_example_prefix": "例：C:\\Users\\&lt;ユーザー名&gt;\\Downloads",
+      "proxy_placeholder": "空欄の場合は直接接続またはシステムのプロキシを使用します",
+      "proxy_scope_label": "プロキシの適用範囲",
+      "proxy_scope_dmm": "DMM のみ",
+      "proxy_scope_all": "すべてのソース",
+      "proxy_scope_dmm_hint": "DMM だけがこのプロキシを経由します",
+      "proxy_scope_all_hint": "すべてのソースがこのプロキシを経由します",
+      "proxy_scope_all_hint_mac": "すべてのソースがこのプロキシを経由します（JavLibrary／FC2-javten を除く）",
+      "proxy_restart_hint": "JavLibrary／FC2-javten は OpenAver を再起動すると新しい設定に切り替わります",
+      "favorite_folder_example_prefix_synology": "例：/volume1/&lt;共有フォルダ&gt;/ダウンロード"
     },
     "translate": {
       "enabled_label": "タイトル翻訳を有効にする",
@@ -479,7 +594,10 @@
       "openai_api_key_placeholder": "空白 = Authorization ヘッダーなし",
       "openai_api_key_hint": "ローカル LLM は空白可、クラウドサービスは API Key が必要",
       "openai_model_placeholder": "例: gpt-4o-mini",
-      "openai_custom_model": "カスタム..."
+      "openai_custom_model": "カスタム...",
+      "claude_cloud": "（Anthropic クラウド）",
+      "claude_api_key_hint": "Anthropic Console で API Key を作成してください（sk-ant- で始まります）。Claude のサブスクリプションのログインはここでは使えません。",
+      "claude_api_key_placeholder": "sk-ant-..."
     },
     "scraper": {
       "suffix_keywords_label": "バージョンマーク",
@@ -533,7 +651,8 @@
           "confirm": "今すぐ書き換える"
         },
         "rewrite_done": ".strm ファイル {count} 件を書き換えました",
-        "rewrite_failed": "既存の .strm の書き換えに失敗しました。パスルールは保存されましたが既存ファイルは未更新です。しばらくしてからもう一度保存して再試行してください。"
+        "rewrite_failed": "既存の .strm の書き換えに失敗しました。パスルールは保存されましたが既存ファイルは未更新です。しばらくしてからもう一度保存して再試行してください。",
+        "intro": "Emby／Jellyfin／Kodi が別のマシンにあり、見えるソースパスがこのPCと異なる場合、これらのルールで「ローカルのスキャン接頭辞」を「再生側の接頭辞」に置き換えます。ルールがない場合、strm にはローカルのパスがそのまま書き込まれます。ルールは全体で1つで、すべての .strm（Emby／Kodi 用を含む）に適用されます。Jellyfin 10.11.7 以降、.strm が指せるのは URL（http／https／rtsp／rtp）のみで、ディスクのパスを書いた .strm はディスクがどのマシンにあっても再生されません。Emby と Kodi は影響を受けません。クラウドドライブが Alist／OpenList などで HTTP 提供されている場合は、「再生側パスの置換」の再生側にその URL 接頭辞を入力してください（例：/volume1/cloud → http://nas:5244/d/115）。"
       }
     },
     "gallery": {
@@ -588,7 +707,10 @@
       "close_action_label": "ウィンドウを閉じるとき",
       "close_action_ask": "毎回確認",
       "close_action_tray": "通知領域に最小化",
-      "close_action_exit": "OpenAver を終了"
+      "close_action_exit": "OpenAver を終了",
+      "this_computer": "このPC",
+      "this_computer_hint": "この設定はサーバーではなく、このPCに保存されます",
+      "this_computer_unavailable": "このPCの設定を一時的に読み取れないため、この2項目は変更できません"
     },
     "action": {
       "test": "テスト",
@@ -648,7 +770,29 @@
       "openai_missing_model": "モデル名を入力してください",
       "openai_connection_timeout": "接続タイムアウト",
       "openai_translate_failed": "翻訳テスト失敗",
-      "ja_skip": "日本語モード：翻訳スキップ"
+      "ja_skip": "日本語モード：翻訳スキップ",
+      "openai_blocked": "このテスト用タイトルはサービス提供元のコンテンツ審査でブロックされました。モデルを変えても効果がないことが多いため、他の翻訳サービスをお試しください",
+      "claude_auth_failed": "認証に失敗しました。API Key をご確認ください",
+      "claude_missing_key": "認証に失敗しました。API Key をご確認ください",
+      "claude_forbidden": "アクセス権限がありません",
+      "claude_not_found": "モデルが存在しません。「テスト」を押して選び直してください",
+      "claude_rate_limited": "利用枠が不足しているか、リクエストが多すぎます",
+      "claude_connection_failed": "接続に失敗しました",
+      "claude_connection_timeout": "接続がタイムアウトしました",
+      "claude_http_error": "HTTP リクエストに失敗しました",
+      "claude_missing_model": "先にモデルを選択してください",
+      "claude_translate_failed": "翻訳テストに失敗しました",
+      "claude_blocked": "このテスト用タイトルはサービス提供元のコンテンツ審査でブロックされました。モデルを変えても効果がないことが多いため、他の翻訳サービスをお試しください",
+      "gemini_auth_failed": "認証に失敗しました。API Key をご確認ください",
+      "gemini_missing_key": "認証に失敗しました。API Key をご確認ください",
+      "gemini_forbidden": "アクセス権限がありません",
+      "gemini_not_found": "モデルが存在しません。「テスト」を押して選び直してください",
+      "gemini_rate_limited": "利用枠が不足しているか、リクエストが多すぎます",
+      "gemini_connection_failed": "接続に失敗しました",
+      "gemini_connection_timeout": "接続がタイムアウトしました",
+      "gemini_http_error": "HTTP リクエストに失敗しました",
+      "gemini_translate_failed": "翻訳テストに失敗しました",
+      "gemini_blocked": "このテスト用タイトルはサービス提供元のコンテンツ審査でブロックされました。モデルを変えても効果がないことが多いため、他の翻訳サービスをお試しください"
     }
   },
   "scanner": {
@@ -931,7 +1075,8 @@
     "wishlist_reconcile_failed": "ブックマークの照合に失敗しました。ログを確認してください",
     "focal_auto_disabled": "顔検出が2回連続でタイムアウトしたため、自動フォーカスを先にオフにしました。位置を調整したい場合は、ライトボックスで自分でドラッグしてください。",
     "data_root_finalized": "データの保存場所が確定しました。バックアップの際はこのフォルダも一緒に保持してください",
-    "data_root_recovered": "既存のライブラリはそのまま保持されましたが、設定はデフォルト値に再構築されました：ソース設定、クロスマシンのパスマッピング、外部サービス設定、インターフェース設定はすべて再設定が必要です"
+    "data_root_recovered": "既存のライブラリはそのまま保持されましたが、設定はデフォルト値に再構築されました：ソース設定、クロスマシンのパスマッピング、外部サービス設定、インターフェース設定はすべて再設定が必要です",
+    "cf_shell_lost": "認証ウィンドウが応答しません。再読み込みしてからもう一度お試しください"
   },
   "similar_mode": {
     "button_aria_label": "類似動画を探索",
@@ -976,7 +1121,17 @@
       "version_next_aria": "次のバージョン",
       "adopt_version": "このバージョンを採用",
       "adopt_switch_source": "このバージョンに置き換え",
-      "preserve_title": "現在のタイトルを保持：「{title}」"
+      "preserve_title": "現在のタイトルを保持：「{title}」",
+      "access_refused": "{source} が接続を拒否しました",
+      "access_unreachable": "{source} に接続できません。ネットワークまたはプロキシ設定をご確認ください",
+      "access_advice_jp_ip": "地域によっては日本のIPが必要です。Proxy 欄で設定できます",
+      "cf_window_not_built": "このPCの認証ウィンドウはまだ準備できていません。「接続」ページで「再試行」を押してください",
+      "cf_window_preparing": "認証ウィンドウを準備中です。数秒後にもう一度お試しください",
+      "group_custom": "カスタムソース",
+      "custom_pattern_mismatch": "このソースはこの形式の品番には対応していません",
+      "custom_not_found": "{source} にこの作品はありません",
+      "custom_parse_failed": "{source} からデータを取得できません。サイトがリニューアルされた可能性があります。設定ページで検証をやり直してください",
+      "custom_refused": "{source} は現在ご利用いただけません"
     },
     "placeholder": {
       "search": "番号・女優名・タイトルを検索..."
@@ -1262,7 +1417,11 @@
       "auto_check_save_failed": "設定の保存に失敗しました。しばらくしてから再試行してください",
       "ai_instruction": "AIエージェントに貼り付けるだけでOpenAverを操作できます",
       "ai_hint_unsupported": "ウェブ版チャットには非対応",
-      "ai_tools": "AI エージェントに貼り付けて OpenAver を操作 — Claude Code · Cursor · Codex など"
+      "ai_tools": "AI エージェントに貼り付けて OpenAver を操作 — Claude Code · Cursor · Codex など",
+      "this_computer_unavailable": "このPCの更新情報を一時的に読み取れません。ヘルプページを開き直してもう一度お試しください",
+      "client_up_to_date": "このPCの OpenAver は最新です",
+      "client_update_available_prefix": "このPCに新バージョン",
+      "client_update_available_suffix": "があります"
     },
     "agent_auth": {
       "title": "Agent Token",
@@ -1420,7 +1579,8 @@
       "h6_multiversion": "同一作品の複数版（流出 / 4K / 字幕）を Emby/Jellyfin で結合するには？",
       "multiversion_intro": "複数版の結合は Emby と Jellyfin がともにネイティブ対応する機能です（同じ「フォルダ名 - ラベル」規則）。各版を品番名のフォルダに入れ、ファイル名をフォルダ名で始め「 - ラベル」を付けます：",
       "multiversion_rule1": "各版のファイル名は<strong>フォルダ名で始める必要があります</strong> + 「 - ラベル」（半角スペース-ハイフン-半角スペース）",
-      "multiversion_rule2": "複数版と cd1/cd2 分割は<strong>同一作品で併用できません</strong>（メディアサーバーの公式制限）"
+      "multiversion_rule2": "複数版と cd1/cd2 分割は<strong>同一作品で併用できません</strong>（メディアサーバーの公式制限）",
+      "strm_deploy_step3": "再生するマシンから見える読み取り専用ソースのパスが OpenAver から見えるパスと異なる場合（例：OpenAver 上では <code>Z:\\115</code>、NAS 上では <code>/volume1/115</code>）、<strong>設定ページ</strong>の「再生側パスの置換」に対応ルールを追加してください。追加しないと、<code>.strm</code> が再生側で見つからないパスを指してしまいます。Jellyfin 10.11.7 以降、<code>.strm</code> が指せるのは URL（http／https／rtsp／rtp）のみで、ディスクのパスを書いた <code>.strm</code> はディスクがどのマシンにあっても再生されません。Emby と Kodi は影響を受けません。クラウドドライブが Alist／OpenList などで HTTP 提供されている場合は、「再生側パスの置換」の再生側にその URL 接頭辞を入力してください（例：<code>/volume1/cloud</code> → <code>http://nas:5244/d/115</code>）。"
     },
     "showcase": {
       "title": "動画ブラウザ（Showcase）",
@@ -1501,7 +1661,44 @@
       "toggle_uncensored": "<strong>設定ページ</strong>で「無修正モード」トグルを有効にすると、検索時に無修正ソースが優先される",
       "col_source": "ソース",
       "col_format": "フォーマット",
-      "col_example": "例"
+      "col_example": "例",
+      "h6_proxy_scope": "プロキシの適用範囲",
+      "h6_probe": "接続テスト",
+      "censored_dmm": "<strong>DMM</strong>：<strong>設定ページ</strong>のソースカプセルで切り替えます（Proxy 欄はスイッチではありません）。地域によって接続を拒否される場合のみ、日本のIPのプロキシを検討してください",
+      "fuzzy_always_on": "<strong>あいまい検索の例外</strong>：女優名／キーワードであいまい検索する場合、「スキャンソース」で無効にしたソースでも、並び順どおりに使われます（無効化が影響するのは品番の完全一致検索のみです）。<strong>DMM の例外</strong>：設定ページの DMM カプセルを確認してください。カプセルがオフなら DMM には問い合わせません",
+      "dmm_fuzzy_prereq": "前提：設定ページの DMM カプセルがオンになっていること",
+      "proxy_empty_system": "Proxy 欄が空欄＝システムのプロキシに従って接続し、システムのプロキシが未設定なら直接接続します。日本の VPN に接続済み、または日本国内にいる場合は、別途設定する必要はありません",
+      "proxy_scope_how": "プロキシのアドレスを入力したら、「DMM のみ」（既定。DMM のデータ取得だけがプロキシを経由）か「すべてのソース」を選べます",
+      "proxy_scope_all_includes": "「すべてのソース」を選ぶと、プロキシを経由するのは、8つの動画ソースのデータ取得、カバーとサンプル画像のダウンロード、検索ページ経由のカバー、ブックマークのカバー、女優のデータと写真です",
+      "proxy_scope_excludes": "プロキシを経由しないのは、metatube（経由して取得する画像を含む）、AI翻訳、アップデート確認です",
+      "proxy_scope_verifier": "JavLibrary／FC2-javten は認証ウィンドウが必要です。Windows デスクトップ版で「すべてのソース」を選び、欄にアドレスがある場合、ウィンドウもこのプロキシを経由します（プロキシを変更した場合は OpenAver の再起動が必要で、設定ページに案内が表示されます。ID・パスワード付きの socks5 プロキシは認証ウィンドウでは使えません）。macOS デスクトップ版は macOS のシステムプロキシに従います。NAS／Docker 版には認証ウィンドウがありません",
+      "probe_where": "設定ページの「スキャンソース」カード右上の「接続テスト」は、画面上の現在のプロキシアドレスと適用範囲を使って、オンになっているソースをまとめてテストします。先に保存する必要はなく、オフのソースはテストされません",
+      "probe_states": "各ソースのカプセルに状態ドットが表示されます：<strong>OK</strong>（接続でき、ブロックされていない）、<strong>ブロック</strong>（サイト側が認証を要求または拒否）、<strong>接続不可</strong>（プロキシが応答しない、タイムアウト、ドメイン解決失敗）、<strong>未テスト</strong>。色だけでなく形も異なります。状態ドットをクリックすると原因が表示されます",
+      "probe_not_data": "「OK」はデータを取得できることを保証しません。サイトのリニューアルや項目の取得失敗はテストの対象外です",
+      "probe_no_images": "テストするのはデータ取得用のドメインのみで、カバーやサンプル画像の画像サーバーはテストしません。「すべてのソース」を選んだ場合、画像サーバーがプロキシにブロックされているソースでも OK と表示されることがあり、その場合カバーは読み込まれません",
+      "probe_verifier": "Windows デスクトップ版では JavLibrary、FC2-javten を実際にテストします。Cloudflare の認証ページに到達できれば「OK」となりますが、これは Cloudflare に到達できたことだけを示し、認証ウィンドウが必ず通過できることを意味しません。認証ウィンドウが起動していない場合や ID・パスワード付きの socks5 を使っている場合は「未テスト」と表示され、理由が説明されます。アドレスを解決できない場合は通常どおりテストされ、接続不可と表示されます",
+      "probe_skipped": "未テストになるのは、JavLibrary、FC2-javten（Windows の認証ウィンドウが必要）と metatube（自前のため、このプロキシを経由しない）です。JavDB は App のデータチャネルのみテストし、Web のフォールバックはテストしません",
+      "probe_skipped_mac": "未テストになるのは、JavLibrary、FC2-javten（macOS 版はシステムプロキシに従う）と metatube（自前のため、このプロキシを経由しない）です。JavDB は App のデータチャネルのみテストし、Web のフォールバックはテストしません",
+      "probe_skipped_windows": "未テストになるのは、metatube（自前のため、このプロキシを経由しない）です。JavDB は App のデータチャネルのみテストし、Web のフォールバックはテストしません",
+      "h6_custom": "カスタムソース（AI が自分で追加できます）",
+      "custom_what": "カスタムソースは「ルールファイル」で、あるサイトから作品のデータを取得する方法を記述したものです。設定だけでプログラムコードは一切実行されず、検証に合格すると<strong>自動的に有効になります</strong>。",
+      "custom_how": "新しいサイトを追加したいときは、AI に一言伝えるだけです。例：「https://example.com を OpenAver のカスタムソースとして追加して」。AI がルールファイルを作成してアップロードします。",
+      "custom_verify": "アップロード後は検証が必要です。AI に検証を実行させるか、<strong>設定ページ</strong>のソース欄で「スキャンソース」を押し、新しいソースの「検証」を押してください。合格すると自動的に有効になり、検索ページ／ブラウズページを再読み込みすると指定できるようになります。使いたくない場合はカプセルをクリックしてオフにできます。同じ内容を再検証しても、オフにしたものが再びオンになることはありません。",
+      "custom_state_unverified": "未検証：アップロードまたは再アップロードしたばかりで、まだ検証されていないため使えません。",
+      "custom_state_verifying": "検証中：該当サイトに接続してテストを実行しています。しばらくお待ちください。",
+      "custom_state_passed": "合格：検証に合格して有効になっており、使えます。無効にしたいときはカプセルをクリックしてオフにします。",
+      "custom_state_failed": "失敗：検証に合格しませんでした（サイトのリニューアルが多い原因です）。AI にルールファイルを修正して再アップロードしてもらってください。",
+      "custom_state_load_failed": "読み込み失敗：ルールファイル自体にエラーがあり読み込めません。AI に修正して再アップロードしてもらってください。",
+      "custom_modal": "再スクレイプのウィンドウのソースメニューには、3つ目のグループとして破線のカプセルが追加され、オンにしたカスタムソースが並びます。そのソースが品番形式を宣言している場合、品番の形式が合わないとカプセルがグレーになり、クリックできません。",
+      "custom_new_media": "新作の取り込みと自動検索ではカスタムソースに問い合わせ<strong>ません</strong>。使いたい場合は、取り込み後に再スクレイプのウィンドウで手動で選んでください。",
+      "custom_folder_intro": "ルールファイルを自分で書く場合は、YAML ファイルを次のフォルダに置いてください（フォルダがなければ作成します）：",
+      "custom_folder_desktop": "Windows／macOS デスクトップ版：OpenAver のプログラムフォルダ内の <code>output/custom_sources</code>",
+      "custom_folder_linux": "Linux サーバー：上と同様。例：<code>~/OpenAver/output/custom_sources</code>",
+      "custom_folder_synology": "Synology：<code>/var/packages/OpenAver/var/data/custom_sources</code>。<code>OPENAVER_DATA_DIR</code> を設定している場合は、そのディレクトリ内の <code>custom_sources</code> です",
+      "custom_limit_host": "詳細ページが別のドメインにあるサイトは検証に失敗します。現在は未対応です。",
+      "custom_limit_userinfo": "URL にID・パスワードが含まれるサイトは、複数バージョンから選んで確認する際の再取得に失敗します。",
+      "custom_limit_stale": "検証に合格したのは、その時点で使えることを示すだけです。サイトがリニューアルされたら再検証が必要です。",
+      "custom_docs_link": "詳しい形式と AI 向けの作業手順（GitHub：docs/custom-sources.md）"
     },
     "metatube": {
       "title": "Metatube チュートリアル",
@@ -1544,7 +1741,13 @@
       "recover_win_2": "左側の「受信の規則 (Inbound Rules)」をクリックします。",
       "recover_win_3": "「プログラム」が <code>python.exe</code>（または Python / OpenAver）で「操作」が「ブロック (Block)」のルールを探します。通常2件あります（パブリック＋プライベート）。",
       "recover_win_4": "右クリックしてそれらのルールを削除し、OpenAver を再起動して「サーバー」モードに切り替え、「許可」をクリックします。",
-      "recover_mac": "macOS の復元：システム設定 → ネットワーク → ファイアウォール → オプション で、このアプリを「着信接続を許可」に変更します。"
+      "recover_mac": "macOS の復元：システム設定 → ネットワーク → ファイアウォール → オプション で、このアプリを「着信接続を許可」に変更します。",
+      "how_shared_folder": "デスクトップ版でサーバーに接続している場合、整理したい新作は先にサーバーから見える共有フォルダに置く必要があります。このPCのダウンロードフォルダから直接整理することはできず、「このフォルダはサーバーから見えません」と表示されます。",
+      "client_h6": "デスクトップアプリから接続する",
+      "client_entry": "デスクトップ版のサイドバーで「接続」をクリックし、サーバーのURLを入力して「接続テスト」を押し、続けて「切り替えて OpenAver を再起動」を押すと、このPCはサーバー上のライブラリを使うようになります。",
+      "client_password": "サーバーにパスワードが設定されている場合、接続ページで入力を求められます。パスワードを忘れた場合は、サーバー側でリセットしてください。",
+      "client_map": "このPCで動画を再生したり新作を整理したりするには、接続ページの「パス対応表」に入力してください。左の欄はサーバー上のフォルダ、右の欄はこのPCから見えるパス（例：ネットワークドライブ \\\\192.168.1.190\\av）です。入力したら「パス対応表を保存」を押します。",
+      "client_back_local": "このPCのライブラリに戻したいときは、同じ接続ページで「ローカルに戻して OpenAver を再起動」を押します。ローカルの元のデータベースには手を加えません。"
     },
     "troubleshooting": {
       "title": "トラブルシューティング",
@@ -1567,7 +1770,12 @@
       "report_debug_3": "ログファイルとエラーメッセージを <a href=\"https://github.com/slive777/OpenAver/issues\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Issues</a> に報告",
       "translate_ollama": "<strong>Ollama</strong>：Ollama アプリが起動していることを確認してください（Windows では手動起動が必要）",
       "translate_gemini": "<strong>Gemini</strong>：<strong>設定ページ</strong>で API Key が正しく設定されていることを確認",
-      "translate_openai": "<strong>OpenAI Compatible</strong>：Base URL とモデル名が正しいか確認してください"
+      "translate_openai": "<strong>OpenAI Compatible</strong>：Base URL とモデル名が正しいか確認してください",
+      "dmm_proxy": "まず<strong>設定ページ</strong>の DMM カプセルがオンになっているかご確認ください",
+      "dmm_blocked_try_jp_proxy": "DMM で接続拒否と表示される場合、地域によっては日本のIPが必要です。<strong>設定ページ</strong> → Proxy 欄に日本のIPのプロキシを入力するか、日本の VPN に接続してください。",
+      "translate_claude": "<strong>Claude</strong>：キーは Anthropic Console で取得し（<code>sk-ant-</code> で始まります）、<strong>設定ページ</strong>に正しく貼り付けてください。Claude のサブスクリプションアカウントのログインは使えず、API キーが必要です。モデル一覧を取得できない場合は、まずキーが正しいかご確認ください",
+      "translate_blocked": "<strong>テストは成功するのに、翻訳できない作品がある</strong>：多くは翻訳サービス提供元のコンテンツ審査が原因です（Gemini で最も多く、Gemma に変えても同様にブロックされます）。Claude やローカルの Ollama に切り替えてお試しください",
+      "translate_manual_model": "<strong>OpenAI 互換</strong>：モデル一覧を取得できなくてもサービスが利用できる場合は、モデル欄にモデル名を直接入力してください（欄がドロップダウンの場合は「カスタム...」を選ぶと入力欄に変わります）"
     },
     "js": {
       "version_load_failed": "読み込み失敗",
@@ -1582,7 +1790,10 @@
       "cancel_btn": "キャンセル",
       "confirm_btn": "アップデートを確認",
       "toast_success": "インストーラーが開きました。画面の指示に従ってアップデートを完了してください。",
-      "toast_error": "インストーラーの起動に失敗しました。インストールスクリプトを手動で実行してください。"
+      "toast_error": "インストーラーの起動に失敗しました。インストールスクリプトを手動で実行してください。",
+      "client_title": "このPCの OpenAver を更新します",
+      "client_case_a_body": "更新するのはこのPCの OpenAver で、サーバーではありません。確認を押すとこのPCでターミナルが開いてインストールが実行されます。先に OpenAver を閉じ、インストール完了後に手動で開き直してください。",
+      "client_case_b_body": "このPCの OpenAver は既定の場所にインストールされていません。\nインストーラーはまず新バージョンを既定のディレクトリにインストールします。インストール中に現在の OpenAver を閉じる必要はありません。\n\nインストール完了後、次の順に操作してください：\n1. OpenAver を閉じる\n2. 旧インストールディレクトリの python フォルダを削除する\n3. 新バージョンのすべてのファイルを、このPCの元のインストール場所にコピーして上書きする\n\n再インストールや再設定は不要で、ファイルを上書きするだけで使えます。"
     }
   },
   "tutorial": {
@@ -1629,7 +1840,9 @@
       "deep_dive": "深掘り：女優とメーカー",
       "gantt": "主要メーカー年表",
       "actress_distribution": "女優×メーカー分布",
-      "costar": "共演者"
+      "costar": "共演者",
+      "actress_top": "女優 Top {n}",
+      "actress_top_rest": "{from}–{to} 位"
     },
     "donut": {
       "legend": "内側：メーカー比率　外側：主要メーカー作品／その他作品",
@@ -1659,6 +1872,94 @@
     "costar": {
       "count_label": "{n} 本"
     },
-    "total_count": "ライブラリ全体 {n} 本"
+    "total_count": "ライブラリ全体 {n} 本",
+    "all_actress": "すべての女優",
+    "all_maker": "すべてのメーカー",
+    "clear_actress": "女優をクリア",
+    "clear_maker": "メーカーをクリア",
+    "count_open_browse": "ブラウズページで見る"
+  },
+  "connect": {
+    "nobridge": "デスクトップ版で開いてください",
+    "status_local": "このPCで自分のサーバーを実行中",
+    "status_connected": "{host} に接続済み",
+    "status_down": "{host} に接続できません",
+    "version_line": "バージョン {version}（{kind}）",
+    "version_only": "バージョン {version}",
+    "kind_synology": "Synology パッケージ",
+    "kind_linux": "Linux サーバー",
+    "kind_windows": "Windows デスクトップ版",
+    "kind_mac": "Mac デスクトップ版",
+    "last_ok": "前回の接続成功：{time}",
+    "change_title": "別のサーバーに接続する",
+    "url_placeholder": "http://192.168.1.190:8765",
+    "test_btn": "接続テスト",
+    "result_patch_diff": "サーバーのバージョン（{server}）とこのPC（{local}）が異なりますが、接続できます",
+    "result_server_old": "サーバーのバージョンが古いため、先にサーバーを更新してください",
+    "result_client_old": "このPCの OpenAver を更新してください",
+    "result_unparseable": "このサーバーのバージョンを判別できません",
+    "result_unreachable": "このサーバーに接続できません。URLとネットワークをご確認ください",
+    "result_timeout": "接続がタイムアウトしました。URLとネットワークをご確認ください",
+    "result_tls": "セキュア接続（https）の検証に失敗しました",
+    "result_lan_forbidden": "このサーバーはLAN内からの接続のみ許可しています",
+    "result_not_openaver": "OpenAver のサーバーではないか、バージョンが古いです",
+    "password_label": "パスワード",
+    "login_btn": "パスワードを確認",
+    "pin_bad": "パスワードが違うか、サーバーが一時的にロックされています。しばらくしてからもう一度お試しください",
+    "pin_failed": "パスワードを確認できませんでした。もう一度お試しください",
+    "nopassword": "このサーバーにはパスワードが設定されておらず、LAN内の誰でも操作できます",
+    "forgot_synology": "パッケージセンターで OpenAver を再インストールするとパスワードが消去されます",
+    "forgot_linux": "サーバーの OpenAver フォルダで次のコマンドを実行し、サーバーを再起動してください：venv/bin/python -c \"from core.access_auth import set_auth; set_auth(enabled=False, pin='')\"",
+    "forgot_desktop": "そのPCの設定ページで変更してください",
+    "cf_ready": "JavLibrary／FC2-javten はこのPCが代わりに認証します：準備完了",
+    "cf_not_ready": "JavLibrary／FC2-javten はこのPCが代わりに認証します：未準備（{reason}）",
+    "cf_reason_starting": "起動中",
+    "cf_reason_no_windows": "認証ウィンドウを作成できませんでした",
+    "cf_reason_proxy_unusable": "サーバーに設定されたプロキシをこのPCでは適用できません",
+    "cf_reason_server_old": "サーバーのバージョンが未対応です",
+    "cf_reason_unreachable": "サーバーに接続できません",
+    "cf_reason_unauthorized": "サーバーがこのPCを受け付けませんでした。接続し直してください",
+    "cf_reason_offline_boot": "起動時にサーバーに接続できませんでした。サーバーが復旧したら「再試行」を押してください",
+    "cf_reason_shell_old": "このアプリのバージョンは未対応です。更新してください",
+    "cf_reason_webview2_failed": "このPCの WebView2 の初期化に失敗しました。Microsoft Edge WebView2 Runtime を修復または再インストールしてください。修復後は OpenAver を再起動してください",
+    "cf_retry_btn": "再試行",
+    "cf_retry_busy": "前回の再試行がまだ進行中です。しばらくしてから押してください",
+    "cf_retry_unavailable": "このアプリのバージョンには再試行機能がありません。更新してください",
+    "cf_proxy_applied": "認証ウィンドウはサーバーに設定されたプロキシを経由します",
+    "cf_proxy_local_direct": "サーバーのプロキシはそのサーバー自身のローカルアドレスのため、このPCは直接接続します",
+    "cf_mac": "JavLibrary／FC2-javten はこのPCが代わりに認証します：このPCは未対応です",
+    "apply_switch": "切り替えて OpenAver を再起動",
+    "apply_apply": "適用して OpenAver を再起動",
+    "apply_hint_local": "ローカルのサーバーは停止します。ローカルのライブラリデータベースには手を加えません。",
+    "apply_hint_client": "URLを変更したりパスワードを入力し直したりした後は、「適用して OpenAver を再起動」を押すと反映されます。",
+    "switch_local_title": "ローカルモードに戻す",
+    "switch_local_btn": "ローカルに戻して OpenAver を再起動",
+    "switch_local_hint": "ローカルのサーバーが再起動します。ローカルの元のデータベースには手を加えておらず、このPCのプレーヤーと終了時の動作の設定は保持されます。",
+    "restarting": "OpenAver を再起動しています…",
+    "error_generic": "操作に失敗しました。もう一度お試しください",
+    "rows": {
+      "title": "パス対応表",
+      "intro": "左の欄はサーバー上のフォルダ、右の欄はこのPCから見えるパスです。後で入力することもできるので、空欄のままでも構いません。",
+      "placeholder_windows": "\\\\192.168.1.190\\av",
+      "placeholder_mac": "/Volumes/av",
+      "favorite": "お気に入り",
+      "readonly": "読み取り専用",
+      "test_btn": "テスト",
+      "found": "見つかりました",
+      "not_found": "このPCからはこの場所が見えません",
+      "not_found_path": "このPCからはこの場所が見えません：{path}",
+      "slow": "この場所の応答が遅いか接続できません。パスを確認してからもう一度テストしてください",
+      "no_sample": "このソースにはテストできる動画がありません",
+      "loading": "サーバーのスキャンソースを読み込み中…",
+      "load_failed": "サーバーのスキャンソースを読み込めません",
+      "reload_btn": "再読み込み",
+      "empty": "サーバーにはまだスキャンソースや「お気に入り」フォルダがありません",
+      "stale": "（サーバーにこのソースはもうありません）",
+      "remove": "削除",
+      "save_btn": "パス対応表を保存",
+      "local_note": "パス対応表は切り替え時に一緒に書き込まれます。",
+      "saved": "パス対応表を保存しました",
+      "save_failed": "パス対応表の保存に失敗しました"
+    }
   }
 }

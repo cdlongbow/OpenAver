@@ -7,7 +7,11 @@
     "help": "说明",
     "help_title": "使用说明",
     "settings": "设置",
-    "toggle_sidebar": "展开/收合"
+    "toggle_sidebar": "展开/收合",
+    "connect": "连接",
+    "connect_title": "连接：这台电脑自己运行服务器",
+    "connect_ok_title": "已连接 {host}",
+    "connect_down_title": "连不上 {host}"
   },
   "common": {
     "locale": {
@@ -48,6 +52,18 @@
       "copy_failed": "复制失败，请手动选取清单文字复制",
       "close": "关闭",
       "count": "共 {count} 部"
+    },
+    "bridge": {
+      "file_not_found": "找不到文件：{path}",
+      "path_uncovered_local": "这台电脑看不到这个位置：{path}",
+      "path_uncovered_server_file": "选取或拖入的文件服务器看不到：{path}。到连接页的路径对照表加上对应，或先把文件放进主机看得到的共享文件夹",
+      "path_uncovered_server_folder": "选取或拖入的文件夹服务器看不到：{path}。到连接页的路径对照表加上对应，或先把文件放进主机看得到的共享文件夹",
+      "path_uncovered_server_any": "选取或拖入的文件或文件夹服务器看不到：{path}。到连接页的路径对照表加上对应，或先把文件放进主机看得到的共享文件夹",
+      "not_video": "不是视频文件，无法打开：{path}"
+    },
+    "shell": {
+      "update_available": "这台电脑的 OpenAver 有新版 v{version}，到帮助页更新",
+      "update_marker_title": "有新版 v{version}，到帮助页更新"
     }
   },
   "desktop": {
@@ -69,6 +85,31 @@
       "cancel": "取消",
       "do_not_show_again": "不再显示此提示",
       "fallback_message": "选择“是”退出 OpenAver，选择“否”最小化到系统托盘，或选择“取消”返回。"
+    },
+    "offline": {
+      "message": {
+        "unreachable": "连不上 {host}",
+        "lan_forbidden": "连不上 {host}：服务器没有开放局域网连接",
+        "incompatible": "{host} 上的 OpenAver 版本与这台电脑不兼容",
+        "relogin": "密码已变更，请重新输入"
+      },
+      "url_label": "服务器网址",
+      "retry": "重试",
+      "retrying": "连接中…",
+      "switch_local": "切回本机模式并重新启动 OpenAver",
+      "password_label": "密码",
+      "submit": "提交",
+      "bad_url": "网址格式不正确",
+      "bad_pin": "密码不对，或主机暂时锁定，请稍后再试",
+      "login_failed": "登录失败，请稍后再试",
+      "retry_failed": "仍然连不上，请确认服务器已开机、网址正确"
+    },
+    "restart": {
+      "spawn_failed": "无法自动重新启动 OpenAver，请手动重新打开。"
+    },
+    "cf_window": {
+      "jl_title": "JavLibrary — CF 验证",
+      "javten_title": "FC2 (javten) — CF 验证"
     }
   },
   "search": {
@@ -296,7 +337,11 @@
       "fields_defaulted": "⚠️ {fields} 信息未取得，已使用默认值",
       "from_source": "来自 {name}",
       "wishlist_already_owned": "这部片已经在你的片库里",
-      "wishlist_added_offscreen": "已加入书签"
+      "wishlist_added_offscreen": "已加入书签",
+      "translate_blocked": "这片的片名被翻译服务的内容审查拒绝了。换模型通常没用，可改用其他翻译服务（例如 Claude 或本机 Ollama）",
+      "translate_rate_limited": "翻译额度用完或请求太频繁，请稍后再试，或检查套餐额度",
+      "translate_batch_blocked_suffix": "（其中 {blocked} 片被翻译服务的内容审查拦下，可改用其他翻译服务）",
+      "translate_batch_limited_suffix": "（{limited} 片遇到额度或限流，请稍后再试）"
     },
     "duplicate": {
       "title": "文件重复",
@@ -360,7 +405,64 @@
       "mt_probe_hint_reason3": "该来源的 metatube scraper 已随网站改版失效（如 JAV321 / KIN8，与你的环境无关）。",
       "mt_connect_failed": "连接失败：{error}",
       "mt_promote_unavailable_warning": "此来源目前测不到，已加入主力集但可能抓不到数据",
-      "mt_probe_failed_pill_hint": "此来源目前测不到，加入后可能抓不到数据，可先点「重新测试」确认"
+      "mt_probe_failed_pill_hint": "此来源目前测不到，加入后可能抓不到数据，可先点「重新测试」确认",
+      "probe_btn": "测试连接",
+      "probe_summary": "{ok}／{total} 可连接",
+      "probe_failed": "测试连接失败，请稍后再试",
+      "probe_state_ok": "通",
+      "probe_state_blocked": "被拦",
+      "probe_state_unreachable": "连不上",
+      "probe_state_skipped": "未测",
+      "probe_reason_ok": "连接正常",
+      "probe_reason_cf_challenge": "站方要求人机验证",
+      "probe_reason_http_status": "站方拒绝了请求",
+      "probe_reason_http_status_code": "站方拒绝了请求（HTTP {status}）",
+      "probe_reason_app_rejected": "站方拒绝了这个查询通道",
+      "probe_reason_proxy": "代理无响应或地址有误",
+      "probe_reason_timeout": "连接超时",
+      "probe_reason_tls": "加密连接失败",
+      "probe_reason_dns": "域名解析失败",
+      "probe_reason_network": "网络连接失败",
+      "probe_reason_error": "测试时发生内部错误",
+      "probe_reason_windows_verifier": "需要 Windows 验证窗口，不在这里测",
+      "probe_reason_self_hosted": "你自建的 metatube，不经这个代理",
+      "probe_reason_unknown": "未知的来源",
+      "probe_reason_unprobeable": "这个来源暂不支持测试",
+      "probe_reason_proxy_auth_unsupported": "这两家的验证窗口不支持带账号密码的 socks5 代理，未测",
+      "probe_reason_mac_system_proxy": "macOS 版按系统代理，未测",
+      "probe_reason_verifier_not_started": "验证窗口未启动，请重新打开 OpenAver",
+      "probe_reason_custom_use_verify": "自定义来源请用验收",
+      "probe_reason_generic": "原因不明",
+      "custom_status_passed": "验收通过",
+      "custom_status_failed": "验收失败",
+      "custom_status_load_failed": "无法加载",
+      "custom_status_unverified": "尚未验收",
+      "custom_status_verifying": "验收中…",
+      "custom_verb_equal": "应为",
+      "custom_verb_contains": "应包含",
+      "custom_verb_include": "应含有",
+      "custom_verb_exclude": "不应含有",
+      "custom_verb_max": "最多",
+      "custom_line_passed": "验收通过 · {time}",
+      "custom_line_failed": "验收失败 · {time} · 第 {n} 条（{number}）：{key} {verb}「{expected}」，实际「{actual}」",
+      "custom_line_failed_bare": "验收失败 · {time}",
+      "custom_line_more": "（另有 {count} 条）",
+      "custom_line_load_failed": "无法加载：{reason}",
+      "custom_verify_btn": "验收",
+      "custom_remove_btn": "移除",
+      "custom_badge_title": "自定义来源",
+      "custom_remove_title": "移除自定义来源",
+      "custom_remove_body": "确定要移除「{name}」吗？来源文件与验收记录会一并删除；已写进 NFO 的来源名不会被改，之后会显示原始 id。",
+      "custom_remove_confirm": "移除",
+      "custom_error_busy": "另一个来源正在验收，请稍后再试",
+      "custom_error_changed": "验收期间这个来源被改动，请重新验收",
+      "custom_error_generic": "操作失败，请稍后再试",
+      "probe_line": "{state}：{reason}",
+      "probe_line_advice": "{state}：{reason}（{advice}）",
+      "probe_line_host": "{state}（{host}）：{reason}",
+      "probe_line_host_advice": "{state}（{host}）：{reason}（{advice}）",
+      "probe_tip": "{name}：{line}",
+      "probe_advice_jp_ip": "部分地区需要日本 IP，可在 Proxy 栏设置"
     },
     "advanced_search": {
       "metatube_keyword_hint": "metatube 来源不支持女优/关键字搜索，建议输入完整番号。",
@@ -381,7 +483,11 @@
       "config_saved": "设置已保存",
       "save_failed": "保存失败: {error}",
       "reset_done": "已恢复默认设置",
-      "reset_failed": "重置失败: {error}"
+      "reset_failed": "重置失败: {error}",
+      "config_saved_with_local": "设置已保存（含这台电脑的设置）",
+      "local_failed_server_saved": "服务器设置已保存；这台电脑的设置保存失败",
+      "local_saved_server_failed": "这台电脑的设置已保存；服务器设置保存失败",
+      "local_failed_server_failed": "服务器与这台电脑的设置都保存失败"
     },
     "header": {
       "title": "设置",
@@ -457,7 +563,16 @@
       "favorite_folder_hint": "一键载入常用文件夹",
       "favorite_folder_placeholder": "留空 = 系统下载文件夹",
       "favorite_folder_placeholder_server": "留空 = 不使用我的最爱文件夹",
-      "favorite_folder_example_prefix": "示例：C:\\Users\\&lt;你的用户名&gt;\\Downloads"
+      "favorite_folder_example_prefix": "示例：C:\\Users\\&lt;你的用户名&gt;\\Downloads",
+      "proxy_placeholder": "留空就直接连接或走系统代理",
+      "proxy_scope_label": "代理范围",
+      "proxy_scope_dmm": "仅 DMM",
+      "proxy_scope_all": "所有来源",
+      "proxy_scope_dmm_hint": "只有 DMM 走这个代理",
+      "proxy_scope_all_hint": "所有来源都走这个代理",
+      "proxy_scope_all_hint_mac": "所有来源都走这个代理（JavLibrary／FC2-javten 除外）",
+      "proxy_restart_hint": "JavLibrary／FC2-javten 重新打开 OpenAver 后才会改走新设置",
+      "favorite_folder_example_prefix_synology": "示例：/volume1/&lt;共享文件夹&gt;/下载"
     },
     "translate": {
       "enabled_label": "启用标题翻译",
@@ -479,7 +594,10 @@
       "openai_api_key_placeholder": "留空 = 不送 Authorization header",
       "openai_api_key_hint": "本地 LLM 可留空，云端服务需填入 API Key",
       "openai_model_placeholder": "e.g. gpt-4o-mini",
-      "openai_custom_model": "自定义..."
+      "openai_custom_model": "自定义...",
+      "claude_cloud": "（Anthropic 云端）",
+      "claude_api_key_hint": "到 Anthropic Console 创建 API Key（sk-ant- 开头）。Claude 订阅套餐的登录不能直接用在这里。",
+      "claude_api_key_placeholder": "sk-ant-..."
     },
     "scraper": {
       "suffix_keywords_label": "版本标记",
@@ -533,7 +651,8 @@
           "confirm": "立即改写"
         },
         "rewrite_done": "已改写 {count} 个 .strm 文件",
-        "rewrite_failed": "改写既有 .strm 失败，路径规则已保存但既有文件尚未更新；请稍后再保存一次重试。"
+        "rewrite_failed": "改写既有 .strm 失败，路径规则已保存但既有文件尚未更新；请稍后再保存一次重试。",
+        "intro": "当 Emby／Jellyfin／Kodi 在另一台机器、看到的来源路径与本机不同时，用这些规则把「本机扫描前缀」替换成「播放端前缀」。没有规则时 strm 直接写本机路径。规则是全局一份，应用到所有 .strm（含 Emby／Kodi 的）。Jellyfin 10.11.7 起 .strm 只能指向网址（http／https／rtsp／rtp），写硬盘路径的 .strm 一律不播——不管硬盘在哪台机器；Emby、Kodi 不受影响。若你的云盘本来就通过 Alist／OpenList 等以 HTTP 提供，把「播放端路径替换」的播放端填成那个网址前缀即可（例：/volume1/cloud → http://nas:5244/d/115）。"
       }
     },
     "gallery": {
@@ -588,7 +707,10 @@
       "close_action_label": "关闭窗口时",
       "close_action_ask": "每次询问",
       "close_action_tray": "最小化到系统托盘",
-      "close_action_exit": "退出 OpenAver"
+      "close_action_exit": "退出 OpenAver",
+      "this_computer": "这台电脑",
+      "this_computer_hint": "这个设置存在这台电脑，不是服务器",
+      "this_computer_unavailable": "暂时读不到这台电脑的设置，这两项先不能改"
     },
     "action": {
       "test": "测试",
@@ -648,7 +770,29 @@
       "openai_missing_model": "请输入模型名称",
       "openai_connection_timeout": "连接超时",
       "openai_translate_failed": "翻译测试失败",
-      "ja_skip": "日文模式：跳过翻译"
+      "ja_skip": "日文模式：跳过翻译",
+      "openai_blocked": "这个测试片名被服务商的内容审查拦下了；换模型通常没用，可改用其他翻译服务",
+      "claude_auth_failed": "认证失败，请检查 API Key",
+      "claude_missing_key": "认证失败，请检查 API Key",
+      "claude_forbidden": "无访问权限",
+      "claude_not_found": "模型不存在，请点『测试』重新选择",
+      "claude_rate_limited": "额度不足或请求太频繁",
+      "claude_connection_failed": "连接失败",
+      "claude_connection_timeout": "连接超时",
+      "claude_http_error": "HTTP 请求失败",
+      "claude_missing_model": "请先选择模型",
+      "claude_translate_failed": "翻译测试失败",
+      "claude_blocked": "这个测试片名被服务商的内容审查拦下了；换模型通常没用，可改用其他翻译服务",
+      "gemini_auth_failed": "认证失败，请检查 API Key",
+      "gemini_missing_key": "认证失败，请检查 API Key",
+      "gemini_forbidden": "无访问权限",
+      "gemini_not_found": "模型不存在，请点『测试』重新选择",
+      "gemini_rate_limited": "额度不足或请求太频繁",
+      "gemini_connection_failed": "连接失败",
+      "gemini_connection_timeout": "连接超时",
+      "gemini_http_error": "HTTP 请求失败",
+      "gemini_translate_failed": "翻译测试失败",
+      "gemini_blocked": "这个测试片名被服务商的内容审查拦下了；换模型通常没用，可改用其他翻译服务"
     }
   },
   "scanner": {
@@ -931,7 +1075,8 @@
     "wishlist_reconcile_failed": "书签对账失败，请查阅日志",
     "focal_auto_disabled": "找脸连续两次超时，已经先帮你关掉自动对焦。想对焦的话，在灯箱里自己拖曳就可以。",
     "data_root_finalized": "数据位置已定版，备份时请把这个文件夹一起保留",
-    "data_root_recovered": "既有片库已保留，设置已重建为默认值：来源设置、跨机器路径映射、外部服务设置与界面偏好都需要重新设置"
+    "data_root_recovered": "既有片库已保留，设置已重建为默认值：来源设置、跨机器路径映射、外部服务设置与界面偏好都需要重新设置",
+    "cf_shell_lost": "验证窗口没有响应，请刷新后再试"
   },
   "similar_mode": {
     "button_aria_label": "探索相似视频",
@@ -976,7 +1121,17 @@
       "version_next_aria": "下一个版本",
       "adopt_version": "采用此版本",
       "adopt_switch_source": "替换此版本",
-      "preserve_title": "保留目前标题：「{title}」"
+      "preserve_title": "保留目前标题：「{title}」",
+      "access_refused": "{source} 拒绝连接",
+      "access_unreachable": "{source} 连不上，请检查网络或代理设置",
+      "access_advice_jp_ip": "部分地区需要日本 IP，可在 Proxy 栏设置",
+      "cf_window_not_built": "这台电脑的验证窗口还没建好，到「连接」页点「重试」",
+      "cf_window_preparing": "验证窗口正在准备，请几秒后再试",
+      "group_custom": "自定义来源",
+      "custom_pattern_mismatch": "此来源不收这种番号",
+      "custom_not_found": "{source} 没有这部片",
+      "custom_parse_failed": "{source} 抓不到数据，站方可能改版了，请到设置页重跑验收",
+      "custom_refused": "{source} 目前无法使用"
     },
     "placeholder": {
       "search": "搜索番号、女优、标题..."
@@ -1262,7 +1417,11 @@
       "auto_check_save_failed": "设置保存失败，请稍后再试",
       "ai_instruction": "粘贴给 AI 智能体即可操作 OpenAver",
       "ai_hint_unsupported": "不适用网页版聊天",
-      "ai_tools": "贴给 AI agent 就能操作 OpenAver — Claude Code · Cursor · Codex 等"
+      "ai_tools": "贴给 AI agent 就能操作 OpenAver — Claude Code · Cursor · Codex 等",
+      "this_computer_unavailable": "暂时读不到这台电脑的更新信息，请重新打开帮助页再试",
+      "client_up_to_date": "这台电脑的 OpenAver 已是最新",
+      "client_update_available_prefix": "这台电脑有新版",
+      "client_update_available_suffix": "可用"
     },
     "agent_auth": {
       "title": "Agent Token",
@@ -1420,7 +1579,8 @@
       "h6_multiversion": "同片多版本（流出 / 4K / 中文字幕）怎么在 Emby/Jellyfin 合并？",
       "multiversion_intro": "多版本合并是 Emby 与 Jellyfin 共同支持的原生功能（同一套「文件夹名 - 标签」规则），不是哪一家独有。把同一片各版本放进以番号命名的文件夹，文件名都以文件夹名开头加「 - 标签」：",
       "multiversion_rule1": "每个版本文件名<strong>必须以文件夹名开头</strong> + 「 - 标签」（空格-连字号-空格）",
-      "multiversion_rule2": "多版本与 cd1/cd2 多段<strong>不能同时用于同一部片</strong>（媒体服务器官方限制）"
+      "multiversion_rule2": "多版本与 cd1/cd2 多段<strong>不能同时用于同一部片</strong>（媒体服务器官方限制）",
+      "strm_deploy_step3": "若播放的那台机器看到的只读来源路径跟 OpenAver 看到的不一样（例如 OpenAver 上是 <code>Z:\\115</code>、NAS 上是 <code>/volume1/115</code>），到<strong>设置页</strong>的「播放端路径替换」加一条对应规则，否则 <code>.strm</code> 会指向播放端找不到的路径。Jellyfin 10.11.7 起 <code>.strm</code> 只能指向网址（http／https／rtsp／rtp），写硬盘路径的 <code>.strm</code> 一律不播——不管硬盘在哪台机器；Emby、Kodi 不受影响。若你的云盘本来就通过 Alist／OpenList 等以 HTTP 提供，把「播放端路径替换」的播放端填成那个网址前缀即可（例：<code>/volume1/cloud</code> → <code>http://nas:5244/d/115</code>）。"
     },
     "showcase": {
       "title": "视频浏览 (Showcase)",
@@ -1501,7 +1661,44 @@
       "toggle_uncensored": "在<strong>设置页</strong>开启「无码模式」toggle，搜索时将优先使用无码来源",
       "col_source": "来源",
       "col_format": "格式",
-      "col_example": "范例"
+      "col_example": "范例",
+      "h6_proxy_scope": "代理范围",
+      "h6_probe": "测试连接",
+      "censored_dmm": "<strong>DMM</strong>：用<strong>设置页</strong>的来源胶囊开关（Proxy 栏不是开关）；部分地区被拒绝连接时，才需要考虑日本 IP 代理",
+      "fuzzy_always_on": "<strong>模糊搜索例外</strong>：用女优名／关键字做模糊搜索时，即使来源在「扫描来源」被停用，仍会按排序被用到（停用只影响番号精确搜索）。<strong>DMM 例外</strong>：看设置页的 DMM 胶囊，胶囊关闭就不会去问 DMM",
+      "dmm_fuzzy_prereq": "前提：设置页的 DMM 胶囊已开启",
+      "proxy_empty_system": "Proxy 栏留空＝按系统代理连接；没设系统代理就直接连接。已连上日本 VPN 或本身位于日本，不需要另外设置",
+      "proxy_scope_how": "填了代理地址后，可选「仅 DMM」（默认，只有 DMM 的数据查询走代理）或「所有来源」",
+      "proxy_scope_all_includes": "选「所有来源」时，走代理的有：8 个视频来源的数据查询、封面与剧照下载、搜索页中转的封面、书签封面、女优资料与照片",
+      "proxy_scope_excludes": "不走代理的有：metatube（含经它代取的图片）、AI 翻译、检查更新",
+      "proxy_scope_verifier": "JavLibrary／FC2-javten 要靠验证窗口：Windows 桌面版选「所有来源」且栏里有地址时，窗口也走这个代理（改了代理要重新打开 OpenAver 才会生效，设置页会提示；带账号密码的 socks5 代理不能给验证窗口用）；macOS 桌面版按 macOS 系统代理；NAS／Docker 版没有验证窗口",
+      "probe_where": "设置页「扫描来源」卡右上的「测试连接」，会用界面上当前的代理地址与范围，一次测完亮着的来源；不用先点保存，关掉的来源不测",
+      "probe_states": "每个来源胶囊上会出现状态点：<strong>通</strong>（连得上、没被拦）、<strong>被拦</strong>（站方要求验证或拒绝请求）、<strong>连不上</strong>（代理无响应、超时或域名解析失败）、<strong>未测</strong>；除了颜色，形状也不同。点状态点会显示原因",
+      "probe_not_data": "「通」不保证抓得到数据：站方改版、字段抓不到，都不在测试范围",
+      "probe_no_images": "只测查数据的域名，不测封面与剧照图床；选「所有来源」时，图床被代理拦住的来源仍可能显示通，但封面加载不出来",
+      "probe_verifier": "Windows 桌面版会实测 JavLibrary、FC2-javten：连到 Cloudflare 验证页就算「通」，只代表到得了 Cloudflare，不代表验证窗口一定过得了；验证窗口没起来或用了带账密的 socks5 时会标「未测」并说明原因；地址无法解析则照常实测，显示连不上",
+      "probe_skipped": "未测的有：JavLibrary、FC2-javten（需要 Windows 验证窗口）与 metatube（自建，不经这个代理）；JavDB 只测 App 数据通道，网页备用不测",
+      "probe_skipped_mac": "未测的有：JavLibrary、FC2-javten（macOS 版按系统代理）与 metatube（自建，不经这个代理）；JavDB 只测 App 数据通道，网页备用不测",
+      "probe_skipped_windows": "未测的有：metatube（自建，不经这个代理）；JavDB 只测 App 数据通道，网页备用不测",
+      "h6_custom": "自定义来源（AI 可自行新增）",
+      "custom_what": "自定义来源是一份「规则文件」，描述怎么从某个网站抓出一部片的数据。它只是配置、不执行任何程序代码，验收通过后<strong>会自动启用</strong>。",
+      "custom_how": "想加新站时，直接对 AI 说一句话，例如：「帮我把 https://example.com 这个站加成 OpenAver 的自定义来源」，AI 会自己编写规则文件并上传。",
+      "custom_verify": "上传后要验收：请 AI 调用验收，或到<strong>设置页</strong>的来源区点「扫描来源」，对新来源点「验收」。验收通过即自动启用，刷新搜索页／浏览页后就能指定它；不想用时可点胶囊关掉，同一份内容重新验收不会把你关掉的再打开。",
+      "custom_state_unverified": "未验证：刚上传或重传过，还没验收，不能使用。",
+      "custom_state_verifying": "验收中：正在连到该站跑测试，请稍候。",
+      "custom_state_passed": "通过：验收通过并已启用，可以使用；想停用时点胶囊关掉。",
+      "custom_state_failed": "失败：验收没通过（常见原因是站方改版），请 AI 修正规则文件后重传。",
+      "custom_state_load_failed": "加载失败：规则文件本身有错误，无法读取，请 AI 修正后重传。",
+      "custom_modal": "重刮窗口的来源菜单会多出第三组虚线胶囊，放的就是已打开的自定义来源；该来源有声明番号格式时，番号格式不符，胶囊会变灰不能点。",
+      "custom_new_media": "新片入库与自动搜索<strong>不会</strong>去问自定义来源，要用的话请在入库之后，到重刮窗口手动选它重刮。",
+      "custom_folder_intro": "自己手写规则文件的话，把 YAML 文件放进下列文件夹（文件夹不存在就自己建）：",
+      "custom_folder_desktop": "Windows／macOS 桌面版：OpenAver 程序文件夹内的 <code>output/custom_sources</code>",
+      "custom_folder_linux": "Linux 服务器：同上，例如 <code>~/OpenAver/output/custom_sources</code>",
+      "custom_folder_synology": "Synology：<code>/var/packages/OpenAver/var/data/custom_sources</code>；若设了 <code>OPENAVER_DATA_DIR</code>，则是该目录下的 <code>custom_sources</code>",
+      "custom_limit_host": "详情页放在别的域名的站，验收会失败，目前不支持。",
+      "custom_limit_userinfo": "网址内带账号密码的站，挑多版本确认时的重新抓取会失败。",
+      "custom_limit_stale": "验收通过只代表当下可用；站方改版后要重新验收。",
+      "custom_docs_link": "完整格式与 AI 操作说明（GitHub：docs/custom-sources.md）"
     },
     "metatube": {
       "title": "Metatube 教学",
@@ -1544,7 +1741,13 @@
       "recover_win_2": "左侧栏点「入站规则 (Inbound Rules)」。",
       "recover_win_3": "找「程序」是 <code>python.exe</code>（或名称 Python / OpenAver）、「操作」为「阻止 (Block)」的规则，通常有两条（公用＋专用）。",
       "recover_win_4": "右键删除这几条，重启 OpenAver，再切到「服务器」并点「允许」。",
-      "recover_mac": "macOS 恢复：系统设置 → 网络 → 防火墙 → 选项，找到本程序改成「允许传入连接」。"
+      "recover_mac": "macOS 恢复：系统设置 → 网络 → 防火墙 → 选项，找到本程序改成「允许传入连接」。",
+      "how_shared_folder": "用桌面版连接到服务器时，要整理的新片必须先放进服务器看得到的共享文件夹，不能直接从这台电脑的下载文件夹整理，否则会看到「这个文件夹服务器看不到」。",
+      "client_h6": "从桌面 App 连接",
+      "client_entry": "在桌面版侧栏点「连接」，输入服务器网址后点「测试连接」，再点「切换并重新启动 OpenAver」，这台电脑就会改用服务器上的片库。",
+      "client_password": "服务器若设了密码，连接页会要你输入；忘记密码时，请到服务器那一端重置。",
+      "client_map": "想在这台电脑播放视频、整理新片，请到连接页的「路径对照表」填写：左栏是服务器上的文件夹，右栏填这台电脑看到的路径（例如网络驱动器 \\\\192.168.1.190\\av），填好点「保存对照表」。",
+      "client_back_local": "想回到自己这台电脑的片库，在同一个连接页点「切回本机模式并重新启动 OpenAver」；本机原本的数据库不会被动。"
     },
     "troubleshooting": {
       "title": "疑难排解",
@@ -1567,7 +1770,12 @@
       "report_debug_3": "将日志文件与错误信息回报到 <a href=\"https://github.com/slive777/OpenAver/issues\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Issues</a>",
       "translate_ollama": "<strong>Ollama</strong>：确认 Ollama 应用程序已启动（Windows 需手动开启）",
       "translate_gemini": "<strong>Gemini</strong>：确认 API Key 已在<strong>设置页</strong>正确设置",
-      "translate_openai": "<strong>OpenAI Compatible</strong>：确认 Base URL 和模型名称正确"
+      "translate_openai": "<strong>OpenAI Compatible</strong>：确认 Base URL 和模型名称正确",
+      "dmm_proxy": "先确认<strong>设置页</strong>的 DMM 胶囊已开启",
+      "dmm_blocked_try_jp_proxy": "若 DMM 显示拒绝连接，部分地区需要日本 IP：可在<strong>设置页</strong> → Proxy 栏填入日本 IP 代理，或改连日本 VPN。",
+      "translate_claude": "<strong>Claude</strong>：密钥请到 Anthropic Console 申请（<code>sk-ant-</code> 开头），并在<strong>设置页</strong>正确粘贴；Claude 订阅账号登录不能用，必须用 API 密钥。若模型列表获取不到，请先检查密钥是否正确",
+      "translate_blocked": "<strong>测试成功，但有些片翻不出来</strong>：多半是翻译服务商的内容审查（Gemini 最常见，换成 Gemma 也一样会拦）。可改用 Claude 或本机 Ollama",
+      "translate_manual_model": "<strong>OpenAI 兼容</strong>：模型列表获取不到但服务可用时，直接在模型栏手动输入模型名称（若栏位是下拉，选「自定义...」就会变成输入框）"
     },
     "js": {
       "version_load_failed": "无法载入",
@@ -1582,7 +1790,10 @@
       "cancel_btn": "取消",
       "confirm_btn": "确认更新",
       "toast_success": "安装窗口已打开，请按屏幕提示完成更新",
-      "toast_error": "启动安装程序失败，请手动执行安装脚本"
+      "toast_error": "启动安装程序失败，请手动执行安装脚本",
+      "client_title": "即将更新这台电脑的 OpenAver",
+      "client_case_a_body": "更新的是这台电脑上的 OpenAver，不是服务器。点击确认后会在这台电脑打开终端运行安装，请先关闭 OpenAver，安装完成后再自行重新打开。",
+      "client_case_b_body": "这台电脑的 OpenAver 不是安装在默认位置。\n安装程序会先把新版本安装到默认目录，安装期间不需要先关闭当前的 OpenAver。\n\n安装完成后，请依次操作：\n1. 关闭 OpenAver\n2. 删除旧安装目录中的 python 文件夹\n3. 将新版本的所有文件复制覆盖回这台电脑原本的安装位置\n\n不需要重新安装或重新设置，直接覆盖文件即可使用。"
     }
   },
   "tutorial": {
@@ -1629,7 +1840,9 @@
       "deep_dive": "深入：女优与片商",
       "gantt": "主要片商年表",
       "actress_distribution": "女优片商分布",
-      "costar": "与她同片"
+      "costar": "与她同片",
+      "actress_top": "女优 Top {n}",
+      "actress_top_rest": "第 {from}–{to} 名"
     },
     "donut": {
       "legend": "内圈 片商占比 · 外圈 主要片商作品／其他作品",
@@ -1659,6 +1872,94 @@
     "costar": {
       "count_label": "{n} 部"
     },
-    "total_count": "全库 {n} 部"
+    "total_count": "全库 {n} 部",
+    "all_actress": "全部女优",
+    "all_maker": "全部片商",
+    "clear_actress": "清除女优",
+    "clear_maker": "清除片商",
+    "count_open_browse": "在浏览页查看"
+  },
+  "connect": {
+    "nobridge": "请在桌面版打开",
+    "status_local": "这台电脑自己运行服务器",
+    "status_connected": "已连接 {host}",
+    "status_down": "连不上 {host}",
+    "version_line": "版本 {version}（{kind}）",
+    "version_only": "版本 {version}",
+    "kind_synology": "Synology 套件",
+    "kind_linux": "Linux 服务器",
+    "kind_windows": "Windows 桌面版",
+    "kind_mac": "Mac 桌面版",
+    "last_ok": "上次成功连接：{time}",
+    "change_title": "改连别的服务器",
+    "url_placeholder": "http://192.168.1.190:8765",
+    "test_btn": "测试连接",
+    "result_patch_diff": "服务器版本（{server}）和这台电脑（{local}）不同，仍可连接",
+    "result_server_old": "服务器版本较旧，请先更新服务器",
+    "result_client_old": "请更新这台电脑的 OpenAver",
+    "result_unparseable": "无法识别这台服务器的版本",
+    "result_unreachable": "连不上这台服务器，请确认网址与网络",
+    "result_timeout": "连接超时，请确认网址与网络",
+    "result_tls": "安全连接（https）验证失败",
+    "result_lan_forbidden": "这台服务器只允许局域网连接",
+    "result_not_openaver": "这不是 OpenAver 服务器，或版本较旧",
+    "password_label": "密码",
+    "login_btn": "确认密码",
+    "pin_bad": "密码不对，或主机暂时锁定，请稍后再试",
+    "pin_failed": "无法确认密码，请再试一次",
+    "nopassword": "这台服务器没有设密码，局域网上任何人都能操作",
+    "forgot_synology": "到套件中心重新安装 OpenAver 会清除密码",
+    "forgot_linux": "在主机的 OpenAver 文件夹运行这行，再重启主机：venv/bin/python -c \"from core.access_auth import set_auth; set_auth(enabled=False, pin='')\"",
+    "forgot_desktop": "到那台电脑的设置页改",
+    "cf_ready": "JavLibrary／FC2-javten 由这台电脑代为验证：已就绪",
+    "cf_not_ready": "JavLibrary／FC2-javten 由这台电脑代为验证：未就绪（{reason}）",
+    "cf_reason_starting": "正在启动",
+    "cf_reason_no_windows": "验证窗口没有建起来",
+    "cf_reason_proxy_unusable": "服务器设置的代理这台电脑套用不上",
+    "cf_reason_server_old": "服务器版本不支持",
+    "cf_reason_unreachable": "连不上服务器",
+    "cf_reason_unauthorized": "服务器没有接受这台电脑，请重新连接",
+    "cf_reason_offline_boot": "启动时连不上服务器；主机恢复后点「重试」",
+    "cf_reason_shell_old": "这个 App 版本不支持，请更新",
+    "cf_reason_webview2_failed": "这台电脑的 WebView2 初始化失败，请修复或重新安装 Microsoft Edge WebView2 Runtime；修好后请重新启动 OpenAver",
+    "cf_retry_btn": "重试",
+    "cf_retry_busy": "上一次重试还在进行，请稍候再点",
+    "cf_retry_unavailable": "这个 App 版本没有重试功能，请更新",
+    "cf_proxy_applied": "验证窗口走服务器设置的代理",
+    "cf_proxy_local_direct": "服务器的代理是它自己的本机地址，这台电脑直连",
+    "cf_mac": "JavLibrary／FC2-javten 由这台电脑代为验证：这台电脑不支持",
+    "apply_switch": "切换并重新启动 OpenAver",
+    "apply_apply": "应用并重新启动 OpenAver",
+    "apply_hint_local": "本机服务器会关掉；本机片库数据库不会被动。",
+    "apply_hint_client": "改网址或重新输入密码后，要点「应用并重新启动 OpenAver」才会生效。",
+    "switch_local_title": "切回本机模式",
+    "switch_local_btn": "切回本机模式并重新启动 OpenAver",
+    "switch_local_hint": "本机服务器会重新启动；本机原本那个数据库没被动过；这台电脑的播放器与关闭行为设置保留。",
+    "restarting": "正在重新启动 OpenAver…",
+    "error_generic": "操作失败，请再试一次",
+    "rows": {
+      "title": "路径对照表",
+      "intro": "左栏是服务器上的文件夹，右栏填这台电脑看到的路径，可以先留空、之后再填。",
+      "placeholder_windows": "\\\\192.168.1.190\\av",
+      "placeholder_mac": "/Volumes/av",
+      "favorite": "我的最爱",
+      "readonly": "只读",
+      "test_btn": "测试",
+      "found": "找得到",
+      "not_found": "这台电脑看不到这个位置",
+      "not_found_path": "这台电脑看不到这个位置：{path}",
+      "slow": "这个位置响应太慢或连不上，请确认路径后再测一次",
+      "no_sample": "这个来源里没有可测试的视频",
+      "loading": "正在读取服务器的扫描来源…",
+      "load_failed": "读不到服务器的扫描来源",
+      "reload_btn": "重新读取",
+      "empty": "服务器还没有扫描来源或「我的最爱」文件夹",
+      "stale": "（服务器已无此来源）",
+      "remove": "移除",
+      "save_btn": "保存对照表",
+      "local_note": "对照表会在切换时一起写入。",
+      "saved": "对照表已保存",
+      "save_failed": "对照表保存失败"
+    }
   }
 }

@@ -7,7 +7,11 @@
     "help": "Help",
     "help_title": "Help Guide",
     "settings": "Settings",
-    "toggle_sidebar": "Toggle Sidebar"
+    "toggle_sidebar": "Toggle Sidebar",
+    "connect": "Connect",
+    "connect_title": "Connect: this computer runs its own server",
+    "connect_ok_title": "Connected to {host}",
+    "connect_down_title": "Cannot reach {host}"
   },
   "common": {
     "locale": {
@@ -48,6 +52,18 @@
       "copy_failed": "Copy failed. Please manually select the list text to copy.",
       "close": "Close",
       "count": "{count} videos total"
+    },
+    "bridge": {
+      "file_not_found": "File not found: {path}",
+      "path_uncovered_local": "This computer cannot see this location: {path}",
+      "path_uncovered_server_file": "The server cannot see the selected or dropped file: {path}. Add a matching entry in the path mapping table on the Connect page, or move the files into a shared folder the server can see.",
+      "path_uncovered_server_folder": "The server cannot see the selected or dropped folder: {path}. Add a matching entry in the path mapping table on the Connect page, or move the the files into a shared folder the server can see.",
+      "path_uncovered_server_any": "The server cannot see the selected or dropped file or folder: {path}. Add a matching entry in the path mapping table on the Connect page, or move the files into a shared folder the server can see.",
+      "not_video": "Not a video file, cannot open: {path}"
+    },
+    "shell": {
+      "update_available": "A new version of OpenAver, v{version}, is available on this computer. Update from the Help page",
+      "update_marker_title": "New version v{version} available. Update from the Help page"
     }
   },
   "desktop": {
@@ -69,6 +85,31 @@
       "cancel": "Cancel",
       "do_not_show_again": "Do not show this prompt again",
       "fallback_message": "Choose Yes to exit OpenAver, No to minimize to the notification area, or Cancel to return."
+    },
+    "offline": {
+      "message": {
+        "unreachable": "Cannot reach {host}",
+        "lan_forbidden": "Cannot reach {host}: the server does not allow LAN connections",
+        "incompatible": "The OpenAver version on {host} is not compatible with this computer",
+        "relogin": "The password has changed. Please enter it again"
+      },
+      "url_label": "Server URL",
+      "retry": "Retry",
+      "retrying": "Connecting...",
+      "switch_local": "Switch back to local mode and restart OpenAver",
+      "password_label": "Password",
+      "submit": "Submit",
+      "bad_url": "Invalid URL format",
+      "bad_pin": "Wrong password, or the server is temporarily locked. Please try again later",
+      "login_failed": "Login failed. Please try again later",
+      "retry_failed": "Still cannot connect. Make sure the server is on and the URL is correct"
+    },
+    "restart": {
+      "spawn_failed": "Could not restart OpenAver automatically. Please reopen it manually."
+    },
+    "cf_window": {
+      "jl_title": "JavLibrary - CF Verification",
+      "javten_title": "FC2 (javten) - CF Verification"
     }
   },
   "search": {
@@ -296,7 +337,11 @@
       "fields_defaulted": "⚠️ {fields} not available; default values used",
       "from_source": "From {name}",
       "wishlist_already_owned": "This title is already in your library",
-      "wishlist_added_offscreen": "Added to Wishlist"
+      "wishlist_added_offscreen": "Added to Wishlist",
+      "translate_blocked": "The title of this video was rejected by the translation provider's content filter. Switching models usually won't help; try another translation service (e.g. Claude or local Ollama)",
+      "translate_rate_limited": "Translation quota used up or too many requests. Please try again later, or check your plan's quota",
+      "translate_batch_blocked_suffix": " ({blocked} blocked by the provider's content filter; try another translation service)",
+      "translate_batch_limited_suffix": " ({limited} hit the quota or were rate limited; please try again later)"
     },
     "duplicate": {
       "title": "Duplicate File",
@@ -360,7 +405,64 @@
       "mt_probe_hint_reason3": "The source's metatube scraper has broken due to a site redesign (e.g. JAV321 / KIN8 — unrelated to your setup).",
       "mt_connect_failed": "Connection failed: {error}",
       "mt_promote_unavailable_warning": "This source is currently unreachable — it has been added to Active Row but may return no data",
-      "mt_probe_failed_pill_hint": "This source is currently unreachable — it may return no data after adding. Click 'Retest' to check again."
+      "mt_probe_failed_pill_hint": "This source is currently unreachable — it may return no data after adding. Click 'Retest' to check again.",
+      "probe_btn": "Test Connections",
+      "probe_summary": "{ok}/{total} reachable",
+      "probe_failed": "Connection test failed. Please try again later",
+      "probe_state_ok": "OK",
+      "probe_state_blocked": "Blocked",
+      "probe_state_unreachable": "Unreachable",
+      "probe_state_skipped": "Not tested",
+      "probe_reason_ok": "Connection OK",
+      "probe_reason_cf_challenge": "The site is asking for human verification",
+      "probe_reason_http_status": "The site rejected the request",
+      "probe_reason_http_status_code": "The site rejected the request (HTTP {status})",
+      "probe_reason_app_rejected": "The site rejected this lookup channel",
+      "probe_reason_proxy": "The proxy did not respond or its address is wrong",
+      "probe_reason_timeout": "Connection timed out",
+      "probe_reason_tls": "Secure connection failed",
+      "probe_reason_dns": "Domain name could not be resolved",
+      "probe_reason_network": "Network connection failed",
+      "probe_reason_error": "An internal error occurred during the test",
+      "probe_reason_windows_verifier": "Requires the Windows verification window; not tested here",
+      "probe_reason_self_hosted": "Your self-hosted metatube; it does not use this proxy",
+      "probe_reason_unknown": "Unknown source",
+      "probe_reason_unprobeable": "Testing is not yet supported for this source",
+      "probe_reason_proxy_auth_unsupported": "The verification windows of these two sources do not support socks5 proxies with a username and password; not tested",
+      "probe_reason_mac_system_proxy": "The macOS version follows the system proxy; not tested",
+      "probe_reason_verifier_not_started": "The verification window did not start. Please restart OpenAver",
+      "probe_reason_custom_use_verify": "For custom sources, use Verify",
+      "probe_reason_generic": "Reason unknown",
+      "custom_status_passed": "Verified",
+      "custom_status_failed": "Verification failed",
+      "custom_status_load_failed": "Failed to load",
+      "custom_status_unverified": "Not verified",
+      "custom_status_verifying": "Verifying...",
+      "custom_verb_equal": "should equal",
+      "custom_verb_contains": "should contain",
+      "custom_verb_include": "should include",
+      "custom_verb_exclude": "should not include",
+      "custom_verb_max": "at most",
+      "custom_line_passed": "Verified · {time}",
+      "custom_line_failed": "Verification failed · {time} · check {n} ({number}): {key} {verb} \"{expected}\", got \"{actual}\"",
+      "custom_line_failed_bare": "Verification failed · {time}",
+      "custom_line_more": "({count} more)",
+      "custom_line_load_failed": "Failed to load: {reason}",
+      "custom_verify_btn": "Verify",
+      "custom_remove_btn": "Remove",
+      "custom_badge_title": "Custom source",
+      "custom_remove_title": "Remove custom source",
+      "custom_remove_body": "Remove \"{name}\"? Its source file and verification record will be deleted. Source names already written to NFO files are not changed and will show the original id from now on.",
+      "custom_remove_confirm": "Remove",
+      "custom_error_busy": "Another source is being verified. Please try again later",
+      "custom_error_changed": "This source was modified during verification. Please verify again",
+      "custom_error_generic": "Operation failed. Please try again later",
+      "probe_line": "{state}: {reason}",
+      "probe_line_advice": "{state}: {reason} ({advice})",
+      "probe_line_host": "{state} ({host}): {reason}",
+      "probe_line_host_advice": "{state} ({host}): {reason} ({advice})",
+      "probe_tip": "{name}: {line}",
+      "probe_advice_jp_ip": "Some regions need a Japan IP; you can set one in the Proxy field"
     },
     "advanced_search": {
       "metatube_keyword_hint": "Metatube sources do not support actress/keyword search — enter a full ID for best results.",
@@ -381,7 +483,11 @@
       "config_saved": "Settings saved",
       "save_failed": "Save failed: {error}",
       "reset_done": "Reset to default settings",
-      "reset_failed": "Reset failed: {error}"
+      "reset_failed": "Reset failed: {error}",
+      "config_saved_with_local": "Settings saved (including this computer's settings)",
+      "local_failed_server_saved": "Server settings saved; failed to save this computer's settings",
+      "local_saved_server_failed": "This computer's settings saved; failed to save server settings",
+      "local_failed_server_failed": "Failed to save both the server's and this computer's settings"
     },
     "header": {
       "title": "Settings",
@@ -457,7 +563,16 @@
       "favorite_folder_hint": "Load a commonly used folder with one click",
       "favorite_folder_placeholder": "Leave blank = system Downloads folder",
       "favorite_folder_placeholder_server": "Leave blank = don't use a favorite folder",
-      "favorite_folder_example_prefix": "Example: C:\\Users\\&lt;your username&gt;\\Downloads"
+      "favorite_folder_example_prefix": "Example: C:\\Users\\&lt;your username&gt;\\Downloads",
+      "proxy_placeholder": "Leave empty to connect directly or use the system proxy",
+      "proxy_scope_label": "Proxy Scope",
+      "proxy_scope_dmm": "DMM only",
+      "proxy_scope_all": "All sources",
+      "proxy_scope_dmm_hint": "Only DMM uses this proxy",
+      "proxy_scope_all_hint": "All sources use this proxy",
+      "proxy_scope_all_hint_mac": "All sources use this proxy (except JavLibrary / FC2-javten)",
+      "proxy_restart_hint": "JavLibrary / FC2-javten will use the new setting only after you restart OpenAver",
+      "favorite_folder_example_prefix_synology": "Example: /volume1/&lt;shared folder&gt;/downloads"
     },
     "translate": {
       "enabled_label": "Enable Title Translation",
@@ -479,7 +594,10 @@
       "openai_api_key_placeholder": "Leave blank = no Authorization header",
       "openai_api_key_hint": "Local LLMs can leave empty; cloud services require an API Key",
       "openai_model_placeholder": "e.g. gpt-4o-mini",
-      "openai_custom_model": "Custom..."
+      "openai_custom_model": "Custom...",
+      "claude_cloud": "(Anthropic cloud)",
+      "claude_api_key_hint": "Create an API Key in the Anthropic Console (starts with sk-ant-). A Claude subscription login cannot be used here.",
+      "claude_api_key_placeholder": "sk-ant-..."
     },
     "scraper": {
       "suffix_keywords_label": "Version Tags",
@@ -533,7 +651,8 @@
           "confirm": "Rewrite now"
         },
         "rewrite_done": "Rewrote {count} .strm file(s)",
-        "rewrite_failed": "Failed to rewrite existing .strm files. The path rules were saved but existing files were not updated; save again later to retry."
+        "rewrite_failed": "Failed to rewrite existing .strm files. The path rules were saved but existing files were not updated; save again later to retry.",
+        "intro": "When Emby / Jellyfin / Kodi runs on another machine and sees source paths that differ from this machine's, use these rules to replace the \"local scan prefix\" with the \"player prefix\". With no rules, strm files contain local paths. The rules are global and apply to all .strm files (including Emby / Kodi ones). Since Jellyfin 10.11.7, .strm files may only point to URLs (http / https / rtsp / rtp); a .strm containing a disk path will not play, no matter which machine the disk is on. Emby and Kodi are not affected. If your cloud drive is already served over HTTP (e.g. via Alist / OpenList), set the player side of \"Playback-side path mapping\" to that URL prefix (e.g. /volume1/cloud → http://nas:5244/d/115)."
       }
     },
     "gallery": {
@@ -588,7 +707,10 @@
       "close_action_label": "When closing the window",
       "close_action_ask": "Ask every time",
       "close_action_tray": "Minimize to tray",
-      "close_action_exit": "Exit OpenAver"
+      "close_action_exit": "Exit OpenAver",
+      "this_computer": "This Computer",
+      "this_computer_hint": "These settings are stored on this computer, not on the server",
+      "this_computer_unavailable": "Cannot read this computer's settings right now, so these two options cannot be changed for the moment"
     },
     "action": {
       "test": "Test",
@@ -648,7 +770,29 @@
       "openai_missing_model": "Please enter model name",
       "openai_connection_timeout": "Connection timeout",
       "openai_translate_failed": "Translation test failed",
-      "ja_skip": "Japanese mode: translation skipped"
+      "ja_skip": "Japanese mode: translation skipped",
+      "openai_blocked": "This test title was blocked by the provider's content filter. Switching models usually won't help; try another translation service instead",
+      "claude_blocked": "This test title was blocked by the provider's content filter. Switching models usually won't help; try another translation service instead",
+      "gemini_blocked": "This test title was blocked by the provider's content filter. Switching models usually won't help; try another translation service instead",
+      "claude_auth_failed": "Authentication failed. Check your API Key",
+      "claude_missing_key": "Authentication failed. Check your API Key",
+      "claude_forbidden": "Access denied",
+      "claude_not_found": "Model not found. Click \"Test\" to choose again",
+      "claude_rate_limited": "Quota exceeded or too many requests",
+      "claude_connection_failed": "Connection failed",
+      "claude_connection_timeout": "Connection timed out",
+      "claude_http_error": "HTTP request failed",
+      "claude_translate_failed": "Translation test failed",
+      "gemini_auth_failed": "Authentication failed. Check your API Key",
+      "gemini_missing_key": "Authentication failed. Check your API Key",
+      "gemini_forbidden": "Access denied",
+      "gemini_not_found": "Model not found. Click \"Test\" to choose again",
+      "gemini_rate_limited": "Quota exceeded or too many requests",
+      "gemini_connection_failed": "Connection failed",
+      "gemini_connection_timeout": "Connection timed out",
+      "gemini_http_error": "HTTP request failed",
+      "gemini_translate_failed": "Translation test failed",
+      "claude_missing_model": "Please select a model first"
     }
   },
   "scanner": {
@@ -931,7 +1075,8 @@
     "wishlist_reconcile_failed": "Wishlist reconciliation failed, check the logs",
     "focal_auto_disabled": "Face detection timed out twice in a row, so we've turned off Auto Face Focus for you. If you want to adjust the position, just drag it yourself in the lightbox.",
     "data_root_finalized": "The data location is now finalized — please keep this folder together when backing up.",
-    "data_root_recovered": "Your existing library has been kept, but settings were rebuilt to their defaults: source settings, cross-machine path mapping, external service settings, and interface preferences all need to be reconfigured."
+    "data_root_recovered": "Your existing library has been kept, but settings were rebuilt to their defaults: source settings, cross-machine path mapping, external service settings, and interface preferences all need to be reconfigured.",
+    "cf_shell_lost": "The verification window is not responding. Please refresh and try again"
   },
   "similar_mode": {
     "button_aria_label": "Explore similar videos",
@@ -976,7 +1121,17 @@
       "version_next_aria": "Next version",
       "adopt_version": "Use this version",
       "adopt_switch_source": "Replace with this version",
-      "preserve_title": "Keep current title: \"{title}\""
+      "preserve_title": "Keep current title: \"{title}\"",
+      "access_refused": "{source} refused the connection",
+      "access_unreachable": "Cannot reach {source}. Check your network or proxy settings",
+      "access_advice_jp_ip": "Some regions need a Japan IP; you can set one in the Proxy field",
+      "cf_window_not_built": "The verification window on this computer is not ready yet. Go to the Connect page and click Retry",
+      "cf_window_preparing": "The verification window is getting ready. Please try again in a few seconds",
+      "group_custom": "Custom sources",
+      "custom_pattern_mismatch": "This source does not accept this kind of ID",
+      "custom_not_found": "{source} does not have this video",
+      "custom_parse_failed": "Could not get data from {source}; the site may have changed. Re-run verification on the Settings page",
+      "custom_refused": "{source} is currently unavailable"
     },
     "placeholder": {
       "search": "Search ID, actress, title..."
@@ -1262,7 +1417,11 @@
       "auto_check_save_failed": "Failed to save setting, please try again later",
       "ai_instruction": "Paste to AI agent to control OpenAver",
       "ai_hint_unsupported": "Not supported in web chat",
-      "ai_tools": "Paste to any AI agent to operate OpenAver — Claude Code · Cursor · Codex etc."
+      "ai_tools": "Paste to any AI agent to operate OpenAver — Claude Code · Cursor · Codex etc.",
+      "this_computer_unavailable": "Cannot read this computer's update info right now. Please reopen the Help page and try again",
+      "client_up_to_date": "OpenAver on this computer is up to date",
+      "client_update_available_prefix": "This computer has a new version",
+      "client_update_available_suffix": "available"
     },
     "agent_auth": {
       "title": "Agent Token",
@@ -1420,7 +1579,8 @@
       "h6_multiversion": "Multi-version manual merge (native Emby / Jellyfin feature)",
       "multiversion_intro": "Merging multiple versions of the same title (censored / uncensored leak / subtitled) into one entry with a version dropdown in Emby or Jellyfin is a feature both support natively (the same {folder name} - {label} rule), not exclusive to either. Just arrange the files manually as below:",
       "multiversion_rule1": "Each version's filename <strong>must start with the folder name</strong> followed by \" - label\" (space, hyphen, space)",
-      "multiversion_rule2": "Multi-version and cd1/cd2 multipart <strong>cannot be used together on the same title</strong> (media server official limitation)"
+      "multiversion_rule2": "Multi-version and cd1/cd2 multipart <strong>cannot be used together on the same title</strong> (media server official limitation)",
+      "strm_deploy_step3": "If the read-only source path seen by the playing machine differs from the one OpenAver sees (e.g. <code>Z:\\115</code> on OpenAver vs <code>/volume1/115</code> on the NAS), add a mapping rule under \"Playback-side path mapping\" on the <strong>Settings page</strong>; otherwise the <code>.strm</code> will point to a path the player cannot find. Since Jellyfin 10.11.7, <code>.strm</code> files may only point to URLs (http / https / rtsp / rtp); a <code>.strm</code> containing a disk path will not play, no matter which machine the disk is on. Emby and Kodi are not affected. If your cloud drive is already served over HTTP (e.g. via Alist / OpenList), set the player side of \"Playback-side path mapping\" to that URL prefix (e.g. <code>/volume1/cloud</code> → <code>http://nas:5244/d/115</code>)."
     },
     "showcase": {
       "title": "Video Browser (Showcase)",
@@ -1501,7 +1661,44 @@
       "toggle_uncensored": "Enable the 'Uncensored Mode' toggle on the <strong>Settings page</strong> to prioritize uncensored sources",
       "col_source": "Source",
       "col_format": "Format",
-      "col_example": "Example"
+      "col_example": "Example",
+      "h6_proxy_scope": "Proxy Scope",
+      "h6_probe": "Test Connections",
+      "censored_dmm": "<strong>DMM</strong>: toggled with the source capsule on the <strong>Settings page</strong> (the Proxy field is not a switch); only consider a Japan IP proxy if your region is refused",
+      "fuzzy_always_on": "<strong>Fuzzy search exception</strong>: when you fuzzy-search by actress name / keyword, sources disabled under \"Scan Sources\" are still used in ranking order (disabling only affects exact ID search). <strong>DMM exception</strong>: check the DMM capsule on the Settings page; if it is off, DMM is not queried",
+      "dmm_fuzzy_prereq": "Prerequisite: the DMM capsule on the Settings page is on",
+      "proxy_empty_system": "Leaving the Proxy field empty = use the system proxy; with no system proxy, connect directly. If you are on a Japan VPN or located in Japan, no extra setup is needed",
+      "proxy_scope_how": "After entering a proxy address, choose \"DMM only\" (default; only DMM data lookups use the proxy) or \"All sources\"",
+      "proxy_scope_all_includes": "With \"All sources\", these use the proxy: data lookups for the 8 video sources, cover and preview image downloads, covers relayed on the search page, bookmark covers, and actress data and photos",
+      "proxy_scope_excludes": "These never use the proxy: metatube (including images fetched through it), AI translation, and update checks",
+      "proxy_scope_verifier": "JavLibrary / FC2-javten rely on the verification window: on the Windows desktop version with \"All sources\" and an address set, the window also uses this proxy (restart OpenAver after changing the proxy; the Settings page will remind you; socks5 proxies with a username and password cannot be used by the window); the macOS desktop version follows the macOS system proxy; the NAS / Docker version has no verification window",
+      "probe_where": "Use \"Test Connections\" at the top right of the \"Scan Sources\" card on the Settings page. It tests all enabled sources at once using the proxy address and scope currently shown on screen; no need to save first. Disabled sources are not tested",
+      "probe_states": "Each source capsule shows a status dot: <strong>OK</strong> (reachable, not blocked), <strong>Blocked</strong> (the site asks for verification or rejects the request), <strong>Unreachable</strong> (proxy not responding, timeout, or domain cannot be resolved), <strong>Not tested</strong>; the shapes differ as well as the colors. Click a dot to see the reason",
+      "probe_not_data": "\"OK\" does not guarantee data can be fetched: site redesigns and fields that cannot be parsed are outside the scope of the test",
+      "probe_no_images": "Only the data-lookup domains are tested, not the cover and preview image hosts. With \"All sources\", a source whose image host is blocked by the proxy may still show OK while covers fail to load",
+      "probe_verifier": "The Windows desktop version actually tests JavLibrary and FC2-javten: reaching the Cloudflare verification page counts as \"OK\", which only means Cloudflare is reachable, not that the verification window will definitely pass. If the verification window did not start, or a socks5 proxy with a username and password is used, they are marked \"Not tested\" with the reason; an address that cannot be resolved is tested as usual and shown as unreachable",
+      "probe_skipped": "Not tested: JavLibrary, FC2-javten (need the Windows verification window) and metatube (self-hosted, does not use this proxy); for JavDB only the App data channel is tested, not the web fallback",
+      "probe_skipped_mac": "Not tested: JavLibrary, FC2-javten (the macOS version follows the system proxy) and metatube (self-hosted, does not use this proxy); for JavDB only the App data channel is tested, not the web fallback",
+      "probe_skipped_windows": "Not tested: metatube (self-hosted, does not use this proxy); for JavDB only the App data channel is tested, not the web fallback",
+      "h6_custom": "Custom Sources (AI can add them for you)",
+      "custom_what": "A custom source is a \"rules file\" that describes how to get a video's data from a website. It is only configuration and runs no code; once verification passes it is <strong>enabled automatically</strong>.",
+      "custom_how": "To add a new site, just tell the AI in one sentence, e.g. \"Add https://example.com as an OpenAver custom source\". The AI will write the rules file and upload it.",
+      "custom_verify": "After uploading, it must be verified: ask the AI to run verification, or on the <strong>Settings page</strong> open the \"Scan Sources\" area and click \"Verify\" on the new source. Once it passes it is enabled automatically, and after refreshing the Search / Browse page you can pick it. To stop using it, click its capsule to turn it off; re-verifying the same content will not turn it back on.",
+      "custom_state_unverified": "Not verified: just uploaded or re-uploaded and not yet verified; cannot be used.",
+      "custom_state_verifying": "Verifying: connecting to the site to run tests. Please wait.",
+      "custom_state_passed": "Verified: verification passed and the source is enabled and ready to use; click its capsule to turn it off.",
+      "custom_state_failed": "Failed: verification did not pass (often because the site changed). Ask the AI to fix the rules file and upload it again.",
+      "custom_state_load_failed": "Failed to load: the rules file itself has errors and cannot be read. Ask the AI to fix it and upload it again.",
+      "custom_modal": "The source menu in the rescrape window gets a third group of dashed capsules holding the custom sources you have turned on. If a source declares an ID format and the ID does not match, its capsule is greyed out and cannot be clicked.",
+      "custom_new_media": "Newly added videos and automatic search <strong>do not</strong> query custom sources. To use one, rescrape manually in the rescrape window after the video is added to the library.",
+      "custom_folder_intro": "If you write the rules file by hand, put the YAML file in the folder below (create it if it does not exist):",
+      "custom_folder_desktop": "Windows / macOS desktop version: <code>output/custom_sources</code> inside the OpenAver program folder",
+      "custom_folder_linux": "Linux server: same as above, e.g. <code>~/OpenAver/output/custom_sources</code>",
+      "custom_folder_synology": "Synology: <code>/var/packages/OpenAver/var/data/custom_sources</code>; if <code>OPENAVER_DATA_DIR</code> is set, it is <code>custom_sources</code> under that directory",
+      "custom_limit_host": "Sites whose detail pages are on a different domain fail verification and are not currently supported.",
+      "custom_limit_userinfo": "For sites whose URL contains a username and password, re-fetching when confirming among multiple versions will fail.",
+      "custom_limit_stale": "Passing verification only means the source works right now; verify again after the site changes.",
+      "custom_docs_link": "Full format and AI instructions (GitHub: docs/custom-sources.md)"
     },
     "metatube": {
       "title": "Metatube Tutorial",
@@ -1544,7 +1741,13 @@
       "recover_win_2": "Click \"Inbound Rules\" in the left panel.",
       "recover_win_3": "Find rules where \"Program\" is <code>python.exe</code> (or named Python / OpenAver) and \"Action\" is \"Block\" — typically two entries (Public + Private).",
       "recover_win_4": "Right-click to delete those rules, restart OpenAver, then switch to \"server\" mode and click \"Allow\".",
-      "recover_mac": "macOS recovery: System Settings → Network → Firewall → Options, find this app and set it to \"Allow incoming connections\"."
+      "recover_mac": "macOS recovery: System Settings → Network → Firewall → Options, find this app and set it to \"Allow incoming connections\".",
+      "how_shared_folder": "When connecting to a server from the desktop version, new videos to organize must first be placed in a shared folder the server can see. You cannot organize directly from this computer's Downloads folder, or you will see \"The server cannot see this folder\".",
+      "client_h6": "Connecting from the Desktop App",
+      "client_entry": "In the desktop version, click \"Connect\" in the sidebar, enter the server URL, click \"Test Connection\", then click \"Switch and Restart OpenAver\". This computer will then use the library on the server.",
+      "client_password": "If the server has a password, the Connect page asks you to enter it. If you forgot it, reset it on the server side.",
+      "client_map": "To play videos and organize new ones on this computer, fill in the \"Path Mapping Table\" on the Connect page: the left column is the folder on the server, the right column is the path as seen from this computer (e.g. a network drive \\\\192.168.1.190\\av). Then click \"Save Mapping Table\".",
+      "client_back_local": "To go back to this computer's own library, click \"Switch back to local mode and restart OpenAver\" on the same Connect page. The original local database is not touched."
     },
     "troubleshooting": {
       "title": "Troubleshooting",
@@ -1567,7 +1770,12 @@
       "report_debug_3": "Report the log file and error message to <a href=\"https://github.com/slive777/OpenAver/issues\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Issues</a>",
       "translate_ollama": "<strong>Ollama</strong>: Confirm the Ollama application is running (Windows requires manual launch)",
       "translate_gemini": "<strong>Gemini</strong>: Confirm the API Key is correctly set on the <strong>Settings page</strong>",
-      "translate_openai": "<strong>OpenAI Compatible</strong>: Check that the Base URL and model name are correct"
+      "translate_openai": "<strong>OpenAI Compatible</strong>: Check that the Base URL and model name are correct",
+      "dmm_proxy": "First make sure the DMM capsule on the <strong>Settings page</strong> is on",
+      "dmm_blocked_try_jp_proxy": "If DMM shows the connection was refused, some regions need a Japan IP: enter a Japan IP proxy in the Proxy field on the <strong>Settings page</strong>, or connect to a Japan VPN.",
+      "translate_claude": "<strong>Claude</strong>: get a key from the Anthropic Console (starts with <code>sk-ant-</code>) and paste it correctly on the <strong>Settings page</strong>. Logging in with a Claude subscription account does not work; you must use an API key. If the model list cannot be fetched, first check that the key is correct",
+      "translate_blocked": "<strong>Test succeeds but some videos cannot be translated</strong>: usually the translation provider's content filter (most common with Gemini; switching to Gemma gets blocked as well). Try Claude or local Ollama instead",
+      "translate_manual_model": "<strong>OpenAI-compatible</strong>: if the model list cannot be fetched but the service works, type the model name directly in the Model field (if the field is a dropdown, choose \"Custom...\" to turn it into a text box)"
     },
     "js": {
       "version_load_failed": "Failed to load",
@@ -1582,7 +1790,10 @@
       "cancel_btn": "Cancel",
       "confirm_btn": "Confirm Update",
       "toast_success": "Installer opened. Follow the on-screen instructions to complete the update.",
-      "toast_error": "Failed to launch the installer. Please run the installation script manually."
+      "toast_error": "Failed to launch the installer. Please run the installation script manually.",
+      "client_title": "About to update OpenAver on this computer",
+      "client_case_a_body": "This updates OpenAver on this computer, not the server. After you confirm, a terminal opens on this computer to run the installation. Please close OpenAver first, and reopen it yourself once the installation finishes.",
+      "client_case_b_body": "OpenAver on this computer is not installed in the default location.\nThe installer will first install the new version to the default directory; you do not need to close the current OpenAver during installation.\n\nWhen the installation finishes, do the following in order:\n1. Close OpenAver\n2. Delete the python folder in the old installation directory\n3. Copy all files of the new version over your original installation location on this computer\n\nNo reinstall or reconfiguration is needed; just overwrite the files and use it."
     }
   },
   "tutorial": {
@@ -1629,7 +1840,9 @@
       "deep_dive": "Deep Dive: Actress & Maker",
       "gantt": "Major Studio Timeline",
       "actress_distribution": "Actress–Maker Distribution",
-      "costar": "Co-stars"
+      "costar": "Co-stars",
+      "actress_top": "Top {n} actresses",
+      "actress_top_rest": "Ranks {from}–{to}"
     },
     "donut": {
       "legend": "Inner ring: maker share · Outer ring: major-maker videos / other videos",
@@ -1659,6 +1872,94 @@
     "costar": {
       "count_label": "{n} videos"
     },
-    "total_count": "{n} videos in your library"
+    "total_count": "{n} videos in your library",
+    "all_actress": "All actresses",
+    "all_maker": "All studios",
+    "clear_actress": "Clear actress",
+    "clear_maker": "Clear studio",
+    "count_open_browse": "View in Browse"
+  },
+  "connect": {
+    "nobridge": "Please open this in the desktop version",
+    "status_local": "This computer runs its own server",
+    "status_connected": "Connected to {host}",
+    "status_down": "Cannot reach {host}",
+    "version_line": "Version {version} ({kind})",
+    "version_only": "Version {version}",
+    "kind_synology": "Synology package",
+    "kind_linux": "Linux server",
+    "kind_windows": "Windows desktop version",
+    "kind_mac": "Mac desktop version",
+    "last_ok": "Last successful connection: {time}",
+    "change_title": "Connect to a different server",
+    "url_placeholder": "http://192.168.1.190:8765",
+    "test_btn": "Test Connection",
+    "result_patch_diff": "The server version ({server}) differs from this computer ({local}), but you can still connect",
+    "result_server_old": "The server version is older. Please update the server first",
+    "result_client_old": "Please update OpenAver on this computer",
+    "result_unparseable": "Could not identify this server's version",
+    "result_unreachable": "Cannot reach this server. Check the URL and your network",
+    "result_timeout": "Connection timed out. Check the URL and your network",
+    "result_tls": "Secure connection (https) verification failed",
+    "result_lan_forbidden": "This server only allows LAN connections",
+    "result_not_openaver": "This is not an OpenAver server, or its version is older",
+    "password_label": "Password",
+    "login_btn": "Confirm Password",
+    "pin_bad": "Wrong password, or the server is temporarily locked. Please try again later",
+    "pin_failed": "Could not verify the password. Please try again",
+    "nopassword": "This server has no password; anyone on the LAN can use it",
+    "forgot_synology": "Reinstalling OpenAver from Package Center clears the password",
+    "forgot_linux": "Run this in the OpenAver folder on the server, then restart the server: venv/bin/python -c \"from core.access_auth import set_auth; set_auth(enabled=False, pin='')\"",
+    "forgot_desktop": "Change it on the Settings page of that computer",
+    "cf_ready": "JavLibrary / FC2-javten verified by this computer: ready",
+    "cf_not_ready": "JavLibrary / FC2-javten verified by this computer: not ready ({reason})",
+    "cf_reason_starting": "Starting",
+    "cf_reason_no_windows": "The verification window was not created",
+    "cf_reason_proxy_unusable": "This computer cannot apply the proxy set on the server",
+    "cf_reason_server_old": "The server version is not supported",
+    "cf_reason_unreachable": "Cannot reach the server",
+    "cf_reason_unauthorized": "The server did not accept this computer. Please reconnect",
+    "cf_reason_offline_boot": "Could not reach the server at startup; click Retry once the server is back",
+    "cf_reason_shell_old": "This App version is not supported. Please update",
+    "cf_reason_webview2_failed": "WebView2 failed to initialize on this computer. Repair or reinstall the Microsoft Edge WebView2 Runtime, then restart OpenAver",
+    "cf_retry_btn": "Retry",
+    "cf_retry_busy": "The previous retry is still in progress. Please wait before clicking again",
+    "cf_retry_unavailable": "This App version has no retry feature. Please update",
+    "cf_proxy_applied": "The verification window uses the proxy set on the server",
+    "cf_proxy_local_direct": "The server's proxy is its own local address, so this computer connects directly",
+    "cf_mac": "JavLibrary / FC2-javten verified by this computer: not supported on this computer",
+    "apply_switch": "Switch and Restart OpenAver",
+    "apply_apply": "Apply and Restart OpenAver",
+    "apply_hint_local": "The local server will be shut down; the local library database is not touched.",
+    "apply_hint_client": "After changing the URL or re-entering the password, click \"Apply and Restart OpenAver\" for it to take effect.",
+    "switch_local_title": "Switch back to local mode",
+    "switch_local_btn": "Switch back to local mode and restart OpenAver",
+    "switch_local_hint": "The local server will restart; the original local database is untouched; this computer's player and close-behavior settings are kept.",
+    "restarting": "Restarting OpenAver...",
+    "error_generic": "Operation failed. Please try again",
+    "rows": {
+      "title": "Path Mapping Table",
+      "intro": "The left column is the folder on the server; in the right column enter the path as seen from this computer. You can leave it empty and fill it in later.",
+      "placeholder_windows": "\\\\192.168.1.190\\av",
+      "placeholder_mac": "/Volumes/av",
+      "favorite": "Favorite",
+      "readonly": "Read-only",
+      "test_btn": "Test",
+      "found": "Found",
+      "not_found": "This computer cannot see this location",
+      "not_found_path": "This computer cannot see this location: {path}",
+      "slow": "This location is too slow to respond or unreachable. Check the path and test again",
+      "no_sample": "No testable video in this source",
+      "loading": "Loading the server's scan sources...",
+      "load_failed": "Could not read the server's scan sources",
+      "reload_btn": "Reload",
+      "empty": "The server has no scan sources or Favorite folders yet",
+      "stale": "(no longer on the server)",
+      "remove": "Remove",
+      "save_btn": "Save Mapping Table",
+      "local_note": "The mapping table is saved together when you switch.",
+      "saved": "Mapping table saved",
+      "save_failed": "Failed to save the mapping table"
+    }
   }
 }
