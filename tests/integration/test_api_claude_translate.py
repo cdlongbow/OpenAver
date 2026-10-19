@@ -33,7 +33,7 @@ KIND_TO_ERROR = [
     ("connection_timeout", "connection_timeout"),
     ("connection_failed", "connection_failed"),
     ("http_error", "http_error"),
-    ("refused", "translate_failed"),
+    ("refused", "blocked"),
     ("truncated", "translate_failed"),
     ("empty_response", "translate_failed"),
     ("api_error", "translate_failed"),

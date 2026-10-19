@@ -25,11 +25,12 @@ from typing import List, Dict, Optional
 import httpx
 import re
 
+from core import gemini_client, openai_client
 from core.anthropic_client import (
     DEFAULT_CLAUDE_MODEL,
-    AnthropicError,
     request_translation,
 )
+from core.cloud_translate import CLOUD_TRANSLATE_TIMEOUT, TranslateError, build_error
 
 
 # ============ 語言 Prompt 模板 ============
@@ -76,6 +77,16 @@ class TranslateService(ABC):
         """
         pass
 
+    async def translate_or_raise(self, title: str, context: Optional[Dict] = None) -> str:
+        """翻譯單個標題；失敗拋 TranslateError（供 API 層分辨原因）。
+
+        預設實作包 translate_single：回空字串視為 empty_response。
+        """
+        result = await self.translate_single(title, context)
+        if not result:
+            raise TranslateError("empty_response", None, "", "translation is empty")
+        return result
+
     @abstractmethod
     async def translate_batch(self, titles: List[str], context: Optional[Dict] = None) -> List[str]:
         """
@@ -110,12 +121,8 @@ class OllamaTranslateService(TranslateService):
         self.model = config.get("model") or "qwen3:8b"
         self.target_language = target_language
 
-    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
-        """
-        單片翻譯
-
-        適用場景：用戶查看第 1 片時立即翻譯
-        """
+    async def translate_or_raise(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；ja 短路；失敗拋 TranslateError（請求內容與改前逐字相同）。"""
         # ja 短路：不呼叫 API，直接回傳原文
         if self.target_language == "ja":
             return title
@@ -153,10 +160,34 @@ class OllamaTranslateService(TranslateService):
 
             # 清理輸出
             result = self._clean_output(result)
-
-            return result if result else ""
-
+        except TranslateError:
+            raise
+        except httpx.TimeoutException as e:
+            raise build_error(
+                "Ollama", "connection_timeout", None, type(e).__name__, "request timed out"
+            ) from None
+        except httpx.ConnectError as e:
+            raise build_error(
+                "Ollama", "connection_failed", None, type(e).__name__, "cannot connect"
+            ) from None
         except Exception as e:
+            raise build_error(
+                "Ollama", "api_error", None, type(e).__name__, str(e)
+            ) from None
+
+        if not result:
+            raise build_error("Ollama", "empty_response", None, "", "translation is empty")
+        return result
+
+    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
+        """
+        單片翻譯
+
+        適用場景：用戶查看第 1 片時立即翻譯；任何失敗回空字串。
+        """
+        try:
+            return await self.translate_or_raise(title, context)
+        except TranslateError as e:
             logger.error(f"[Ollama] Single translation failed: {e}")
             return ""
 
@@ -219,121 +250,39 @@ class GeminiTranslateService(TranslateService):
         """
         self.api_key = config.get("api_key", "")
         self.model = config.get("model", "gemini-flash-lite-latest")
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
         self.target_language = target_language
 
         if not self.api_key:
             raise ValueError("Gemini API Key is required")
 
-    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
-        """
-        單片翻譯
-
-        適用場景：用戶手動點擊翻譯按鈕
-        性能：約 0.87 秒
-        """
+    async def translate_or_raise(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；ja 短路；失敗拋 TranslateError。"""
         # ja 短路：不呼叫 API，直接回傳原文
         if self.target_language == "ja":
             return title
 
-        lang_data = LANGUAGE_PROMPTS.get(self.target_language, LANGUAGE_PROMPTS["zh-TW"])
-        instruction = lang_data["gemini_instruction"]
-        rules = lang_data["gemini_rules"]
-
-        prompt = f"""你是專業的影視資料庫管理員與翻譯引擎。這是既有日文文字的逐字翻譯任務，{instruction}。
-
-原文：
-{title}
-
-翻譯要求：
-{rules}
-"""
+        prompt = build_cloud_translate_prompt(title, self.target_language)
 
         try:
-            url = f"{self.base_url}/models/{self.model}:generateContent"
-            headers = {"x-goog-api-key": self.api_key}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.3,
-                    "maxOutputTokens": 100
-                },
-                "safetySettings": [
-                    {
-                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        "threshold": "BLOCK_NONE"
-                    },
-                    {
-                        "category": "HARM_CATEGORY_HARASSMENT",
-                        "threshold": "BLOCK_NONE"
-                    },
-                    {
-                        "category": "HARM_CATEGORY_HATE_SPEECH",
-                        "threshold": "BLOCK_NONE"
-                    },
-                    {
-                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                        "threshold": "BLOCK_NONE"
-                    }
-                ]
-            }
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-
-            data = resp.json()
-
-            # Step 1: 檢查 promptFeedback（最優先）
-            if "promptFeedback" in data:
-                feedback = data["promptFeedback"]
-                if "blockReason" in feedback:
-                    block_reason = feedback["blockReason"]
-                    safety_ratings = feedback.get("safetyRatings", [])
-                    logger.warning(f"[Gemini] Prompt 被過濾: {block_reason}")
-                    if safety_ratings:
-                        logger.warning(f"[Gemini] 安全評級: {safety_ratings}")
-                    return ""
-
-            # Step 2: 檢查 candidates 是否存在
-            if "candidates" not in data or not data["candidates"]:
-                if "error" in data:
-                    error_msg = data["error"].get("message", "Unknown error")
-                    logger.error(f"[Gemini] API Error: {error_msg}")
-                else:
-                    logger.warning("[Gemini] No candidates in response")
-                return ""
-
-            candidate = data["candidates"][0]
-
-            # Step 3: 檢查 finishReason
-            finish_reason = candidate.get("finishReason", "")
-            if finish_reason and finish_reason != "STOP":
-                logger.warning(f"[Gemini] 異常終止: finishReason={finish_reason}")
-                if finish_reason == "SAFETY":
-                    safety_ratings = candidate.get("safetyRatings", [])
-                    logger.warning(f"[Gemini] 安全過濾觸發: {safety_ratings}")
-                return ""
-
-            # Step 4: 安全訪問 content 字段
-            try:
-                translation = candidate["content"]["parts"][0]["text"].strip()
-                return translation
-            except (KeyError, IndexError, TypeError) as e:
-                logger.error(f"[Gemini] 響應格式錯誤: {e}")
-                logger.debug(f"[Gemini] Candidate 結構: {candidate}")
-                return ""
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400:
-                logger.error("[Gemini] Invalid API Key or request")
-            elif e.response.status_code == 429:
-                logger.warning("[Gemini] API quota exceeded")
-            else:
-                logger.error(f"[Gemini] API error: {e.response.status_code}")
-            return ""
+            return await gemini_client.request_translation(
+                self.api_key,
+                self.model,
+                prompt,
+                timeout=CLOUD_TRANSLATE_TIMEOUT,
+            )
+        except TranslateError:
+            raise
         except Exception as e:
-            logger.error(f"[Gemini] Single translation failed: {e}")
+            # 只記型別名：例外字串可能含金鑰
+            raise build_error(
+                "Gemini", "api_error", None, type(e).__name__, "translation request failed"
+            ) from None
+
+    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯（用戶手動點擊）；任何失敗回空字串。"""
+        try:
+            return await self.translate_or_raise(title, context)
+        except TranslateError:
             return ""
 
     async def translate_batch(self, titles: List[str], context: Optional[Dict] = None) -> List[str]:
@@ -379,59 +328,35 @@ class OpenAICompatibleTranslateService(TranslateService):
         self.model = config.get("model") or "gpt-4o-mini"
         self.target_language = target_language
 
-    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
-        """
-        單片翻譯
-
-        使用 OpenAI Chat Completions API 格式
-        """
+    async def translate_or_raise(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；ja 短路；失敗拋 TranslateError。"""
         # ja 短路：不呼叫 API，直接回傳原文
         if self.target_language == "ja":
             return title
 
-        lang_data = LANGUAGE_PROMPTS.get(self.target_language, LANGUAGE_PROMPTS["zh-TW"])
-        instruction = lang_data["gemini_instruction"]
-        rules = lang_data["gemini_rules"]
-
-        prompt = f"""你是專業的影視資料庫管理員與翻譯引擎。這是既有日文文字的逐字翻譯任務，{instruction}。
-
-原文：
-{title}
-
-翻譯要求：
-{rules}
-"""
-
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "max_completion_tokens": 100,  # 不用 max_tokens：OpenAI reasoning models（gpt-5.x / o-series）會回 400
-        }
+        prompt = build_cloud_translate_prompt(title, self.target_language)
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload
-                )
-                resp.raise_for_status()
-
-            data = resp.json()
-            choices = data.get("choices")
-            if not choices:
-                logger.error("[OpenAI] Response missing 'choices': %s", data)
-                return ""
-            result = choices[0]["message"]["content"].strip()
-            return result
-
+            return await openai_client.request_translation(
+                self.base_url,
+                self.api_key,
+                self.model,
+                prompt,
+                timeout=CLOUD_TRANSLATE_TIMEOUT,
+            )
+        except TranslateError:
+            raise
         except Exception as e:
-            logger.error("[OpenAI] Single translation failed: %s", e)
+            # 只記型別名：例外字串可能含金鑰
+            raise build_error(
+                "OpenAI", "api_error", None, type(e).__name__, "translation request failed"
+            ) from None
+
+    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；任何失敗回空字串。"""
+        try:
+            return await self.translate_or_raise(title, context)
+        except TranslateError:
             return ""
 
     async def translate_batch(self, titles: List[str], context: Optional[Dict] = None) -> List[str]:
@@ -484,8 +409,8 @@ class ClaudeTranslateService(TranslateService):
         if not self.api_key:
             raise ValueError("Claude API Key is required")
 
-    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
-        """單片翻譯；ja 短路；AnthropicError／其他例外回空字串。"""
+    async def translate_or_raise(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；ja 短路；失敗拋 TranslateError（AnthropicError 為其子類）。"""
         if self.target_language == "ja":
             return title
 
@@ -498,10 +423,19 @@ class ClaudeTranslateService(TranslateService):
                 prompt,
                 timeout=30,
             )
-        except AnthropicError:
-            return ""
+        except TranslateError:
+            raise
         except Exception as e:
-            logger.error("[Claude] Single translation failed: %s", e)
+            # 只記型別名：例外字串可能含金鑰
+            raise build_error(
+                "Claude", "api_error", None, type(e).__name__, "translation request failed"
+            ) from None
+
+    async def translate_single(self, title: str, context: Optional[Dict] = None) -> str:
+        """單片翻譯；任何失敗回空字串。"""
+        try:
+            return await self.translate_or_raise(title, context)
+        except TranslateError:
             return ""
 
     async def translate_batch(self, titles: List[str], context: Optional[Dict] = None) -> List[str]:

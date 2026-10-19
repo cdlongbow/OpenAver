@@ -79,13 +79,17 @@ scrapers/
 
 ### `translate_service.py`
 **AI 翻譯服務**
-- 抽象基類 `TranslateService` 定義統一介面。
-- `OllamaTranslateService` - 本地 Ollama 翻譯（批次處理）。
-- `GeminiTranslateService` - Google Gemini API 翻譯。
-  - 內建 `safetySettings` (BLOCK_NONE) 避免內容過濾。
-  - 批次翻譯改為逐片調用以提高成功率。
+- 抽象基類 `TranslateService` 定義統一介面：`translate_single()`（失敗回空字串、不拋，整理流程用）與 `translate_or_raise()`（失敗拋 `TranslateError` 帶原因，搜尋頁與測試鈕用）。
+- `OllamaTranslateService` - 本地 Ollama 翻譯（批次處理；請求參數固定不送上限以外的東西）。
+- `GeminiTranslateService` - Google Gemini API 翻譯（請求／回應細節在 `gemini_client.py`；只送 `contents`＋`safetySettings`(BLOCK_NONE)，不送回答上限與溫度）。
+- `OpenAICompatibleTranslateService` - OpenAI 相容服務翻譯（細節在 `openai_client.py`；只送 `model`＋`messages`）。
 - `ClaudeTranslateService` - Anthropic Claude API 翻譯（請求／回應細節在 `anthropic_client.py`）。
 - 工廠函數 `create_translate_service()` 根據配置創建服務。
+
+### `cloud_translate.py`／`gemini_client.py`／`openai_client.py`
+**雲端翻譯共用層與各家 client**
+- `cloud_translate.py`：`TranslateError`（`kind`／`status`／`error_type`／`message`）、`failure_category()`（搜尋頁三分法：blocked／rate_limited／other）、`settings_error_key()`（設定頁測試鈕 error key）、`finalize_translation()`（清 `<think>`／`<thought>`，不成對標記 fail-closed）、`cloud_request()`（httpx 傳輸殼：逾時／金鑰含不合法字元／連線失敗映射成固定訊息，金鑰不進 log）、`CLOUD_TRANSLATE_TIMEOUT`（60 秒）。
+- `gemini_client.py`／`openai_client.py`：各自的 `build_headers`（金鑰 strip）、`build_translate_payload`、`extract_text`（判定表：被擋 → 截斷 → 只有 `STOP`／`stop` 才算正常結尾 → 空內容 → 清理）、`classify_http_error`、`request_translation`。引擎與設定頁測試鈕都只呼叫 `request_translation`，所以「測試成功＝真正翻譯能用」。
 
 ### `version.py`
 **版本資訊**

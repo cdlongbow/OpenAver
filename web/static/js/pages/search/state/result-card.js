@@ -3,7 +3,7 @@
  * 包含：結果卡片顯示、編輯、翻譯、標籤、本地狀態
  */
 import { openLocal } from '@/shared/open-local.js';
-import { isCloudTranslateProvider } from '@/shared/translate-provider.js';
+import { isCloudTranslateProvider, translateFailureToastKey } from '@/shared/translate-provider.js';
 
 // TASK-106-T3 CD-106-8: 純函式，module-level named export（非 this.-bound method）
 // 三分隔符 `、`/`，`（U+FF0C 全形逗號）/`,`，對齊 core/scrapers/actress/wiki_ja.py:108 先例。
@@ -221,7 +221,8 @@ export function searchStateResultCard() {
             await this._translateWithAILogic();
         } catch (error) {
             console.error('[Translate] 翻譯失敗:', error);
-            this.showToast(window.t('search.toast.translate_failed'), 'error');
+            const key = translateFailureToastKey(error?.reason);
+            this.showToast(window.t(key), key === 'search.toast.translate_rate_limited' ? 'warning' : 'error');
         } finally {
             this.isTranslating = false;
         }
@@ -257,7 +258,9 @@ export function searchStateResultCard() {
                 currentResult.translated_title = result.result;
                 this.saveState();
             } else {
-                throw new Error(result.error || window.t('search.error.translate_failed_generic'));
+                const err = new Error(result.error || window.t('search.error.translate_failed_generic'));
+                err.reason = result.reason;
+                throw err;
             }
 
             return;  // 雲端模式結束

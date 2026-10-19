@@ -647,9 +647,7 @@
       "openai_missing_base_url": "Base URL を入力してください",
       "openai_missing_model": "モデル名を入力してください",
       "openai_connection_timeout": "接続タイムアウト",
-      "openai_api_error": "API エラー",
       "openai_translate_failed": "翻訳テスト失敗",
-      "openai_unknown_response_format": "不明なレスポンス形式",
       "ja_skip": "日本語モード：翻訳スキップ"
     }
   },
