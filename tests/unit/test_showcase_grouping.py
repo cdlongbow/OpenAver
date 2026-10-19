@@ -180,7 +180,8 @@ class TestAC4BaselineFixtureComparison:
                 f"單檔片 {path} 的 user_rating 在 baseline fixture 情境下必為 0，"
                 f"實際 {actual_v.get('user_rating')}"
             )
-            extra_keys = set(actual_v.keys()) - set(expected_v.keys()) - {"part_tokens", "user_rating"}
+            assert "needs_translate" in actual_v, f"單檔片 {path} 缺 needs_translate 欄位（172 新增，無條件輸出）"
+            extra_keys = set(actual_v.keys()) - set(expected_v.keys()) - {"part_tokens", "user_rating", "needs_translate"}
             assert not extra_keys, f"多出非預期 key: {extra_keys}（path={path}）"
 
 

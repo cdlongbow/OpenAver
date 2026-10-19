@@ -17,6 +17,7 @@ import { stateLightbox } from '@/showcase/state-lightbox.js';
 import { stateLightboxMask } from '@/showcase/state-lightbox-mask.js';
 import { stateLightboxPicker } from '@/showcase/state-lightbox-picker.js';
 import { stateLightboxTags } from '@/showcase/state-lightbox-tags.js';
+import { stateLightboxTranslate } from '@/showcase/state-lightbox-translate.js';
 import { stateLightboxSamples } from '@/showcase/state-lightbox-samples.js';
 import { stateSimilar }  from '@/showcase/state-similar.js';
 import { stateDelete }   from '@/showcase/state-delete.js';
@@ -33,6 +34,7 @@ window.showcaseState = function() {
         stateLightboxMask.call(this),
         stateLightboxPicker.call(this),
         stateLightboxTags.call(this),
+        stateLightboxTranslate.call(this),
         stateLightboxSamples.call(this),
         stateSimilar.call(this),
         stateDelete.call(this),

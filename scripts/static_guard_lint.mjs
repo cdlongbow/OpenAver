@@ -82,6 +82,7 @@ const LIGHTBOX_SLICE_FILES = [
   'web/static/js/pages/showcase/state-lightbox-picker.js',
   'web/static/js/pages/showcase/state-lightbox-samples.js',
   'web/static/js/pages/showcase/state-lightbox-tags.js',
+  'web/static/js/pages/showcase/state-lightbox-translate.js',
 ];
 
 // ---- RULES ----
@@ -1673,6 +1674,7 @@ const RULES = [
     ['state-lightbox-picker.js', 'stateLightboxPicker'],
     ['state-lightbox-samples.js', 'stateLightboxSamples'],
     ['state-lightbox-tags.js', 'stateLightboxTags'],
+    ['state-lightbox-translate.js', 'stateLightboxTranslate'],
   ].map(([file, fn]) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'required-string',
     pattern: `export function ${fn}`,
@@ -1708,18 +1710,18 @@ const RULES = [
     pattern: /^[ \t]*return[ \t]*mergeState\(/m,
     note: '[TestShowcaseESMGuard] test_main_js_calls_merge_state — 實際呼叫 mergeState(...)，非 Object.assign 等替代品（防 descriptor 丟失假綠，Codex P2）',
   },
-  ...['stateBase()', 'stateVideos()', 'stateActress()', 'stateLightbox()', 'stateLightboxMask()', 'stateLightboxPicker()', 'stateLightboxTags()', 'stateLightboxSamples()'].map((fn) => ({
+  ...['stateBase()', 'stateVideos()', 'stateActress()', 'stateLightbox()', 'stateLightboxMask()', 'stateLightboxPicker()', 'stateLightboxTags()', 'stateLightboxSamples()', 'stateLightboxTranslate()'].map((fn) => ({
     file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: `...${fn}`,
     note: '[TestShowcaseESMGuard] test_main_js_no_plain_spread_merge — 8 factory 全禁',
   })),
-  ...['stateBase', 'stateVideos', 'stateActress', 'stateLightbox', 'stateLightboxMask', 'stateLightboxPicker', 'stateLightboxSamples', 'stateLightboxTags'].map((fn) => ({
+  ...['stateBase', 'stateVideos', 'stateActress', 'stateLightbox', 'stateLightboxMask', 'stateLightboxPicker', 'stateLightboxSamples', 'stateLightboxTags', 'stateLightboxTranslate'].map((fn) => ({
     file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: `${fn}.call(this)`,
     note: '[TestShowcaseESMGuard] test_main_js_factory_calls_use_call_this — 唯一有此斷言的頁（settings/scanner/search 皆未檢查）',
   })),
   { file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: 'window.showcaseState', note: '[TestShowcaseESMGuard] test_main_js_has_window_showcase_state_bridge — 唯一有 window bridge 斷言的頁' },
-  ...['state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js'].map((file) => ({
+  ...['state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'state-lightbox-translate.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string',
-    pattern: /^\s*import\b[^\n]*\b(?:stateBase|stateVideos|stateActress|stateLightbox|stateLightboxMask|stateLightboxPicker|stateLightboxSamples|stateLightboxTags)\b/m,
+    pattern: /^\s*import\b[^\n]*\b(?:stateBase|stateVideos|stateActress|stateLightbox|stateLightboxMask|stateLightboxPicker|stateLightboxSamples|stateLightboxTags|stateLightboxTranslate)\b/m,
     note: `[TestShowcaseESMGuard] test_no_circular_state_factory_imports — ${file} 頂層 import 不可含 6 個 factory 函式名（判斷單位是 factory 名非檔名；state-base.js 本身不驗）`,
   })),
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
@@ -1729,17 +1731,17 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string', pattern: 'addFavoriteActress', note: '[TestShowcaseESMGuard] test_state_videos_no_actress_functions' },
   { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string', pattern: /^\s+openLightbox\s*\(/m, note: '[TestShowcaseESMGuard] test_state_actress_no_lightbox_functions — 方法定義 regex（行首縮排+openLightbox(，防誤殺 this.openLightbox(...) 呼叫）' },
   { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string', pattern: /^\s+closeLightbox\s*\(/m, note: '[TestShowcaseESMGuard] test_state_actress_no_lightbox_functions' },
-  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'main.js'].map((file) => ({
+  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'state-lightbox-translate.js', 'main.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string',
     pattern: /^(?!\s)(?!\/\/)(?!\*)[^\n]*window\.gsap/m,
     note: `[TestShowcaseESMGuard] test_no_gsap_at_module_top_level — ${file} 頂層非註解行不可含 window.gsap`,
   })),
-  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'main.js'].map((file) => ({
+  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'state-lightbox-translate.js', 'main.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string',
     pattern: /^gsap\b/m,
     note: `[TestShowcaseESMGuard] test_no_gsap_at_module_top_level — ${file} 頂層行不可以 gsap 識別字開頭`,
   })),
-  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js'].map((file) => ({
+  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-mask.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'state-lightbox-translate.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string', pattern: 'this._PICKER_PARAMS',
     note: `[TestShowcaseESMGuard] test_no_this_picker_params_in_state_modules — ${file} 不可 this._PICKER_PARAMS（main.js 不在此列）`,
   })),
@@ -2568,6 +2570,10 @@ const RULES = [
   {
     file: 'web/templates/settings.html', kind: 'required-string', pattern: /(?<![\w:-])@click="form\.proxyScope = 'all'"/,
     note: "[163a-T6a-bind] 使用者按「所有來源」要真的切過去，否則 NAS 的封面與女優照片無法走代理",
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])@click\.stop="\$store\.toast\.action\.onClick\(\); \$store\.toast\.hide\(\)"/,
+    note: '[172-T4] 使用者翻譯標題後 toast 上的「復原」鈕要接得上：刪了這行 → 鈕按了沒反應或鈕不見，lint／node:test 全綠但標題翻錯無處可退',
   },
   {
     file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'isDmmAvailable',
@@ -9292,6 +9298,32 @@ const RULES = [
   {
     file: 'web/templates/connect.html', kind: 'required-string', pattern: /(?<![\w:.-])@click="retryCf\(\)"/,
     note: '[lint-guard 168e-T14-connect-retry-wired] 連線頁「重試」鈕少了 @click="retryCf()" → 按鈕還在但點了沒反應，使用者永遠修不好 JavLibrary／FC2-javten 的驗證視窗，而單元測試全綠',
+  },
+  // ---- [172-T5] 燈箱翻譯鈕接線（node:test 繞過 Alpine runtime，接線只能靠 required-string）----
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count', pattern: /(?<![\w:-])@click\.stop="lbTranslate\(\)"/, count: 2,
+    note: '[lint-guard 172-T5-click] 翻譯圖示（標題行尾＋原文行尾共兩顆）少了或多了點擊接線 → 圖示還在但按了沒反應，或第三顆圖示冒在不該出現的地方，而測試全綠',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="lbTrShowOnTitle\(\)"/,
+    note: '[lint-guard 172-T5-show-title] 標題行尾圖示少了顯示條件 → 中文標題、翻譯關閉的片也看到翻譯圖示，按下去才被擋',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="lbTrShowOnOtitle\(\)"/,
+    note: '[lint-guard 172-T5-show-otitle] 原文行尾圖示少了顯示條件 → 沒翻過的片原文行也冒出圖示，或翻譯關閉後仍看得到入口',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'window.__SHOWCASE_TRANSLATE__ =',
+    note: '[lint-guard 172-T5-inject] 瀏覽頁沒有注入翻譯開關 → 設定頁開著翻譯，燈箱卻永遠沒有圖示，使用者找不到入口也沒有任何錯誤提示',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: /translate\s*\|\s*tojson/,
+    note: '[lint-guard 172-T5-no-config-leak] 整包翻譯設定被注入頁面 → 使用者的雲端翻譯 API key 出現在瀏覽頁原始碼裡，LAN 內任何人檢視原始碼即可取得',
+  },
+  {
+    file: 'web/static/js/pages/showcase/main.js', kind: 'required-string',
+    pattern: /^import\s*\{[^}]*\bstateLightboxTranslate\b[^}]*\}\s*from\s*'@\/showcase\/state-lightbox-translate\.js'/m,
+    note: '[lint-guard 172-T5-main-import] main.js 漏掉翻譯分片 import → eslint 的 no-undef 全域關閉不會報錯，頁面載入時才丟 ReferenceError，瀏覽頁整頁狀態壞掉',
   },
 ];
 

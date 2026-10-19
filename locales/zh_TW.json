@@ -1284,6 +1284,13 @@
       "tag_api_failed": "標籤儲存失敗，請稍後再試",
       "tag_nfo_not_written": "標籤已存，但媒體伺服器讀的那份 NFO 沒有更新",
       "tag_nfo_write_blocked": "標籤已存，但沒有權限寫入 NFO",
+      "translate_tooltip": "翻譯標題",
+      "translate_done": "已翻譯標題",
+      "translate_undo": "復原",
+      "translate_skipped": "標題沒有需要翻譯的內容",
+      "translate_undone": "已復原標題",
+      "translate_write_failed": "標題寫入失敗，請稍後再試",
+      "translate_no_nfo": "這部片還沒有 NFO，請先補完再翻譯標題",
       "user_tags_label": "自訂標籤",
       "alias_label": "別名",
       "alias_source_hint": "由 Scanner 同步",
@@ -1421,7 +1428,8 @@
       "auto_check_save_failed": "設定儲存失敗，請稍後再試",
       "ai_instruction": "貼給 AI agent 就能操作 OpenAver",
       "ai_hint_unsupported": "不適用網頁版聊天",
-      "ai_tools": "支援：Claude Code · Cursor · Codex 等 AI agent"
+      "ai_tools": "支援：Claude Code · Cursor · Codex 等 AI agent",
+      "ai_actress_watch": "想追關注女優的新片？可請 agent 用搜尋＋書籤 API 定期查，結果會出現在搜尋頁的書籤分頁。快速探索搜尋目前只有 JavBus 一個來源，被擋時查不到。"
     },
     "agent_auth": {
       "title": "Agent Token",
@@ -1599,6 +1607,7 @@
       "other_lightbox_detail": "Lightbox 顯示導演、片長、系列、Label 等詳細資訊",
       "other_table_cols": "Table 模式新增「導演」和「片長」欄位",
       "other_gallery": "Lightbox 可開啟劇照瀏覽（點擊「劇照」按鈕）",
+      "other_translate_title": "<strong>翻譯標題</strong>：已入庫、標題含日文、還沒有原文的片，Lightbox 標題旁會出現翻譯圖示（設定頁開啟翻譯功能後才有；片需要有 NFO）。翻好的標題會寫進 NFO，原標題留在 NFO 的 <code>originaltitle</code>。翻得不好，按畫面底部提示上的「復原」，或按原文行尾的圖示再翻一次。",
       "other_per_page": "每頁顯示數量可在<strong>設定頁</strong>調整"
     },
     "similar": {
