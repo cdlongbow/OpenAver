@@ -257,3 +257,14 @@ def test_existing_id_does_not_gain_num(tmp_path):
     root = ET.parse(p).getroot()
     assert root.find("num") is None
     assert _text(root, "id") == "ABC-123"
+
+
+@pytest.mark.parametrize("shape", ["<num/>", "<num>  </num>", "<id>   </id>", "<num></num><id> </id>"])
+def test_blank_num_or_id_is_filled_so_rescan_strips_prefix(tmp_path, shape):
+    from core.gallery_scanner import VideoScanner
+
+    p = _write(tmp_path, NFO_NO_NUM.replace("<plot>", shape + "\n  <plot>"))
+    _call(p)
+    info = VideoScanner().parse_nfo(str(p))
+    assert info.num == "ABC-123"
+    assert info.title == "譯文"

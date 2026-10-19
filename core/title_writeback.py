@@ -9,6 +9,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from core.nfo_read import nfo_first_text
 from core.nfo_title_format import build_display_title
 from core.nfo_updater import set_element_text
 from core.nfo_utils import sanitize_nfo_bytes
@@ -64,7 +65,7 @@ def rewrite_nfo_titles(
         number, title_body, original_title, actors, maker, date, nfo_title_format,
     )
 
-    if number and root.find("num") is None and root.find("id") is None:
+    if number and not nfo_first_text(root, ("num", "id")):
         set_element_text(root, "num", number, after_tag="title")
     set_element_text(root, "title", display_title, after_tag="num")
     set_element_text(root, "originaltitle", original_title, after_tag="title")
