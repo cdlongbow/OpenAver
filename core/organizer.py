@@ -922,12 +922,10 @@ def generate_nfo(
     )
 
     # 顯示標題（belt-and-suspenders：剝除前置番號前綴後組 display_title，B2 FIX B CD-c7）
-    _t = title or original_title
-    _t = _strip_num_prefixes(_t, number) if _t else _t
-    from core.nfo_title_format import format_nfo_title  # 延遲：反向模組層 import 會循環
-    display_title = format_nfo_title(nfo_title_format, {
-        'number': number, 'title': _t, 'actors': actors, 'maker': maker, 'date': date,
-    })
+    from core.nfo_title_format import build_display_title  # 延遲：反向模組層 import 會循環
+    display_title, _t = build_display_title(
+        number, title, original_title, actors, maker, date, nfo_title_format,
+    )
 
     poster_suffix = '-poster' if has_poster else ''
     fanart_suffix = '-fanart' if has_fanart else ''

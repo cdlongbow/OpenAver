@@ -41,6 +41,28 @@ def format_nfo_title(template: str, data: dict) -> str:
     return _PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
+def build_display_title(
+    number,
+    title,
+    original_title,
+    actors,
+    maker,
+    date,
+    nfo_title_format,
+) -> tuple:
+    """顯示標題單一擁有者（CD-172-4a）：回傳 (display_title, body)。
+
+    body ＝ `title or original_title` 剝除前置番號前綴後的標題本體；
+    generate_nfo 與 title_writeback 都經由此處，不得各自複製代換邏輯（BE-DATA-14）。
+    """
+    body = title or original_title
+    body = _strip_num_prefixes(body, number) if body else body
+    display_title = format_nfo_title(nfo_title_format, {
+        'number': number, 'title': body, 'actors': actors, 'maker': maker, 'date': date,
+    })
+    return display_title, body
+
+
 def validate_nfo_title_format(template: str) -> Optional[str]:
     """回傳人類可讀錯誤原因；合法格式回傳 None。
 
