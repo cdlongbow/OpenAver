@@ -1907,6 +1907,10 @@
                 'bi-info-circle':          $store.toast.type === 'info'
             }"></i>
             <span x-text="$store.toast.message"></span>
+            <button type="button" class="btn btn-ghost btn-xs"
+                    x-show="$store.toast.action"
+                    @click.stop="$store.toast.action.onClick(); $store.toast.hide()"
+                    x-text="$store.toast.action?.label"></button>
         </div>
     </div>
 

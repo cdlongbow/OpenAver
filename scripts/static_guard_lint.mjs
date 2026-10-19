@@ -2570,6 +2570,10 @@ const RULES = [
     note: "[163a-T6a-bind] 使用者按「所有來源」要真的切過去，否則 NAS 的封面與女優照片無法走代理",
   },
   {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])@click\.stop="\$store\.toast\.action\.onClick\(\); \$store\.toast\.hide\(\)"/,
+    note: '[172-T4] 使用者翻譯標題後 toast 上的「復原」鈕要接得上：刪了這行 → 鈕按了沒反應或鈕不見，lint／node:test 全綠但標題翻錯無處可退',
+  },
+  {
     file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'isDmmAvailable',
     note: '[163a-T6a-no-intercept-js] 使用者 Proxy 空白時點 DMM 膠囊要能開關，不得被「請先設定代理」攔住',
   },

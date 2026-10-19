@@ -63,3 +63,66 @@ test('toastState().showToast 委派到 Alpine.store(\'toast\').show 且參數逐
         delete globalThis.Alpine;
     }
 });
+
+// ── TASK-172-T4: toast 動作鈕（action）──
+
+test('show(msg, type, duration, action) 後 store.action 是傳入的物件；未傳為 null', () => {
+    const store = createToastStore();
+    assert.equal(store.action, null);
+    const act = { label: '復原', onClick() {} };
+    store.show('translated', 'success', 6000, act);
+    assert.equal(store.action, act);
+    store.show('plain', 'info', 2500);
+    assert.equal(store.action, null);
+    if (store._timer) clearTimeout(store._timer);
+});
+
+test('show() 後到的無 action toast 會清掉前一則的 action', () => {
+    const store = createToastStore();
+    const act = { label: '復原', onClick() {} };
+    store.show('A', 'success', 6000, act);
+    assert.equal(store.action, act);
+    store.show('B', 'info', 2500);
+    assert.equal(store.action, null);
+    assert.equal(store.message, 'B');
+    if (store._timer) clearTimeout(store._timer);
+});
+
+test('hide() 後 action 回 null', () => {
+    const store = createToastStore();
+    const act = { label: '復原', onClick() {} };
+    store.show('x', 'success', 5000, act);
+    assert.equal(store.action, act);
+    store.hide();
+    assert.equal(store.action, null);
+    assert.equal(store.visible, false);
+    if (store._timer) clearTimeout(store._timer);
+});
+
+test('到期後 action 回 null 且 visible 為 false', async () => {
+    const store = createToastStore();
+    const act = { label: '復原', onClick() {} };
+    store.show('temp', 'info', 50, act);
+    assert.equal(store.action, act);
+    await delay(80);
+    assert.equal(store.visible, false);
+    assert.equal(store.action, null);
+    if (store._timer) clearTimeout(store._timer);
+});
+
+test('showToast 把第四個參數 action 原樣轉發', () => {
+    const calls = [];
+    const fakeStore = {
+        show(...args) { calls.push(args); },
+    };
+    globalThis.Alpine = { store: () => fakeStore };
+    try {
+        const act = { label: '復原', onClick() {} };
+        toastState().showToast('delegated', 'success', 6000, act);
+        assert.equal(calls.length, 1);
+        assert.deepEqual(calls[0], ['delegated', 'success', 6000, act]);
+        assert.equal(calls[0][3], act);
+    } finally {
+        delete globalThis.Alpine;
+    }
+});

@@ -1849,14 +1849,17 @@
                    toastType: 'success',
                    toastTimeout: null,
                    toastDuration: 2500,
-                   showToast(message, type = 'success', duration = 2500) {
+                   toastAction: null,
+                   showToast(message, type = 'success', duration = 2500, action = null) {
                      clearTimeout(this.toastTimeout);
+                     this.toastAction = action;
                      this.toastMessage = message;
                      this.toastType = type;
                      this.toastDuration = duration;
                      this.toastVisible = true;
                      this.toastTimeout = setTimeout(() => {
                        this.toastVisible = false;
+                       this.toastAction = null;
                      }, duration);
                    }
                  }">
@@ -1891,6 +1894,11 @@
                                 @click="showToast('⚠ 版本標記未設定', 'warning', 3000)">
                             <i class="bi bi-exclamation-triangle-fill"></i> 觸發警告 Toast
                         </button>
+
+                        <button type="button" class="btn btn-ghost"
+                                @click="showToast('已翻譯標題', 'success', 6000, { label: '復原', onClick() {} })">
+                            <i class="bi bi-arrow-counterclockwise"></i> 觸發帶動作鈕 Toast
+                        </button>
                     </div>
 
                     <!-- Toast Container (Fixed positioning) -->
@@ -1915,6 +1923,10 @@
                                  'bi-exclamation-triangle-fill': toastType === 'warning'
                                }"></i>
                             <span x-text="toastMessage"></span>
+                            <button type="button" class="btn btn-ghost btn-xs"
+                                    x-show="toastAction"
+                                    @click.stop="toastAction.onClick(); toastVisible = false; toastAction = null"
+                                    x-text="toastAction?.label"></button>
                         </div>
                     </div>
                 </div>
@@ -1940,6 +1952,7 @@
 
 &lt;!-- ① 觸發（頁面 state 分片內，呼叫面不變） --&gt;
 this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/state-toast.js 提供
+this.showToast('已翻譯', 'success', 6000, { label: '復原', onClick() {} })   // 帶動作鈕：第四參數；目前只有 showcase 的容器會渲染動作鈕
 
 &lt;!-- ② 容器（每頁一個，只有視覺自訂，綁定來源一律是 $store.toast） --&gt;
 &lt;div class="toast toast-bottom toast-center fluent-toast-container" x-show="$store.toast.visible"&gt;
