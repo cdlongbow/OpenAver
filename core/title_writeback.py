@@ -64,6 +64,8 @@ def rewrite_nfo_titles(
         number, title_body, original_title, actors, maker, date, nfo_title_format,
     )
 
+    if number and root.find("num") is None and root.find("id") is None:
+        set_element_text(root, "num", number, after_tag="title")
     set_element_text(root, "title", display_title, after_tag="num")
     set_element_text(root, "originaltitle", original_title, after_tag="title")
     if root.find("sorttitle") is not None:

@@ -229,3 +229,31 @@ def test_returns_written_bytes(tmp_path):
     out = _call(p)
     assert isinstance(out, bytes)
     assert out == p.read_bytes()
+
+
+NFO_NO_NUM = """<?xml version="1.0" encoding="utf-8"?>
+<movie>
+  <title>舊標題</title>
+  <plot>p</plot>
+</movie>
+"""
+
+
+def test_missing_num_is_added_so_rescan_strips_prefix(tmp_path):
+    from core.gallery_scanner import VideoScanner
+
+    p = _write(tmp_path, NFO_NO_NUM)
+    _call(p)
+    root = ET.parse(p).getroot()
+    assert _text(root, "num") == "ABC-123"
+    info = VideoScanner().parse_nfo(str(p))
+    assert info.title == "譯文"
+    assert "[ABC-123]" not in info.title
+
+
+def test_existing_id_does_not_gain_num(tmp_path):
+    p = _write(tmp_path, NFO_NO_NUM.replace("<plot>", "<id>ABC-123</id>\n  <plot>"))
+    _call(p)
+    root = ET.parse(p).getroot()
+    assert root.find("num") is None
+    assert _text(root, "id") == "ABC-123"
