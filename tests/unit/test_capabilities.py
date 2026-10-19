@@ -91,6 +91,9 @@ EXPECTED_TOOL_NAMES = {
     "preview_actress_sources",
     "submit_actress",
     "upload_actress_photo",
+    "video_title_writeback",
+    "wishlist_add",
+    "wishlist_membership",
 }
 
 REQUIRED_TOOL_FIELDS = [
@@ -139,7 +142,7 @@ class TestCapabilitiesEndpoint:
 
     def test_tools_count_is_40(self, client):
         data = client.get("/api/capabilities").json()
-        assert len(data["tools"]) == 48
+        assert len(data["tools"]) == 51
 
     def test_all_tool_names_present(self, client):
         data = client.get("/api/capabilities").json()
@@ -470,3 +473,56 @@ class TestCapabilitiesSourceEnum:
         enum = item_props["source"]["enum"]
         assert enum == get_source_enum(include_auto=True)
         assert "auto" in enum
+
+
+class TestTranslateTitleTools:
+    """172-T7：標題寫回／書籤 tool 揭露與 needs_translate 文件。"""
+
+    @staticmethod
+    def _tools(client):
+        return {t["name"]: t for t in client.get("/api/capabilities").json()["tools"]}
+
+    @pytest.mark.parametrize("name", ["video_title_writeback", "wishlist_add"])
+    def test_new_write_tools_require_confirmation(self, client, name):
+        tool = self._tools(client)[name]
+        assert tool["confirmation_required"] is True
+        assert tool["side_effect"] is True
+
+    def test_write_tools_description_risk_keywords(self, client):
+        tools = self._tools(client)
+        d = tools["video_title_writeback"]["description"]
+        for kw in ("NFO", "originaltitle", "original_title"):
+            assert kw in d
+        d = tools["wishlist_add"]["description"]
+        for kw in ("already_owned", "下載"):
+            assert kw in d
+
+    def test_wishlist_membership_is_read_only(self, client):
+        tool = self._tools(client)["wishlist_membership"]
+        assert tool["side_effect"] is False
+        assert "confirmation_required" not in tool
+
+    def test_no_tool_exposes_get_wishlist(self, client):
+        tools = client.get("/api/capabilities").json()["tools"]
+        assert not [t for t in tools if (t["method"], t["path"]) == ("GET", "/api/wishlist")]
+
+    def test_new_tools_match_registered_routes(self, client):
+        registered = set()
+        for r in client.app.routes:
+            for m in getattr(r, "methods", None) or ():
+                registered.add((m, getattr(r, "path", None)))
+        tools = self._tools(client)
+        for name in ("video_title_writeback", "wishlist_add", "wishlist_membership"):
+            t = tools[name]
+            assert (t["method"], t["path"]) in registered, name
+
+    def test_showcase_videos_documents_needs_translate(self, client):
+        tools = self._tools(client)
+        fields = tools["showcase_videos"]["output_schema"]["videos"]["item_fields"]
+        assert "needs_translate" in fields
+        assert "needs_translate" in tools["showcase_video"]["output_schema"]["video"]
+
+    def test_no_stale_23_field_count(self):
+        import pathlib
+        src = pathlib.Path("web/routers/capabilities.py").read_text(encoding="utf-8")
+        assert "23 欄位" not in src

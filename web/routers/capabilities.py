@@ -730,7 +730,7 @@ _TOOLS: list[dict] = [
     {
         "name": "showcase_videos",
         "description": (
-            "列出當前 Showcase 設定資料夾下「所有」影片，每筆含 23 欄位 enrich 過的完整 metadata。"
+            "列出當前 Showcase 設定資料夾下「所有」影片，每筆含 25 欄位 enrich 過的完整 metadata。"
             " ⚠️ **分集片（`-cd1`/`-part2`…）一組只回一筆**（feature/122）：同資料夾同主幹的各段"
             "合併成單一 item，`path` 是**段號最小的那一段**（通常是 cd1，但不保證 cd1 存在）、"
             "`size` 是各段加總、`part_tokens` 列出段別。"
@@ -755,7 +755,7 @@ _TOOLS: list[dict] = [
             "total": "integer — videos 陣列長度",
             "videos": {
                 "type": "array",
-                "description": "影片清單；每筆 item 為 23 欄位 dict（分集片一組一筆）",
+                "description": "影片清單；每筆 item 為 25 欄位 dict（分集片一組一筆）",
                 "item_fields": {
                     "path": "string — file:/// URI（DB key 格式，可作為 showcase_video 查詢輸入）",
                     "title": "string",
@@ -775,6 +775,7 @@ _TOOLS: list[dict] = [
                     "label": "string",
                     "sample_images": "array[string] — 劇照 gallery image URLs（真正的 array）",
                     "user_tags": "array[string] — 用戶自訂標籤（真正的 array，可空）",
+                    "user_rating": "integer — 精選標記（1=精選 / 0=未精選；無條件輸出）",
                     "has_cover": "boolean — DB 初判 cover_path 非空（不做 IO 檢查）",
                     "has_nfo": "boolean — nfo_mtime > 0（41a 寫入契約）",
                     "auto_focal": "string — 封面焦點 'x,y'（4 位小數）或空字串",
@@ -783,6 +784,7 @@ _TOOLS: list[dict] = [
                         "array[string] — 分集段別字面（例 ['cd1', 'cd2']，依段號升冪）；"
                         "單檔片為空陣列。非空即代表本筆是多個實體檔案的合併呈現。"
                     ),
+                    "needs_translate": "boolean — 標題含日文假名、沒有 original_title、且已有 NFO（nfo_mtime>0）（可用來挑出尚未翻譯的片）",
                 },
             },
         },
@@ -812,11 +814,11 @@ _TOOLS: list[dict] = [
         "output_schema": {
             "success": "boolean",
             "video": (
-                "object — 23 欄位 dict，schema 同 showcase_videos.videos.item_fields"
+                "object — 25 欄位 dict，schema 同 showcase_videos.videos.item_fields"
                 "（path/title/original_title/number/actresses[csv⚠️]/maker/release_date/tags[csv⚠️]/"
                 "size/cover_url/cover_full_url/mtime/director/duration/series/label/"
-                "sample_images[array]/user_tags[array]/has_cover/has_nfo/auto_focal/crop_mode/"
-                "part_tokens[array]）。注意 actresses 和 tags"
+                "sample_images[array]/user_tags[array]/user_rating[integer]/has_cover/has_nfo/auto_focal/crop_mode/"
+                "part_tokens[array]/needs_translate[boolean，標題含日文假名、沒有 original_title、且已有 NFO]）。注意 actresses 和 tags"
                 "是逗號分隔字串，其餘標記為 array 的欄位才是真正的 array。"
                 " 查詢分集片的任一段，回的都是該組的合併結果（`part_tokens` 非空）。"
             ),
@@ -824,6 +826,107 @@ _TOOLS: list[dict] = [
         "side_effect": False,
         "retry_safe": True,
         "_example_template": "curl '{base}/api/showcase/video?path=file:///C:/AVtest/SONE-205/SONE-205.mp4'",
+    },
+    {
+        "name": "video_title_writeback",
+        "description": (
+            "改寫單部影片 NFO 的 <title>（標題），並同步更新 DB。原標題保留在 NFO 的 <originaltitle>；"
+            "可用同一端點改回原標題（original_title 傳空字串＝清空 originaltitle）。"
+            "唯讀來源的片寫的是輸出夾那份 NFO，原始資料夾零寫入。"
+            "沒有 NFO、或找不到唯一一份 NFO 時回 success:false，DB 不動。"
+            "本端點不做翻譯：翻譯由 agent 自己完成後再把結果傳進來。"
+            "與 enrich_single 的 metadata 不同：那是整包取代、無法清空 original_title；本端點只改標題兩欄。"
+            "⚠️ side effect：會覆寫使用者 NFO 裡的標題，執行前須先向使用者確認。"
+        ),
+        "method": "POST",
+        "path": "/api/showcase/video/title",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "影片路徑（DB key，file:/// URI 格式）"},
+                "title": {"type": "string", "description": "新標題（必填，不可為空）"},
+                "original_title": {"type": "string", "description": "選填；省略（或 null）＝沿用現值（現值為空則搬目前標題）；空字串＝清空；非空＝設定"},
+            },
+            "required": ["file_path", "title"],
+        },
+        "output_schema": {
+            "success": "boolean",
+            "title": "string — 寫入後的標題",
+            "original_title": "string — 寫入後的原標題",
+            "needs_translate": "boolean — 寫入後這部片是否仍被判定為尚未翻譯",
+            "nfo_updated": "boolean — NFO 是否已更新",
+            "failure": "失敗形狀（HTTP 200）：{success:false, error:<code>, message}；code 為 not_found／title_empty／no_nfo／nfo_ambiguous／nfo_unreadable／nfo_write_failed／db_write_failed／invalid_path",
+        },
+        "side_effect": True,
+        "confirmation_required": True,
+        "idempotent": True,
+        "retry_safe": True,
+        "also_see": "GET /api/showcase/videos — 用 needs_translate 挑出尚未翻譯的片",
+        "_example_template": "curl -X POST -H 'Content-Type: application/json' -d '{{\"file_path\":\"file:///C:/AVtest/SONE-205/SONE-205.mp4\",\"title\":\"中文標題\"}}' {base}/api/showcase/video/title",
+    },
+    {
+        "name": "wishlist_add",
+        "description": (
+            "把一部片加入書籤（wishlist）。number 必填，其餘欄位選填。"
+            "同番號已在書籤時不重複新增（回 added:false）。"
+            "已入庫的番號回 already_owned:true 且不寫入，且下次開書籤牆時會被自動對帳移除。"
+            "cover／preview_cover_url 是網址，伺服器會去該網址下載封面並存成本機 WebP。"
+            "⚠️ side effect：會新增書籤並讓伺服器對外下載封面，執行前須先向使用者確認。"
+        ),
+        "method": "POST",
+        "path": "/api/wishlist",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "number": {"type": "string", "description": "番號（必填）"},
+                "title": {"type": "string"},
+                "actors": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "maker": {"type": "string"},
+                "director": {"type": "string"},
+                "series": {"type": "string"},
+                "label": {"type": "string"},
+                "duration": {"type": "integer", "description": "分鐘"},
+                "date": {"type": "string", "description": "發行日 YYYY-MM-DD"},
+                "cover": {"type": "string", "description": "封面網址（伺服器會下載）"},
+                "preview_cover_url": {"type": "string", "description": "預覽封面網址（優先於 cover，伺服器會下載）"},
+                "sample_images": {"type": "array", "items": {"type": "string"}},
+                "preview_sample_images": {"type": "array", "items": {"type": "string"}},
+                "source": {"type": "string"},
+                "url": {"type": "string", "description": "來源頁網址"},
+            },
+            "required": ["number"],
+        },
+        "output_schema": {
+            "success": "boolean — 已入庫時為 false",
+            "added": "boolean — true=真的新增一筆；false=書籤本來就有",
+            "cover_available": "boolean — 本機封面是否可用",
+            "already_owned": "boolean — 僅番號已入庫時出現（true），此時不寫入",
+            "local_status": "object — 僅已入庫時出現：{exists, count, paths}",
+        },
+        "side_effect": True,
+        "confirmation_required": True,
+        "idempotent": True,
+        "retry_safe": True,
+        "also_see": "POST /api/wishlist/membership — 加書籤前先查重（見 wishlist_membership tool）",
+        "_example_template": "curl -X POST -H 'Content-Type: application/json' -d '{{\"number\":\"SONE-205\",\"title\":\"標題\",\"actors\":[\"女優A\"]}}' {base}/api/wishlist",
+    },
+    {
+        "name": "wishlist_membership",
+        "description": "給一串番號，回哪些已在書籤；用來在加書籤前去重。唯讀，不改任何資料。",
+        "method": "POST",
+        "path": "/api/wishlist/membership",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "numbers": {"type": "array", "items": {"type": "string"}, "description": "要查的番號清單"},
+            },
+            "required": ["numbers"],
+        },
+        "output_schema": "object — 以輸入的原字串為 key、值為 boolean（true=已在書籤）的 dict",
+        "side_effect": False,
+        "retry_safe": True,
+        "_example_template": "curl -X POST -H 'Content-Type: application/json' -d '{{\"numbers\":[\"SONE-205\",\"IPX-001\"]}}' {base}/api/wishlist/membership",
     },
     {
         "name": "jellyfin_check",
