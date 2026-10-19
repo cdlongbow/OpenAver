@@ -122,6 +122,9 @@
                 <p class="text-xs text-base-content/40 mt-0.5">
                     {{ t('help.hero.ai_hint_unsupported') }}
                 </p>
+                <p class="text-xs text-base-content/40 mt-0.5">
+                    {{ t('help.hero.ai_actress_watch') }}
+                </p>
                 {%- if show_agent_auth %}
                 <div class="help-agent-token-panel mt-3" data-agent-token="{{ agent_token }}">
                     <div class="help-agent-token-row">
@@ -289,6 +292,7 @@
                 <li>{{ t('help.showcase.other_lightbox_detail') }}</li>
                 <li>{{ t('help.showcase.other_table_cols') }}</li>
                 <li>{{ t('help.showcase.other_gallery') }}</li>
+                <li>{{ t('help.showcase.other_translate_title') | safe }}</li>
                 <li>{{ t('help.showcase.other_per_page') | safe }}</li>
             </ul>
         </div>
