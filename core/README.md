@@ -127,6 +127,13 @@ scrapers/
 - `<user_tag>` 與 `<tag>` 在 NFO 中完全分離：scraper 標籤寫 `<tag>`，用戶標籤寫 `<user_tag>`，互不混淆。
 - 不寫封面、不寫 extrafanart、不更新 DB。
 
+### `title_writeback.py`
+**NFO 標題精準改寫**（`POST /api/showcase/video/title`，燈箱翻譯與 agent 用）
+- `rewrite_nfo_titles(nfo_path, *, number, title_body, original_title, ...)` — 只改 `<title>`／`<originaltitle>`／已存在的 `<sorttitle>`／`<openaver_title_record>`，其他元素不動；單次原地寫入，不走 `generate_nfo` 整份重生。
+- 顯示標題由 `nfo_title_format.build_display_title()` 組出（與 `generate_nfo` 共用，輸出逐位元組相同）。
+- NFO 缺有效番號（`<num>`／`<id>` 空）時先補 `<num>`，確保重掃讀回能剝掉 `[番號]` 前綴。
+- 不存在／壞 XML 各拋明確例外（`NfoNotFoundError`／`NfoParseError`），讀寫 `OSError` 原樣往外拋；不更新 DB（DB 由 `VideoRepository.update_titles()` 另寫）。
+
 ### `enricher.py`
 **單一影片原地補完**（`POST /api/enrich-single`，Agentic AI 用）
 - 三種模式：`fill_missing`（DB→NFO→scraper 逐層補齊）、`db_to_sidecar`（僅從 DB 寫出）、`refresh_full`（強制重抓覆蓋）。
