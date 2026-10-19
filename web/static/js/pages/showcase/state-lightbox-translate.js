@@ -26,9 +26,9 @@ export function stateLightboxTranslate() {
             return this.lbTranslateEnabled && this.currentLightboxVideo?.needs_translate === true;
         },
 
-        // 原文行尾圖示：已有原文（再翻入口）
+        // 原文行尾圖示：已有原文且有 NFO（再翻入口；無 NFO 寫回必回 no_nfo，不給入口）
         lbTrShowOnOtitle() {
-            return this.lbTranslateEnabled && !!this.currentLightboxVideo?.original_title;
+            return this.lbTranslateEnabled && this.currentLightboxVideo?.has_nfo === true && !!this.currentLightboxVideo?.original_title;
         },
 
         lbTrIsBusy() {
