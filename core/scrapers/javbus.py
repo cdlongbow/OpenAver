@@ -1,11 +1,13 @@
 """JavBus 爬蟲（自建 requests + BeautifulSoup）"""
 import re
 from typing import Optional
+from typing import NamedTuple
 
 import requests
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper
+from .errors import SourceBlocked, SourceUnreachable
 from .models import Video, Actress
 from .utils import rate_limit, strip_number_prefix
 from core.logger import get_logger
@@ -32,6 +34,52 @@ FIELD_LABELS = {
 }
 
 LANG_PREFIX = {"zh-tw": "", "ja": "/ja", "en": "/en"}
+
+# --- 片商頁能力（173-T3，plan CD-173-6／CD-173-7）---
+JAVBUS_LIST_PAGE_SIZE = 30
+
+_STUDIO_HREF_RE = re.compile(r"^(?:https?://[^/]+)?(?:/(?:ja|en))?(?:/(uncensored))?/studio/([0-9A-Za-z]+)/?(?:[?#].*)?$")
+
+
+class StudioVote(NamedTuple):
+    """單樣本投票：kind ∈ {'censored','uncensored'}、studio_id 為 JavBus 片商代號。"""
+    kind: str
+    studio_id: str
+
+
+# 單樣本的另外兩種結果：Miss 只留 HTTP 404；其餘一切看不懂的都是 Unreachable（BE-PY-03）
+STUDIO_MISS = "studio_miss"
+STUDIO_UNREACHABLE = "studio_unreachable"
+
+LIST_PARSE = "list_parse"
+LIST_END = "list_end"
+LIST_BLOCKED = "list_blocked"
+LIST_UNREADABLE = "list_unreadable"
+
+
+def parse_studio_href(href: str):
+    """href → (kind, studio_id)；/label/、/series/ 與空字串回 None。"""
+    m = _STUDIO_HREF_RE.match(href or "")
+    if not m:
+        return None
+    return ("uncensored" if m.group(1) else "censored", m.group(2))
+
+
+def classify(status: int, has_info: bool, hrefs: list):
+    """詳情頁單樣本分類：StudioVote／STUDIO_MISS／STUDIO_UNREACHABLE。"""
+    if status == 404:
+        return STUDIO_MISS
+    if status != 200 or not has_info:
+        return STUDIO_UNREACHABLE
+    votes = [v for v in (parse_studio_href(h) for h in hrefs) if v]
+    return StudioVote(*votes[0]) if votes else STUDIO_UNREACHABLE
+
+
+def classify_list_response(status: int, has_waterfall: bool) -> str:
+    """片商列表頁分類：404 才是尾端；200 無 #waterfall 是看不懂；其餘非 200 是被擋。"""
+    if status != 200:
+        return LIST_END if status == 404 else LIST_BLOCKED
+    return LIST_PARSE if has_waterfall else LIST_UNREADABLE
 
 
 class JavBusScraper(BaseScraper):
@@ -388,3 +436,57 @@ class JavBusScraper(BaseScraper):
             except (ValueError, TimeoutError, requests.ConnectionError):
                 continue
         return results
+
+    # ---------- 片商頁能力（173-T3）----------
+
+    def build_studio_url(self, ref, page: int = 1) -> str:
+        """ref=(kind, studio_id) → 片商作品列表網址，第 2 頁起附 /{page}。"""
+        kind, studio_id = ref
+        seg = "uncensored/" if kind == "uncensored" else ""
+        url = f"{self.BASE_URL}{self._get_lang_prefix()}/{seg}studio/{studio_id}"
+        if page > 1:
+            url += f"/{page}"
+        return url
+
+    def _extract_studio_info(self, html: str):
+        """站方 HTML → (有無 info 區塊, 區塊內所有 href)。單測以替身取代。"""
+        info = BeautifulSoup(html, "html.parser").select_one("div.col-md-3.info")
+        if info is None:
+            return False, []
+        return True, [a["href"] for a in info.find_all("a", href=True)]
+
+    def _has_waterfall(self, html: str) -> bool:
+        """站方 HTML → 有無 #waterfall。單測以替身取代。"""
+        return BeautifulSoup(html, "html.parser").find(id="waterfall") is not None
+
+    def fetch_studio_sample(self, number: str):
+        """取一部片的詳情頁，認出片商代號。回 StudioVote／STUDIO_MISS／STUDIO_UNREACHABLE。"""
+        number = self.normalize_number(number)
+        url = f"{self.BASE_URL}{self._get_lang_prefix()}/{number}"
+        rate_limit(self.config.delay)
+        try:
+            resp = self._session.get(url, timeout=self.config.timeout)
+        except requests.RequestException as e:
+            logger.error("JavBus studio sample %s failed: %s: %s", number, type(e).__name__, e)
+            return STUDIO_UNREACHABLE
+        has_info, hrefs = (False, [])
+        if resp.status_code == 200:
+            has_info, hrefs = self._extract_studio_info(resp.text)
+        return classify(resp.status_code, has_info, hrefs)
+
+    def get_ids_from_studio(self, ref, page: int = 1) -> list[str]:
+        """片商列表單頁番號。404（頁碼超界）回 []；看不懂或被擋一律丟例外，絕不回 []。"""
+        url = self.build_studio_url(ref, page)
+        try:
+            resp = self._session.get(url, timeout=self.config.timeout)
+        except requests.RequestException as exc:
+            raise SourceUnreachable(f"JavBus studio list request failed: {url}") from exc
+        has_wf = self._has_waterfall(resp.text) if resp.status_code == 200 else False
+        verdict = classify_list_response(resp.status_code, has_wf)
+        if verdict == LIST_END:
+            return []
+        if verdict == LIST_BLOCKED:
+            raise SourceBlocked(f"JavBus studio list HTTP {resp.status_code}: {url}")
+        if verdict == LIST_UNREADABLE:
+            raise SourceUnreachable(f"JavBus studio list unreadable (no #waterfall): {url}")
+        return self._parse_search_ids(BeautifulSoup(resp.text, "html.parser"))
