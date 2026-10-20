@@ -4,6 +4,7 @@
  */
 import { detectSwipe } from '@/shared/swipe.js';
 import { isHorizontalWheel, isVerticalWheel, createWheelNav } from '@/shared/wheel-nav.js';
+import { buildSearchUrl, MAKER_PAGE_SIZE } from '@/search/search-url.js';
 
 // 排除清單容器（橫向捲動列表/表格）：命中即整條 wheel handler 提早 return，
 // 讓原生橫向捲動不受影響（見 TASK-102d-T1.md「技術要點」排除清單段）。
@@ -188,19 +189,22 @@ export function searchStateNavigation() {
      */
     async loadMore(trigger = 'detail') {
         if (this.listMode !== 'search') return null;
-        if (this.isLoadingMore || !this.hasMoreResults || !this.currentQuery) return null;
+        if (this.isLoadingMore || !this.hasMoreResults || (!this.currentQuery && !this.activeMaker())) return null;
 
         this.isLoadingMore = true;
         const oldLength = this.searchResults.length;
-        const newOffset = this.currentOffset + this.PAGE_SIZE;
+        const maker = this.activeMaker();
+        const newOffset = this.currentOffset + (this.activeMaker() ? MAKER_PAGE_SIZE : this.PAGE_SIZE);
+        const rid = this.requestId;
         const loadMoreSignal = this._getAbortSignal('loadMore');
 
         try {
-            const response = await fetch(
-                `/api/search?q=${encodeURIComponent(this.currentQuery)}&offset=${newOffset}&limit=${this.PAGE_SIZE}`,
-                { signal: loadMoreSignal }
-            );
+            const url = buildSearchUrl({ query: this.currentQuery, maker, offset: newOffset, limit: maker ? undefined : this.PAGE_SIZE });
+            const response = await fetch(url, { signal: loadMoreSignal });
             const data = await response.json();
+
+            // 世代守衛：換搜尋／取消／清除都會遞增 requestId；舊請求晚到不改任何 state
+            if (rid !== this.requestId) return null;
 
             if (response.ok && data.success && data.data && data.data.length > 0) {
                 const loadedCount = data.data.length;

@@ -84,6 +84,7 @@ test('loadMore: listMode="search" → 不因白名單提前 return（可繼續�
     const fakeThis = {
         ...searchStateNavigation(),
         listMode: 'search',
+        activeMaker: () => null,
         isLoadingMore: false,
         hasMoreResults: true,
         currentQuery: 'ABC-123',
