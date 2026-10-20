@@ -3,6 +3,8 @@
  * 包含：搜尋流程（doSearch, fallbackSearch, cancelSearch, handleSearchStatus）
  */
 
+import { buildSearchUrl } from '../search-url.js';
+
 // TASK-113c-T3b（本任務唯一決定「staging 卡片預覽能不能生效」的賦值運算式，見
 // TASK-113c-T3b.md 顯示點對帳表 #9）：preview_cover_url 優先，空字串 fallback
 // 回 cover（FE-JS-01：|| 對空字串 fallback 正是本任務要的行為，preview_cover_url
@@ -123,13 +125,21 @@ export function searchStateSearchFlow() {
     /**
      * 執行搜尋（SSE 串流）
      * @param {string} query - 搜尋關鍵字（可選，預設讀取 input）
+     * @param {object} [opts]
+     * @param {{key:string,label:string,spellings:string[]}} [opts.maker] - 173 CD-173-10：片商入口
+     *   （存在時不讀 searchQuery、不要求 query，其餘起手式與關鍵字入口共用同一份程式）
      */
-    async doSearch(query) {
+    async doSearch(query, opts = {}) {
+        const maker = opts.maker ?? null;
         // 1. 取得搜尋關鍵字（V1c: 優先從 Alpine state 讀取）
-        if (!query) {
-            query = this.searchQuery?.trim();
+        if (maker) {
+            query = '';
+        } else {
+            if (!query) {
+                query = this.searchQuery?.trim();
+            }
+            if (!query) return;
         }
-        if (!query) return;
 
         // 2. 取消現有搜尋
         this.cancelSearch();
@@ -160,7 +170,12 @@ export function searchStateSearchFlow() {
         // 5. 初始化狀態（修正 1: 使用 showState）
         this.pageState = 'loading';
         this.progressLog = window.t('search.button.searching');
-        this.currentMode = '';
+        this.currentMode = maker ? 'maker' : '';
+        // 173 CD-173-9：片商入口存純物件複本（不共用呼叫端參照）；關鍵字入口順手清掉（衛生）
+        this.currentMaker = maker
+            ? { key: maker.key, label: maker.label, spellings: [...(maker.spellings || [])] }
+            : null;
+        if (maker) this.searchQuery = '';  // 片商模式搜尋框維持空白
         this.detailDone = 0;
         this.detailTotal = 0;
         this._resetCoverState();
@@ -207,7 +222,7 @@ export function searchStateSearchFlow() {
         // 檔案列表由 x-show 自動隱藏（listMode=null, fileList=[]）
 
         // 6. 建立 SSE 連線並追蹤
-        this.activeEventSource = this._trackConnection(new EventSource(`/api/search/stream?q=${encodeURIComponent(query)}`));
+        this.activeEventSource = this._trackConnection(new EventSource(buildSearchUrl({ stream: true, query, maker })));
         const eventSource = this.activeEventSource;
 
         eventSource.onmessage = (event) => {
@@ -457,9 +472,13 @@ export function searchStateSearchFlow() {
                         this.addingTag = false;
                     } else {
                         this._searchSnapshot = null; // Fix 2: 清空 snapshot（搜尋失敗）
-                        this.errorText = window.t('search.error.no_data');  // T6c: Alpine state
-                        this.errorKind = 'no_data';
-                        this.pageState = 'error';
+                        if (this.activeMaker()) {
+                            this._applyMakerError(data);
+                        } else {
+                            this.errorText = window.t('search.error.no_data');  // T6c: Alpine state
+                            this.errorKind = 'no_data';
+                            this.pageState = 'error';
+                        }
                     }
                 }
                 else if (data.type === 'error') {
@@ -523,7 +542,7 @@ export function searchStateSearchFlow() {
         this._fallbackAbortController = new AbortController();
 
         try {
-            const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+            const response = await fetch(buildSearchUrl({ query, maker: this.activeMaker() }), {
                 signal: this._fallbackAbortController.signal
             });
             const data = await response.json();
@@ -584,9 +603,13 @@ export function searchStateSearchFlow() {
                 if (this._heroSlotReserved) {
                     this._heroSlotReserved = false;
                 }
-                this.errorText = data.error || window.t('search.error.no_data');  // T6c: Alpine state
-                this.errorKind = 'no_data';
-                this.pageState = 'error';
+                if (this.activeMaker()) {
+                    this._applyMakerError(data);
+                } else {
+                    this.errorText = data.error || window.t('search.error.no_data');  // T6c: Alpine state
+                    this.errorKind = 'no_data';
+                    this.pageState = 'error';
+                }
             }
         } catch (err) {
             // AbortError：離頁或新搜尋取消，靜默忽略
@@ -597,6 +620,26 @@ export function searchStateSearchFlow() {
             console.error('[Search]', err);
             this.errorText = window.t('search.error.network_error');  // T6c: Alpine state
             this.errorKind = 'network_error';
+            this.pageState = 'error';
+        }
+    },
+
+    /**
+     * 173 CD-173-13：片商搜尋失敗的錯誤頁（只處理片商；兩個失敗分支以 activeMaker() 分流後呼叫）。
+     * maker_not_found ⇒ 片商錯誤頁＋隱藏該膠囊（hideMakerCapsule 屬 T11，未定義時 optional call 不拋錯）；
+     * 其他 code／無 code ⇒ 一般 no_data、不隱藏（暫時連不上不該讓膠囊消失）。
+     * 不顯示後端失敗體的 error 文字，只依 error_code。
+     */
+    _applyMakerError(data) {
+        const maker = this.activeMaker();
+        if (data?.error_code === 'maker_not_found') {
+            this.errorText = window.t('search.error.maker_not_found', { maker: maker.label });
+            this.errorKind = 'maker_not_found';
+            this.pageState = 'error';
+            this.hideMakerCapsule?.(maker.key);
+        } else {
+            this.errorText = window.t('search.error.no_data');
+            this.errorKind = 'no_data';
             this.pageState = 'error';
         }
     },

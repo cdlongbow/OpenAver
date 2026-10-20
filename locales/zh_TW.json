@@ -189,6 +189,7 @@
       "tag_nfo_not_written": "標籤已存，但媒體伺服器讀的那份 NFO 沒有更新",
       "tag_nfo_write_blocked": "標籤已存，但沒有權限寫入 NFO",
       "no_data": "找不到資料",
+      "maker_not_found": "JavBus 找不到「{maker}」的作品頁",
       "search_failed": "搜尋失敗",
       "network_error": "網路錯誤，請重試",
       "no_translation_needed": "當前片無需翻譯",
