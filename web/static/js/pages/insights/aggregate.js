@@ -14,7 +14,7 @@
  */
 
 import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
-import { normalizePillValue } from '../../shared/pill-filter.js';
+import { canonicalMakerLabels } from '../../shared/maker-merge.js';
 import { periodContainsYear, scopeRecords } from './selection.js';
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
@@ -60,31 +60,14 @@ export function getRecords() {
  */
 export function canonicalizeMakers(records) {
     if (!records || records.length === 0) return;
-    var groups = new Map();
+    var spellingCounts = new Map();
     records.forEach(function (r) {
         var mk = r && r.maker;
         if (mk == null || mk === '') return;
-        var key = normalizePillValue(mk);
-        if (key === '') return;
-        var counts = groups.get(key);
-        if (!counts) {
-            counts = new Map();
-            groups.set(key, counts);
-        }
-        counts.set(mk, (counts.get(mk) || 0) + 1);
+        spellingCounts.set(mk, (spellingCounts.get(mk) || 0) + 1);
     });
 
-    var canonical = new Map();
-    groups.forEach(function (counts) {
-        var best = null;
-        var bestN = -1;
-        counts.forEach(function (n, s) {
-            if (n > bestN || (n === bestN && s < best)) { best = s; bestN = n; }
-        });
-        counts.forEach(function (_, s) {
-            canonical.set(s, best);
-        });
-    });
+    var canonical = canonicalMakerLabels(spellingCounts);
 
     records.forEach(function (r) {
         var mk = r && r.maker;
