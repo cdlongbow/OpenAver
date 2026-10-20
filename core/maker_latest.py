@@ -9,7 +9,6 @@ from __future__ import annotations
 import datetime
 from typing import NamedTuple
 
-from core.database import maker_javbus_map
 from core.library_titles import release_parts
 from core.logger import get_logger
 from core.scrapers.javbus import STUDIO_MISS, STUDIO_UNREACHABLE, JavBusScraper, StudioVote
@@ -112,6 +111,8 @@ def _from_mapping(m):
 def resolve_maker_studio(maker_key, label, spellings, titles, *, today,
                          fetch_sample=None, db_path=None):
     """解析一家片商在 JavBus 的作品頁代號；found／absent 才寫表。"""
+    # 延後 import：core.database 的 __init__ 會 import core.scraper，頂層 import 會與 core.scraper 成環
+    from core.database import maker_javbus_map
     mapped = maker_javbus_map.get_mapping(maker_key, db_path=db_path)
     if mapped is not None:
         return _from_mapping(mapped)
