@@ -108,6 +108,21 @@ def _ensure_notifications_schema(cursor: sqlite3.Cursor) -> None:
         cursor.execute("ALTER TABLE notifications ADD COLUMN url TEXT")
 
 
+# 片商 → JavBus 作品頁代號對應表（173-T2，CD-173-5）。
+# 三態：有列 found／有列 not_found／沒有列＝沒查過。maker_key 對後端是不透明字串。
+_MAKER_JAVBUS_MAP_DDL = """
+CREATE TABLE IF NOT EXISTS maker_javbus_map (
+    maker_key  TEXT PRIMARY KEY,
+    status     TEXT NOT NULL CHECK (status IN ('found','not_found')),
+    kind       TEXT NOT NULL DEFAULT '' CHECK (kind IN ('','censored','uncensored')),
+    studio_id  TEXT NOT NULL DEFAULT '',
+    label      TEXT NOT NULL DEFAULT '',
+    checked_at REAL NOT NULL,
+    CHECK ((status='found' AND kind<>'' AND studio_id<>'') OR (status='not_found' AND kind='' AND studio_id=''))
+)
+"""
+
+
 def init_db(db_path: Path = None) -> None:
     """初始化資料庫 Schema"""
     conn = get_connection(db_path)
@@ -286,6 +301,8 @@ def init_db(db_path: Path = None) -> None:
             last_failed_at REAL NOT NULL
         )
     """)
+
+    cursor.execute(_MAKER_JAVBUS_MAP_DDL)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS app_meta (
