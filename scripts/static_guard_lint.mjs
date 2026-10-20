@@ -9325,6 +9325,50 @@ const RULES = [
     pattern: /^import\s*\{[^}]*\bstateLightboxTranslate\b[^}]*\}\s*from\s*'@\/showcase\/state-lightbox-translate\.js'/m,
     note: '[lint-guard 172-T5-main-import] main.js 漏掉翻譯分片 import → eslint 的 no-undef 全域關閉不會報錯，頁面載入時才丟 ReferenceError，瀏覽頁整頁狀態壞掉',
   },
+  // ---- [173-T13] 片商最新作品膠囊接線（node:test 繞過 Alpine runtime，接線只能靠 required-string）----
+  {
+    file: 'web/templates/search.html', kind: 'required-string', pattern: /(?<![\w:-])@click="startMakerSearch\(/,
+    note: '[lint-guard 173-T13-chip-click] 膠囊少了 @click="startMakerSearch(" → 使用者在空狀態點片商膠囊沒有任何反應，而所有測試全綠',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string', pattern: /class="progress-query"[^>]*progressQueryText\(\)/,
+    note: '[lint-guard 173-T13-progress-title] 進度標題改回舊綁定 → 使用者點片商膠囊後載入中的標題顯示空白引號，看不出正在搜哪一家',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string', pattern: '<template x-for="capsule in makerCapsules"',
+    note: '[lint-guard 173-T13-chip-xfor] 膠囊列的 x-for 被刪或改名 → 使用者的空狀態永遠沒有片商膠囊，入口整個消失而沒有任何錯誤訊息',
+  },
+  {
+    file: 'web/static/js/pages/search/main.js', kind: 'required-string', stripLineComments: true,
+    pattern: /^import\s*\{[^}]*\bsearchStateMakerLatest\b[^}]*\}\s*from\s*'@\/search\/state\/maker-latest\.js'/m,
+    note: '[lint-guard 173-T13-main-import] main.js 漏掉片商膠囊分片 import → eslint 的 no-undef 全域關閉不會報錯，搜尋頁載入時才丟 ReferenceError，使用者整頁壞掉',
+  },
+  {
+    file: 'web/static/js/pages/search/main.js', kind: 'required-string', stripLineComments: true,
+    pattern: /^\s*searchStateMakerLatest\(\),/m,
+    note: '[lint-guard 173-T13-main-slice] mergeState 少了片商膠囊分片 → 使用者的空狀態沒有片商膠囊、點了也無 startMakerSearch，而 import 仍在、node:test 全綠',
+  },
+  {
+    file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', stripLineComments: true,
+    pattern: /this\.hideMakerCapsule\?\.\(/,
+    note: '[lint-guard 173-T13-hide-wired] 片商搜尋失敗後不再隱藏該膠囊 → 使用者回到空狀態又看到同一顆點了必失敗的膠囊，每次都重複同樣的錯誤頁',
+  },
+  ...[
+    'web/static/js/pages/search/state/search-flow.js',
+    'web/static/js/pages/search/state/navigation.js',
+  ].map((f) => ({
+    file: f, kind: 'forbidden-string', stripLineComments: true, pattern: /\/api\/search(?:\/stream)?\?q=\$\{/,
+    note: '[lint-guard 173-T13-no-direct-url] 搜尋 URL 改回手拼 → 使用者搜片商（名稱可能含 & 或載入更多）時送出的是關鍵字查詢，拿到不相干的作品卻看似正常',
+  })),
+  {
+    file: 'web/templates/search.html', kind: 'required-string', pattern: /(?<![\w:-])x-show="makerCapsules\.length > 0"/,
+    note: '[lint-guard 173-T13-row-xshow] 膠囊列少了單一隱藏條件 → 關掉 JavBus 或沒有片商達門檻時，使用者的空狀態仍留一行「片商最新作品」小標卻沒有膠囊',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /advanced_search_cta'\)"(?:(?!\) \}\})[\s\S])*?(?<![\w:-])x-show="!activeMaker\(\)"/,
+    note: '[lint-guard 173-T13-cta-xshow] 進階搜尋 CTA 少了 x-show="!activeMaker()" → 片商搜尋失敗頁冒出「使用番號進階搜尋」按鈕，使用者被導去對片商無意義的入口',
+  },
 ];
 
 // ---- helpers ----
