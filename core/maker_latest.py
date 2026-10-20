@@ -52,10 +52,12 @@ def pick_samples(titles, today, k=SAMPLE_K, *, spellings=None, validate=None):
     seen = set()
     dated, undated = [], []
     for t in titles:
+        if spellings is not None and (t.maker or "").strip() not in spellings:
+            continue
+        if not (t.number or "").strip():
+            continue  # 掃描器認不出番號的檔 number=None
         number = normalize_number_impl(t.number)
         if number in seen:
-            continue
-        if spellings is not None and (t.maker or "").strip() not in spellings:
             continue
         if validate is not None and not validate(number):
             continue

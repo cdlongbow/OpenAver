@@ -209,7 +209,7 @@ export function searchStateBase() {
         // getter 惰性求值，render 時取 final pageState/results，無中間態順序問題。
         get hasContent() {
             // 173 CD-173-9：片商搜尋失敗的錯誤頁也要有 ✕（回到膠囊列）；先判 error 再呼叫 activeMaker()，
-            // 因為 Object.assign 合併時會在原物件上求值這個 getter（那時 activeMaker 還不存在）。
+            // 既有測試用 Object.assign 組 fake this 時會先求值 getter，所以先判 pageState 再讀 activeMaker()。
             return this.pageState !== 'loading' && (this.searchResults.length > 0 || this.fileList.length > 0 || (this.pageState === 'error' && !!this.activeMaker()));
         },
 

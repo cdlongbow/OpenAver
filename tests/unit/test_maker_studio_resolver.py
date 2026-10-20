@@ -231,3 +231,13 @@ def test_fetcher_called_with_picked_numbers_in_order_at_most_five(db):
     f = Fetcher([M] * 8)
     run(f, db, titles)
     assert f.calls == [f"SONE-{i}" for i in range(5)]
+
+
+@pytest.mark.parametrize("bad", [None, "", "   "], ids=["none", "empty", "blank"])
+def test_titles_without_number_are_skipped_not_crashing(db, bad):
+    # 片庫有檔名認不出番號的檔（別家與同家各一）→ 照樣從有番號的片取樣
+    titles = [T(bad, maker="OTHER"), T(bad, maker="S1")] + five_titles()[:2]
+    assert nums(pick_samples(titles, TODAY, spellings={"S1"})) == ["SONE-200", "SONE-201"]
+    f = Fetcher([V7Q, V7Q])
+    r = run(f, db, titles)
+    assert r.status == "found" and f.call_count == 2
