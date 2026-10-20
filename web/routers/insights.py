@@ -7,8 +7,6 @@ Insights API 路由 — 片庫分析快照端點
 
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -25,7 +23,11 @@ from core.database.version_tracker import (
     compute_etag,
     get_showcase_revision,
 )
-from core.path_utils import is_path_under_dir, uri_to_local_fs_path
+from core.library_titles import (
+    first_members,
+    release_parts as _release_parts,
+    rows_in_library_dirs,
+)
 from core.actress_photo import get_local_photo_path
 from core.logger import get_logger
 from core.config import (
@@ -33,38 +35,17 @@ from core.config import (
     get_gallery_source_paths,
     get_configured_gallery_dirs,
 )
-from core.multipart_group import group_rows
 from core.cover_attributes import manifest_payload
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/insights", tags=["insights"])
 
-_RELEASE_RE = re.compile(r"^(19\d{2}|20\d{2}|21\d{2})(?:-(\d{2})(?:-(\d{2}))?)?")
-
-
 def _etag_matches(if_none_match: str, etag: str) -> bool:
     """比對 `If-None-Match` 語意（同 showcase.py）。"""
     if not if_none_match:
         return False
     return etag in [tag.strip().removeprefix("W/") for tag in if_none_match.split(",")]
-
-
-def _release_parts(raw: object) -> tuple[int | None, str | None, str | None]:
-    """從 release_date 抽出 (year, month='YYYY-MM', date='YYYY-MM-DD')。"""
-    match = _RELEASE_RE.match(str(raw or "").strip())
-    if not match:
-        return None, None, None
-    year = int(match.group(1))
-    month_num = match.group(2)
-    day_num = match.group(3)
-    month = None
-    if month_num and 1 <= int(month_num) <= 12:
-        month = f"{year}-{month_num}"
-    date = None
-    if month and day_num and 1 <= int(day_num) <= 31:
-        date = f"{year}-{month_num}-{day_num}"
-    return year, month, date
 
 
 def _build_alias_lookup(records) -> dict[str, tuple[str, list[str]]]:
@@ -220,20 +201,16 @@ def get_insights_snapshot(request: Request):
             )
 
         repo = VideoRepository(db_path)
-        all_videos = [v for v in repo.get_all() if any(is_path_under_dir(v.path, uri) for uri in configured_dir_uris)]
-
-        groups = group_rows(
-            all_videos,
-            fs_path_of=lambda v: uri_to_local_fs_path(v.path, path_mappings),
-        )
+        all_videos = rows_in_library_dirs(repo.get_all(), configured_dir_uris)
+        firsts = first_members(all_videos, path_mappings)
 
         actress_lookup = _build_alias_lookup(AliasRepository(db_path).get_all())
         tag_lookup = _build_alias_lookup(TagAliasRepository(db_path).get_all())
         tag_lookup = _merge_badge_alias_manifest(tag_lookup)
 
         records = [
-            _serialize_record(g.members[0], actress_lookup, tag_lookup)
-            for g in groups
+            _serialize_record(v, actress_lookup, tag_lookup)
+            for v in firsts
         ]
         years = sorted({r["year"] for r in records if r["year"] is not None})
 
