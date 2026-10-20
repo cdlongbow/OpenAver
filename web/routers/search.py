@@ -13,7 +13,9 @@
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response, StreamingResponse, JSONResponse
-from typing import Optional, List, Dict
+from typing import Annotated, Optional, List, Dict
+import calendar
+import datetime
 import re
 import requests
 import json
@@ -43,9 +45,12 @@ from core.image_host_policy import (
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from web.routers._custom_gate import refusal_for # noqa: PLC2701 — 卡片指定的 web 內部底線模組（165-T7b），同 router 層共用 gate 句表，尚未升格為公開名
-from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
+from core.source_settings import get_switchable_source_ids_ordered, is_source_enabled, is_uncensored_mode_effective
+from core.library_titles import logical_title_firsts, release_parts
+from core.database.maker_javbus_map import list_not_found_keys
+from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
 from core.auto_organize_state import mark_manual_activity, request_abort, get_status
-from core.config import load_config, mutate_config
+from core.config import get_configured_gallery_dirs, load_config, mutate_config
 from core.favorite_scan import resolve_favorite_folder
 from core.proxy_policy import proxy_kwargs
 from web import auto_organize_scheduler
@@ -53,6 +58,7 @@ from web import auto_organize_scheduler
 from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
     is_prefix_only, search_partial, search_actress,
+    search_maker_latest, MakerSearchResult,
 )
 from core.scrapers.utils import SOURCE_NAMES, resolve_route_target
 
@@ -61,6 +67,127 @@ router = APIRouter(prefix="/api", tags=["search"])
 
 # 168d：指定來源搜尋的 CF 錯誤句主詞。javlibrary 與舊版逐字相同（含站名後的空格）；其餘來源中性。
 _CF_ERROR_SUBJECT = {"javlibrary": "JavLibrary ", "fc-javten": "FC2-javten "}
+
+
+def _today() -> datetime.date:
+    """伺服器本地今天（片商膠囊窗口與樣本挑選共用；測試 patch 這裡）。"""
+    return datetime.date.today()
+
+
+# ── 173：片商最新作品（容量端點 ＋ stream／REST 的 maker 分支）──
+
+_MAKER_PARAM_ERROR = "片商參數無效"
+
+
+def _since_twelve_months_ago(today: datetime.date) -> str:
+    """今天往前 12 個月；日期以目標月最後一天夾住（閏日 → 2/28）。"""
+    year = today.year - 1
+    day = min(today.day, calendar.monthrange(year, today.month)[1])
+    return datetime.date(year, today.month, day).isoformat()
+
+
+def _library_titles(db_path):
+    """邏輯片單（設定片庫目錄內、分集合併取 part-1）。"""
+    configured_dir_uris, path_mappings = get_configured_gallery_dirs(load_config())
+    repo = VideoRepository(db_path)
+    titles = logical_title_firsts(repo.get_library_title_rows(), configured_dir_uris, path_mappings)
+    return titles
+
+
+def _count_makers(titles, since: str) -> list:
+    counts: Dict[str, List[int]] = {}
+    for t in titles:
+        name = (t.maker or "").strip()
+        if not name:
+            continue
+        entry = counts.setdefault(name, [0, 0])
+        entry[0] += 1
+        date = release_parts(t.release_date)[2]
+        if date is not None and date >= since:
+            entry[1] += 1
+    makers = [{"maker": n, "total": c[0], "recent": c[1]} for n, c in counts.items()]
+    makers.sort(key=lambda m: (-m["recent"], -m["total"], m["maker"]))
+    return makers
+
+
+@router.get("/search/maker-capsules")
+def get_maker_capsules() -> dict:
+    """搜尋頁片商膠囊的容量資料：各片商片數（全庫／近 12 個月）與已確認 JavBus 沒有的片商。"""
+    try:
+        since = _since_twelve_months_ago(_today())
+        body = {"success": True, "javbus_enabled": True, "since": since, "makers": [], "hidden_keys": []}
+        if not is_source_enabled("javbus"):
+            body["javbus_enabled"] = False
+            return body
+        db_path = get_db_path()
+        if not db_path.exists():
+            return body
+        init_db(db_path)
+        body["makers"] = _count_makers(_library_titles(db_path), since)
+        body["hidden_keys"] = list_not_found_keys(db_path=db_path)
+        return body
+    except Exception:
+        logger.exception("maker-capsules failed")
+        return {"success": False}
+
+
+def _maker_param_error(maker_key: str, spellings, offset: int) -> Optional[str]:
+    """maker 分支入口驗證；回 None 表示通過。"""
+    if not 1 <= len(maker_key) <= 200:
+        return _MAKER_PARAM_ERROR
+    if spellings and (len(spellings) > 20 or any(len(sp) > 200 for sp in spellings)):
+        return _MAKER_PARAM_ERROR
+    if offset % JAVBUS_LIST_PAGE_SIZE:
+        return _MAKER_PARAM_ERROR
+    return None
+
+
+def _run_maker_search(maker_key, maker, spellings, offset, status_callback=None, result_callback=None):
+    """解析＋列表（由呼叫端放進背景執行緒）；未預期例外一律當連不上，不當找不到。"""
+    label = maker or maker_key
+    try:
+        db_path = get_db_path()
+        init_db(db_path)
+        titles = _library_titles(db_path)
+        return search_maker_latest(
+            maker_key, label, spellings or [label], offset,
+            titles=titles, today=_today(),
+            status_callback=status_callback, result_callback=result_callback,
+            db_path=db_path,
+        )
+    except Exception:
+        logger.exception("maker search failed: %s", maker_key)
+        return MakerSearchResult([], False, "maker_unreachable")
+
+
+def _maker_has_more(result) -> bool:
+    return result.has_more
+
+
+def _maker_result_extras(maker_key: str, results: list, result) -> dict:
+    """result 事件／REST 失敗體共用的 maker 欄位：maker_key，失敗且有代碼時加 error_code。"""
+    extras = {"maker_key": maker_key}
+    if not results and result.error_code:
+        extras["error_code"] = result.error_code
+    return extras
+
+
+def _search_maker_rest(maker_key, maker, spellings, offset) -> dict:
+    error = _maker_param_error(maker_key, spellings, offset)
+    if error:
+        return JSONResponse(status_code=400, content={"success": False, "error": error})
+    result = _run_maker_search(maker_key, maker, spellings, offset)
+    extras = _maker_result_extras(maker_key, result.results, result)
+    if result.results:
+        return {
+            "success": True, "data": result.results, "total": len(result.results),
+            "mode": "maker", "offset": offset, "has_more": _maker_has_more(result),
+            "actress_profile": None, **extras,
+        }
+    return {
+        "success": False, "error": f"找不到 {maker or maker_key} 的資料", "data": [], "total": 0,
+        "mode": "maker", "has_more": False, "actress_profile": None, **extras,
+    }
 
 
 def _cf_error_subject(source) -> str:
@@ -161,13 +288,16 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
 
 @router.get("/search")
 def search(
-    q: str = Query(..., description="番號、局部番號、或女優名"),
+    q: Optional[str] = Query(None, description="番號、局部番號、或女優名"),
     mode: str = Query("auto", description="搜尋模式: auto/exact/partial/actress"),
     source: Optional[str] = Query(None, description="指定來源: javbus/jav321/javdb/fc2/avsox"),
     limit: int = Query(20, description="每頁結果數", ge=1, le=50),
     offset: int = Query(0, description="跳過前 N 個結果（用於分頁）", ge=0),
     since: Optional[str] = Query(None, description="日期過濾（YYYY-MM-DD），只回傳此日期之後的結果"),
-    discovery: bool = Query(False, description="輕量探索模式：只取番號+標題，不取封面/女優詳情")
+    discovery: bool = Query(False, description="輕量探索模式：只取番號+標題，不取封面/女優詳情"),
+    maker_key: Optional[str] = Query(None, description="片商 key；給了就走片商最新作品（忽略 q）"),
+    maker: Optional[str] = Query(None, description="片商顯示名"),
+    spellings: Annotated[Optional[List[str]], Query(description="片商的片庫寫法（可重複）")] = None,
 ) -> dict:
     """
     搜尋 JAV 資訊
@@ -187,7 +317,10 @@ def search(
     - **limit**: 每頁結果數（預設 20，最大 50）
     - **offset**: 跳過前 N 個結果，用於載入更多
     """
-    q = q.strip()
+    if maker_key is not None:
+        return _search_maker_rest(maker_key, maker, spellings, offset)
+
+    q = (q or "").strip()
     if not q or len(q) < 2:
         return {"success": False, "error": "請輸入有效的搜尋關鍵字", "data": [], "total": 0}
 
@@ -584,9 +717,12 @@ def batch_search(body: BatchSearchRequest) -> dict:
 
 @router.get("/search/stream")
 async def search_stream(
-    q: str = Query(..., description="番號、局部番號、或女優名"),
+    q: Optional[str] = Query(None, description="番號、局部番號、或女優名"),
     limit: int = Query(20, description="每頁結果數", ge=1, le=50),
-    offset: int = Query(0, description="跳過前 N 個結果（用於分頁）", ge=0)
+    offset: int = Query(0, description="跳過前 N 個結果（用於分頁）", ge=0),
+    maker_key: Optional[str] = Query(None, description="片商 key；給了就走片商最新作品（忽略 q）"),
+    maker: Optional[str] = Query(None, description="片商顯示名"),
+    spellings: Annotated[Optional[List[str]], Query(description="片商的片庫寫法（可重複）")] = None,
 ):
     """
     串流搜尋 API（SSE）- 即時回報搜尋狀態
@@ -596,10 +732,13 @@ async def search_stream(
     - result: 搜尋結果
     """
     mark_manual_activity()
-    q = q.strip()
-    if not q or len(q) < 2:
+    is_maker = maker_key is not None
+    q = (q or "").strip()
+    invalid = _maker_param_error(maker_key, spellings, offset) if is_maker else (
+        None if len(q) >= 2 else "請輸入有效的搜尋關鍵字")
+    if invalid:
         async def error_gen():
-            yield f"data: {json.dumps({'type': 'error', 'message': '請輸入有效的搜尋關鍵字'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': invalid})}\n\n"
         return StreamingResponse(error_gen(), media_type="text/event-stream")
 
     # 讀取設定（無碼模式）
@@ -625,14 +764,19 @@ async def search_stream(
         else:
             status_queue.put({'type': 'result-item', 'slot': slot, 'data': data})
 
+    maker_out = []
+
     def run_search():
         """在背景執行搜尋"""
+        if is_maker:
+            maker_out.append(_run_maker_search(maker_key, maker, spellings, offset, status_callback, result_callback))
+            return maker_out[0].results
         return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, result_callback=result_callback)
 
     async def event_generator():
         nonlocal sent_seed
         # 偵測模式
-        mode = _detect_mode(q)
+        mode = 'maker' if is_maker else _detect_mode(q)
         yield f"data: {json.dumps({'type': 'mode', 'mode': mode})}\n\n"
 
         # 啟動搜尋線程
@@ -674,7 +818,7 @@ async def search_stream(
 
                 # 從實際結果更新 mode（smart_search 內部可能 fallback，
                 # 例如 prefix→actress 或 actress→keyword）
-                if results and results[0].get('_mode'):
+                if results and results[0].get('_mode') and not is_maker:
                     mode = results[0]['_mode']
 
                 # Consistency check（與 REST 相同邏輯）
@@ -692,7 +836,8 @@ async def search_stream(
                             logger.info(f"[Actress Profile] Not found for: {top_actor}")
 
                 # 判斷是否還有更多結果
-                has_more = mode in ('prefix', 'actress') and len(results) >= limit
+                has_more = _maker_has_more(maker_out[0]) if is_maker else (
+                    mode in ('prefix', 'actress') and len(results) >= limit)
 
                 # 若漸進路徑被使用，先送 result-complete（供 T4 消費者用）
                 if sent_seed:
@@ -715,6 +860,8 @@ async def search_stream(
                     'has_more': has_more,
                     'actress_profile': actress_profile
                 }
+                if is_maker:
+                    response.update(_maker_result_extras(maker_key, results, maker_out[0]))
                 yield f"data: {json.dumps(response)}\n\n"
 
             except Exception as e:
