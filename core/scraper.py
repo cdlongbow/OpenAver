@@ -12,7 +12,7 @@ from core.config import load_config
 
 logger = get_logger(__name__)
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, NamedTuple
 
 # 引入新版爬蟲模組
 from core.scrapers import (
@@ -35,6 +35,8 @@ from core.scrapers.utils import (
     resolve_route_target,
 )
 from core.maker_mapping import get_maker_by_prefix
+from core.maker_latest import resolve_maker_studio
+from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
 from core.source_settings import get_enabled_source_ids, get_all_source_ids_ordered, is_source_enabled
@@ -643,8 +645,12 @@ def _javbus_keyword_search(
     status_callback: Optional[Callable[[str, str], None]],
     result_callback: Optional[Callable[[int, Any], None]],
     discovery_only: bool = False,
+    *,
+    ids_provider: Optional[Callable[[JavBusScraper, int], List[str]]] = None,
 ) -> List[Dict[str, Any]]:
     """JavBus keyword search — extracted from search_actress.
+
+    ids_provider（173）：取代「取番號那一步」，簽名 (scraper, page) -> ids；None＝關鍵字搜尋。
 
     Returns list[dict] (empty list on failure / no ids).
     JavDB fallback is NOT included; fuzzy fallback is limited to FUZZY_SEARCH_SOURCES.
@@ -660,7 +666,10 @@ def _javbus_keyword_search(
 
         all_ids = []
         for page in range(start_page, start_page + pages_needed):
-            ids = scraper.get_ids_from_search(name, page=page)
+            if ids_provider is None:
+                ids = scraper.get_ids_from_search(name, page=page)
+            else:
+                ids = ids_provider(scraper, page)
             if ids:
                 all_ids.extend(ids)
                 if len(all_ids) >= limit + skip_in_page:
@@ -709,6 +718,75 @@ def _javbus_keyword_search(
         logger.error('_javbus_keyword_search failed: %s', e)
 
     return []
+
+
+class MakerSearchResult(NamedTuple):
+    results: List[Dict[str, Any]]
+    has_more: bool
+    error_code: Optional[str]
+
+
+_MAKER_RESOLUTION_ERRORS = {
+    'absent': 'maker_not_found',
+    'unreachable': 'maker_unreachable',
+    'no_sample': 'maker_no_sample',
+}
+
+
+def search_maker_latest(
+    maker_key: str,
+    label: str,
+    spellings,
+    offset: int,
+    *,
+    titles,
+    today,
+    status_callback: Optional[Callable[[str, str], None]] = None,
+    result_callback: Optional[Callable[[int, Any], None]] = None,
+    db_path=None,
+) -> MakerSearchResult:
+    """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊）。
+
+    不攔 resolve_maker_studio 的未預期例外（交呼叫端）。
+    """
+    if offset < 0 or offset % JAVBUS_LIST_PAGE_SIZE:
+        raise ValueError(f'offset must be a non-negative multiple of {JAVBUS_LIST_PAGE_SIZE}: {offset}')
+    if status_callback:
+        status_callback('javbus', 'searching')
+    resolution = resolve_maker_studio(
+        maker_key, label, spellings, titles, today=today, db_path=db_path)
+    if resolution.status != 'found':
+        code = _MAKER_RESOLUTION_ERRORS.get(resolution.status, 'maker_unreachable')
+        return MakerSearchResult([], False, code)
+
+    ref = (resolution.kind, resolution.studio_id)
+    request_page = offset // JAVBUS_LIST_PAGE_SIZE + 1
+    counts: Dict[int, int] = {}
+    errors: List[BaseException] = []
+
+    def provider(scraper: JavBusScraper, page: int) -> List[str]:
+        if page != request_page:
+            return []
+        try:
+            ids = scraper.get_ids_from_studio(ref, page)
+        except Exception as e:
+            errors.append(e)
+            raise
+        counts[page] = len(ids)
+        return ids
+
+    results = _javbus_keyword_search(
+        label, JAVBUS_LIST_PAGE_SIZE, offset, status_callback, result_callback,
+        ids_provider=provider,
+    )
+    if errors:
+        logger.error('maker %s list failed: %s: %s', maker_key, type(errors[0]).__name__, errors[0])
+        return MakerSearchResult([], False, 'maker_unreachable')
+    if not counts.get(request_page):
+        logger.info('maker %s page %d empty', maker_key, request_page)
+        return MakerSearchResult([], False, 'maker_empty')
+    has_more = counts.get(request_page, 0) >= JAVBUS_LIST_PAGE_SIZE
+    return MakerSearchResult(results, has_more, None)
 
 
 def _fuzzy_one(

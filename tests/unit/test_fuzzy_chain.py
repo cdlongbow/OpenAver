@@ -428,3 +428,156 @@ class TestFuzzyDmmSource:
         assert len(results) == 1, f"Expected 1 result, got {results}"
         assert results[0]['_source'] == 'dmm', \
             f"Expected _source='dmm', got {results[0].get('_source')!r}"
+
+
+# ============================================================
+# TestMakerLatestPipeline — 173-T5 ids_provider ＋ search_maker_latest
+# ============================================================
+
+from core.scrapers.errors import SourceBlocked as _MkBlocked, SourceUnreachable as _MkUnreachable
+
+_MK_REF = ('censored', '7q')
+_MK_TODAY = '2026-10-21'
+
+
+def _mk_found():
+    from core.maker_latest import Resolution
+    return Resolution('found', 'censored', '7q')
+
+
+def _mk_nums(n, start=1):
+    return [f'MKR-{i:03d}' for i in range(start, start + n)]
+
+
+def _mk_detail(missing=(), dates=None):
+    """search_jav 替身：missing 內的番號查不到；dates 指定發行日。"""
+    def fake(num, source=None, *a, **kw):
+        if num in missing:
+            return None
+        d = {'number': num, 'title': f't-{num}', 'source': 'javbus'}
+        if dates:
+            d['date'] = dates[num]
+        return d
+    return fake
+
+
+def _mk_call(offset=0):
+    from core.scraper import search_maker_latest
+    return search_maker_latest(
+        'mk', '片商', ['片商'], offset,
+        titles=[], today=_MK_TODAY,
+        status_callback=None, result_callback=None, db_path=None,
+    )
+
+
+def _run_maker(offset=0, studio_side_effect=None, detail=None, resolution=None):
+    with patch('core.scraper.resolve_maker_studio',
+               return_value=resolution or _mk_found()) as res, \
+         patch.object(JavBusScraper, 'get_ids_from_studio',
+                      side_effect=studio_side_effect) as st, \
+         patch('core.scraper.search_jav', side_effect=detail or _mk_detail()) as sj:
+        out = _mk_call(offset)
+    return out, res, st, sj
+
+
+class TestMakerLatestPipeline:
+
+    def test_failed_detail_does_not_clear_has_more(self):
+        nums = _mk_nums(30)
+        out, _, st, _ = _run_maker(
+            studio_side_effect=lambda ref, page: nums if page == 1 else [],
+            detail=_mk_detail(missing={nums[7]}),
+        )
+        assert len(out.results) == 29
+        assert out.has_more is True
+        assert out.error_code is None
+        assert nums[7] not in [r['number'] for r in out.results]
+        assert st.call_count == 1
+
+    def test_last_page_requests_only_the_requested_page(self):
+        nums = _mk_nums(12)
+
+        def studio(ref, page):
+            if page == 2:
+                return nums
+            raise TimeoutError('page 3 must not be requested')
+
+        out, _, st, _ = _run_maker(offset=30, studio_side_effect=studio)
+        assert len(out.results) == 12
+        assert out.has_more is False
+        assert out.error_code is None
+        assert st.call_count == 1
+        assert st.call_args_list[0] == call(_MK_REF, 2)
+
+    def test_last_page_session_layer_single_list_request(self):
+        fake_session = MagicMock()
+        fake_session.get.return_value = MagicMock(status_code=200, text='x')
+        nums = _mk_nums(12)
+        with patch.object(JavBusScraper, '_new_session', return_value=fake_session), \
+             patch.object(JavBusScraper, '_has_waterfall', return_value=True), \
+             patch.object(JavBusScraper, '_parse_search_ids', return_value=nums), \
+             patch('core.scraper.resolve_maker_studio', return_value=_mk_found()), \
+             patch('core.scraper.search_jav', side_effect=_mk_detail()):
+            out = _mk_call(30)
+        list_gets = [c for c in fake_session.get.call_args_list if '/studio/' in str(c.args[0])]
+        assert len(list_gets) == 1
+        assert list_gets[0].args[0].endswith('/studio/7q/2')
+        assert len(out.results) == 12
+        assert out.has_more is False
+
+    def test_maker_path_orders_results_like_keyword_path(self, monkeypatch):
+        from core.scraper import _javbus_keyword_search
+        monkeypatch.setattr('core.scraper.MAX_WORKERS', 1)
+        nums = ['MKR-001', 'MKR-002', 'MKR-003', 'MKR-004']
+        dates = {'MKR-001': '2024-03-01', 'MKR-002': '2025-06-01',
+                 'MKR-003': '2023-01-01', 'MKR-004': '2025-12-01'}
+        out, _, _, _ = _run_maker(
+            studio_side_effect=lambda ref, page: nums if page == 1 else [],
+            detail=_mk_detail(dates=dates),
+        )
+        maker_order = [r['number'] for r in out.results]
+        with patch.object(JavBusScraper, 'get_ids_from_search',
+                          side_effect=lambda name, page=1: nums if page == 1 else []), \
+             patch('core.scraper.search_jav', side_effect=_mk_detail(dates=dates)):
+            kw = _javbus_keyword_search('x', 30, 0, None, None)
+        assert maker_order == [r['number'] for r in kw]
+        assert maker_order == ['MKR-004', 'MKR-002', 'MKR-001', 'MKR-003']
+
+    @pytest.mark.parametrize('exc', [TimeoutError('t'), _MkUnreachable('u'), _MkBlocked('b')])
+    def test_list_exception_is_maker_unreachable(self, exc):
+        out, _, _, _ = _run_maker(studio_side_effect=exc)
+        assert out.error_code == 'maker_unreachable'
+        assert out.results == []
+        assert out.has_more is False
+
+    def test_empty_page_is_maker_empty(self):
+        out, _, _, _ = _run_maker(studio_side_effect=lambda ref, page: [])
+        assert out.error_code == 'maker_empty'
+        assert out.results == []
+        assert out.has_more is False
+
+    @pytest.mark.parametrize('status,code', [
+        ('absent', 'maker_not_found'),
+        ('unreachable', 'maker_unreachable'),
+        ('no_sample', 'maker_no_sample'),
+    ])
+    def test_resolution_failures_map_to_error_code(self, status, code):
+        from core.maker_latest import Resolution
+        out, _, st, sj = _run_maker(resolution=Resolution(status))
+        assert out.error_code == code
+        assert out.results == []
+        assert out.has_more is False
+        assert st.call_count == 0
+        assert sj.call_count == 0
+
+    @pytest.mark.parametrize('offset', [-30, 1, 29, 31])
+    def test_bad_offset_raises(self, offset):
+        with pytest.raises(ValueError):
+            _run_maker(offset=offset)
+
+    def test_default_path_still_calls_get_ids_from_search_with_name_page(self):
+        from core.scraper import _javbus_keyword_search
+        with patch.object(JavBusScraper, 'get_ids_from_search',
+                          side_effect=lambda name, page=1: []) as gi:
+            _javbus_keyword_search('abc', 30, 0, None, None)
+        assert gi.call_args_list == [call('abc', page=1)]
