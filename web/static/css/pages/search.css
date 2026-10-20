@@ -498,6 +498,53 @@
     }
 }
 
+/* === 空狀態：片商最新作品膠囊列（外觀抄 .lb-tag，CD-173-14 類 3） === */
+.maker-latest {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 1rem auto 0.5rem;
+}
+
+.maker-latest-title {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.maker-latest-chip {
+    padding: 0.15rem 0.5rem;
+    background: var(--bg-body);
+    border: 1px solid var(--stroke-subtle);
+    border-radius: var(--radius-pill);
+    font-family: inherit;
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    color: var(--text-secondary);
+    cursor: pointer;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+.maker-latest-chip:hover {
+    background: var(--accent);
+    color: var(--surface-0);
+    text-decoration: none;
+}
+
+.maker-latest-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+    .maker-latest {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
 /* === 搜尋進度指示器 === */
 .search-progress {
     display: flex;
