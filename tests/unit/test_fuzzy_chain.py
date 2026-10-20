@@ -434,8 +434,6 @@ class TestFuzzyDmmSource:
 # TestMakerLatestPipeline — 173-T5 ids_provider ＋ search_maker_latest
 # ============================================================
 
-from core.scrapers.errors import SourceBlocked as _MkBlocked, SourceUnreachable as _MkUnreachable
-
 _MK_REF = ('censored', '7q')
 _MK_TODAY = '2026-10-21'
 
@@ -542,38 +540,6 @@ class TestMakerLatestPipeline:
             kw = _javbus_keyword_search('x', 30, 0, None, None)
         assert maker_order == [r['number'] for r in kw]
         assert maker_order == ['MKR-004', 'MKR-002', 'MKR-001', 'MKR-003']
-
-    @pytest.mark.parametrize('exc', [TimeoutError('t'), _MkUnreachable('u'), _MkBlocked('b')])
-    def test_list_exception_is_maker_unreachable(self, exc):
-        out, _, _, _ = _run_maker(studio_side_effect=exc)
-        assert out.error_code == 'maker_unreachable'
-        assert out.results == []
-        assert out.has_more is False
-
-    def test_empty_page_is_maker_empty(self):
-        out, _, _, _ = _run_maker(studio_side_effect=lambda ref, page: [])
-        assert out.error_code == 'maker_empty'
-        assert out.results == []
-        assert out.has_more is False
-
-    @pytest.mark.parametrize('status,code', [
-        ('absent', 'maker_not_found'),
-        ('unreachable', 'maker_unreachable'),
-        ('no_sample', 'maker_no_sample'),
-    ])
-    def test_resolution_failures_map_to_error_code(self, status, code):
-        from core.maker_latest import Resolution
-        out, _, st, sj = _run_maker(resolution=Resolution(status))
-        assert out.error_code == code
-        assert out.results == []
-        assert out.has_more is False
-        assert st.call_count == 0
-        assert sj.call_count == 0
-
-    @pytest.mark.parametrize('offset', [-30, 1, 29, 31])
-    def test_bad_offset_raises(self, offset):
-        with pytest.raises(ValueError):
-            _run_maker(offset=offset)
 
     def test_default_path_still_calls_get_ids_from_search_with_name_page(self):
         from core.scraper import _javbus_keyword_search

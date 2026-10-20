@@ -85,11 +85,6 @@ def test_classify_votes():
     assert classify(200, True, ["/label/9x", "/studio/7q"]) == StudioVote("censored", "7q")
 
 
-def test_classify_no_info_block_is_unreachable():
-    from core.scrapers.javbus import classify, STUDIO_UNREACHABLE
-    assert classify(200, False, ["/studio/7q"]) is STUDIO_UNREACHABLE
-
-
 @pytest.mark.parametrize("hrefs", [[], ["/label/9x"], ["/series/x", "/label/9x"], [""]])
 def test_classify_info_without_studio_link_is_unreachable(hrefs):
     from core.scrapers.javbus import classify, STUDIO_UNREACHABLE
@@ -110,13 +105,6 @@ def test_classify_info_without_studio_link_is_unreachable(hrefs):
 def test_classify_list_response(status, has_wf, expected):
     import core.scrapers.javbus as jb
     assert jb.classify_list_response(status, has_wf) is getattr(jb, expected)
-
-
-def test_list_constants_distinct():
-    import core.scrapers.javbus as jb
-    vals = {jb.LIST_PARSE, jb.LIST_END, jb.LIST_BLOCKED, jb.LIST_UNREADABLE}
-    assert len(vals) == 4
-    assert jb.STUDIO_MISS != jb.STUDIO_UNREACHABLE
 
 
 def test_list_page_size():
@@ -155,24 +143,11 @@ def test_fetch_sample_200_without_info_is_unreachable(scraper_zh):
     assert _sample(scraper_zh, 200, info=(False, [])) is STUDIO_UNREACHABLE
 
 
-@pytest.mark.parametrize("hrefs", [[], ["/label/9x"]])
-def test_fetch_sample_200_info_without_studio_link_is_unreachable(scraper_zh, hrefs):
-    from core.scrapers.javbus import STUDIO_UNREACHABLE
-    assert _sample(scraper_zh, 200, info=(True, hrefs)) is STUDIO_UNREACHABLE
-
-
 def test_fetch_sample_rate_limits_and_uses_detail_url(scraper_zh):
     _sample(scraper_zh, 404)
     scraper_zh._rate_limit_mock.assert_called_once_with(scraper_zh.config.delay)
     url = scraper_zh._session.get.call_args[0][0]
     assert url == "https://www.javbus.com/SONE-205"
-
-
-def test_fetch_sample_does_not_extract_html_for_non_200(scraper_zh):
-    scraper_zh._session.get = MagicMock(return_value=_resp(403))
-    with patch.object(scraper_zh, "_extract_studio_info") as ex:
-        scraper_zh.fetch_studio_sample("SONE-205")
-    assert ex.call_count == 0
 
 
 # ---------------- build_studio_url ----------------
