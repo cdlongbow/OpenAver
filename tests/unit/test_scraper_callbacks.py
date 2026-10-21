@@ -276,6 +276,11 @@ class TestSearchActressResultCallback:
         in FUZZY_SEARCH_SOURCES; this test uses the actual 2-source pool (javbus + dmm).
         """
         from core.scraper import search_actress
+        from core.scrapers.dmm import DMMScraper
+        from core.scrapers.models import Video
+
+        def _dmm_video(number):
+            return Video(number=number, title='T', source='dmm', date='2024-01-01')
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['javbus', 'dmm'])
@@ -290,21 +295,16 @@ class TestSearchActressResultCallback:
         mock_scraper = make_mock_scraper_actress([[]])
 
         with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper._dmm_keyword_search_progressive',
-                   return_value=[{'number': 'SONE-100', 'actors': ['三上悠亜']}]) as mock_dmm:
+             patch.object(DMMScraper, 'search_by_keyword_with_ids',
+                          return_value=[('sone00100', _dmm_video('SONE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, '_fetch_by_id', return_value=_dmm_video('SONE-100')):
             results = search_actress('三上悠亜', limit=20,
                                      result_callback=result_callback)
 
         # DMM must have been called (fallback ran)
         mock_dmm.assert_called_once()
         # Critically: DMM must have received result_callback=None (not the caller's callback).
-        # Signature: _dmm_keyword_search_progressive(scraper, query, limit, status_cb, result_cb, ...)
-        # result_callback is positional arg index 4.
-        positional_args = mock_dmm.call_args[0]
-        dmm_result_cb = positional_args[4] if len(positional_args) > 4 else mock_dmm.call_args[1].get('result_callback')
-        assert dmm_result_cb is None, \
-            f"Fallback source must NOT receive result_callback, got {dmm_result_cb}"
-        # And therefore no seed/item callbacks were fired by the mock
+        # pairs 非空且真的跑了補詳情，所以 callback 若被傳進去就會有 seed／item 事件。
         assert callback_calls == [], \
             f"Fallback source should not call result_callback, got {callback_calls}"
 

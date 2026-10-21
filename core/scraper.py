@@ -11,7 +11,7 @@ from core.logger import get_logger
 from core.config import load_config
 
 logger = get_logger(__name__)
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Dict, Any, Callable
 
 # 引入新版爬蟲模組
@@ -491,44 +491,19 @@ def _dmm_keyword_search_progressive(
     result_callback,
     offset: int = 0,
 ) -> Optional[List[Dict[str, Any]]]:
-    """DMM keyword search with progressive enrichment (mirrors JavBus pattern).
+    """DMM keyword search with progressive enrichment（175a-T5：實作搬進 DMMProvider，此處為薄轉接）。
 
     Returns a list of result dicts on success, or None if DMM returned nothing
     (caller should fall through to JavBus).
     """
-    pairs = dmm_scraper.search_by_keyword_with_ids(query, limit=limit, offset=offset)
-    if not pairs:
-        return None
+    from core.search_providers.dmm import DMMProvider
+    from core.search_providers.types import Kind, Window
 
-    # Seed: frontend renders skeleton cards immediately
-    if result_callback:
-        seed_ids = [video.number for _, video in pairs]
-        result_callback(-1, seed_ids)
-
-    results = [None] * len(pairs)  # pre-allocate to preserve seed order
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {}
-        for idx, (content_id, shallow) in enumerate(pairs):
-            future = executor.submit(dmm_scraper._fetch_by_id, content_id)
-            futures[future] = (idx, content_id, shallow)
-
-        for future in as_completed(futures):
-            idx, content_id, shallow = futures[future]
-            try:
-                video = future.result()
-                if video is None:
-                    video = shallow
-            except Exception:
-                logger.error('DMM enrichment failed: %s', content_id)
-                video = shallow
-            data = video.to_legacy_dict()
-            results[idx] = data  # slot-indexed, not append
-            if result_callback:
-                result_callback(idx, data)
-
-    if status_callback:
-        status_callback('done', f'found:{len(results)}')
-    return results
+    results = DMMProvider(dmm_scraper).run(
+        Kind.KEYWORD, query, Window(offset, limit),
+        status_callback=status_callback, result_callback=result_callback,
+    )
+    return results or None
 
 
 def _javbus_keyword_search(
@@ -596,8 +571,6 @@ def _fuzzy_one(
             dmm_scraper, query, limit, status_callback, result_callback, offset=offset
         )
         result = result if result is not None else []
-        for d in result:
-            d['_source'] = 'dmm'  # 鏡像 javbus（search_jav L354）：模糊結果補內部來源標記
         return result
 
     if source == 'javbus':

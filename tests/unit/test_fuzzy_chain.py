@@ -70,8 +70,9 @@ class TestFuzzyChain:
                             lambda: ['javbus', 'dmm'])
 
         with patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
-             patch('core.scraper._dmm_keyword_search_progressive',
-                   return_value=[{'number': 'MIDE-100', 'source': 'dmm'}]) as mock_dmm:
+             patch.object(DMMScraper, 'search_by_keyword_with_ids',
+                          return_value=[('mide00100', _make_video('dmm', 'MIDE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, '_fetch_by_id', return_value=_make_video('dmm', 'MIDE-100')):
             results = _fuzzy_search_chain("some actress")
 
         mock_jb.assert_called()          # javbus reached but returned empty
@@ -416,11 +417,11 @@ class TestFuzzyDmmSource:
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus'])
 
-        # DMM returns 1 result (no _source yet — _fuzzy_one must add it)
-        monkeypatch.setattr(
-            "core.scraper._dmm_keyword_search_progressive",
-            lambda *a, **kw: [{'number': 'STARS-001', 'source': 'dmm'}],
-        )
+        # DMM returns 1 result (no _source yet — DMMProvider.run must add it)
+        video = _make_video('dmm', 'STARS-001')
+        monkeypatch.setattr(DMMScraper, 'search_by_keyword_with_ids',
+                            lambda self, *a, **kw: [('stars00001', video)])
+        monkeypatch.setattr(DMMScraper, '_fetch_by_id', lambda self, cid: video)
 
         # 膠囊開（autouse fixture）所以 DMM 閘放行
         results = _fuzzy_search_chain("actress")
