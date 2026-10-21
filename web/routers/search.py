@@ -45,7 +45,7 @@ from core.image_host_policy import (
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from web.routers._custom_gate import refusal_for # noqa: PLC2701 — 卡片指定的 web 內部底線模組（165-T7b），同 router 層共用 gate 句表，尚未升格為公開名
-from core.source_settings import get_switchable_source_ids_ordered, is_source_enabled, is_uncensored_mode_effective
+from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
 from core.library_titles import logical_title_firsts, release_parts
 from core.database.maker_javbus_map import list_not_found_keys
 from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
@@ -62,6 +62,7 @@ from core.scraper import (
 from core.scrapers.utils import SOURCE_NAMES
 from core.query_intent import classify_query
 from core.maker_names import known_makers
+from core.search_providers.relay import maker_capsule_policy
 
 router = APIRouter(prefix="/api", tags=["search"])
 
@@ -116,16 +117,18 @@ def get_maker_capsules() -> dict:
     """搜尋頁片商膠囊的容量資料：各片商片數（全庫／近 12 個月）與已確認 JavBus 沒有的片商。"""
     try:
         since = _since_twelve_months_ago(_today())
-        body = {"success": True, "javbus_enabled": True, "since": since, "makers": [], "hidden_keys": []}
-        if not is_source_enabled("javbus"):
-            body["javbus_enabled"] = False
+        body = {"success": True, "maker_search_enabled": True, "since": since, "makers": [], "hidden_keys": []}
+        policy = maker_capsule_policy()
+        if not policy.enabled:
+            body["maker_search_enabled"] = False
             return body
         db_path = get_db_path()
         if not db_path.exists():
             return body
         init_db(db_path)
         body["makers"] = _count_makers(_library_titles(db_path), since)
-        body["hidden_keys"] = list_not_found_keys(db_path=db_path)
+        if policy.use_not_found_map:
+            body["hidden_keys"] = list_not_found_keys(db_path=db_path)
         return body
     except Exception:
         logger.exception("maker-capsules failed")
@@ -350,7 +353,7 @@ def search(
 
     # 自動模式使用 smart_search
     if mode == "auto":
-        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, discovery_only=use_discovery)
+        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, discovery_only=use_discovery, resolve_makers=True)
     elif mode == "exact":
         if source:
             # 指定來源搜索
@@ -436,7 +439,7 @@ def search(
     else:
         results = smart_search(q, limit=limit, offset=offset, discovery_only=use_discovery)
 
-    detected_mode = mode if mode != "auto" else _detect_mode(q)
+    detected_mode = mode if mode != "auto" else _detect_mode(q, True)
 
     # since post-filter: 保留 date >= since 的結果（缺 date 或空 date 保留）
     if since and results:
@@ -454,7 +457,7 @@ def search(
                     logger.info(f"[Actress Profile] Not found for: {top_actor}")
 
         # 判斷是否還有更多結果（prefix/actress 模式且結果數 = limit）
-        has_more = detected_mode in ('prefix', 'actress') and len(results) >= limit
+        has_more = detected_mode in ('prefix', 'actress', 'maker') and len(results) >= limit
 
         response_data = {
             "success": True,
@@ -765,12 +768,12 @@ async def search_stream(
         if is_maker:
             maker_out.append(_run_maker_search(maker_key, maker, spellings, offset, status_callback, result_callback))
             return maker_out[0].results
-        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, result_callback=result_callback)
+        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, result_callback=result_callback, resolve_makers=True)
 
     async def event_generator():
         nonlocal sent_seed
         # 偵測模式
-        mode = 'maker' if is_maker else _detect_mode(q)
+        mode = 'maker' if is_maker else await asyncio.to_thread(_detect_mode, q, True)
         yield f"data: {json.dumps({'type': 'mode', 'mode': mode})}\n\n"
 
         # 啟動搜尋線程
@@ -831,7 +834,7 @@ async def search_stream(
 
                 # 判斷是否還有更多結果
                 has_more = _maker_has_more(maker_out[0]) if is_maker else (
-                    mode in ('prefix', 'actress') and len(results) >= limit)
+                    mode in ('prefix', 'actress', 'maker') and len(results) >= limit)
 
                 # 若漸進路徑被使用，先送 result-complete（供 T4 消費者用）
                 if sent_seed:

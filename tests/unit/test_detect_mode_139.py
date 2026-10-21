@@ -83,3 +83,11 @@ def test_oracle_b_detect_mode():
     assert set(moves) <= allowed_transitions_dm
     # ② 筆數對帳
     assert dict(Counter(moves)) == expected_counts_dm
+
+
+def test_detect_mode_maker_when_resolve_makers_true(monkeypatch):
+    """175b-T9：resolve_makers=True 且片庫有該片商 → maker；預設不讀片庫"""
+    from core.maker_names import maker_key_of
+    monkeypatch.setattr("web.routers.search.known_makers", lambda: frozenset({maker_key_of("SOD")}))
+    assert _detect_mode("SOD", True) == "maker"
+    assert _detect_mode("SSIS-816", True) == "exact"

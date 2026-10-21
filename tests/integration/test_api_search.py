@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock, call, ANY
 from bs4 import BeautifulSoup
 
+pytestmark = pytest.mark.usefixtures("empty_library_makers")
+
 
 def load_fixture(filename: str) -> dict:
     """載入 Mock JSON fixture"""

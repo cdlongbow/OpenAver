@@ -16,7 +16,7 @@ export function searchStateMakerLatest() {
             try {
                 const res = await fetch('/api/search/maker-capsules');
                 const data = await res.json();
-                if (data && data.success === true && data.javbus_enabled !== false) {
+                if (data && data.success === true && data.maker_search_enabled !== false) {
                     rows = Array.isArray(data.makers) ? data.makers : [];
                     hidden = Array.isArray(data.hidden_keys) ? data.hidden_keys : [];
                 }

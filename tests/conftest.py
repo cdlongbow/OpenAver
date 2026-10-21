@@ -555,6 +555,19 @@ def isolate_reconcile_db(tmp_path_factory, monkeypatch):
     return db_path
 
 
+# ============ 175b-T9：路由讀片庫片商名的隔離（named fixture，非 autouse）====
+#
+# `/api/search` 與 `/api/search/stream` 的 auto 分支現在會呼叫 `_detect_mode(q, True)`
+# ⇒ `core.maker_names.known_makers()` ⇒ `library_maker_names()` 開真實 `output/openaver.db`
+# （BE-TEST-28）。既有測試 patch 的是 router 層的東西，到不了這裡。
+# 不做 autouse（同 isolate_reconcile_db 的理由）；受影響的檔案逐檔 pytestmark opt-in：
+#     pytestmark = pytest.mark.usefixtures("empty_library_makers")
+@pytest.fixture
+def empty_library_makers(monkeypatch):
+    """opt-in（非 autouse）：片庫片商名回空集合（靜態對照表半邊照常）。"""
+    monkeypatch.setattr("core.maker_names.library_maker_names", lambda: set())
+
+
 # ============ CI 修復：session 開始前把真實預設資料根真的定版一次 ============
 #
 # 為什麼需要：CI 乾淨 checkout 沒有已定版的 `output/`（gitignored，本機早已

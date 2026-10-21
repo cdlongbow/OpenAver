@@ -32,7 +32,7 @@ function fakeFetch(body, { throws = false, badJson = false } = {}) {
     return calls;
 }
 
-const okBody = (extra = {}) => ({ success: true, javbus_enabled: true, makers: MAKERS, hidden_keys: [], ...extra });
+const okBody = (extra = {}) => ({ success: true, maker_search_enabled: true, makers: MAKERS, hidden_keys: [], ...extra });
 const labels = (page) => page.makerCapsules.map((c) => c.label);
 
 test('slice shape: 無 init()、searchPage().init 仍存在、初值為空', () => {
@@ -48,8 +48,8 @@ test('load: 成功載入 ⇒ makerCapsules 為預期排名（至多 5 顆）', a
     assert.deepEqual(labels(page), ['A', 'B', 'C', 'D', 'E']);
 });
 
-test('javbus-disabled-empty: javbus_enabled:false（makers 非空）⇒ []', async () => {
-    fakeFetch(okBody({ javbus_enabled: false }));
+test('maker-search-disabled-empty: maker_search_enabled:false（makers 非空）⇒ []', async () => {
+    fakeFetch(okBody({ maker_search_enabled: false }));
     const page = searchPage();
     await page.loadMakerCapsules();
     assert.deepEqual(page.makerCapsules, []);
