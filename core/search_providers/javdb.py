@@ -15,14 +15,25 @@ from core.logger import get_logger
 from core.maker_mapping import load_name_mapping, load_search_aliases
 from core.maker_names import maker_key_of
 from core.scrapers import javdb_api
+from core.scrapers.errors import SourceBlocked
 from core.scrapers.javdb_api import MAX_PAGE, PAGE_SIZE
 from core.scrapers.utils import strip_number_prefix
 from core.search_providers.pipeline import fetch_window, run_window
-from core.search_providers.types import Enriched, EntityRef, Kind, Page, Window, WorkItem
+from core.search_providers.types import (
+    Enriched,
+    EntityRef,
+    Kind,
+    MakerSearchResult,
+    Outcome,
+    Page,
+    Window,
+    WorkItem,
+)
 
 logger = get_logger(__name__)
 
 SOURCE = "javdb"
+PAGE_SIZE_MAKER = 30  # 片商膠囊一頁 30 部（limit=None 的視窗）
 
 
 def _s(v) -> str:
@@ -418,6 +429,47 @@ class JavDBProvider:
         for card in cards:
             card["_source"] = SOURCE
         return cards
+
+    def run_maker(self, maker_key, label, spellings, offset, *, limit=None, titles=None, today=None,
+                  status_callback=None, result_callback=None, db_path=None) -> MakerSearchResult:
+        """片商最新作品（175b-T8b）：resolve(MAKER, label) → list_entity 視窗 → run_window(guard)。
+
+        titles／today／db_path／spellings 接受但不使用（正名／別名展開在 resolve 內）。limit=None ⇒ 視窗取 30。"""
+        if status_callback:
+            status_callback(SOURCE, "searching")
+        try:
+            ref = self.resolve(Kind.MAKER, label)
+            if ref is None:
+                return MakerSearchResult([], False, "maker_not_found")
+            page = self.list_entity(ref, Window(offset, limit or PAGE_SIZE_MAKER))
+        except Exception as err:
+            logger.warning("javdb maker %s failed (%s%s)", maker_key, type(err).__name__,
+                           "/blocked" if isinstance(err, SourceBlocked) else "")
+            return MakerSearchResult([], False, "maker_unreachable")
+        if not page.items:
+            return MakerSearchResult([], False, "maker_empty")
+        res = run_window(
+            self,
+            page.items,
+            ref,
+            result_callback=result_callback,
+            on_fail="degrade",
+            delay=None,
+            guard=True,
+            breaker=True,
+        )
+        if res.outcome is Outcome.UNREACHABLE:
+            return MakerSearchResult([], False, "maker_unreachable")
+        if not res.cards:
+            return MakerSearchResult([], False, "maker_not_found")
+        import core.scraper as m
+
+        cards = m.sort_results_by_date(res.cards)
+        for card in cards:
+            card["_source"] = SOURCE
+        if status_callback:
+            status_callback("done", f"found:{len(cards)}")
+        return MakerSearchResult(cards, page.has_next, None)
 
     def _run_code(self, target, w, result_callback) -> list[dict]:
         ref = self.resolve(Kind.CODE, target.strip().upper())

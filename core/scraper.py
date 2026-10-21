@@ -37,7 +37,7 @@ from core.maker_mapping import get_maker_by_prefix
 from core.maker_latest import resolve_maker_studio  # noqa: F401  # 測試 patch 點＋provider 延後取用
 from core.search_providers.javbus import JavBusProvider
 from core.search_providers import registry
-from core.search_providers.relay import search_by_intent
+from core.search_providers.relay import search_by_intent, search_maker
 from core.search_providers.types import Kind, MakerSearchResult, Window  # noqa: F401  # MakerSearchResult 重新匯出（web/routers/search.py 使用）
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
@@ -519,11 +519,8 @@ def search_maker_latest(
     result_callback: Optional[Callable[[int, Any], None]] = None,
     db_path=None,
 ) -> MakerSearchResult:
-    """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊；175a-T4：實作搬進 JavBusProvider，此處為 shim）。
-
-    不攔 resolve_maker_studio 的未預期例外（交呼叫端）。
-    """
-    return JavBusProvider().run_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
+    """片商最新作品（經 relay 接力，限 30 部一頁；175b-T8b）。"""
+    return search_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
 
 
 def search_actress(

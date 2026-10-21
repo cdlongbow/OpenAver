@@ -39,6 +39,9 @@ def env(tmp_path, monkeypatch):
         lambda cfg: ({to_file_uri(str(video_dir), {})}, {}),
     )
     monkeypatch.setattr("core.scraper.MAX_WORKERS", 1)
+    # 175b-T8b：片商路徑改走接力；173 的情境只驗 JavBus，固定鏈＝只有 javbus
+    monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ["javbus"])
+    monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == "javbus")
     return type("Env", (), {"db": db, "dir": video_dir, "tmp": tmp_path})()
 
 

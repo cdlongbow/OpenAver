@@ -16,7 +16,7 @@ from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked
 from core.search_providers import registry
 from core.search_providers.pipeline import run_window
-from core.search_providers.types import EntityRef, Kind, Window
+from core.search_providers.types import EntityRef, Kind, MakerSearchResult, Window
 
 logger = get_logger(__name__)
 
@@ -128,3 +128,53 @@ def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, 
         if cards:
             return cards
     return []
+
+
+def _merge_maker_codes(codes: list[str | None]) -> str:
+    """全鏈都換不出答案時的彙整：有連不上 ⇒ unreachable；全部 no_sample ⇒ no_sample；其餘 not_found。"""
+    if "maker_unreachable" in codes:
+        return "maker_unreachable"
+    if codes and all(c == "maker_no_sample" for c in codes):
+        return "maker_no_sample"
+    return "maker_not_found"
+
+
+def search_maker(maker_key, label, spellings, offset, *, limit=None, titles, today, status_callback=None,
+                 result_callback=None, db_path=None) -> MakerSearchResult:
+    """片商最新作品的接力（175b-T8b）：鏈＝providers_for({MAKER})，逐家 run_maker。
+
+    I-M2（同一份清單不得中途換家）：非空 ⇒ 回；maker_empty ⇒ 終點；offset>0 的 unreachable／例外 ⇒ 終點；
+    其餘（not_found／no_sample／offset==0 的 unreachable／例外）記下並換下一家。"""
+    providers = registry.providers_for({Kind.MAKER})
+    if not providers:
+        return MakerSearchResult([], False, "maker_not_found")
+    chain_ids = [p.id for p in providers]
+    gate = _SeedGate(result_callback)
+    codes: list[str | None] = []
+    for index, provider in enumerate(providers):
+        run_maker = getattr(provider, "run_maker", None)
+        if not callable(run_maker):
+            raise TypeError(f"provider {provider.id!r} has no run_maker()")
+        cb = None if gate.seeded or (index and not _streams_as_fallback(provider)) else gate.callback
+        try:
+            res = run_maker(maker_key, label, spellings, offset, limit=limit, titles=titles, today=today,
+                            status_callback=status_callback, result_callback=cb, db_path=db_path)
+        except Exception as exc:
+            logger.warning(
+                "relay maker: %s failed (%s%s), chain %s",
+                provider.id, type(exc).__name__, "/blocked" if isinstance(exc, SourceBlocked) else "", chain_ids,
+            )
+            if offset > 0:
+                return MakerSearchResult([], False, "maker_unreachable")
+            codes.append("maker_unreachable")
+            continue
+        if res.results:
+            return res
+        if res.error_code is None:
+            return res  # 認得、也列出了（詳情全缺）：同 maker_empty，終點（173 行為不變）
+        if res.error_code == "maker_empty":
+            return res
+        if res.error_code == "maker_unreachable" and offset > 0:
+            return res
+        codes.append(res.error_code)
+    return MakerSearchResult([], False, _merge_maker_codes(codes))
