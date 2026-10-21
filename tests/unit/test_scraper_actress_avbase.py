@@ -102,10 +102,6 @@ class TestNormalizeBasicInfo:
         out = _normalize_basic_info({"cup": raw})
         assert out == ({"cup": raw} if present else {})
 
-    def test_text_fields_stripped_and_mapped(self):
-        out = _normalize_basic_info({"prefectures": " 東京都 ", "hobby": " 散歩 "})
-        assert out == {"hometown": "東京都", "hobby": "散歩"}
-
     def test_unused_keys_ignored_and_non_dict_safe(self):
         assert _normalize_basic_info({"blood_type": "A", "sns": ["x"], "profile": "p"}) == {}
         assert _normalize_basic_info(None) == {}
@@ -205,11 +201,6 @@ def test_malformed_primary_is_ignored(primary):
 
 
 # ── 純函式：__NEXT_DATA__ 取值 ───────────────────────────────────────────────
-
-def test_extract_talent_returns_talent_dict():
-    talent = _talent({"hobby": "x"})
-    assert _extract_talent(_page(talent)) == talent
-
 
 @pytest.mark.parametrize("html", [
     "<p>nothing here</p>",

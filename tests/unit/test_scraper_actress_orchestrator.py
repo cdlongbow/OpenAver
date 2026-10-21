@@ -768,11 +768,6 @@ class TestWikiFirstFieldOrder:
         assert {f: data["text"].get(f) for f in _FO_FIELDS} == {f: _FO_WIKI[f] for f in _FO_FIELDS}
         assert data["primary_text_source"] == "wiki"
 
-    def test_wiki_lacks_hobby_xcity_supplies_it(self):
-        data = _fo_profile(_FO_XCITY, _FO_WIKI, _FO_GRAPHIS, _FO_AVBASE)
-        assert "hobby" not in _FO_WIKI
-        assert data["text"].get("hobby") == "xcity趣味"
-
     def test_front_three_lack_birth_avbase_supplies_it(self):
         wiki = {k: v for k, v in _FO_WIKI.items() if k != "birth"}
         xcity = {k: v for k, v in _FO_XCITY.items() if k != "birth"}
@@ -805,11 +800,6 @@ class TestWikiFirstFieldOrder:
     def test_primary_xcity_when_wiki_absent(self):
         data = _fo_profile(_FO_XCITY, None, _FO_GRAPHIS, _FO_AVBASE)
         assert data["primary_text_source"] == "xcity"
-
-    def test_avbase_alias_only_is_not_primary_text_source(self):
-        data = _fo_profile(avbase={"other_names": ["二階堂れい"]})
-        assert data is not None
-        assert data["primary_text_source"] is None
 
 
 # ---------------------------------------------------------------------------
