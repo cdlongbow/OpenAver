@@ -206,9 +206,10 @@ _LIST_FILTER = {
 
 
 def _partial_matches(items, want):
+    """只留落在「與 JavBus 同一套展開」號碼集合內的列（換哪家回答結果一樣）。"""
     out = []
     for it in items:
-        if norm_number(it.number).startswith(want):
+        if norm_number(it.number) in want:
             out.append(it)
     return out
 
@@ -505,12 +506,15 @@ class JavDBProvider:
         ).cards
 
     def _run_partial(self, target, w, result_callback) -> list[dict]:
-        """局部搜尋：忽略 w.limit（relay 傳 Window(0,0)）、只取第 1 頁、客戶端過濾前綴。"""
+        """局部搜尋：忽略 w.limit（relay 傳 Window(0,0)）、只取第 1 頁、客戶端只留與 JavBus 同一套展開的號碼。"""
         if w.offset > 0:
             return []
         proxies = self._proxies()
         rows = _paced(lambda: javdb_api.api_search_page(target.strip(), 1, proxies=proxies))
-        items = _keep_newer(_partial_matches(parse_list_rows(rows), norm_number(target)))
+        import core.scraper as m
+
+        want = {norm_number(n) for n in m.expand_partial_number(target)}
+        items = _keep_newer(_partial_matches(parse_list_rows(rows), want))
         if not items:
             return []
         return run_window(
