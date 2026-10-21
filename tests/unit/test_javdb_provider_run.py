@@ -242,6 +242,8 @@ def _code_site(site, numbers, details=None):
 def test_code_latest_listing_is_rejected_by_guard(site, sync_executor, pipe_sleeps):
     # 站方靜默回全站最新：前 3 部都不是 MIDV
     _code_site(site, ["ABC-001", "DEF-002", "GHI-003", "MIDV-004"])
+    for r, d in zip(site.pages[("0:c:MIDV", 1)], ["2026-01-04", "2026-01-03", "2026-01-02", "2026-01-01"]):
+        r["release_date"] = d  # 日期遞減：讓事前排序後視窗順序＝列表順序（F3）
     got = []
     out = _prov().run(Kind.CODE, "midv", Window(0, 20), result_callback=lambda s, c: got.append(s))
     assert out == [] and got == []
@@ -339,8 +341,9 @@ def test_window_spanning_two_pages_requests_two_lists_and_twenty_details(site, s
 
 
 # ------------------------------------------------------------------ 補卡階段失敗
-def _kw_site(site, n):
-    site.pages[("kw", 1)] = [_list_row(i, f"AAA-{i:03d}") for i in range(n)]
+def _kw_site(site, n, descending_dates=False):
+    site.pages[("kw", 1)] = [_list_row(i, f"AAA-{i:03d}", f"2026-02-{n - i:02d}" if descending_dates else "2026-01-01")
+                             for i in range(n)]
     for i in range(n):
         site.details[f"m{i}"] = _detail(i, actors=["A1"])
 
@@ -356,7 +359,7 @@ def test_one_detail_failure_degrades_only_that_card_no_retry(site, sync_executor
 
 
 def test_consecutive_blocked_details_stop_new_requests(site, sync_executor, pipe_sleeps):
-    _kw_site(site, 20)
+    _kw_site(site, 20, descending_dates=True)  # 日期遞減：讓事前排序後視窗順序＝列表順序（F3）
     for k in (3, 4, 5):  # 第 4–6 部連續被擋
         site.details[f"m{k}"] = SourceBlocked("blocked")
     out = _prov().run(Kind.KEYWORD, "kw", Window(0, 20))
@@ -524,3 +527,57 @@ def test_partial_empty_expansion_sends_zero_requests(site, monkeypatch):
     monkeypatch.setattr(m, "expand_partial_number", lambda t: [])
     assert _prov().run(Kind.PARTIAL, "SONE-1", Window(0, 0)) == []
     assert site.total_requests() == 0
+
+
+# ------------------------------------------------------------------ 串流 seed 順序＝回傳順序（175b-F3）
+_UNSORTED = [("2024-01-01", "1"), ("2025-06-01", "2"), ("2023-03-01", "3"),
+             ("2025-06-01", "4"), ("2025-06-01", "5")]
+
+
+def _unsorted_rows(prefix):
+    return [_list_row(i, f"{prefix}{n}", d) for i, (d, n) in enumerate(_UNSORTED, 1)]
+
+
+def _expected_order(rows):
+    import core.scraper as m
+
+    dicts = [{"number": r["number"], "date": r["release_date"]} for r in rows]
+    return [d["number"] for d in m.sort_results_by_date(dicts)]
+
+
+@pytest.mark.parametrize("kind", [Kind.CODE, Kind.KEYWORD, Kind.PARTIAL])
+def test_stream_seed_order_equals_returned_order(site, sync_executor, pipe_sleeps, kind):
+    if kind is Kind.CODE:
+        site.typed[("code", "MIDV")] = [_code_row()]
+        key, target, prefix = "0:c:MIDV", "MIDV", "MIDV-10"
+    elif kind is Kind.KEYWORD:
+        key, target, prefix = "温泉", "温泉", "AAA-00"
+    else:
+        key, target, prefix = "MIDV-01", "MIDV-01", "MIDV-01"
+    rows = _unsorted_rows(prefix)
+    site.pages[(key, 1)] = rows
+    for i in range(1, len(rows) + 1):
+        site.details[f"m{i}"] = _detail(i, actors=["A1"])
+    seeds = []
+    out = _prov().run(kind, target, Window(0, 20),
+                      result_callback=lambda slot, c: slot == -1 and seeds.append(list(c)))
+    expected = _expected_order(rows)
+    assert expected != [r["number"] for r in rows]  # 造資料要真的與 API 序不同
+    assert seeds == [expected]
+    assert [c["number"] for c in out] == expected
+
+
+def test_maker_stream_seed_order_equals_returned_order(site, sync_executor, pipe_sleeps):
+    site.typed[("maker", "片商")] = [
+        {"id": "M1", "name": "片商", "name_zht": "", "other_name": "", "videos_count": 99, "type": 0}]
+    rows = _unsorted_rows("AAA-00")
+    site.pages[("0:m:M1", 1)] = rows
+    for i in range(1, len(rows) + 1):
+        site.details[f"m{i}"] = {**_detail(i, actors=["A1"]), "maker_id": "M1"}
+    seeds = []
+    res = _prov().run_maker("mk", "片商", ["片商"], 0, titles=[], today="2026-10-21",
+                            result_callback=lambda slot, c: slot == -1 and seeds.append(list(c)))
+    expected = _expected_order(rows)
+    assert expected != [r["number"] for r in rows]
+    assert seeds == [expected]
+    assert [c["number"] for c in res.results] == expected

@@ -297,6 +297,14 @@ def _maker_names(q: str) -> list[str]:
     return out[:_MAKER_MAX_NAMES]
 
 
+def _sort_items_like_results(items):
+    """串流 seed 順序＝回傳順序：視窗在 run_window 之前就依 sort_results_by_date 的鍵與方向排好。"""
+    import core.scraper as m
+
+    rows = [{"date": it.date, "number": it.number, "_item": it} for it in items]
+    return [r["_item"] for r in m.sort_results_by_date(rows)]
+
+
 class JavDBProvider:
     id = SOURCE
     capabilities = frozenset(
@@ -424,9 +432,6 @@ class JavDBProvider:
             return []
         if status_callback:
             status_callback("done", f"found:{len(cards)}")
-        import core.scraper as m
-
-        cards = m.sort_results_by_date(cards)
         for card in cards:
             card["_source"] = SOURCE
         return cards
@@ -451,7 +456,7 @@ class JavDBProvider:
             return MakerSearchResult([], False, "maker_empty")
         res = run_window(
             self,
-            page.items,
+            _sort_items_like_results(page.items),
             ref,
             result_callback=result_callback,
             on_fail="degrade",
@@ -463,9 +468,7 @@ class JavDBProvider:
             return MakerSearchResult([], False, "maker_unreachable")
         if not res.cards:
             return MakerSearchResult([], False, "maker_not_found")
-        import core.scraper as m
-
-        cards = m.sort_results_by_date(res.cards)
+        cards = res.cards
         for card in cards:
             card["_source"] = SOURCE
         if status_callback:
@@ -481,7 +484,7 @@ class JavDBProvider:
             return []
         return run_window(
             self,
-            page.items,
+            _sort_items_like_results(page.items),
             ref,
             result_callback=result_callback,
             on_fail="degrade",
@@ -496,7 +499,7 @@ class JavDBProvider:
             return []
         return run_window(
             self,
-            page.items,
+            _sort_items_like_results(page.items),
             None,
             result_callback=result_callback,
             on_fail="degrade",
@@ -525,7 +528,7 @@ class JavDBProvider:
             return []
         return run_window(
             self,
-            items,
+            _sort_items_like_results(items),
             None,
             result_callback=result_callback,
             on_fail="degrade",
