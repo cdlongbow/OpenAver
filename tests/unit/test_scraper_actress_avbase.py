@@ -170,6 +170,19 @@ def test_alias_only_page_is_found_with_other_names_only():
     assert out == {"other_names": [NAME, "あかね麗", "二階堂麗"]}
 
 
+def test_social_handle_only_page_is_treated_as_not_found():
+    """actors 只有查詢名和一個 @ 社群帳號、八欄全空 → 視為查無（不收成一張空卡）；
+    other_names 輸出本身不過濾（有真資料時 @ 帳號照樣保留給 AI 預覽）。"""
+    assert _build_result(_talent({}, names=(NAME, "@shinjin_a")), NAME) is None
+    assert _build_result(_talent({}, names=(NAME, "＠fullwidth_at")), NAME) is None
+    # 帳號之外還有真別名 → 仍算查到，且輸出未過濾
+    out = _build_result(_talent({}, names=(NAME, "@shinjin_a", "あかね麗")), NAME)
+    assert out == {"other_names": [NAME, "@shinjin_a", "あかね麗"]}
+    # 有資料欄位時 @ 帳號照樣保留在 other_names
+    out = _build_result(_talent({"hobby": "x"}, names=(NAME, "@shinjin_a")), NAME)
+    assert out == {"hobby": "x", "other_names": [NAME, "@shinjin_a"]}
+
+
 def test_result_keys_and_other_names_dedup_keep_order():
     info = {"birthday": "1999-11-30", "height": "162", "bust": "90", "waist": "58",
             "hip": "88", "cup": "F", "prefectures": "東京都", "hobby": "散歩", "blood_type": "A"}

@@ -131,7 +131,8 @@ def _build_result(talent: dict, name: str) -> Optional[dict]:
     meta = talent.get("meta")
     basic = meta.get("basic_info") if isinstance(meta, dict) else None
     fields = _normalize_basic_info(basic)
-    others = [n for n in names if _nfkc(n) != _nfkc(name)]
+    # 空頁判定不把 @ 開頭的社群帳號當別名（輸出的 other_names 仍不過濾，CD-174-1）
+    others = [n for n in names if _nfkc(n) != _nfkc(name) and not _nfkc(n).startswith("@")]
     if not any(fields.values()) and not others:
         return None
     result: dict = dict(fields)
