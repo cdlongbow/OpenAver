@@ -598,6 +598,7 @@ export function searchStateBase() {
             if (!src || !name) return null;
             if (src === 'wiki') return `https://ja.wikipedia.org/wiki/${encodeURIComponent(name)}`;
             if (src === 'xcity') return `https://xcity.jp/idol/?genre=%2Fidol%2F&q=${encodeURIComponent(name)}&sg=idol`;
+            if (src === 'avbase') return `https://www.avbase.net/talents/${encodeURIComponent(name)}`;
             return null;
         },
 
