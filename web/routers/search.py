@@ -56,11 +56,12 @@ from core.proxy_policy import proxy_kwargs
 from web import auto_organize_scheduler
 
 from core.scraper import (
-    search_jav, smart_search, is_partial_number, is_number_format,
-    is_prefix_only, search_partial, search_actress,
+    search_jav, smart_search, search_partial, search_actress,
     search_maker_latest, MakerSearchResult,
 )
-from core.scrapers.utils import SOURCE_NAMES, resolve_route_target
+from core.scrapers.utils import SOURCE_NAMES
+from core.query_intent import classify_query
+from core.maker_names import known_makers
 
 router = APIRouter(prefix="/api", tags=["search"])
 
@@ -497,17 +498,10 @@ def _extract_top_makers(results: list) -> list:
     return [maker for maker, _ in counter.most_common(2)]
 
 
-def _detect_mode(q: str) -> str:
-    """偵測搜尋模式"""
-    target = resolve_route_target(q)
-    if is_number_format(target):
-        return "exact"
-    elif is_partial_number(q):
-        return "partial"
-    elif is_prefix_only(q):
-        return "prefix"
-    else:
-        return "actress"
+def _detect_mode(q: str, resolve_makers: bool = False) -> str:
+    """偵測搜尋模式（判斷順序在 core.query_intent.classify_query；預設不讀片庫）"""
+    known = known_makers() if resolve_makers else frozenset()
+    return classify_query(q, known, resolve_makers=resolve_makers).mode
 
 
 def _normalize_actress_name(name: str) -> str:

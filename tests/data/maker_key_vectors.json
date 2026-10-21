@@ -1,0 +1,121 @@
+{
+ "_comment": "maker_key_of (Python) / makerKey (JS) 共用向量。預期值由 node 實跑 makerKey() 產出；前端為權威。pytest 與 node --test 各讀一次。",
+ "vectors": [
+  {
+   "input": "SOD",
+   "key": "sod"
+  },
+  {
+   "input": "S1",
+   "key": "s1"
+  },
+  {
+   "input": "  SOD  ",
+   "key": "sod"
+  },
+  {
+   "input": "\ufeffSOD\ufeff",
+   "key": "sod"
+  },
+  {
+   "input": "\u001cSOD\u001c",
+   "key": "\u001csod\u001c"
+  },
+  {
+   "input": "\u0085SOD\u0085",
+   "key": "\u0085sod\u0085"
+  },
+  {
+   "input": "\u00a0SOD\u00a0",
+   "key": "sod"
+  },
+  {
+   "input": "　SOD　",
+   "key": "sod"
+  },
+  {
+   "input": "\u2028SOD\u2029",
+   "key": "sod"
+  },
+  {
+   "input": "ＭＯＯＤＹＺ",
+   "key": "moodyz"
+  },
+  {
+   "input": "Moodyz",
+   "key": "moodyz"
+  },
+  {
+   "input": "ｱﾀｯｶｰｽﾞ",
+   "key": "アタッカーズ"
+  },
+  {
+   "input": "アタッカーズ",
+   "key": "アタッカーズ"
+  },
+  {
+   "input": "アタッカース\u3099",
+   "key": "アタッカーズ"
+  },
+  {
+   "input": "アタッカヺ",
+   "key": "アタッカヺ"
+  },
+  {
+   "input": "ガ",
+   "key": "ガ"
+  },
+  {
+   "input": "カ\u3099",
+   "key": "ガ"
+  },
+  {
+   "input": "ß",
+   "key": "ß"
+  },
+  {
+   "input": "ẞ",
+   "key": "ß"
+  },
+  {
+   "input": "ΑΣ",
+   "key": "ας"
+  },
+  {
+   "input": "ΟΔΥΣΣΕΥΣ",
+   "key": "οδυσσευς"
+  },
+  {
+   "input": "İstanbul",
+   "key": "i̇stanbul"
+  },
+  {
+   "input": "ＤＯＣ",
+   "key": "doc"
+  },
+  {
+   "input": "S1 NO.1 STYLE",
+   "key": "s1 no.1 style"
+  },
+  {
+   "input": "本中",
+   "key": "本中"
+  },
+  {
+   "input": "",
+   "key": ""
+  },
+  {
+   "input": "   ",
+   "key": ""
+  },
+  {
+   "input": "\u200bSOD",
+   "key": "\u200bsod"
+  },
+  {
+   "input": "Ａ１",
+   "key": "a1"
+  }
+ ]
+}

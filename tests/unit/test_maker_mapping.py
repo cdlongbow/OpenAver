@@ -116,6 +116,47 @@ class TestLoadNameMapping:
 
 # ============ load_prefix_mapping ============
 
+class TestLoadSearchAliases:
+    @pytest.mark.parametrize("raw", [
+        {"_meta": {}, "name_mapping": {}, "prefix_mapping": {}},          # 缺節
+        {"_meta": {}, "search_aliases": {}},                               # 空節
+        {"_meta": {}, "search_aliases": ["a", "b"]},                       # 清單
+        {"_meta": {}, "search_aliases": "x"},                              # 字串
+        {"_meta": {}, "search_aliases": None},
+    ])
+    def test_search_aliases_bad_shapes_return_empty(self, tmp_path, monkeypatch, raw):
+        import core.maker_mapping as mm
+        p = tmp_path / "maker_mapping.json"
+        p.write_text(json.dumps(raw), encoding="utf-8")
+        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", p)
+        monkeypatch.setattr(mm, "_cache", None)
+        assert mm.load_search_aliases() == {}
+
+    def test_search_aliases_filters_non_string_items(self, tmp_path, monkeypatch):
+        import core.maker_mapping as mm
+        p = tmp_path / "maker_mapping.json"
+        p.write_text(json.dumps({"_meta": {}, "search_aliases": {"a": "A", "b": 1, "c": None}}), encoding="utf-8")
+        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", p)
+        monkeypatch.setattr(mm, "_cache", None)
+        assert mm.load_search_aliases() == {"a": "A"}
+
+    def test_missing_or_corrupted_file_returns_empty(self, nonexistent_file, corrupted_file, monkeypatch):
+        import core.maker_mapping as mm
+        for f in (nonexistent_file, corrupted_file):
+            monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", f)
+            monkeypatch.setattr(mm, "_cache", None)
+            assert mm.load_search_aliases() == {}
+
+    def test_real_file_has_empty_search_aliases_section(self, monkeypatch):
+        import core.maker_mapping as mm
+        monkeypatch.setattr(mm, "_cache", None)
+        raw = mm._load_raw()
+        assert raw["search_aliases"] == {}
+        assert mm.load_search_aliases() == {}
+        assert "search_aliases" not in mm.load_name_mapping()
+        assert "search_aliases" not in mm.load_prefix_mapping()
+
+
 class TestLoadPrefixMapping:
     def test_new_format_returns_prefix_mapping(self, new_format_file, monkeypatch):
         """新格式：load_prefix_mapping() 回傳 prefix_mapping 層（含前綴 key）"""

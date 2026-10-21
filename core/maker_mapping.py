@@ -62,6 +62,19 @@ def load_name_mapping() -> Dict[str, str]:
     return {}
 
 
+def load_search_aliases() -> Dict[str, str]:
+    """
+    回傳 search_aliases 節（只認不寫的搜尋別名 {別名: 正名}；175a 起，內容由 175b 填）。
+
+    - 缺節、非 dict、檔案不存在或損毀 → {}
+    - 鍵或值不是字串的項目濾掉
+    """
+    sa = _load_raw().get("search_aliases")
+    if isinstance(sa, dict):
+        return {k: v for k, v in sa.items() if isinstance(k, str) and isinstance(v, str)}
+    return {}
+
+
 def load_prefix_mapping() -> Dict[str, str]:
     """
     回傳 prefix_mapping 層。
