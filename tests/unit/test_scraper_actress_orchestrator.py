@@ -810,3 +810,122 @@ class TestWikiFirstFieldOrder:
         data = _fo_profile(avbase={"other_names": ["二階堂れい"]})
         assert data is not None
         assert data["primary_text_source"] is None
+
+
+# ---------------------------------------------------------------------------
+# 174-T4b: 別名過濾器 ＋ 別名來源鏈「維基 → avbase」
+# ---------------------------------------------------------------------------
+
+def _al_profile(name, xcity=None, wiki=None, graphis=None, avbase=None):
+    with patch(_PATCH_XCITY, return_value=xcity), \
+         patch(_PATCH_WIKI, return_value=wiki), \
+         patch(_PATCH_GRAPHIS, return_value=graphis), \
+         patch(_PATCH_GFRIENDS, return_value=None), \
+         patch(_PATCH_AVBASE, return_value=avbase):
+        return get_actress_profile(name).data
+
+
+class TestCleanAliases:
+
+    def test_clean_aliases_drops_own_name_keeps_other_name(self):
+        names = ["二階堂麗", "あかね麗"]
+        assert orchestrator._clean_aliases(names, "二階堂麗") == ["あかね麗"]
+        assert orchestrator._clean_aliases(names, "あかね麗") == ["二階堂麗"]
+
+    def test_clean_aliases_drops_at_prefixed_accounts(self):
+        assert orchestrator._clean_aliases(
+            ["@Faerina", "@久世ミコト", "久世ミコト"], "別人") == ["久世ミコト"]
+        assert orchestrator._clean_aliases(["＠abc", "真別名"], "別人") == ["真別名"]
+
+    def test_clean_aliases_treats_fullwidth_own_name_as_same(self):
+        assert orchestrator._clean_aliases(["ABC", "別名"], "ＡＢＣ") == ["別名"]
+
+    def test_clean_aliases_dedupes_and_ignores_blank_and_non_str(self):
+        names = ["甲", "甲", "", "   ", None, 123, "乙"]
+        assert orchestrator._clean_aliases(names, "own") == ["甲", "乙"]
+        assert orchestrator._clean_aliases(None, "own") == []
+
+
+_AL_OWN = "二階堂麗"
+_AL_WIKI_ALIAS = "維基別名"
+_AL_AV_NAMES = ["avbase別名甲", "avbase別名乙", "avbase別名丙"]
+
+
+class TestAliasChain:
+
+    def test_wiki_aliases_win_over_avbase_even_when_avbase_has_more(self):
+        data = _al_profile(
+            _AL_OWN,
+            wiki={"name_ja": _AL_OWN, "other_names": [_AL_WIKI_ALIAS]},
+            avbase={"other_names": list(_AL_AV_NAMES)},
+        )
+        assert data["text"]["aliases"] == [_AL_WIKI_ALIAS]
+
+    def test_wiki_with_only_own_name_falls_through_to_avbase(self):
+        for wiki_names in ([_AL_OWN], ["@wikiacct"]):
+            orchestrator._cache.clear()
+            data = _al_profile(
+                _AL_OWN,
+                wiki={"name_ja": _AL_OWN, "other_names": list(wiki_names)},
+                avbase={"other_names": [_AL_OWN, "@acct", *_AL_AV_NAMES]},
+            )
+            assert data["text"]["aliases"] == _AL_AV_NAMES
+
+    def test_wiki_aliases_are_filtered_too_and_still_win(self):
+        data = _al_profile(
+            _AL_OWN,
+            wiki={"name_ja": _AL_OWN, "other_names": [_AL_OWN, _AL_WIKI_ALIAS]},
+            avbase={"other_names": list(_AL_AV_NAMES)},
+        )
+        assert data["text"]["aliases"] == [_AL_WIKI_ALIAS]
+
+    def test_avbase_aliases_used_when_wiki_absent_for_both_query_names(self):
+        av = ["二階堂麗", "あかね麗"]
+        data = _al_profile("二階堂麗", avbase={"other_names": list(av)})
+        assert data["text"]["aliases"] == ["あかね麗"]
+        orchestrator._cache.clear()
+        data = _al_profile("あかね麗", avbase={"other_names": list(av)})
+        assert data["text"]["aliases"] == ["二階堂麗"]
+
+    def test_alias_only_avbase_result_becomes_text_aliases(self):
+        data = _al_profile("二階堂麗", avbase={"other_names": ["二階堂麗", "あかね麗"]})
+        assert data is not None
+        assert data["text"] == {"aliases": ["あかね麗"]}
+        assert data["primary_text_source"] is None
+
+    def test_no_aliases_key_when_neither_source_has_any(self):
+        data = _al_profile(
+            _AL_OWN,
+            wiki={"name_ja": _AL_OWN, "birth": "1991-01-01", "other_names": [_AL_OWN]},
+            avbase={"other_names": ["@acct"]},
+        )
+        assert data["text"] == {"birth": "1991-01-01"}
+        assert "aliases" not in data["text"]
+        orchestrator._cache.clear()
+        data = _al_profile(
+            _AL_OWN,
+            graphis={"prof_url": "https://example.com/p.jpg"},
+            avbase={"other_names": [_AL_OWN, "@acct"]},
+        )
+        assert data["text"] is None
+
+    def test_aliases_do_not_change_other_field_sources(self):
+        data = _al_profile(
+            _AL_OWN,
+            wiki={"name_ja": _AL_OWN, "other_names": [_AL_WIKI_ALIAS]},
+            avbase={"birth": "1994-04-04", "other_names": list(_AL_AV_NAMES)},
+        )
+        assert data["text"]["birth"] == "1994-04-04"
+        assert data["text"]["aliases"] == [_AL_WIKI_ALIAS]
+
+    def test_all_sources_other_names_stay_unfiltered(self):
+        wiki_names = [_AL_OWN, "@wikiacct", _AL_WIKI_ALIAS]
+        av_names = [_AL_OWN, "@avacct", *_AL_AV_NAMES]
+        wiki_copy, av_copy = list(wiki_names), list(av_names)
+        data = _al_profile(
+            _AL_OWN,
+            wiki={"name_ja": _AL_OWN, "other_names": wiki_names},
+            avbase={"other_names": av_names},
+        )
+        assert data["all_sources"]["wiki"]["other_names"] == wiki_copy
+        assert data["all_sources"]["avbase"]["other_names"] == av_copy

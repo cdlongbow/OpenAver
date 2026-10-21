@@ -9,6 +9,7 @@ Routes:
     TD-1     : current_age computed from text.birth, never read from source
 """
 
+import unicodedata
 from collections import namedtuple
 from datetime import datetime
 from typing import Optional, Dict
@@ -34,7 +35,37 @@ _COMMON_FIELDS = ("name_en", "birth", "height", "bust", "waist", "hip", "cup",
 _WIKI_ONLY_FIELDS = ("nickname",)  # 不含 exclusive_makers/debut_year，見下方說明
 
 
-def _merge_text_fields(sources: dict) -> dict:
+_ALIAS_SOURCE_PRIORITY = ("wiki", "avbase")  # 別名來源鏈：前面的過濾後非空就用
+
+
+def _clean_aliases(names, own_name: str) -> list:
+    """別名過濾（CD-174-5）：丟空白／非字串／`@` 開頭帳號／等於查詢名；原字串去重、保序。"""
+    if not isinstance(names, list):
+        return []
+    own = unicodedata.normalize("NFKC", own_name or "").strip()
+    cleaned, seen = [], set()
+    for raw in names:
+        if not isinstance(raw, str):
+            continue
+        norm = unicodedata.normalize("NFKC", raw).strip()
+        if not norm or norm.startswith("@") or norm == own:
+            continue
+        if raw.strip() not in seen:
+            seen.add(raw.strip())
+            cleaned.append(raw.strip())
+    return cleaned
+
+
+def _pick_aliases(sources: dict, own_name: str) -> list:
+    """依 _ALIAS_SOURCE_PRIORITY 取第一個「過濾後非空」的來源別名；都空回 []。"""
+    for src in _ALIAS_SOURCE_PRIORITY:
+        cleaned = _clean_aliases((sources.get(src) or {}).get("other_names"), own_name)
+        if cleaned:
+            return cleaned
+    return []
+
+
+def _merge_text_fields(sources: dict, name: str) -> dict:
     merged = {}
     for field in _COMMON_FIELDS:
         for src in _FIELD_MERGE_PRIORITY:
@@ -46,10 +77,10 @@ def _merge_text_fields(sources: dict) -> dict:
         val = (sources.get("wiki") or {}).get(field)
         if val:
             merged[field] = val
-    # aliases 例外：唯一供應端是 wiki 的 other_names（見下方說明）
-    other_names = (sources.get("wiki") or {}).get("other_names")
-    if other_names:
-        merged["aliases"] = other_names
+    # aliases 例外：與其他欄位來源互不影響，走 _ALIAS_SOURCE_PRIORITY（維基 → avbase）
+    aliases = _pick_aliases(sources, name)
+    if aliases:
+        merged["aliases"] = aliases
     return merged
 
 
@@ -232,7 +263,7 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
         return ProfileResult(data=None, timed_out=sources.timed_out)
 
     # C1 — each field takes the first non-empty value in source priority order.
-    merged = _merge_text_fields(sources)
+    merged = _merge_text_fields(sources, name)
     text = merged or None
     primary_text_source = None
     for src in _FIELD_MERGE_PRIORITY:

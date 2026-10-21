@@ -3598,3 +3598,93 @@ class TestAddFavoriteExistingNotRewritten:
         assert resp2.json()["error"] == "already_exists"
         assert mock_fetch.call_count == 0
         assert _row() == before
+
+
+# ---------------------------------------------------------------------------
+# TASK-174-T4b：別名來源鏈（維基 → avbase）＋別名過濾器 → 別名群組／線上搜尋建議
+# ---------------------------------------------------------------------------
+
+_T4B_NEW = "二階堂麗"
+_T4B_OLD = "あかね麗"
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestAddFavoriteAliasGroup:
+    """174-T4b：收藏後別名群組含另一個名字、不含自己重複與 @ 帳號。
+
+    端點把別名同步包在 try/except（失敗只寫 warning、仍回 200），
+    所以必須讀 tmp DB 的別名群組，不能只看 HTTP 200。
+    """
+
+    @pytest.mark.parametrize(
+        "query,other",
+        [(_T4B_NEW, _T4B_OLD), (_T4B_OLD, _T4B_NEW)],
+        ids=["query_new_name", "query_old_name"],
+    )
+    def test_favorite_writes_other_name_into_alias_group(self, client, query, other):
+        from core.database import ActressRepository, AliasRepository
+
+        avbase = {"birth": "1999-11-30",
+                  "other_names": [_T4B_NEW, _T4B_OLD, "@Faerina"]}
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(avbase=avbase)), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp = client.post("/api/actresses/favorite", json={"name": query})
+
+        assert resp.status_code == 200
+        assert resp.json()["skipped_aliases"] == []
+        assert AliasRepository().resolve(query) == {_T4B_NEW, _T4B_OLD}
+        assert list(ActressRepository().get_by_name(query).aliases) == [other]
+
+    def test_favorite_alias_only_avbase_still_writes_alias_group(self, client):
+        from core.database import ActressRepository, AliasRepository
+
+        avbase = {"other_names": [_T4B_NEW, _T4B_OLD]}
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(avbase=avbase)), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp = client.post("/api/actresses/favorite", json={"name": _T4B_NEW})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["skipped_aliases"] == []
+        assert body["actress"]["primary_text_source"] is None
+        assert AliasRepository().resolve(_T4B_NEW) == {_T4B_NEW, _T4B_OLD}
+        assert list(ActressRepository().get_by_name(_T4B_NEW).aliases) == [_T4B_OLD]
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestSearchOnlineAliasChain:
+    """174-T4b（F2）：真的 get_actress_profile ＋ 替身五源，打 search-online。"""
+
+    def test_search_online_returns_200_empty_when_text_is_none(self, client):
+        from core.scrapers.actress.orchestrator import _FetchedSources
+
+        sources = _FetchedSources({
+            "xcity": None,
+            "wiki": {"name_ja": _T4B_NEW, "other_names": [_T4B_NEW]},
+            "graphis": {"prof_url": "https://example.com/p.jpg"},
+            "gfriends": None,
+            "avbase": None,
+        })
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=sources):
+            resp = client.post("/api/actress-aliases/search-online",
+                               json={"name": _T4B_NEW})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["suggested_aliases"] == []
+
+    def test_search_online_suggests_avbase_names_without_self_or_accounts(self, client):
+        avbase = {"other_names": [_T4B_NEW, "@Faerina", _T4B_OLD]}
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(avbase=avbase)):
+            resp = client.post("/api/actress-aliases/search-online",
+                               json={"name": _T4B_NEW})
+
+        assert resp.status_code == 200
+        assert resp.json()["suggested_aliases"] == [_T4B_OLD]

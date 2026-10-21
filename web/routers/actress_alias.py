@@ -141,7 +141,7 @@ def search_alias_online(req: SearchOnlineRequest):
             },
         )
 
-    raw_aliases = result.data.get("text", {}).get("aliases")
+    raw_aliases = (result.data.get("text") or {}).get("aliases")
     suggested = _flatten_aliases(raw_aliases)
     logger.info("[actress_alias] search-online 成功：%s → %d 個建議", req.name, len(suggested))
     return JSONResponse(
