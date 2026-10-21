@@ -1,54 +1,54 @@
 """
 tests/unit/test_scraper_locale.py — JavBus 語系接線單元測試
 
-測試 _get_javbus_lang() 與各搜尋函數的 lang 參數傳遞。
+測試 get_javbus_lang() 與各搜尋函數的 lang 參數傳遞。
 全 mock，不連網。
 """
 
 import pytest
 from unittest.mock import patch, MagicMock
-from core.scraper import _get_javbus_lang, _LOCALE_TO_JAVBUS, search_prefix
+from core.scraper import get_javbus_lang, _LOCALE_TO_JAVBUS, search_prefix
 
 
 class TestGetJavbusLang:
-    """_get_javbus_lang() 對各 locale 轉換的測試"""
+    """get_javbus_lang() 對各 locale 轉換的測試"""
 
     def test_zh_tw_returns_zh_tw(self):
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'zh-TW'}}):
-            assert _get_javbus_lang() == "zh-tw"
+            assert get_javbus_lang() == "zh-tw"
 
     def test_zh_cn_uses_zh_tw(self):
         """zh-CN 無簡中版 JavBus，應使用繁中 zh-tw"""
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'zh-CN'}}):
-            assert _get_javbus_lang() == "zh-tw"
+            assert get_javbus_lang() == "zh-tw"
 
     def test_ja_returns_ja(self):
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'ja'}}):
-            assert _get_javbus_lang() == "ja"
+            assert get_javbus_lang() == "ja"
 
     def test_en_returns_en(self):
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'en'}}):
-            assert _get_javbus_lang() == "en"
+            assert get_javbus_lang() == "en"
 
     def test_missing_locale_key_returns_zh_tw(self):
         """config 中無 locale key，應 fallback 為 zh-tw"""
         with patch('core.scraper.load_config', return_value={'general': {}}):
-            assert _get_javbus_lang() == "zh-tw"
+            assert get_javbus_lang() == "zh-tw"
 
     def test_missing_general_section_returns_zh_tw(self):
         """config 中無 general section，應 fallback 為 zh-tw"""
         with patch('core.scraper.load_config', return_value={}):
-            assert _get_javbus_lang() == "zh-tw"
+            assert get_javbus_lang() == "zh-tw"
 
     def test_config_exception_returns_zh_tw(self):
         """load_config 拋例外，應安全 fallback 為 zh-tw 不影響搜尋"""
         with patch('core.scraper.load_config', side_effect=Exception("config error")):
-            assert _get_javbus_lang() == "zh-tw"
+            assert get_javbus_lang() == "zh-tw"
 
     def test_unknown_locale_returns_zh_tw(self):
         """未知 locale 應 fallback 為 zh-tw"""
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'fr'}}):
-            assert _get_javbus_lang() == "zh-tw"
+            assert get_javbus_lang() == "zh-tw"
 
     def test_locale_to_javbus_mapping_completeness(self):
         """確認 mapping 包含所有支援的 locale"""

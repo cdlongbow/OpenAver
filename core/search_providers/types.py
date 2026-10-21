@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol
+from typing import Any, NamedTuple, Protocol
 
 
 class Kind(str, Enum):
@@ -99,3 +99,18 @@ class Provider(Protocol):
     def enrich(self, item: WorkItem, ref: EntityRef | None) -> Enriched:
         """管線掛鉤：把 WorkItem 補成結果卡（legacy dict）＋成員資格事實。"""
         ...
+
+
+class MakerSearchResult(NamedTuple):
+    """片商最新作品的回覆（173）；欄位與順序不可變。"""
+
+    results: list[dict[str, Any]]
+    has_more: bool
+    error_code: str | None
+
+
+MAKER_RESOLUTION_ERRORS = {
+    "absent": "maker_not_found",
+    "unreachable": "maker_unreachable",
+    "no_sample": "maker_no_sample",
+}

@@ -526,3 +526,56 @@ def test_pipeline_has_no_own_threads_or_other_pools():
     src = inspect.getsource(pipeline)
     assert "threading.Thread" not in src and "ProcessPoolExecutor" not in src
     assert ".map(" not in src
+
+
+# ---------------------------------------------------------------- 175a-T4：on_item_done 掛鉤
+def run_hooked(script, n=6, guard=False, ref=None, **kw):
+    prov = FakeProvider(script)
+    events = []
+    hook = lambda slot, ok: events.append(("done", slot, ok))  # noqa: E731
+    cb = lambda slot, card: events.append(("item", slot))  # noqa: E731
+    res = run_window(prov, make_items(n), ref, result_callback=cb, on_item_done=hook, guard=guard, **kw)
+    return events, res
+
+
+def test_item_done_counts_failed_detail(sync_executor):
+    """前綴搜尋某部詳情失敗，進度仍要數到 N/N：每部各呼叫一次、失敗那部 ok=False。"""
+    events, _ = run_hooked({"AAA-002": ValueError("boom"), "AAA-004": "EMPTY"}, n=5, on_fail="drop")
+    done = [e for e in events if e[0] == "done"]
+    assert sorted(s for _, s, _ in done) == [0, 1, 2, 3, 4]
+    assert {s: ok for _, s, ok in done} == {0: True, 1: False, 2: True, 3: False, 4: True}
+
+
+def test_item_done_comes_before_that_items_result_callback(sync_executor):
+    events, _ = run_hooked({"AAA-002": ValueError("boom")}, n=3, on_fail="degrade")
+    for slot in range(3):
+        assert events.index(("done", slot, slot != 1)) < events.index(("item", slot))
+
+
+def test_item_done_covers_items_never_started_after_breaker(sync_executor):
+    script = {f"AAA-{i:03d}": SourceBlocked("b") for i in range(1, 4)}
+    events, _ = run_hooked(script, n=6, on_fail="drop")
+    done = [e for e in events if e[0] == "done"]
+    assert sorted(s for _, s, _ in done) == list(range(6))  # 每部恰一次，含從未發起的
+    assert {s: ok for _, s, ok in done if s in (0, 1, 2, 4, 5)} == {0: False, 1: False, 2: False, 4: False, 5: False}
+
+
+def test_item_done_not_called_when_guard_rejects(sync_executor):
+    events, _ = run_hooked({f"AAA-{i:03d}": "F" for i in range(1, 7)}, n=6, guard=True, ref=REF)
+    assert events == []
+
+
+def test_item_done_with_guard_pass_covers_every_item_in_order(sync_executor):
+    events, _ = run_hooked({"AAA-001": "T"}, n=5, guard=True, ref=REF)
+    done = [s for k, s, *_ in events if k == "done"]
+    assert sorted(done) == [0, 1, 2, 3, 4]
+    for slot in range(5):
+        assert events.index(("done", slot, True)) < events.index(("item", slot))
+
+
+def test_item_done_empty_window_and_none_hook_do_nothing(sync_executor):
+    events = []
+    run_window(FakeProvider(), [], on_item_done=lambda s, ok: events.append(s))
+    assert events == []
+    res = run_window(FakeProvider(), make_items(3), on_item_done=None)
+    assert len(res.cards) == 3

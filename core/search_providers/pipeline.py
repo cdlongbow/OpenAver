@@ -157,8 +157,9 @@ def verify_page(provider, items, ref, *, delay=None) -> GuardResult:
 class _Collector:
     """slot 預配置、依 on_fail 處理失敗、通知 result_callback、數連續 SourceBlocked。"""
 
-    def __init__(self, items, result_callback, on_fail, breaker):
+    def __init__(self, items, result_callback, on_fail, breaker, on_item_done=None):
         self.items = items
+        self.on_item_done = on_item_done
         self.slots: list = [None] * len(items)
         self.callback = result_callback
         self.on_fail = on_fail
@@ -170,14 +171,23 @@ class _Collector:
         if self.callback:
             self.callback(slot, card)
 
+    def put_ok(self, slot, card):
+        self._notify(slot, True)
+        self.put(slot, card)
+
     def put_failed(self, slot):
+        self._notify(slot, False)
         if self.on_fail == "degrade":
             self.put(slot, _degraded_card(self.items[slot]))
+
+    def _notify(self, slot, ok):
+        if self.on_item_done is not None:
+            self.on_item_done(slot, ok)
 
     def on_done(self, slot, item, enriched: Enriched | None, exc):
         if exc is None:
             self.blocked_streak = 0
-            self.put(slot, enriched.card)
+            self.put_ok(slot, enriched.card)
             return True
         self.put_failed(slot)
         self.blocked_streak = self.blocked_streak + 1 if isinstance(exc, SourceBlocked) else 0
@@ -197,12 +207,15 @@ def run_window(
     delay=None,
     guard=False,
     breaker=True,
+    on_item_done=None,
 ) -> WindowResult:
     """對一個已切好的視窗（list[WorkItem]）送 seed、逐部補詳情，回 WindowResult。
 
     on_fail：'degrade'（失敗的那張用列表資料出降級卡）／'drop'（失敗的不出卡）。
     delay：None＝REQUEST_DELAY；T4／T5 傳 0（與今天相同），JavDB 不得傳比 REQUEST_DELAY 小的值。
     guard：需 ref；啟用則先 verify_page，不通過就不 seed。breaker：連續被擋斷路。並行度固定 MAX_WORKERS。
+    on_item_done(slot, ok)：視窗內每一部各呼叫一次（成功 True；失敗／被丟棄／斷路後未發起 False），
+    在呼叫端執行緒、先於該部的 result-item callback；守衛不通過則完全不呼叫。掛鉤內不得 sleep。
     """
     if on_fail not in _ON_FAIL_POLICIES:
         raise ValueError(f"on_fail must be one of {_ON_FAIL_POLICIES}")
@@ -211,7 +224,7 @@ def run_window(
     if not items:
         return WindowResult(Outcome.NOT_ANSWERABLE, [], seeded=False)
     delay = _resolve_delay(delay)
-    col = _Collector(items, result_callback, on_fail, breaker)
+    col = _Collector(items, result_callback, on_fail, breaker, on_item_done)
     verdict = verify_page(provider, items, ref, delay=delay) if guard else None
     if verdict is not None and verdict.outcome is Outcome.UNREACHABLE:
         return WindowResult(Outcome.UNREACHABLE, [], seeded=False)
@@ -234,6 +247,6 @@ def _emit_guard_cards(col: _Collector, verdict: GuardResult) -> None:
     for slot in sorted(verdict.cards):
         card = verdict.cards[slot]
         if card:
-            col.put(slot, card)
+            col.put_ok(slot, card)
         else:
             col.put_failed(slot)

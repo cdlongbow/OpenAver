@@ -5,14 +5,14 @@ Scraper 模組（向後相容層）
 包含 smart_search 等高階搜尋邏輯。
 """
 import re
-import time
+import time  # noqa: F401  # 測試 patch 點（core.scraper.time.sleep）＋provider 延後取用
 
 from core.logger import get_logger
 from core.config import load_config
 
 logger = get_logger(__name__)
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List, Dict, Any, Callable, NamedTuple
+from typing import Optional, List, Dict, Any, Callable
 
 # 引入新版爬蟲模組
 from core.scrapers import (
@@ -35,8 +35,9 @@ from core.scrapers.utils import (
     resolve_route_target,
 )
 from core.maker_mapping import get_maker_by_prefix
-from core.maker_latest import resolve_maker_studio
-from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
+from core.maker_latest import resolve_maker_studio  # noqa: F401  # 測試 patch 點＋provider 延後取用
+from core.search_providers.javbus import JavBusProvider
+from core.search_providers.types import MakerSearchResult  # noqa: F401  # 重新匯出（web/routers/search.py 使用）
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
 from core.source_settings import get_enabled_source_ids, get_all_source_ids_ordered, is_source_enabled
@@ -57,7 +58,7 @@ REQUEST_DELAY = 0.3
 _LOCALE_TO_JAVBUS = {"zh-TW": "zh-tw", "zh-CN": "zh-tw", "ja": "ja", "en": "en"}
 
 
-def _get_javbus_lang() -> str:
+def get_javbus_lang() -> str:
     """從 config 讀取 locale 並轉換為 JavBus lang code"""
     try:
         config = load_config()
@@ -271,7 +272,7 @@ def search_jav(
     if javbus_lang is not None and javbus_lang not in VALID_JAVBUS_LANGS:
         logger.warning("[Search] 無效的 javbus_lang: %s，fallback 到 config", javbus_lang)
         javbus_lang = None
-    _javbus_lang = javbus_lang if javbus_lang is not None else _get_javbus_lang()
+    _javbus_lang = javbus_lang if javbus_lang is not None else get_javbus_lang()
 
     # 來源 id → scraper factory（無參數 callable，回 scraper instance list）。
     # DMM 與 JavBus 是攜帶 closure 參數的特例：
@@ -473,121 +474,13 @@ def search_partial(partial: str,
                    status_callback: Optional[Callable[[str, str], None]] = None,
                    result_callback: Optional[Callable[[int, Any], None]] = None,
                    discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """局部搜尋"""
-    candidates = expand_partial_number(partial)
-    results = []
-
-    if status_callback:
-        status_callback('javbus', 'searching')
-
-    # Seed callback: 通知前端準備 skeleton grid
-    if candidates and result_callback:
-        result_callback(-1, candidates)
-
-    if discovery_only:
-        if status_callback:
-            status_callback('done', f'found:{len(candidates)}')
-        return [{'number': num, 'title': ''} for num in candidates]
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # 記錄 slot index 以支援 result_callback 正確定位
-        futures = {}
-        for idx, num in enumerate(candidates):
-            future = executor.submit(search_jav, num, 'javbus')
-            futures[future] = (idx, num)
-
-        for future in as_completed(futures):
-            idx, num = futures[future]
-            try:
-                data = future.result()
-                if data and data.get('title'):
-                    results.append(data)
-                    if result_callback:
-                        result_callback(idx, data)
-            except Exception:
-                logger.error('search_partial: %s failed', num)
-            time.sleep(REQUEST_DELAY)
-
-    if status_callback:
-        status_callback('done', f'found:{len(results)}')
-
-    return sort_results_by_date(results)
+    """局部搜尋（175a-T4：實作搬進 JavBusProvider，此處為 shim）"""
+    return JavBusProvider().run_partial(partial, status_callback, result_callback, discovery_only)
 
 
 def search_prefix(prefix: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """前綴搜尋"""
-    results = []
-    prefix = prefix.strip().upper()
-
-    if status_callback:
-        status_callback('javbus', 'searching')
-
-    try:
-        scraper = JavBusScraper(lang=_get_javbus_lang())
-        start_page = (offset // 30) + 1
-        skip_in_page = offset % 30
-        pages_needed = ((limit + skip_in_page) // 30) + 2
-
-        all_ids: List[str] = []
-        for page in range(start_page, start_page + pages_needed):
-            ids = scraper.get_ids_from_search(prefix, page=page, search_type=1)
-            if ids:
-                all_ids.extend(ids)
-                if len(all_ids) >= limit + skip_in_page:
-                    break
-            else:
-                break
-
-        if not all_ids:
-            if status_callback:
-                status_callback('javbus', 'found:0')
-            return []
-
-        target_ids = all_ids[skip_in_page:][:limit]
-
-        if status_callback:
-            status_callback('javbus', f'found:{len(target_ids)}')
-
-        if discovery_only:
-            if status_callback:
-                status_callback('done', f'found:{len(target_ids)}')
-            return [{'number': num, 'title': ''} for num in target_ids]
-
-        if status_callback:
-            status_callback('javbus', 'fetching_details')
-
-        if target_ids and result_callback:
-            result_callback(-1, target_ids)
-
-        completed_count = 0
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {}
-            for idx, num in enumerate(target_ids):
-                future = executor.submit(search_jav, num, 'javbus')
-                futures[future] = (idx, num)
-
-            for future in as_completed(futures):
-                idx, num = futures[future]
-                completed_count += 1
-                if status_callback:
-                    status_callback('javbus', f'details:{completed_count}/{len(target_ids)}')
-                try:
-                    data = future.result()
-                    if data and data.get('title'):
-                        results.append(data)
-                        if result_callback:
-                            result_callback(idx, data)
-                except Exception:
-                    logger.error('search_prefix: %s failed', num)
-                time.sleep(REQUEST_DELAY)
-
-    except Exception as e:
-        logger.error('search_prefix failed: %s', e)
-
-    if status_callback:
-        status_callback('done', f'found:{len(results)}')
-
-    return sort_results_by_date(results)
+    """前綴搜尋（175a-T4：實作搬進 JavBusProvider，此處為 shim）"""
+    return JavBusProvider().run_prefix(prefix, limit, offset, status_callback, result_callback, discovery_only)
 
 
 def _dmm_keyword_search_progressive(
@@ -648,89 +541,13 @@ def _javbus_keyword_search(
     *,
     ids_provider: Optional[Callable[[JavBusScraper, int], List[str]]] = None,
 ) -> List[Dict[str, Any]]:
-    """JavBus keyword search — extracted from search_actress.
+    """JavBus keyword search — extracted from search_actress（175a-T4：實作搬進 JavBusProvider，此處為 shim）。
 
     ids_provider（173）：取代「取番號那一步」，簽名 (scraper, page) -> ids；None＝關鍵字搜尋。
-
     Returns list[dict] (empty list on failure / no ids).
     JavDB fallback is NOT included; fuzzy fallback is limited to FUZZY_SEARCH_SOURCES.
     """
-    try:
-        if status_callback:
-            status_callback('javbus', 'searching')
-
-        scraper = JavBusScraper(lang=_get_javbus_lang())
-        start_page = (offset // 30) + 1
-        skip_in_page = offset % 30
-        pages_needed = ((limit + skip_in_page) // 30) + 2
-
-        all_ids = []
-        for page in range(start_page, start_page + pages_needed):
-            if ids_provider is None:
-                ids = scraper.get_ids_from_search(name, page=page)
-            else:
-                ids = ids_provider(scraper, page)
-            if ids:
-                all_ids.extend(ids)
-                if len(all_ids) >= limit + skip_in_page:
-                    break
-            else:
-                break
-
-        if all_ids:
-            all_ids = all_ids[skip_in_page:]
-            target_ids = all_ids[:limit]
-
-            if status_callback:
-                status_callback('javbus', f'found:{len(target_ids)}')
-
-            if discovery_only:
-                if status_callback:
-                    status_callback('done', f'found:{len(target_ids)}')
-                return [{'number': num, 'title': ''} for num in target_ids]
-
-            if target_ids and result_callback:
-                result_callback(-1, target_ids)
-
-            results = []
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                futures = {}
-                for idx, num in enumerate(target_ids):
-                    future = executor.submit(search_jav, num, 'javbus')
-                    futures[future] = (idx, num)
-
-                for future in as_completed(futures):
-                    idx, num = futures[future]
-                    try:
-                        data = future.result()
-                        if data and data.get('title'):
-                            results.append(data)
-                            if result_callback:
-                                result_callback(idx, data)
-                    except Exception:
-                        logger.error('_javbus_keyword_search: %s failed', num)
-
-            if status_callback:
-                status_callback('done', f'found:{len(results)}')
-            return sort_results_by_date(results)
-
-    except Exception as e:
-        logger.error('_javbus_keyword_search failed: %s', e)
-
-    return []
-
-
-class MakerSearchResult(NamedTuple):
-    results: List[Dict[str, Any]]
-    has_more: bool
-    error_code: Optional[str]
-
-
-_MAKER_RESOLUTION_ERRORS = {
-    'absent': 'maker_not_found',
-    'unreachable': 'maker_unreachable',
-    'no_sample': 'maker_no_sample',
-}
+    return JavBusProvider().run_keyword(name, limit, offset, status_callback, result_callback, discovery_only, ids_provider=ids_provider)
 
 
 def search_maker_latest(
@@ -745,48 +562,11 @@ def search_maker_latest(
     result_callback: Optional[Callable[[int, Any], None]] = None,
     db_path=None,
 ) -> MakerSearchResult:
-    """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊）。
+    """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊；175a-T4：實作搬進 JavBusProvider，此處為 shim）。
 
     不攔 resolve_maker_studio 的未預期例外（交呼叫端）。
     """
-    if offset < 0 or offset % JAVBUS_LIST_PAGE_SIZE:
-        raise ValueError(f'offset must be a non-negative multiple of {JAVBUS_LIST_PAGE_SIZE}: {offset}')
-    if status_callback:
-        status_callback('javbus', 'searching')
-    resolution = resolve_maker_studio(
-        maker_key, label, spellings, titles, today=today, db_path=db_path)
-    if resolution.status != 'found':
-        code = _MAKER_RESOLUTION_ERRORS.get(resolution.status, 'maker_unreachable')
-        return MakerSearchResult([], False, code)
-
-    ref = (resolution.kind, resolution.studio_id)
-    request_page = offset // JAVBUS_LIST_PAGE_SIZE + 1
-    counts: Dict[int, int] = {}
-    errors: List[BaseException] = []
-
-    def provider(scraper: JavBusScraper, page: int) -> List[str]:
-        if page != request_page:
-            return []
-        try:
-            ids = scraper.get_ids_from_studio(ref, page)
-        except Exception as e:
-            errors.append(e)
-            raise
-        counts[page] = len(ids)
-        return ids
-
-    results = _javbus_keyword_search(
-        label, JAVBUS_LIST_PAGE_SIZE, offset, status_callback, result_callback,
-        ids_provider=provider,
-    )
-    if errors:
-        logger.error('maker %s list failed: %s: %s', maker_key, type(errors[0]).__name__, errors[0])
-        return MakerSearchResult([], False, 'maker_unreachable')
-    if not counts.get(request_page):
-        logger.info('maker %s page %d empty', maker_key, request_page)
-        return MakerSearchResult([], False, 'maker_empty')
-    has_more = counts.get(request_page, 0) >= JAVBUS_LIST_PAGE_SIZE
-    return MakerSearchResult(results, has_more, None)
+    return JavBusProvider().run_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
 
 
 def _fuzzy_one(
