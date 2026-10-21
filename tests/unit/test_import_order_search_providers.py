@@ -23,10 +23,9 @@ def _run(code: str) -> subprocess.CompletedProcess:
     )
 
 
-# T7 的 DoD：把 core.search_providers.relay 加進這份清單
 @pytest.mark.parametrize(
     "first_import",
-    ["core.scraper", "core.search_providers.pipeline", "web.routers.search"],
+    ["core.scraper", "core.search_providers.pipeline", "core.search_providers.relay", "web.routers.search"],
 )
 def test_first_import_in_fresh_interpreter(first_import):
     proc = _run(f"import {first_import}")

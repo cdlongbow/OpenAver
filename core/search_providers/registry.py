@@ -1,25 +1,70 @@
 """Provider 註冊表（顯式表，非掃描）。
 
-175a-T3 起為空；T4／T5 註冊 javbus／dmm。值是無參數工廠，惰性建構（import 時不 new session、
-也不 import 任何 provider 模組）。providers_for（順序∩註冊∩開關∩能力）屬 T7，不在此檔。
+175a-T7 註冊 javbus／dmm。值是無參數工廠，惰性建構（import 時不 new session、
+也不 import 任何 provider 模組；BE-PY-08：頂層不得 import core.scraper／core.database）。
+
+- new_provider：每次搜尋新建（不快取）——使用者改了代理／語言後下一次搜尋就生效。
+- providers_for：順序∩註冊∩今天的開關規則∩能力。順序與開關在呼叫當下經 core.scraper 讀
+  （既有測試 patch 的就是 core.scraper.get_all_source_ids_ordered／is_source_enabled）。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
-from core.search_providers.types import Provider
+from core.search_providers.types import Kind, Provider
 
-_REGISTRY: dict[str, Callable[[], Provider]] = {}
-_INSTANCES: dict[str, Provider] = {}
+# CD-65-4 今天的規則：JavBus 不看 is_source_enabled，其餘來源看。175b-T5 刪除。
+_SWITCH_EXEMPT_TODAY = frozenset({"javbus"})
+
+
+def _make_javbus() -> Provider:
+    from core.search_providers.javbus import JavBusProvider
+
+    return JavBusProvider()
+
+
+def _make_dmm() -> Provider:
+    from core.search_providers.dmm import DMMProvider
+
+    return DMMProvider()
+
+
+_REGISTRY: dict[str, Callable[[], Provider]] = {
+    "javbus": _make_javbus,
+    "dmm": _make_dmm,
+}
 
 
 def registered_ids() -> frozenset[str]:
     return frozenset(_REGISTRY)
 
 
-def get_provider(provider_id: str) -> Provider:
-    """依 id 取 provider；第一次取用才建構。未註冊 ⇒ KeyError。"""
-    if provider_id not in _INSTANCES:
-        _INSTANCES[provider_id] = _REGISTRY[provider_id]()
-    return _INSTANCES[provider_id]
+def new_provider(provider_id: str) -> Provider:
+    """呼叫工廠建一個新的 provider（不快取）。未註冊 ⇒ KeyError。"""
+    return _REGISTRY[provider_id]()
+
+
+def providers_for(kinds: Iterable[Kind], *, discovery_only: bool = False) -> list[Provider]:
+    """回傳本次搜尋要依序詢問的新 provider 實例。
+
+    鏈＝設定頁順序 ∩ 已註冊 ∩（JavBus 不看開關、其餘 is_source_enabled）∩ 宣告了 kinds 任一能力
+    （discovery_only 再 ∩ supports_discovery）。
+    """
+    import core.scraper as scraper
+
+    wanted = frozenset(kinds)
+    ordered = scraper.get_all_source_ids_ordered()
+    chain: list[Provider] = []
+    for pid in ordered:
+        if pid not in _REGISTRY:
+            continue
+        if pid not in _SWITCH_EXEMPT_TODAY and not scraper.is_source_enabled(pid):
+            continue
+        provider = new_provider(pid)
+        if not (provider.capabilities & wanted):
+            continue
+        if discovery_only and not provider.supports_discovery:
+            continue
+        chain.append(provider)
+    return chain
