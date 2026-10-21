@@ -457,35 +457,70 @@ def test_partial_offset_positive_is_empty_zero_requests(site):
     assert site.total_requests() == 0
 
 
-def _page_for(site, key, numbers):
-    site.pages[(key, 1)] = [_list_row(i, n) for i, n in enumerate(numbers, 1)]
+def _page_for(site, monkeypatch, numbers, *, strict=False):
+    """strict＝站方只回「號碼以查詢字開頭」的列；否則回整頁混合列（站方模糊命中，客戶端篩選要自己擋）。"""
+    rows = [_list_row(i, n) for i, n in enumerate(numbers, 1)]
     for i in range(1, len(numbers) + 1):
         site.details[f"m{i}"] = _detail(i, actors=["A1"])
 
+    def search_page(q, page, limit=50, proxies=None):
+        site.search_calls.append((q, page))
+        if page != 1:
+            return []
+        return [r for r in rows if not strict or r["number"].upper().startswith(q.upper())][:50]
 
-def test_partial_single_digit_matches_javbus_expansion(site, sync_executor, pipe_sleeps):
-    _page_for(site, "SONE-1", ["SONE-100", "SONE-150", "SONE-012", "SONE-015", "SONE-019"])
+    monkeypatch.setattr(javdb_api, "api_search_page", search_page)
+
+
+def test_partial_single_digit_matches_javbus_expansion(site, monkeypatch, sync_executor, pipe_sleeps):
+    _page_for(site, monkeypatch, ["SONE-100", "SONE-150", "SONE-012", "SONE-015", "SONE-019"])
     out = _prov().run(Kind.PARTIAL, "SONE-1", Window(0, 0))
     assert {c["number"] for c in out} == {"SONE-012", "SONE-015", "SONE-019"}
 
 
 @pytest.mark.parametrize("target", ["SONE-0", "SONE-1", "MIDV-01", "MIDV-0"])
-def test_partial_parity_with_javbus_expansion(site, sync_executor, pipe_sleeps, target):
+def test_partial_parity_with_javbus_expansion(site, monkeypatch, sync_executor, pipe_sleeps, target):
     import core.scraper as m
 
     prefix = target.split("-")[0]
     candidates = [f"{prefix}-{n:03d}" for n in range(0, 200, 7)] + [f"{prefix}-{n:03d}" for n in range(0, 30)]
     candidates = list(dict.fromkeys(candidates))
-    _page_for(site, target, candidates)
+    _page_for(site, monkeypatch, candidates)
     out = _prov().run(Kind.PARTIAL, target, Window(0, 0))
     expected = set(candidates) & set(m.expand_partial_number(target))
     assert expected  # 造資料要真的有交集，否則比對是空轉
     assert {c["number"] for c in out} == expected
 
 
-def test_partial_single_digit_detail_requests_bounded(site, sync_executor, pipe_sleeps):
+def test_partial_single_digit_detail_requests_bounded(site, monkeypatch, sync_executor, pipe_sleeps):
     import core.scraper as m
 
-    _page_for(site, "SONE-0", [f"SONE-{n:03d}" for n in range(50)])
+    _page_for(site, monkeypatch, [f"SONE-{n:03d}" for n in range(50)])
     _prov().run(Kind.PARTIAL, "SONE-0", Window(0, 0))
     assert sum(site.detail_calls.values()) <= len(m.expand_partial_number("SONE-0"))
+
+
+@pytest.mark.parametrize("target,query", [("SONE-1", "SONE-01"), ("SONE-0", "SONE-00"), ("MIDV-01", "MIDV-01")])
+def test_partial_single_digit_queries_expanded_prefix(site, monkeypatch, sync_executor, pipe_sleeps, target, query):
+    _page_for(site, monkeypatch, [])
+    _prov().run(Kind.PARTIAL, target, Window(0, 0))
+    assert site.search_calls == [(query, 1)]
+
+
+def test_partial_single_digit_site_prefix_search_is_not_empty(site, monkeypatch, sync_executor, pipe_sleeps):
+    # 站方只回字首相符的列：若查詢字仍是 SONE-1 只會拿到 SONE-1xx，交集為空 → 使用者看到「查無」
+    import core.scraper as m
+
+    _page_for(site, monkeypatch, [f"SONE-{n:03d}" for n in range(100, 150)] + [f"SONE-{n:03d}" for n in range(10, 20)], strict=True)
+    out = _prov().run(Kind.PARTIAL, "SONE-1", Window(0, 0))
+    nums = {c["number"] for c in out}
+    assert nums and nums <= set(m.expand_partial_number("SONE-1"))
+
+
+def test_partial_empty_expansion_sends_zero_requests(site, monkeypatch):
+    # expand_partial_number 實際不會回空（無法解析時回 [原字]）；以 patch 鎖住防禦分支
+    import core.scraper as m
+
+    monkeypatch.setattr(m, "expand_partial_number", lambda t: [])
+    assert _prov().run(Kind.PARTIAL, "SONE-1", Window(0, 0)) == []
+    assert site.total_requests() == 0

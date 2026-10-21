@@ -509,11 +509,17 @@ class JavDBProvider:
         """局部搜尋：忽略 w.limit（relay 傳 Window(0,0)）、只取第 1 頁、客戶端只留與 JavBus 同一套展開的號碼。"""
         if w.offset > 0:
             return []
-        proxies = self._proxies()
-        rows = _paced(lambda: javdb_api.api_search_page(target.strip(), 1, proxies=proxies))
         import core.scraper as m
 
-        want = {norm_number(n) for n in m.expand_partial_number(target)}
+        expanded = m.expand_partial_number(target)
+        # 查詢字＝展開結果共同的前綴（去掉最後一位數字）；不一致或為空就不查
+        stems = {n[:-1] for n in expanded}
+        if len(stems) != 1:
+            return []
+        query = stems.pop()
+        proxies = self._proxies()
+        rows = _paced(lambda: javdb_api.api_search_page(query, 1, proxies=proxies))
+        want = {norm_number(n) for n in expanded}
         items = _keep_newer(_partial_matches(parse_list_rows(rows), want))
         if not items:
             return []
