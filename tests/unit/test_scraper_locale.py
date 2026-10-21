@@ -64,7 +64,8 @@ class TestSearchPrefixLangParam:
 
     def test_javbus_receives_ja_lang(self):
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'ja'}}):
-            with patch('core.scraper.JavBusScraper') as MockScraper:
+            with patch('core.scraper.get_all_source_ids_ordered', return_value=['javbus']), \
+                 patch('core.scraper.JavBusScraper') as MockScraper:
                 mock_instance = MagicMock()
                 mock_instance.get_ids_from_search.return_value = []
                 MockScraper.return_value = mock_instance
@@ -73,7 +74,8 @@ class TestSearchPrefixLangParam:
 
     def test_javbus_receives_en_lang(self):
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'en'}}):
-            with patch('core.scraper.JavBusScraper') as MockScraper:
+            with patch('core.scraper.get_all_source_ids_ordered', return_value=['javbus']), \
+                 patch('core.scraper.JavBusScraper') as MockScraper:
                 mock_instance = MagicMock()
                 mock_instance.get_ids_from_search.return_value = []
                 MockScraper.return_value = mock_instance
@@ -82,7 +84,8 @@ class TestSearchPrefixLangParam:
 
     def test_javbus_receives_zh_tw_lang(self):
         with patch('core.scraper.load_config', return_value={'general': {'locale': 'zh-TW'}}):
-            with patch('core.scraper.JavBusScraper') as MockScraper:
+            with patch('core.scraper.get_all_source_ids_ordered', return_value=['javbus']), \
+                 patch('core.scraper.JavBusScraper') as MockScraper:
                 mock_instance = MagicMock()
                 mock_instance.get_ids_from_search.return_value = []
                 MockScraper.return_value = mock_instance

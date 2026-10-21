@@ -6,7 +6,7 @@
   list_entity＋run_window(guard=True)，該家不再問 KEYWORD；梯子全空才 run(KEYWORD)（175a 對 JavBus／DMM 是空操作）。
 - seed 規則（CD-175a-4 I-S3）：第一個發動的 provider 一律拿得到 callback（同今天 first_dispatched）；之後的 provider
   只有「尚未真的送出 seed（slot == -1 被轉送）且 fallback_streaming」才拿得到，否則 None（避免後備改變最終順序）。
-- relay 自己不送 status 事件、不補 `_source`、不排序。
+- relay 自己不送 status 事件（唯一例外：宣告實體能力的 provider 的實體梯子，見 _entity_ladder）、不補 `_source`、不排序。
 頂層只准 stdlib、core.logger、core.scrapers.errors、core.search_providers.*（BE-PY-08）。
 """
 
@@ -49,11 +49,18 @@ def _resolve_refs(provider, kind: Kind, name: str) -> list[EntityRef]:
     return [ref] if ref is not None else []
 
 
-def _entity_ladder(provider, name: str, w: Window, cb) -> list[dict] | None:
-    """None＝梯子沒有任何 ref 命中（呼叫端改問 KEYWORD）；list＝命中了（可為空；該家不再問 KEYWORD）。"""
+def _entity_ladder(provider, name: str, w: Window, cb, status_callback=None) -> list[dict] | None:
+    """None＝梯子沒有任何 ref 命中（呼叫端改問 KEYWORD）；list＝命中了（可為空；該家不再問 KEYWORD）。
+
+    可觀測：只有宣告了實體能力的 provider 才送 status（第一次進入實體 kind 前 searching、有卡時 done）；
+    不宣告實體能力者（JavBus／DMM）梯子是空操作、零事件。"""
+    announced = False
     for kind in _ENTITY_KINDS:
         if kind not in provider.capabilities:
             continue
+        if not announced and status_callback is not None:
+            status_callback(provider.id, "searching")
+        announced = True
         try:
             refs = _resolve_refs(provider, kind, name)
             for ref in refs:
@@ -66,9 +73,14 @@ def _entity_ladder(provider, name: str, w: Window, cb) -> list[dict] | None:
                     guard=True,
                 )
                 if res.cards:
+                    if status_callback is not None:
+                        status_callback("done", f"found:{len(res.cards)}")
                     return res.cards
         except Exception as err:
-            logger.warning("entity ladder failed: %s/%s (%s)", provider.id, kind.value, type(err).__name__)
+            logger.warning(
+                "entity ladder failed: %s/%s (%s%s)",
+                provider.id, kind.value, type(err).__name__, "/blocked" if isinstance(err, SourceBlocked) else "",
+            )
             return []
         if refs:
             return []
@@ -78,7 +90,7 @@ def _entity_ladder(provider, name: str, w: Window, cb) -> list[dict] | None:
 def _ask(provider, mode, q, w, status_callback, cb, discovery_only) -> list[dict]:
     if mode == "actress":
         if not discovery_only:
-            cards = _entity_ladder(provider, q, w, cb)
+            cards = _entity_ladder(provider, q, w, cb, status_callback)
             if cards is not None:
                 return cards
         kind = Kind.KEYWORD

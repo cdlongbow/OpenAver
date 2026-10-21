@@ -5,6 +5,7 @@
 """
 
 import concurrent.futures as cf
+import inspect
 import itertools
 import time
 from unittest.mock import MagicMock
@@ -13,7 +14,7 @@ import pytest
 
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.search_providers import registry, relay
-from core.search_providers.types import Enriched, EntityRef, Kind, Page, Window, WorkItem
+from core.search_providers.types import Enriched, EntityRef, Kind, Page, Provider, Window, WorkItem
 
 W = Window(0, 20)
 REF = EntityRef(Kind.ACTOR, "a1", "someone")
@@ -138,8 +139,24 @@ def search(mode="partial", q="q", w=W, **kw):
 
 
 # ---------------------------------------------------------------- registry
-def test_registered_ids_are_javbus_and_dmm():
-    assert registry.registered_ids() == frozenset({"javbus", "dmm"})
+def test_registered_ids_are_javbus_dmm_and_javdb():
+    assert registry.registered_ids() == frozenset({"javbus", "dmm", "javdb"})
+
+
+@pytest.mark.parametrize("pid", sorted(registry.registered_ids()))
+def test_every_registered_provider_satisfies_protocol_shape(pid):
+    p = registry.new_provider(pid)
+    assert p.id == pid
+    assert isinstance(p.capabilities, frozenset) and p.capabilities
+    assert isinstance(p.supports_discovery, bool) and isinstance(p.fallback_streaming, bool)
+    assert callable(p.run) and callable(p.enrich)
+    sig = inspect.signature(p.run)
+    assert {"status_callback", "result_callback", "discovery_only"} <= set(sig.parameters)
+
+
+def test_provider_protocol_declares_run():
+    assert callable(getattr(Provider, "run", None))
+    assert {"status_callback", "result_callback", "discovery_only"} <= set(inspect.signature(Provider.run).parameters)
 
 
 # ---------------------------------------------------------------- 接力語意
@@ -397,3 +414,49 @@ def test_relay_does_not_add_source_or_reorder(chain):
 
 
 # ---------------------------------------------------------------- _resolve_refs
+
+# ---------------------------------------------------------------- 175b-T4b：實體梯子可觀測
+def test_ladder_sends_status_only_for_providers_declaring_entity_kinds(chain):
+    a = EntityFake("a", n_items=3)
+    plain = Fake("plain")  # 先問、查無
+    chain([plain, a])
+    status = MagicMock()
+    search("actress", "someone", status_callback=status)
+    events = [c.args for c in status.call_args_list]
+    assert ("a", "searching") in events
+    assert ("done", "found:3") in events
+    assert all(e[0] != "plain" for e in events)
+
+
+def test_ladder_without_entity_capability_emits_zero_events(chain):
+    a, b = Fake("a"), Fake("b", cards=[card("B")])
+    chain([a, b])
+    status = MagicMock()
+    search("actress", "someone", status_callback=status)
+    assert status.call_count == 0
+
+
+def test_ladder_status_callback_none_is_safe(chain):
+    a = EntityFake("a", n_items=2)
+    chain([a])
+    assert len(search("actress", "someone", status_callback=None)) == 2
+
+
+def test_ladder_no_done_event_when_page_unrelated(chain):
+    a = EntityFake("a", belongs=False)
+    chain([a, Fake("b", cards=[card("B")])])
+    status = MagicMock()
+    search("actress", "someone", status_callback=status)
+    events = [c.args for c in status.call_args_list]
+    assert ("a", "searching") in events
+    assert not any(e[0] == "done" for e in events)
+
+
+@pytest.mark.parametrize("exc,tag", [(SourceBlocked("b"), True), (SourceUnreachable("u"), False)])
+def test_ladder_failure_log_marks_blocked_only_for_blocked(chain, caplog, exc, tag):
+    a = EntityFake("a", resolve_raises=exc)
+    chain([a, Fake("b", cards=[card("B")])])
+    with caplog.at_level("WARNING"):
+        assert search("actress", "someone") == [card("B")]
+    lines = [r.getMessage() for r in caplog.records if "entity ladder failed" in r.getMessage()]
+    assert len(lines) == 1 and ("/blocked" in lines[0]) is tag

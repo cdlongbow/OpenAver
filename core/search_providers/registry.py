@@ -1,6 +1,6 @@
 """Provider 註冊表（顯式表，非掃描）。
 
-175a-T7 註冊 javbus／dmm。值是無參數工廠，惰性建構（import 時不 new session、
+175a-T7 註冊 javbus／dmm；175b-T4b 註冊 javdb。值是無參數工廠，惰性建構（import 時不 new session、
 也不 import 任何 provider 模組；BE-PY-08：頂層不得 import core.scraper／core.database）。
 
 - new_provider：每次搜尋新建（不快取）——使用者改了代理／語言後下一次搜尋就生效。
@@ -30,9 +30,16 @@ def _make_dmm() -> Provider:
     return DMMProvider()
 
 
+def _make_javdb() -> Provider:
+    from core.search_providers.javdb import JavDBProvider
+
+    return JavDBProvider()
+
+
 _REGISTRY: dict[str, Callable[[], Provider]] = {
     "javbus": _make_javbus,
     "dmm": _make_dmm,
+    "javdb": _make_javdb,
 }
 
 

@@ -247,19 +247,26 @@ class TestFuzzyChain:
         mock_jb.assert_called()        # JavBus tried as next
         assert len(results) == 1
 
-    # ---- 10. javdb 不在 search provider 註冊表 → 鏈忽略 javdb（TASK-65g） ----
-    def test_javdb_excluded_from_fuzzy_pool(self, monkeypatch):
-        """javdb 不在 search provider 註冊表 → order=['javdb'] 交集後 chain=[] → 回 []"""
+    # ---- 10. javdb 已註冊（175b-T4b）：在順序內且開關開 ⇒ 被問；開關關 ⇒ 不被問 ----
+    def test_javdb_asked_when_enabled_and_not_asked_when_disabled(self, monkeypatch):
+        """R27 翻轉：order=['javdb'] 且開關開 ⇒ JavDBProvider.run 被呼叫；開關關 ⇒ 0 次（patch 使用端，不連外）"""
+        from unittest.mock import MagicMock
+
         from core.scraper import search_actress
+        from core.search_providers.javdb import JavDBProvider
 
-        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
-                            lambda: ['javdb'])
+        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javdb'])
+        run = MagicMock(return_value=[])
+        monkeypatch.setattr(JavDBProvider, "run", run)
+        monkeypatch.setattr(JavDBProvider, "resolve", lambda self, kind, name: None)
 
-        with patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb:
-            results = search_actress("actress")
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
+        assert search_actress("actress") == []
+        assert run.call_count == 1
 
-        mock_javdb.assert_not_called()  # javdb filtered out by search provider 註冊表 intersection
-        assert results == []
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        assert search_actress("actress") == []
+        assert run.call_count == 1  # 開關關了沒再被問
 
     # ---- 11. `_get_fuzzy_source` 已刪 ----
     def test_get_fuzzy_source_deleted(self):

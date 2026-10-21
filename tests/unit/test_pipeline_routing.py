@@ -302,7 +302,7 @@ class TestPipeline:
         from core.scraper import JavDBScraper
 
         # DMM returns nothing → should fall through to JavBus path
-        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
+        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321']), \
              patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=[]) as mock_dmm_kw, \
              patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
              patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb_kw:
@@ -498,6 +498,7 @@ class TestFuzzyGuard:
         from core.scraper import search_partial
 
         with patch('core.scraper.get_enabled_source_ids', return_value=[]), \
+             patch('core.scraper.get_all_source_ids_ordered', return_value=['javbus', 'dmm']), \
              patch('core.scraper.expand_partial_number', return_value=['MIDV-010', 'MIDV-011']), \
              patch('core.scraper.search_jav', return_value=None) as mock_search_jav:
             search_partial('MIDV-01')

@@ -465,6 +465,55 @@ def test_breaker_counts_in_true_completion_order():
     assert sum(1 for c in res.cards if "full" in c) == 5
 
 
+@pytest.mark.parametrize("rep", range(20))
+def test_breaker_true_completion_order_when_two_finish_in_one_wakeup(monkeypatch, rep):
+    """同一次喚醒內已有 2 部完成（主執行緒被 result_callback 卡住），且「真實完成順序」與「提交順序」以外的
+    任何排法都得出不同的斷路結論。真實序：成功(0)、被擋(1)、成功(2)，其後全被擋 ⇒ 連續數 0→1→0→1→2→3，共 8 部被呼叫；
+    若把 1 排在 2 之後則提早斷路（7 部）。重複 20 次是因為舊寫法的錯序取決於 hash，單次有一半機會碰巧對。"""
+    monkeypatch.setattr("core.scraper.MAX_WORKERS", 3)
+    futures = []
+    real = cf.ThreadPoolExecutor
+
+    class Spy(real):
+        def submit(self, fn, *a, **kw):
+            f = super().submit(fn, *a, **kw)
+            futures.append(f)
+            return f
+
+    monkeypatch.setattr(cf, "ThreadPoolExecutor", Spy)
+    blocked = SourceBlocked("b")
+    script = {f"AAA-{k:03d}": blocked for k in range(4, 11)}
+    script["AAA-002"] = blocked
+    prov = GatedProvider(script, 10)
+    for k in (1, *range(4, 11)):
+        prov.gates[k].set()  # 第 1 部與第 4 部起不卡：只有第 2、3 部的完成順序由測試掌控
+
+    def cb(slot, card):
+        if slot != 0:
+            return
+        # 主執行緒卡在這裡；此刻 slot1／slot2 仍在途，依指定順序放行並等它們「完成且已入佇列」
+        for k in (2, 3):
+            ev = threading.Event()
+            futures[k - 1].add_done_callback(lambda f, ev=ev: ev.set())  # 註冊在 pipeline 的 callback 之後
+            prov.gates[k].set()
+            assert ev.wait(10)
+
+    res = run_window(prov, make_items(10), result_callback=cb, delay=0)
+    for g in prov.gates.values():
+        g.set()
+    assert len(prov.calls) == 8
+    assert len(res.cards) == 10
+
+
+def test_no_new_calls_after_breaker_trips_sync_executor(sync_executor):
+    n = 12
+    prov = FakeProvider({f"AAA-{i:03d}": SourceBlocked("b") for i in range(1, n + 1)})
+    res = run_window(prov, make_items(n), delay=0)
+    assert len(res.cards) == n
+    # 同步 executor：完成順序＝提交順序 ⇒ 第 3 次被擋時已發起 MAX_WORKERS-1 部在途，其後 0 次新發起
+    assert len(prov.calls) == BREAKER_THRESHOLD + MAX_WORKERS - 1
+
+
 # ---------------------------------------------------------------- 並行與間隔
 def test_enrichment_respects_concurrency_and_delay_limits(monkeypatch, sleeps):
     created = []

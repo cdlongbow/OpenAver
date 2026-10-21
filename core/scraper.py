@@ -709,7 +709,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
              # Fallback to actress（不透傳 result_callback：prefix 的 seed 已送出，
              # actress fallback 不可送第二個 seed，避免 slot index 錯位）
              if status_callback: status_callback('mode', 'actress')
-             results = search_actress(query, limit=limit, status_callback=status_callback)
+             results = search_actress(query, limit=limit, status_callback=status_callback, discovery_only=discovery_only)
              if results: mode = 'actress'
 
         if not results:
