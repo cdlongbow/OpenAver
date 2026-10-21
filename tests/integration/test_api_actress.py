@@ -3485,3 +3485,116 @@ class TestPreviewIncludesAvbase:
             {"source": "wiki", "url": "https://example.com/wiki-photo.jpg"}
         ]
 
+
+
+# ---------------------------------------------------------------------------
+# TASK-174-T4a：文字欄位順序「維基 → xcity → graphis → avbase」（五源替身 → 收藏 → DB）
+# ---------------------------------------------------------------------------
+
+def _t4a_sources(xcity=None, wiki=None, avbase=None):
+    """五鍵一律給齊；graphis／gfriends 為 None（不走下載與裁圖）。"""
+    from core.scrapers.actress.orchestrator import _FetchedSources
+    return _FetchedSources({
+        "xcity": xcity,
+        "wiki": wiki,
+        "graphis": None,
+        "gfriends": None,
+        "avbase": avbase,
+    })
+
+
+@pytest.fixture
+def _t4a_clear_profile_cache():
+    from core.scrapers.actress import orchestrator
+    orchestrator._cache.clear()
+    yield
+    orchestrator._cache.clear()
+
+
+_T4A_XCITY = {"name_ja": "順序女優", "birth": "1992-02-02", "bust": "82cm", "height": "152cm"}
+_T4A_WIKI = {"name_ja": "順序女優", "birth": "1991-01-01", "bust": "81cm", "height": "151cm"}
+_T4A_AVBASE = {"birth": "1994-04-04", "bust": "84cm", "height": "154cm"}
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestAddFavoriteTextSourceOrder:
+    """174-T4a：收藏後 DB 的 bust／birth／primary_text_source 依新順序取值。"""
+
+    ACTRESS = "順序女優"
+
+    @pytest.mark.parametrize(
+        "xcity,wiki,avbase,exp_bust,exp_birth,exp_primary",
+        [
+            (_T4A_XCITY, _T4A_WIKI, _T4A_AVBASE, 81, "1991-01-01", "wiki"),
+            (_T4A_XCITY, None, _T4A_AVBASE, 82, "1992-02-02", "xcity"),
+            (None, None, _T4A_AVBASE, 84, "1994-04-04", "avbase"),
+        ],
+        ids=["wiki_over_xcity_over_avbase", "xcity_when_wiki_absent", "avbase_only"],
+    )
+    def test_db_row_follows_field_order(self, client, xcity, wiki, avbase,
+                                        exp_bust, exp_birth, exp_primary):
+        from core.database import ActressRepository
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(xcity, wiki, avbase)), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        stored = ActressRepository().get_by_name(self.ACTRESS)
+        assert type(stored.bust) is int
+        assert stored.bust == exp_bust
+        assert stored.birth == exp_birth
+        assert stored.primary_text_source == exp_primary
+        assert resp.json()["actress"]["primary_text_source"] == exp_primary
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestAddFavoriteExistingNotRewritten:
+    """174-T4a（plan F4）：已收藏的女優再收藏 → 409，DB 值一個字不變、不重抓。"""
+
+    ACTRESS = "順序女優"
+
+    def test_second_favorite_409_leaves_db_row_unchanged(self, client):
+        from core.database import ActressRepository
+        from core.scrapers.actress import orchestrator
+
+        first = _t4a_sources(
+            xcity={"name_ja": self.ACTRESS, "birth": "1990-01-01", "bust": "80cm"},
+            wiki={"name_ja": self.ACTRESS, "birth": "1999-11-30", "bust": "86cm",
+                  "other_names": ["あかね麗"]},
+            avbase={"birth": "1994-04-04", "bust": "84cm"},
+        )
+        second = _t4a_sources(
+            xcity={"name_ja": self.ACTRESS, "birth": "2001-05-05", "bust": "70cm"},
+            wiki={"name_ja": self.ACTRESS, "birth": "2000-12-31", "bust": "71cm",
+                  "other_names": ["べつ名"]},
+            avbase={"birth": "2002-06-06", "bust": "72cm"},
+        )
+
+        def _row():
+            a = ActressRepository().get_by_name(self.ACTRESS)
+            return (a.birth, a.bust, list(a.aliases or []), a.photo_source,
+                    a.primary_text_source)
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=first), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp1 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+        assert resp1.status_code == 200
+        before = _row()
+        assert before == ("1999-11-30", 86, ["あかね麗"], None, "wiki")
+
+        orchestrator._cache.clear()
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=second) as mock_fetch, \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp2 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp2.status_code == 409
+        assert resp2.json()["error"] == "already_exists"
+        assert mock_fetch.call_count == 0
+        assert _row() == before

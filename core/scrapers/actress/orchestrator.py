@@ -2,7 +2,7 @@
 女優爬蟲 Orchestrator — 五來源並行抓取（Phase 42b T3）
 
 Routes:
-    C1 text  : per-field XCity → Wikipedia → Graphis merge
+    C1 text  : per-field Wikipedia → XCity → Graphis → AVBase merge
     C2 parallel: xcity + wiki + graphis + gfriends + avbase (max_workers=5, 5s budget)
     C3 photo : Graphis prof_url → gfriends URL → Wiki photo_url → XCity photo_url → None
     C4 return: nested new fields + legacy flat shortcuts
@@ -28,7 +28,7 @@ _MEANINGFUL_TEXT_FIELDS = (
     "nickname", "exclusive_makers", "debut_year", "other_names",
 )
 
-_FIELD_MERGE_PRIORITY = ("xcity", "wiki", "graphis")  # 依序找第一個非空值
+_FIELD_MERGE_PRIORITY = ("wiki", "xcity", "graphis", "avbase")  # 依序找第一個非空值
 _COMMON_FIELDS = ("name_en", "birth", "height", "bust", "waist", "hip", "cup",
                   "hometown", "hobby")  # 不含 blood，見下方說明
 _WIKI_ONLY_FIELDS = ("nickname",)  # 不含 exclusive_makers/debut_year，見下方說明
@@ -236,7 +236,7 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
     text = merged or None
     primary_text_source = None
     for src in _FIELD_MERGE_PRIORITY:
-        raw = sources[src] or {}
+        raw = sources.get(src) or {}
         if any(raw.get(field) for field in _COMMON_FIELDS) or (
             src == "wiki" and (any(raw.get(field) for field in _WIKI_ONLY_FIELDS)
                                or raw.get("other_names"))
@@ -266,7 +266,7 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
     # C4 — mixed return shape: new nested fields + legacy flat shortcuts
     result = {
         # === NEW nested fields (Phase 43 consumers) ===
-        "primary_text_source": primary_text_source,   # "xcity"|"wiki"|"graphis"|None
+        "primary_text_source": primary_text_source,   # "wiki"|"xcity"|"graphis"|"avbase"|None
         "text": text,                                  # merged text fields, or None
         "photo_url": photo_url,                        # winner of photo cascade, or None
         "photo_source": photo_source,                  # "graphis"|"gfriends"|"wiki"|"xcity"|None

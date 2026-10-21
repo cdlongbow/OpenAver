@@ -134,7 +134,7 @@ def _frozen_dt_class(frozen: datetime):
 
 class TestHappyPath:
 
-    def test_primary_text_source_xcity(self):
+    def test_primary_text_source_wiki_when_wiki_and_xcity_both_have_data(self):
         xcity = _make_xcity()
         wiki    = _make_wiki()
         graphis = _make_graphis()
@@ -146,7 +146,7 @@ class TestHappyPath:
              patch(_PATCH_GFRIENDS, return_value=gfurl):
             result = get_actress_profile(_ACTRESS_NAME)
 
-        assert result.data["primary_text_source"] == "xcity"
+        assert result.data["primary_text_source"] == "wiki"
         assert result.data["text"]["birth"] == xcity["birth"]
         assert result.data["text"]["nickname"] == wiki["nickname"]
         assert result.data["text"]["name_en"] == graphis["name_en"]
@@ -176,7 +176,7 @@ class TestHappyPath:
 
 class TestC1Cascade:
 
-    def test_merge_text_fields_xcity_wins_over_wiki_when_both_have_value(self):
+    def test_merge_text_fields_wiki_wins_over_xcity_when_both_have_value(self):
         xcity = _make_xcity(hometown="", height="160cm")
         wiki = _make_wiki(hometown="東京都", height="155cm")
 
@@ -187,7 +187,7 @@ class TestC1Cascade:
             result = get_actress_profile(_ACTRESS_NAME)
 
         assert result.data["text"]["hometown"] == "東京都"
-        assert result.data["text"]["height"] == "160cm"
+        assert result.data["text"]["height"] == "155cm"
 
     def test_xcity_none_wiki_wins(self):
         wiki    = _make_wiki()
@@ -733,3 +733,80 @@ class TestFetchAllSourcesAvbase:
             ev.set()
         for _ in range(4):
             assert done.acquire(timeout=_AV_SAFETY_S + 1), "卡住的 worker 未結束"
+
+
+# ---------------------------------------------------------------------------
+# 174-T4a: 文字欄位順序「維基 → xcity → graphis → avbase」、primary 納入 avbase
+# ---------------------------------------------------------------------------
+
+_FO_FIELDS = ("birth", "height", "bust", "waist", "hip", "cup", "hometown")
+
+# 四源互異值（BE-TEST-23）：換不換順序都看得出取到哪一家
+_FO_WIKI = {"name_ja": _AV_NAME, "birth": "1991-01-01", "height": "151cm", "bust": "81cm",
+            "waist": "61cm", "hip": "91cm", "cup": "C", "hometown": "東京都"}
+_FO_XCITY = {"name_ja": _AV_NAME, "birth": "1992-02-02", "height": "152cm", "bust": "82cm",
+             "waist": "62cm", "hip": "92cm", "cup": "D", "hometown": "大阪府", "hobby": "xcity趣味"}
+_FO_GRAPHIS = {"birth": "1993-03-03", "height": "153cm", "bust": "83cm", "waist": "63cm",
+               "hip": "93cm", "cup": "E", "hometown": "京都府", "hobby": "graphis趣味"}
+_FO_AVBASE = {"birth": "1994-04-04", "height": "154cm", "bust": "84cm", "waist": "64cm",
+              "hip": "94cm", "cup": "F", "hometown": "北海道", "hobby": "avbase趣味"}
+
+
+def _fo_profile(xcity=None, wiki=None, graphis=None, avbase=None):
+    with patch(_PATCH_XCITY, return_value=xcity), \
+         patch(_PATCH_WIKI, return_value=wiki), \
+         patch(_PATCH_GRAPHIS, return_value=graphis), \
+         patch(_PATCH_GFRIENDS, return_value=None), \
+         patch(_PATCH_AVBASE, return_value=avbase):
+        return get_actress_profile(_AV_NAME).data
+
+
+class TestWikiFirstFieldOrder:
+
+    def test_all_four_sources_differ_wiki_wins_every_shared_field(self):
+        data = _fo_profile(_FO_XCITY, _FO_WIKI, _FO_GRAPHIS, _FO_AVBASE)
+        assert {f: data["text"].get(f) for f in _FO_FIELDS} == {f: _FO_WIKI[f] for f in _FO_FIELDS}
+        assert data["primary_text_source"] == "wiki"
+
+    def test_wiki_lacks_hobby_xcity_supplies_it(self):
+        data = _fo_profile(_FO_XCITY, _FO_WIKI, _FO_GRAPHIS, _FO_AVBASE)
+        assert "hobby" not in _FO_WIKI
+        assert data["text"].get("hobby") == "xcity趣味"
+
+    def test_front_three_lack_birth_avbase_supplies_it(self):
+        wiki = {k: v for k, v in _FO_WIKI.items() if k != "birth"}
+        xcity = {k: v for k, v in _FO_XCITY.items() if k != "birth"}
+        graphis = {k: v for k, v in _FO_GRAPHIS.items() if k != "birth"}
+        data = _fo_profile(xcity, wiki, graphis, _FO_AVBASE)
+        text = data["text"]
+        assert text.get("birth") == _FO_AVBASE["birth"]
+        assert text.get("height") == _FO_WIKI["height"]
+        assert text.get("hobby") == "xcity趣味"
+
+    def test_avbase_never_used_when_first_three_together_cover_every_field(self):
+        # 前三家各供一部分欄位、分攤在三個名次：avbase 排進任何一家之前都會紅
+        wiki = {"name_ja": _AV_NAME, "birth": "1991-01-01", "height": "151cm", "hometown": "東京都"}
+        xcity = {"name_ja": _AV_NAME, "bust": "82cm", "waist": "62cm", "cup": "D"}
+        graphis = {"hip": "93cm", "hobby": "graphis趣味"}
+        data = _fo_profile(xcity, wiki, graphis, _FO_AVBASE)
+        expected = {
+            "birth": "1991-01-01", "height": "151cm", "hometown": "東京都",
+            "bust": "82cm", "waist": "62cm", "cup": "D",
+            "hip": "93cm", "hobby": "graphis趣味",
+        }
+        assert data["text"] == expected
+        assert not (set(data["text"].values()) & set(_FO_AVBASE.values()))
+
+    def test_only_avbase_has_data_text_and_primary_from_avbase(self):
+        data = _fo_profile(avbase=_FO_AVBASE)
+        assert data["text"] == _FO_AVBASE
+        assert data["primary_text_source"] == "avbase"
+
+    def test_primary_xcity_when_wiki_absent(self):
+        data = _fo_profile(_FO_XCITY, None, _FO_GRAPHIS, _FO_AVBASE)
+        assert data["primary_text_source"] == "xcity"
+
+    def test_avbase_alias_only_is_not_primary_text_source(self):
+        data = _fo_profile(avbase={"other_names": ["二階堂れい"]})
+        assert data is not None
+        assert data["primary_text_source"] is None
