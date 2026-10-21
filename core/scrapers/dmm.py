@@ -3,7 +3,7 @@ import json
 import re
 import requests
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from core.logger import get_logger
 
@@ -38,6 +38,47 @@ def _actress_main_name(name):
         return name
     main = _TRAILING_PAREN.sub('', name, count=1)
     return main or name
+
+
+# ── GraphQL 傳輸層（175c-T6）──────────────────────────────────────────────
+_MAX_OFFSET = 10000  # 站方上限：offset > 10000 回 200＋validation error，本地擋下不發請求
+_MAX_LIMIT = 100     # 單頁上限
+_MAX_FACTS = 100     # fetch_facts 單次 alias 批次的 id 上限（呼叫端視窗上限即 _MAX_LIMIT）
+_BLOCKED_STATUS = frozenset({403, 429, 503})
+
+
+class Named(NamedTuple):
+    """站方給的 (id, 名稱) 對：系列／label／導演。"""
+    id: str
+    name: str
+
+
+class Facts(NamedTuple):
+    """fetch_facts 對單一 content_id 的事實：官方番號與系列／label／導演。"""
+    maker_content_id: Optional[str]
+    series: Optional[Named]
+    label: Optional[Named]
+    directors: list[Named]
+
+
+class ListResult(NamedTuple):
+    """list_contents 的回傳：rows 為站方原始 dict；total／has_next 來自 pageInfo（缺則 None／False）。"""
+    rows: list[dict]
+    total: Optional[int]
+    has_next: bool
+
+
+def _http_error(status: int) -> Exception:
+    """非 200 的分類：403／429／503＝連得上但被擋；其他＝連不上（BE-PY-03：不得當成查無）。"""
+    if status in _BLOCKED_STATUS:
+        return SourceBlocked(f"DMM: HTTP {status}")
+    return SourceUnreachable(f"DMM: HTTP {status}")
+
+
+def _named(raw) -> Optional[Named]:
+    if isinstance(raw, dict) and raw.get('id') and isinstance(raw.get('name'), str) and raw['name']:
+        return Named(str(raw['id']), raw['name'])
+    return None
 
 
 def _flatten_shipped_table(raw: dict) -> dict[str, dict]:
@@ -102,15 +143,18 @@ class DMMScraper(BaseScraper):
     """
 
     SEARCH_LIST_QUERY = """
-        query AvSearch($limit: Int!, $offset: Int!, $sort: ContentSearchPPVSort!, $queryWord: String) {
-            legacySearchPPV(limit: $limit, offset: $offset, sort: $sort, queryWord: $queryWord) {
+        query AvSearch($limit: Int!, $offset: Int!, $sort: ContentSearchPPVSort!, $queryWord: String, $filter: ContentSearchPPVFilterInput) {
+            legacySearchPPV(limit: $limit, offset: $offset, sort: $sort, queryWord: $queryWord, filter: $filter) {
                 result {
+                    pageInfo { totalCount hasNext }
                     contents {
                         id
                         title
                         packageImage { largeUrl }
-                        actresses { name }
-                        maker { name }
+                        deliveryStartAt
+                        releaseStatus
+                        actresses { id name }
+                        maker { id name }
                     }
                 }
             }
@@ -751,64 +795,97 @@ class DMMScraper(BaseScraper):
         # 4. 完全失敗
         return None
 
-    def search_by_keyword_with_ids(self, keyword: str, limit: int = 20, offset: int = 0) -> list[tuple[str, Video]]:
-        """
-        關鍵字搜尋（輕量版）— 回傳 (content_id, shallow_Video) tuples。
-        供 facade 層 ThreadPoolExecutor enrichment 使用。
-        不呼叫 _fetch_by_id（不做 enrichment）。
+    def _graphql(self, payload: dict) -> dict:
+        """POST 一次 GraphQL 並解析 body；失敗必須長得像失敗（BE-PY-03），不吞例外。
+
+        403／429／503 → SourceBlocked；其他非 200、requests 例外、200 但非 JSON／非物件／帶非空 errors
+        → SourceUnreachable。回傳解析後的 body（dict），結構細節由呼叫端判斷。
         """
         try:
-            payload = {
-                'query': self.SEARCH_LIST_QUERY,
-                'variables': {
-                    'limit': limit,
-                    'offset': offset,
-                    'sort': 'RELEASE_DATE',
-                    'queryWord': keyword,
-                }
-            }
-            response = self._session.post(
-                self.API_URL,
-                json=payload,
-                timeout=self.config.timeout,
+            resp = self._session.post(self.API_URL, json=payload, timeout=self.config.timeout)
+        except requests.RequestException as e:
+            raise SourceUnreachable(f"DMM: {type(e).__name__}") from e
+        if resp.status_code != 200:
+            raise _http_error(resp.status_code)
+        try:
+            body = resp.json()
+        except ValueError as e:  # requests.exceptions.JSONDecodeError 亦為其子類
+            raise SourceUnreachable("DMM: non-JSON response") from e
+        if not isinstance(body, dict):
+            raise SourceUnreachable("DMM: unexpected response body")
+        if body.get('errors'):
+            raise SourceUnreachable("DMM: GraphQL errors")
+        return body
+
+    def list_contents(self, query_word: Optional[str] = None, filter: Optional[dict] = None, *,
+                      limit: int, offset: int) -> ListResult:
+        """
+        列表查詢（關鍵字或 filter），回傳 ListResult(rows, total, has_next)。
+
+        rows 是站方原始 dict（轉成卡片是 provider 的事）；total／has_next 取自 pageInfo。
+        offset 超過站方上限（10000）時不發請求，直接回「已到底」；limit 夾在 100 以內。
+        variables 只放有值的鍵，sort 固定 RELEASE_DATE；filter 原樣傳入。
+        失敗一律拋例外（見 _graphql），contents 為空陣列才是「確定沒有」。
+        """
+        if offset > _MAX_OFFSET:
+            return ListResult([], None, False)
+        variables = {'limit': min(limit, _MAX_LIMIT), 'offset': offset, 'sort': 'RELEASE_DATE'}
+        if query_word is not None:
+            variables['queryWord'] = query_word
+        if filter is not None:
+            variables['filter'] = filter
+        body = self._graphql({'query': self.SEARCH_LIST_QUERY, 'variables': variables})
+
+        data = body.get('data')
+        search = data.get('legacySearchPPV') if isinstance(data, dict) else None
+        result = search.get('result') if isinstance(search, dict) else None
+        contents = result.get('contents') if isinstance(result, dict) else None
+        if not isinstance(contents, list):
+            raise SourceUnreachable("DMM: unexpected list response shape")
+        page_info = result.get('pageInfo')
+        if not isinstance(page_info, dict):
+            page_info = {}
+        total = page_info.get('totalCount')
+        return ListResult(
+            [row for row in contents if isinstance(row, dict)],
+            total if isinstance(total, int) else None,
+            bool(page_info.get('hasNext')),
+        )
+
+    def fetch_facts(self, content_ids) -> dict[str, Facts]:
+        """
+        一個 alias 批次請求取回多部作品的官方番號與系列／label／導演。
+
+        空輸入不發請求；超過 100 個 id 拋 ValueError（不靜默分批、不截斷）。
+        缺或 null 的 alias 不入回傳 dict。id 以 json.dumps 轉義後嵌入 query 字串。
+        """
+        ids = list(content_ids)
+        if not ids:
+            return {}
+        if len(ids) > _MAX_FACTS:
+            raise ValueError(f"fetch_facts: at most {_MAX_FACTS} ids per request, got {len(ids)}")
+        fields = "makerContentId series { id name } label { id name } directors { id name }"
+        aliases = " ".join(
+            f"a{i}: ppvContent(id: {json.dumps(cid)}) {{ {fields} }}" for i, cid in enumerate(ids)
+        )
+        data = self._graphql({'query': f"query {{ {aliases} }}"}).get('data')
+        if not isinstance(data, dict):
+            raise SourceUnreachable("DMM: unexpected facts response shape")
+
+        facts: dict[str, Facts] = {}
+        for i, cid in enumerate(ids):
+            item = data.get(f"a{i}")
+            if not isinstance(item, dict):
+                continue
+            maker_content_id = item.get('makerContentId')
+            directors = item.get('directors')
+            facts[cid] = Facts(
+                maker_content_id=maker_content_id if isinstance(maker_content_id, str) and maker_content_id else None,
+                series=_named(item.get('series')),
+                label=_named(item.get('label')),
+                directors=[n for n in map(_named, directors if isinstance(directors, list) else []) if n is not None],
             )
-
-            if response.status_code != 200:
-                return []
-
-            data = response.json()
-            if not data.get('data') or not data['data'].get('legacySearchPPV'):
-                return []
-
-            contents = data['data']['legacySearchPPV']['result']['contents']
-            if not contents:
-                return []
-
-            pairs = []
-            for item in contents:
-                content_id = item.get('id', '')
-                if not content_id:
-                    continue
-                actresses = [
-                    Actress(name=_actress_main_name(a['name']))
-                    for a in (item.get('actresses') or [])
-                    if a.get('name')
-                ]
-                video = Video(
-                    number=self._content_id_to_number(content_id),
-                    title=item.get('title', ''),
-                    actresses=actresses,
-                    maker=(item.get('maker') or {}).get('name', ''),
-                    cover_url=(item.get('packageImage') or {}).get('largeUrl', ''),
-                    source=self.source_name,
-                    detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={content_id}/",
-                )
-                pairs.append((content_id, video))
-
-            return pairs
-
-        except Exception:
-            return []
+        return facts
 
     def search_by_keyword(self, keyword: str, limit: int = 20, offset: int = 0) -> list[Video]:
         """關鍵字搜尋（女優名、片商名等日文關鍵字）"""

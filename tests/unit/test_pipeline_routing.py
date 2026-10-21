@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 from core.scrapers.d2pass import D2PassScraper
 from core.scrapers.heyzo import HEYZOScraper
-from core.scrapers.dmm import DMMScraper
+from core.scrapers.dmm import DMMScraper, ListResult
 from core.scrapers.javbus import JavBusScraper
 from core.scrapers.models import Video
 from core.scrapers.utils import SOURCE_ORDER
@@ -260,7 +260,7 @@ class TestPipeline:
         mock_video = _make_video("javbus", "SONE-205")
 
         with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids') as mock_dmm_kw, \
+             patch.object(DMMScraper, 'list_contents') as mock_dmm_kw, \
              patch.object(JavBusScraper, 'get_ids_from_search', return_value=['SONE-205']), \
              patch('core.scraper.search_jav', return_value=mock_video.to_legacy_dict()), \
              patch.object(JavDBScraper, 'search_by_keyword', return_value=[]):
@@ -271,14 +271,14 @@ class TestPipeline:
         assert len(results) >= 1
 
     def test_search_actress_dmm_routing(self):
-        """DMM 排第一 + DMM 膠囊開 → DMM search_by_keyword_with_ids 先被呼叫，JavBus 不呼叫"""
+        """DMM 排第一 + DMM 膠囊開 → DMM list_contents 先被呼叫，JavBus 不呼叫"""
         from core.scraper import search_actress
 
         mock_video = _make_video("dmm", "SONE-205")
-        mock_pairs = [("sone00205", mock_video)]
+        mock_rows = [{"id": "sone00205", "title": "Test Title"}]
 
         with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=mock_pairs) as mock_dmm_kw, \
+             patch.object(DMMScraper, 'list_contents', return_value=ListResult(mock_rows, None, False)) as mock_dmm_kw, \
              patch.object(DMMScraper, '_fetch_by_id', return_value=mock_video), \
              patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
              patch('core.scrapers.dmm.rate_limit'):
@@ -304,7 +304,7 @@ class TestPipeline:
 
         # DMM returns nothing → should fall through to JavBus path
         with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321']), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=[]) as mock_dmm_kw, \
+             patch.object(DMMScraper, 'list_contents', return_value=ListResult([], None, False)) as mock_dmm_kw, \
              patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
              patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb_kw:
             results = search_actress(

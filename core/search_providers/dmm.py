@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 from core.logger import get_logger
-from core.scrapers.dmm import DMMScraper
+from core.scrapers.dmm import DMMScraper, _actress_main_name
+from core.scrapers.models import Actress, Video
 from core.search_providers.pipeline import run_window
 from core.search_providers.types import Enriched, Kind, Page, Window, WorkItem
 
@@ -32,19 +33,38 @@ class DMMProvider:
         return self._scraper_obj
 
     def search_keyword(self, q: str, w: Window) -> Page:
-        pairs = self._scraper.search_by_keyword_with_ids(q, limit=w.limit, offset=w.offset)
-        items = [
-            WorkItem(
-                number=shallow.number,
-                title=shallow.title,
-                cover_url=shallow.cover_url,
-                date=shallow.date,
-                actors=None,
-                source=SOURCE,
-                ref=(content_id, shallow),
+        """列表一頁 → WorkItem（shallow Video 的取值沿用舊流程：番號由 cid 推導、女優去括號舊名、不帶日期）。
+        列表失敗（被擋／連不上）原樣往外拋，由 relay 接住換下一家；contents 為空才是『查無』。"""
+        result = self._scraper.list_contents(q, limit=w.limit, offset=w.offset)
+        items = []
+        for row in result.rows:
+            content_id = row.get("id", "")
+            if not content_id:
+                continue
+            shallow = Video(
+                number=self._scraper._content_id_to_number(content_id),
+                title=row.get("title", ""),
+                actresses=[
+                    Actress(name=_actress_main_name(a["name"]))
+                    for a in (row.get("actresses") or [])
+                    if a.get("name")
+                ],
+                maker=(row.get("maker") or {}).get("name", ""),
+                cover_url=(row.get("packageImage") or {}).get("largeUrl", ""),
+                source=self._scraper.source_name,
+                detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={content_id}/",
             )
-            for content_id, shallow in pairs
-        ]
+            items.append(
+                WorkItem(
+                    number=shallow.number,
+                    title=shallow.title,
+                    cover_url=shallow.cover_url,
+                    date=shallow.date,
+                    actors=None,
+                    source=SOURCE,
+                    ref=(content_id, shallow),
+                )
+            )
         return Page(items, has_next=len(items) >= w.limit, total=None)
 
     def enrich(self, item: WorkItem, ref=None) -> Enriched:

@@ -277,7 +277,7 @@ class TestSearchActressResultCallback:
     def test_fallback_source_receives_callback_when_javbus_has_no_ids(self, monkeypatch):
         """JavBus 查無（沒送過 seed）→ 後備的 DMM 拿得到 callback，骨架卡邊補邊顯示（175a 新規則）"""
         from core.scraper import search_actress
-        from core.scrapers.dmm import DMMScraper
+        from core.scrapers.dmm import DMMScraper, ListResult
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javbus', 'dmm'])
         monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
@@ -285,8 +285,8 @@ class TestSearchActressResultCallback:
         mock_scraper = make_mock_scraper_actress([[]])
 
         with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids',
-                          return_value=[('sone00100', self._dmm_video('SONE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, 'list_contents',
+                          return_value=ListResult([{'id': 'sone00100', 'title': 'T'}], None, False)) as mock_dmm, \
              patch.object(DMMScraper, '_fetch_by_id', return_value=self._dmm_video('SONE-100')):
             results = search_actress('三上悠亜', limit=20,
                                      result_callback=lambda s, d: callback_calls.append((s, d)))
@@ -300,7 +300,7 @@ class TestSearchActressResultCallback:
     def test_javbus_fallback_after_dmm_gets_none(self, monkeypatch):
         """DMM 排第一、查無，JavBus 接手 → JavBus 不串流（最後結果依日期排序，與今天相同）"""
         from core.scraper import search_actress
-        from core.scrapers.dmm import DMMScraper
+        from core.scrapers.dmm import DMMScraper, ListResult
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['dmm', 'javbus'])
         monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
@@ -309,7 +309,7 @@ class TestSearchActressResultCallback:
 
         with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
              patch('core.scraper.search_jav', side_effect=lambda n, source='javbus': {'number': n, 'title': 't', 'date': '2024-01-01'}), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=[]):
+             patch.object(DMMScraper, 'list_contents', return_value=ListResult([], None, False)):
             results = search_actress('三上悠亜', limit=20,
                                      result_callback=lambda s, d: callback_calls.append((s, d)))
 
@@ -319,7 +319,7 @@ class TestSearchActressResultCallback:
     def test_fallback_source_gets_none_after_seed_sent(self, monkeypatch):
         """JavBus 已送出 seed、詳情全失敗 → DMM 拿到 None，不再送第二組骨架卡（R28，I-S3）"""
         from core.scraper import search_actress
-        from core.scrapers.dmm import DMMScraper
+        from core.scrapers.dmm import DMMScraper, ListResult
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javbus', 'dmm'])
         monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
@@ -328,8 +328,8 @@ class TestSearchActressResultCallback:
 
         with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
              patch('core.scraper.search_jav', return_value=None), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids',
-                          return_value=[('sone00100', self._dmm_video('SONE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, 'list_contents',
+                          return_value=ListResult([{'id': 'sone00100', 'title': 'T'}], None, False)) as mock_dmm, \
              patch.object(DMMScraper, '_fetch_by_id', return_value=self._dmm_video('SONE-100')):
             results = search_actress('三上悠亜', limit=20,
                                      result_callback=lambda s, d: callback_calls.append((s, d)))

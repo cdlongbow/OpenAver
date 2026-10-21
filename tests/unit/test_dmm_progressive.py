@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 from core.scrapers.d2pass import D2PassScraper
 from core.scrapers.heyzo import HEYZOScraper
-from core.scrapers.dmm import DMMScraper
+from core.scrapers.dmm import DMMScraper, ListResult
 from core.scrapers.javbus import JavBusScraper
 from core.scrapers.models import Video
 from core.scraper import smart_search
@@ -51,14 +51,14 @@ class TestDMMProgressiveFacade:
         from core.scraper import search_actress
 
         mock_video = _make_video("dmm", "SONE-205")
-        mock_pairs = [("sone00205", mock_video), ("sone00300", mock_video)]
+        mock_rows = [{"id": "sone00205", "title": "Test Title"}, {"id": "sone00300", "title": "Test Title"}]
         callbacks = []
 
         def mock_result_callback(slot, data):
             callbacks.append((slot, data))
 
         with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=mock_pairs), \
+             patch.object(DMMScraper, 'list_contents', return_value=ListResult(mock_rows, None, False)), \
              patch.object(DMMScraper, '_fetch_by_id', return_value=mock_video), \
              patch('core.scrapers.dmm.rate_limit'):
             results = search_actress(
@@ -76,16 +76,14 @@ class TestDMMProgressiveFacade:
         """DMM progressive: 最終回傳順序必須與 seed slot 一致，不受 as_completed 亂序影響"""
         from core.scraper import search_actress
 
-        video1 = _make_video("dmm", "SONE-205")
-        video2 = _make_video("dmm", "SONE-300")
-        mock_pairs = [("sone00205", video1), ("sone00300", video2)]
+        mock_rows = [{"id": "sone00205", "title": "Test Title"}, {"id": "sone00300", "title": "Test Title"}]
 
         # _fetch_by_id returns enriched videos in predictable order
         enriched1 = Video(number="SONE-205", title="Title 1", source="dmm")
         enriched2 = Video(number="SONE-300", title="Title 2", source="dmm")
 
         with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=mock_pairs), \
+             patch.object(DMMScraper, 'list_contents', return_value=ListResult(mock_rows, None, False)), \
              patch.object(DMMScraper, '_fetch_by_id', side_effect=[enriched1, enriched2]), \
              patch('core.scrapers.dmm.rate_limit'):
             results = search_actress(

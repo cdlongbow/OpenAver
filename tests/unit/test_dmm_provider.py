@@ -2,12 +2,12 @@
 import concurrent.futures as cf
 import copy
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.scrapers.dmm import DMMScraper
-from core.scrapers.errors import SourceUnreachable
+from core.scrapers.dmm import DMMScraper, ListResult
+from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.scrapers.models import Video
 from core.search_providers.dmm import DMMProvider
 from core.search_providers.types import Kind, Window
@@ -43,16 +43,28 @@ def _video(number, title="shallow", **kw):
     return Video(number=number, title=title, source="dmm", date="2024-01-01", **kw)
 
 
-def _pairs(n=2):
-    return [(f"cid{i}", _video(f"SONE-{i:03d}")) for i in range(1, n + 1)]
+def _rows(n=2):
+    """合成 list_contents rows：真格式 cid（假 cid 推不出 SONE-001）。"""
+    return [{"id": f"sone{i:05d}", "title": "shallow"} for i in range(1, n + 1)]
+
+
+def _num(cid):
+    """測試用的 cid → 預期番號（字面對照，不呼叫 _content_id_to_number）。"""
+    return {"sone00001": "SONE-001", "sone00002": "SONE-002", "sone00003": "SONE-003"}[cid]
+
+
+def _shallow(cid):
+    """provider 為該列組出的 shallow 卡的預期值（字面構造）。"""
+    return Video(number=_num(cid), title="shallow", source="dmm",
+                 detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={cid}/")
 
 
 def _enriched(number):
     return _video(number, title="full", maker="Maker", series="S", director="D")
 
 
-def _run(pairs, fetch, w=Window(0, 20), status_cb=None, result_cb=None, **kw):
-    with patch.object(DMMScraper, "search_by_keyword_with_ids", return_value=pairs) as search, \
+def _run(rows, fetch, w=Window(0, 20), status_cb=None, result_cb=None, **kw):
+    with patch.object(DMMScraper, "list_contents", return_value=ListResult(rows, None, False)) as search, \
          patch.object(DMMScraper, "_fetch_by_id", **fetch) as fetched:
         out = DMMProvider(DMMScraper()).run(Kind.KEYWORD, "q", w, status_callback=status_cb,
                                             result_callback=result_cb, **kw)
@@ -60,9 +72,9 @@ def _run(pairs, fetch, w=Window(0, 20), status_cb=None, result_cb=None, **kw):
 
 
 def test_dmm_seed_then_items_in_slot_order():
-    pairs = _pairs(3)
+    rows = _rows(3)
     events = []
-    out, _, _ = _run(pairs, {"side_effect": lambda cid: _enriched(dict(pairs)[cid].number)},
+    out, _, _ = _run(rows, {"side_effect": lambda cid: _enriched(_num(cid))},
                      result_cb=lambda s, d: events.append((s, copy.deepcopy(d))))
     assert [e for e in events if e[0] == -1] == [(-1, ["SONE-001", "SONE-002", "SONE-003"])]
     assert events[0][0] == -1
@@ -72,7 +84,7 @@ def test_dmm_seed_then_items_in_slot_order():
 
 
 def test_dmm_search_passes_offset_for_load_more():
-    out, search, _ = _run(_pairs(1), {"return_value": _enriched("SONE-001")}, w=Window(20, 15))
+    out, search, _ = _run(_rows(1), {"return_value": _enriched("SONE-001")}, w=Window(20, 15))
     search.assert_called_once_with("q", limit=15, offset=20)
     assert len(out) == 1
 
@@ -84,19 +96,19 @@ def test_dmm_search_passes_offset_for_load_more():
     {"side_effect": RuntimeError("boom")},
 ])
 def test_dmm_detail_failure_falls_back_to_shallow_card(failure):
-    pairs = _pairs(2)
+    rows = _rows(2)
     ok = _enriched("SONE-002")
 
     def fetch(cid):
-        if cid == "cid1":
+        if cid == "sone00001":
             if "side_effect" in failure:
                 raise failure["side_effect"]
             return failure["return_value"]
         return ok
 
     seen = []
-    out, _, _ = _run(pairs, {"side_effect": fetch}, result_cb=lambda s, d: seen.append(s))
-    assert out[0] == {**pairs[0][1].to_legacy_dict(), "_source": "dmm"}
+    out, _, _ = _run(rows, {"side_effect": fetch}, result_cb=lambda s, d: seen.append(s))
+    assert out[0] == {**_shallow("sone00001").to_legacy_dict(), "_source": "dmm"}
     assert out[1]["title"] == "full"
     assert seen == [-1, 0, 1]
 
@@ -104,13 +116,13 @@ def test_dmm_detail_failure_falls_back_to_shallow_card(failure):
 def test_dmm_progressive_adds_no_inter_request_delay(monkeypatch):
     rec = []
     monkeypatch.setattr(time, "sleep", lambda s: rec.append(s))
-    _run(_pairs(3), {"return_value": _enriched("SONE-001")})
+    _run(_rows(3), {"return_value": _enriched("SONE-001")})
     assert rec and all(s == 0 for s in rec)
 
 
 def test_dmm_source_stamped_after_callbacks():
     payloads = []
-    out, _, _ = _run(_pairs(2), {"return_value": _enriched("SONE-001")},
+    out, _, _ = _run(_rows(2), {"return_value": _enriched("SONE-001")},
                      result_cb=lambda s, d: payloads.append(copy.deepcopy(d)))
     assert all(c["_source"] == "dmm" for c in out)
     item_payloads = [p for p in payloads if isinstance(p, dict)]
@@ -119,7 +131,7 @@ def test_dmm_source_stamped_after_callbacks():
 
 def test_dmm_done_status_sent_once_and_no_result_callback_ok():
     statuses = []
-    out, _, _ = _run(_pairs(2), {"return_value": _enriched("SONE-001")},
+    out, _, _ = _run(_rows(2), {"return_value": _enriched("SONE-001")},
                      status_cb=lambda k, v: statuses.append((k, v)))
     assert statuses == [("dmm", "searching"), ("done", "found:2")]
     assert len(out) == 2
@@ -127,9 +139,9 @@ def test_dmm_done_status_sent_once_and_no_result_callback_ok():
 
 def test_dmm_emits_searching_status_before_search():
     order = []
-    pairs = _pairs(1)
-    with patch.object(DMMScraper, "search_by_keyword_with_ids",
-                      side_effect=lambda *a, **k: order.append("search") or pairs), \
+    rows = _rows(1)
+    with patch.object(DMMScraper, "list_contents",
+                      side_effect=lambda *a, **k: order.append("search") or ListResult(rows, None, False)), \
          patch.object(DMMScraper, "_fetch_by_id", return_value=_enriched("SONE-001")):
         DMMProvider(DMMScraper()).run(Kind.KEYWORD, "q", Window(0, 20),
                                       status_callback=lambda k, v: order.append((k, v)))
@@ -142,12 +154,12 @@ def test_dmm_empty_wrong_kind_and_discovery(case):
     calls = []
     kw = {}
     kind = Kind.KEYWORD
-    pairs = [] if case == "empty" else _pairs(1)
+    rows = [] if case == "empty" else _rows(1)
     if case == "wrong_kind":
         kind = Kind.CODE
     if case == "discovery":
         kw["discovery_only"] = True
-    with patch.object(DMMScraper, "search_by_keyword_with_ids", return_value=pairs) as search, \
+    with patch.object(DMMScraper, "list_contents", return_value=ListResult(rows, None, False)) as search, \
          patch.object(DMMScraper, "_fetch_by_id", return_value=_enriched("SONE-001")):
         p = DMMProvider(DMMScraper())
         args = (kind, "q", Window(0, 20))
@@ -161,3 +173,103 @@ def test_dmm_empty_wrong_kind_and_discovery(case):
     assert calls == ([("dmm", "searching")] if case == "empty" else [])
     if case == "discovery":
         search.assert_not_called()
+
+
+# ─── 175c-T6：列表轉換（rows → WorkItem／shallow 卡）production 向量 ──────────────
+# 期望值是刪除舊的關鍵字列表函式之前，用它對同一份 JSON 實跑抄下的字面常數
+# （不用 _content_id_to_number 現算：同源恆真）。13dsvr／h_／55t 的「錯」番號是現行行為，官方番號是 T8 的事。
+_VECTOR_ROWS = [
+    {"id": "13dsvr01774", "title": "VR タイトル A", "packageImage": {"largeUrl": "https://img.invalid/13dsvr01774pl.jpg"},
+     "deliveryStartAt": "2024-05-01T00:00:00Z", "releaseStatus": "RELEASED",
+     "actresses": [{"id": "1093154", "name": "あかね麗（二階堂麗）"}, {"id": "1030262", "name": "三上悠亜"}],
+     "maker": {"id": "3152", "name": "エスワン ナンバーワンスタイル"}},
+    {"id": "h_113id00057", "title": "タイトル B", "packageImage": {"largeUrl": "https://img.invalid/h_113id00057pl.jpg"},
+     "deliveryStartAt": "2023-01-02T00:00:00Z", "releaseStatus": "RELEASED",
+     "actresses": [{"id": "2001", "name": "テスト女優"}],
+     "maker": {"id": "1509", "name": "ムーディーズ"}},
+    {"title": "id 欠落列", "packageImage": {"largeUrl": "https://img.invalid/noid.jpg"},
+     "actresses": [{"id": "3", "name": "丟棄女優"}], "maker": {"id": "9", "name": "丟棄片商"}},
+    {"id": "sone00205", "title": "最小列", "packageImage": None, "actresses": None, "maker": None},
+    {"id": "55t28103", "title": "數字前綴", "packageImage": {"largeUrl": "https://img.invalid/55t28103pl.jpg"},
+     "deliveryStartAt": "2022-03-04T00:00:00Z", "releaseStatus": "PRE_ORDER",
+     "actresses": [{"id": "4001", "name": "女優甲（舊名）"}, {"id": "4002", "name": ""}],
+     "maker": {"id": "1227", "name": "アタッカーズ"}},
+]
+
+# (content_id, number, title, cover_url, date, 女優名, maker, source, detail_url)
+_VECTOR_EXPECTED = [
+    ('13dsvr01774', 'DSVR-1774', 'VR タイトル A', 'https://img.invalid/13dsvr01774pl.jpg', '',
+     ['あかね麗', '三上悠亜'], 'エスワン ナンバーワンスタイル', 'dmm',
+     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=13dsvr01774/'),
+    ('h_113id00057', 'h_113id00057', 'タイトル B', 'https://img.invalid/h_113id00057pl.jpg', '',
+     ['テスト女優'], 'ムーディーズ', 'dmm',
+     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=h_113id00057/'),
+    ('sone00205', 'SONE-205', '最小列', '', '', [], '', 'dmm',
+     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=sone00205/'),
+    ('55t28103', 'T-28103', '數字前綴', 'https://img.invalid/55t28103pl.jpg', '',
+     ['女優甲'], 'アタッカーズ', 'dmm',
+     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=55t28103/'),
+]
+
+
+def _json_resp(status=200, data=None):
+    r = MagicMock()
+    r.status_code = status
+    r.json = lambda: data
+    return r
+
+
+def _provider_with_post(response):
+    scraper = DMMScraper()
+    return DMMProvider(scraper), patch.object(scraper._session, "post", return_value=response)
+
+
+def test_search_keyword_row_conversion_matches_pre_deletion_vector():
+    """使用者搜 あかね麗：卡片女優欄是『あかね麗』而不是『あかね麗（二階堂麗）』；缺 id 列丟棄、缺 maker／女優列照收。"""
+    body = {"data": {"legacySearchPPV": {"result": {
+        "pageInfo": {"totalCount": 5, "hasNext": False}, "contents": _VECTOR_ROWS}}}}
+    provider, post_patch = _provider_with_post(_json_resp(200, body))
+    with post_patch as post:
+        page = provider.search_keyword("キーワード", Window(0, 40))
+    assert post.call_count == 1
+    assert post.call_args.kwargs["json"]["variables"] == {
+        "limit": 40, "offset": 0, "sort": "RELEASE_DATE", "queryWord": "キーワード"}
+    got = [(it.ref[0], it.number, it.title, it.cover_url, it.date,
+            [a.name for a in it.ref[1].actresses], it.ref[1].maker, it.source, it.ref[1].detail_url)
+           for it in page.items]
+    assert got == _VECTOR_EXPECTED
+    # WorkItem 欄位與 shallow 卡一致、actors 維持 None、Page 語意本卡不變
+    assert all(it.actors is None and it.ref[1].number == it.number and it.ref[1].title == it.title
+               and it.ref[1].source == "dmm" for it in page.items)
+    assert page.has_next is False and page.total is None
+
+
+def test_search_keyword_has_next_still_derived_from_window_size():
+    """改採 pageInfo 是 T8（CD-175c-7）；本卡 has_next 維持『筆數 ≥ 視窗』。"""
+    body = {"data": {"legacySearchPPV": {"result": {
+        "pageInfo": {"totalCount": 999, "hasNext": True}, "contents": _VECTOR_ROWS}}}}
+    provider, post_patch = _provider_with_post(_json_resp(200, body))
+    with post_patch:
+        assert provider.search_keyword("x", Window(0, 4)).has_next is True
+    provider, post_patch = _provider_with_post(_json_resp(200, body))
+    with post_patch:
+        assert provider.search_keyword("x", Window(0, 5)).has_next is False
+
+
+@pytest.mark.parametrize("status, expected", [(403, SourceBlocked), (429, SourceBlocked), (503, SourceBlocked),
+                                              (500, SourceUnreachable)])
+def test_list_failure_propagates_out_of_provider_not_empty(status, expected):
+    """DMM 暫擋要穿出 provider（relay 接住換下一家），不能被 provider 吞成查無。"""
+    provider, post_patch = _provider_with_post(_json_resp(status, {}))
+    with post_patch:
+        with pytest.raises(Exception) as ei:
+            provider.search_keyword("q", Window(0, 20))
+    assert type(ei.value) is expected
+    events = []
+    provider, post_patch = _provider_with_post(_json_resp(status, {}))
+    with post_patch:
+        with pytest.raises(Exception) as ei:
+            provider.run(Kind.KEYWORD, "q", Window(0, 20), status_callback=lambda *a: events.append(a),
+                         result_callback=lambda *a: events.append(a))
+    assert type(ei.value) is expected
+    assert events == [("dmm", "searching")]
