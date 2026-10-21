@@ -680,11 +680,12 @@ def test_rows_with_null_fields_still_become_items(site, entry):
 
 
 # ================================================================ 邊界條件 5：能力與接線
-def test_capabilities_are_exactly_the_four_entities_plus_keyword():
+def test_capabilities_are_exactly_the_five_entities_plus_keyword():
     """〔使用者把 DMM 排第一打 MIDV／MIDV-01 → 若誤宣告 CODE／PARTIAL，結果混入 48midv… 重製版與別片商；
-    若誤宣告 MAKER 而沒有 run_maker，片商膠囊一按就丟 TypeError〕"""
-    assert DMMProvider.capabilities == frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.KEYWORD})
-    assert not DMMProvider.capabilities & {Kind.MAKER, Kind.CODE, Kind.PARTIAL}
+    MAKER 自 T9 起與 run_maker 同時宣告（沒有 run_maker 就宣告，片商膠囊一按就丟 TypeError）〕"""
+    assert DMMProvider.capabilities == frozenset(
+        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.KEYWORD})
+    assert not DMMProvider.capabilities & {Kind.CODE, Kind.PARTIAL}
     assert DMMProvider.supports_discovery is False and DMMProvider.fallback_streaming is True
 
 

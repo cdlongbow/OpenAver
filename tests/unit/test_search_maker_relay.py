@@ -506,3 +506,13 @@ def test_capsule_policy_matrix(order, ids, enabled, use_map):
     order(["javdb", "javbus"], enabled=ids)
     p = relay.maker_capsule_policy()
     assert p.enabled is enabled and p.use_not_found_map is use_map
+
+
+@pytest.mark.parametrize("ids", [["dmm"], ["dmm", "javbus"], ["dmm", "javdb"]])
+def test_capsule_policy_counts_dmm(order, ids):
+    """175c-T9：DMM 宣告 MAKER 後也算鏈上做得到片商的一家（膠囊列啟用），且鏈不是恰為 javbus ⇒ 不信 JavBus 的「沒有這家」對照表。
+    〔只開 DMM 的使用者進搜尋頁空狀態 → 若 DMM 沒宣告 MAKER，片商膠囊列整排停用；預設順序（DMM 排第一）下使用者在
+    JavBus 對照表標「沒有」的片商，膠囊不再被藏（plan 殘留 14）〕"""
+    order(["dmm", "javdb", "javbus"], enabled=ids)
+    p = relay.maker_capsule_policy()
+    assert p.enabled is True and p.use_not_found_map is False

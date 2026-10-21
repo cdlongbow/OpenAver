@@ -1,13 +1,16 @@
-"""DMM 的 Provider：關鍵字與實體（女優／系列／導演／label）列表、官方番號、守衛 belongs、逐部補詳情。
+"""DMM 的 Provider：關鍵字與實體（女優／系列／導演／label／片商）列表、官方番號、守衛 belongs、逐部補詳情。
 
 - 175a-T5 把 scraper.py 的 DMM「列表＋逐部補詳情」包入；175c-T7 加名稱→實體 resolve；175c-T8 起宣告
   ACTOR／SERIES／DIRECTOR／LABEL／KEYWORD：名稱經 resolve 換成 DMM id，list_entity 用 filter 列出該實體的完整作品
-  （含預購未發行），順序同站方（預購最前、新→舊，不重排）。
+  （含預購未發行），順序同站方（預購最前、新→舊，不重排）；175c-T9 起再宣告 MAKER（與 run_maker 同時就位）。
 - 關鍵字與實體共用同一個頁面組裝：一次 list_contents ＋ 恰一次 fetch_facts（先於回傳，也就先於 seed）；
   列表階段的番號用官方 makerContentId，缺值才退 cid 推導（精準搜尋與進階搜尋打 cid 不變）。
   傳輸失敗（被擋／連不上）原樣往外丟，由 relay 換下一家；contents 為空才是「查無」。
 - 守衛 belongs 全由列表階段已取得的事實算出（enrich 內除 _fetch_by_id 外零網路）；實體路徑自補 _source。
-- 不宣告 CODE／PARTIAL（DMM 前綴是 token 子字串，會混入重製版，CD-175c-10）；MAKER 待 T9 與 run_maker 同時宣告。
+- run_maker（片商膠囊與打字片商）：片商名（label 與各拼法）→ _resolve_maker → list_entity 視窗 → run_window(guard=False)；
+  DMM 以片商 id 精查，不需要片庫樣本、不寫 JavBus 的片商對照表。錯誤碼：不認得 ⇒ maker_not_found、
+  傳輸例外 ⇒ maker_unreachable（絕不互換）、列表空 ⇒ maker_empty。
+- 不宣告 CODE／PARTIAL（DMM 前綴是 token 子字串，會混入重製版，CD-175c-10）。
 頂層不得 import core.scraper／core.database（BE-PY-08）。補詳情一律經 pipeline.run_window。
 """
 
@@ -20,10 +23,11 @@ from core.logger import get_logger
 from core.maker_names import maker_key_of
 from core.name_match import fold, split_paren_name
 from core.scrapers.dmm import DMMScraper, Facts, ListResult, _actress_main_name
+from core.scrapers.errors import SourceBlocked
 from core.scrapers.models import Actress, Video
 from core.search_providers.names import maker_names
 from core.search_providers.pipeline import run_window
-from core.search_providers.types import EntityRef, Enriched, Kind, Page, Window, WorkItem
+from core.search_providers.types import EntityRef, Enriched, Kind, MakerSearchResult, Page, Window, WorkItem
 
 logger = get_logger(__name__)
 
@@ -146,7 +150,7 @@ def _pick_maker(rows: list[dict], spellings: set[str]) -> EntityRef | None:
 
 
 # ---------------------------------------------------------------- 實體清單＋官方番號＋守衛（175c-T8，plan CD-175c-7）
-# 實體 kind → list_contents 的 filter 鍵（MAKER 在表內供 T9 的 run_maker 使用，本卡不宣告 MAKER 能力）
+# 實體 kind → list_contents 的 filter 鍵（MAKER 供 run_maker 使用）
 _FILTER_KEY = {
     Kind.ACTOR: "actressIds",
     Kind.SERIES: "seriesIds",
@@ -214,9 +218,21 @@ def _belongs(ref: EntityRef, facts: Facts | None, actress_ids: frozenset[str], m
     return None if owners is None else str(ref.id) in owners
 
 
+# ---------------------------------------------------------------- 片商最新作品（175c-T9，plan CD-175c-8）
+PAGE_SIZE_MAKER = 30  # 膠囊一頁 30 部（前端翻頁 offset 以 30 遞增且不帶 limit）；DMM 為 offset 原生
+
+
+def _dedupe_names(names: list[str]) -> list[str]:
+    """以 maker_key_of 去重保序（保留第一次出現的寫法）：重複拼法只探一次，不佔 _resolve_maker 的前 3 個名額。"""
+    first: dict[str, str] = {}
+    for name in names:
+        first.setdefault(maker_key_of(name), name)
+    return list(first.values())
+
+
 class DMMProvider:
     id = SOURCE
-    capabilities = frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.KEYWORD})
+    capabilities = frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.KEYWORD})
     supports_discovery = False
     fallback_streaming = True  # 最終陣列不重排，串流順序＝最終順序
 
@@ -321,3 +337,40 @@ class DMMProvider:
         for card in res.cards:
             card["_source"] = "dmm"
         return res.cards
+
+    def run_maker(self, maker_key, label, spellings, offset, *, limit=None, titles=None, today=None,
+                  status_callback=None, result_callback=None, db_path=None) -> MakerSearchResult:
+        """片商最新作品（175c-T9，CD-175c-8）：label 與各拼法 → 片商 id → 依 id 列出完整作品（含預購）→ 補詳情。
+
+        片庫樣本相關的參數接受但不使用（DMM 以片商 id 精查，不需要樣本，也不寫 JavBus 的對照表）；
+        limit=None ⇒ 視窗取 30；offset 為 DMM 原生，不要求 30 的倍數。結果順序＝站方清單順序，不重排。"""
+        if status_callback:
+            status_callback(SOURCE, "searching")
+        names = _dedupe_names([label, *spellings])
+        try:
+            ref = self._resolve_maker(names)
+            if ref is None:
+                return MakerSearchResult([], False, "maker_not_found")
+            page = self.list_entity(ref, Window(offset, limit or PAGE_SIZE_MAKER))
+        except Exception as err:
+            logger.warning("dmm maker %s failed (%s%s)", maker_key, type(err).__name__,
+                           "/blocked" if isinstance(err, SourceBlocked) else "")
+            return MakerSearchResult([], False, "maker_unreachable")
+        if not page.items:
+            return MakerSearchResult([], False, "maker_empty")
+        res = run_window(
+            self,
+            page.items,
+            ref,
+            result_callback=result_callback,
+            on_fail="degrade",
+            delay=0,
+            breaker=False,
+            guard=False,  # CD-175c-8：provider 自己的入口，不在梯子上
+        )
+        cards = res.cards
+        for card in cards:
+            card["_source"] = SOURCE
+        if status_callback:
+            status_callback("done", f"found:{len(cards)}")
+        return MakerSearchResult(cards, page.has_next, None)

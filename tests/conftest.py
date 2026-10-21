@@ -601,11 +601,16 @@ def empty_library_makers(monkeypatch):
 # 不做 autouse：resolve 自己的測試與 test_javbus_entity_list.py 要真的 resolve（受影響的檔案逐檔 pytestmark opt-in）：
 #     pytestmark = pytest.mark.usefixtures("no_entity_lookup")
 # 只 patch 既有屬性（不用 create=True，命名錯誤要炸）；T7 加入 DMM 的 resolve 後擴成兩家。
+# T9：DMM 宣告 MAKER 後，片商路徑（`relay.search_maker` → `DMMProvider.run_maker`）經 `_resolve_maker` 解析片商名
+# （不經 `resolve`，上面兩行攔不到），預設順序 DMM 排第一，既有的片商接力測試（test_fuzzy_chain.py 的
+# TestMakerLatestPipeline）會在片商解析第一步被 `_outbound_guard` 擋成 `OutboundConnectionViolation`；
+# 片商解析也是「名稱→實體」查詢，所以併進這個 fixture（已 opt-in 的檔零修改）。
 @pytest.fixture
 def no_entity_lookup(monkeypatch):
-    """opt-in（非 autouse）：JavBus、DMM 名稱→實體 resolve 回 None（0 請求）。"""
+    """opt-in（非 autouse）：JavBus、DMM 名稱→實體 resolve（含 DMM 的片商解析）回 None（0 請求）。"""
     monkeypatch.setattr("core.search_providers.javbus.JavBusProvider.resolve", lambda self, kind, name: None)
     monkeypatch.setattr("core.search_providers.dmm.DMMProvider.resolve", lambda self, kind, name: None)
+    monkeypatch.setattr("core.search_providers.dmm.DMMProvider._resolve_maker", lambda self, names: None)
 
 
 # ============ TASK-175c-T8：DMM 官方番號 facts 的隔離（R14 測試遷移）====

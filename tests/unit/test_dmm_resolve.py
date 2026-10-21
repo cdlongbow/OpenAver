@@ -509,9 +509,10 @@ def test_clear_probe_cache_forces_a_new_request(transport, provider):
     assert transport.words == ["x", "x"]
 
 
-# ================================================================ 5. I-D1 完整路徑＋capabilities（T8 起宣告四種實體＋KEYWORD）
-def test_capabilities_declare_four_entities_plus_keyword_since_t8():
-    assert DMMProvider.capabilities == frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.KEYWORD})
+# ================================================================ 5. I-D1 完整路徑＋capabilities（T8 起宣告四種實體＋KEYWORD，T9 起再加 MAKER）
+def test_capabilities_declare_five_entities_plus_keyword_since_t9():
+    assert DMMProvider.capabilities == frozenset(
+        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.KEYWORD})
 
 
 def test_no_entity_lookup_fixture_covers_dmm(transport, provider, no_entity_lookup):
