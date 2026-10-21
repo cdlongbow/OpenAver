@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import re
+from types import SimpleNamespace
+
 from core.logger import get_logger
 from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
 from core.search_providers.pipeline import fetch_window, run_window
@@ -89,6 +92,50 @@ def _sorted(cards):
     import core.scraper as m
 
     return m.sort_results_by_date(cards)
+
+
+_PROBE_PREFIXES = 2
+_PROBE_SAMPLES = 5
+
+
+def _prefix_of(number):
+    m = re.match(r"^([A-Za-z]+)", number or "")
+    return m.group(1).upper() if m else ""
+
+
+def _probe_titles(scraper_mod, maker_key, spellings, titles, today, db_path):
+    """片庫沒樣本且對照表沒這家 → 用 prefix_mapping 的前綴搜幾個番號當樣本（記憶體內合成 title，不寫片庫）。
+
+    回 (titles, spellings)；不需要探針就原樣回。搜尋丟例外 → 回 None（呼叫端回 maker_unreachable，不寫表）。
+    """
+    from core.database import maker_javbus_map
+    from core.maker_latest import pick_samples
+    from core.maker_mapping import load_prefix_mapping
+    from core.maker_names import maker_key_of
+
+    mapped = maker_javbus_map.get_mapping(maker_key, db_path=db_path)
+    if mapped is not None:
+        return titles, spellings
+    scraper = scraper_mod.JavBusScraper()
+    if pick_samples(titles, today, spellings=set(spellings), validate=scraper.validate_number):
+        return titles, spellings
+    keys = {maker_key} | {maker_key_of(s) for s in spellings}
+    chosen = sorted((p, v) for p, v in load_prefix_mapping().items() if maker_key_of(v) in keys)
+    synthetic, extra = [], []
+    for prefix, value in chosen[:_PROBE_PREFIXES]:
+        try:
+            ids = scraper.get_ids_from_search(prefix, page=1, search_type=1)
+        except Exception as e:
+            logger.error("maker %s probe %s failed: %s: %s", maker_key, prefix, type(e).__name__, e)
+            return None
+        kept = [
+            number for number in ids
+            if _prefix_of(number) == prefix
+        ]
+        for number in kept[:_PROBE_SAMPLES - len(synthetic)]:
+            synthetic.append(SimpleNamespace(maker=value, number=number, release_date=None))
+            extra.append(value)
+    return list(titles) + synthetic, list(dict.fromkeys([*spellings, *extra]))
 
 
 class JavBusProvider:
@@ -214,9 +261,17 @@ class JavBusProvider:
         return []
 
     def run_maker(self, maker_key, label, spellings, offset, *, titles, today, status_callback=None,
-                  result_callback=None, db_path=None) -> MakerSearchResult:
-        """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊）。不攔 resolve_maker_studio 的未預期例外。"""
+                  result_callback=None, db_path=None, limit=None) -> MakerSearchResult:
+        """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊）。不攔 resolve_maker_studio 的未預期例外。
+
+        limit=None＝173 原樣（offset 須 30 的倍數、單頁）；給了 limit＝視窗模式（175b-T8a，offset 任意＋前綴探針）。
+        """
         import core.scraper as m
+
+        if limit is not None:
+            return self._run_maker_window(maker_key, label, spellings, offset, limit, titles=titles, today=today,
+                                          status_callback=status_callback, result_callback=result_callback,
+                                          db_path=db_path)
 
         if offset < 0 or offset % JAVBUS_LIST_PAGE_SIZE:
             raise ValueError(f"offset must be a non-negative multiple of {JAVBUS_LIST_PAGE_SIZE}: {offset}")
@@ -252,6 +307,53 @@ class JavBusProvider:
             logger.info("maker %s page %d empty", maker_key, request_page)
             return MakerSearchResult([], False, "maker_empty")
         return MakerSearchResult(results, counts.get(request_page, 0) >= JAVBUS_LIST_PAGE_SIZE, None)
+
+    def _run_maker_window(self, maker_key, label, spellings, offset, limit, *, titles, today, status_callback,
+                          result_callback, db_path) -> MakerSearchResult:
+        """視窗模式：任意 (offset, limit)；對照表沒這家且片庫沒樣本時先做前綴探針。"""
+        import core.scraper as m
+
+        if offset < 0 or limit <= 0:
+            raise ValueError(f"offset/limit out of range: {offset}, {limit}")
+        if status_callback:
+            status_callback("javbus", "searching")
+        probed = _probe_titles(m, maker_key, spellings, titles, today, db_path)
+        if probed is None:
+            return MakerSearchResult([], False, "maker_unreachable")
+        titles, spellings = probed
+        resolution = m.resolve_maker_studio(maker_key, label, spellings, titles, today=today, db_path=db_path)
+        if resolution.status != "found":
+            code = MAKER_RESOLUTION_ERRORS.get(resolution.status, "maker_unreachable")
+            return MakerSearchResult([], False, code)
+
+        ref = (resolution.kind, resolution.studio_id)
+        first_page = offset // JAVBUS_LIST_PAGE_SIZE + 1
+        skip = offset % JAVBUS_LIST_PAGE_SIZE
+        counts: dict[int, int] = {}
+        errors: list[BaseException] = []
+
+        def ids_provider(scraper, page):
+            if page > first_page and counts.get(page - 1, 0) < JAVBUS_LIST_PAGE_SIZE:
+                return []  # 前一頁不滿 30 ＝已到末頁，不再發請求
+            try:
+                ids = scraper.get_ids_from_studio(ref, page)
+            except Exception as e:
+                errors.append(e)
+                raise
+            counts[page] = len(ids)
+            return ids
+
+        results = self.run_keyword(
+            label, limit, offset, status_callback, result_callback, ids_provider=ids_provider)
+        if errors:
+            logger.error("maker %s list failed: %s: %s", maker_key, type(errors[0]).__name__, errors[0])
+            return MakerSearchResult([], False, "maker_unreachable")
+        fetched = sum(counts.values())
+        if fetched <= skip:
+            logger.info("maker %s window at %d empty", maker_key, offset)
+            return MakerSearchResult([], False, "maker_empty")
+        has_more = fetched > skip + limit or counts[max(counts)] >= JAVBUS_LIST_PAGE_SIZE
+        return MakerSearchResult(results, has_more, None)
 
     # ------------------------------------------------------------ 內部
     def _scraper(self):
