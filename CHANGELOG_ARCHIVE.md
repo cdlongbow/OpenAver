@@ -1,4 +1,4 @@
-# Changelog Archive (v0.1.0 ~ v0.17.5)
+# Changelog Archive (v0.1.0 ~ v0.17.6)
 
 All notable changes to this project will be documented in this file.
 
@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 0.17.x
 
+- [0.17.6] 2026-10-12 — 封面圖不再因圖床網域不在內建名單而破圖（圖片代理改為只要是公網點陣圖就顯示），自訂來源新增 {number_compact} 占位符
 - [0.17.5] 2026-10-12 — 開機不再等 NAS 與 metatube：舊版 NFO 時間補正與 metatube 重連改背景，debug.log 記啟動耗時
 - [0.17.4] 2026-10-10 — 自訂來源：上傳 YAML 規則檔新增刮削來源，驗收通過自動啟用，進階搜尋與重刮可指定
 - [0.17.3] 2026-10-10 — 代理可給所有來源用（僅 DMM／所有來源）＋ DMM 只看膠囊 ＋ 設定頁「測試連線」＋ 被拒絕不再顯示找不到
@@ -229,6 +230,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [0.1.3] 2026-01-17 — path_utils 集中化路徑處理，NFO updater / image proxy 全部改用
 - [0.1.1] 2026-01-17 — 圖片 proxy Windows 路徑修正 + Settings 手動更新檢查按鈕
 - [0.1.0] 2026-01-15 — 初始版本（Spotlight Search + Gallery Generator + Ollama 翻譯 + PyWebView）
+
+## [0.17.6] - 2026-10-12
+
+> 搜尋結果與預覽的封面圖，不再因為「圖床網域不在內建名單」而破圖；自訂來源（例如封面放在別的網域的站）也能正常顯示封面。
+
+### Fixed
+
+#### 🖼️ 封面圖不再因圖床網域而破圖
+
+- 圖片代理改成「只要是公網位址上的點陣圖就顯示」，內建來源、metatube、自訂來源一體適用，不必再把圖床網域逐一加進名單。例如肉視頻的封面放在另一個網域，現在能正常顯示。
+- 開 Clash／Surge 的 TUN（fake-ip）模式時，圖片與自訂來源仍可運作（198.18.0.0/15 這段位址現在視為公網）。
+
+### Changed
+
+- 圖片代理改看檔案開頭的格式判斷是不是圖片（JPEG／PNG／GIF／WebP／AVIF／BMP），不再相信對方宣稱的類型；上游回的是網頁或錯誤頁時不會轉給瀏覽器。
+- 圖片代理不跟隨轉址；內網與本機位址一律不代理。
+
+### Added
+
+- 自訂來源網址新增 `{number_compact}`／`{number_compact_lower}` 兩個占位符（`MD-0317` → `MD0317`），給網址不帶連字號的站用。搜尋時若輸入 `MD0180-3`（字母後沒有連字號），會被當成 `MD01803`，請改輸入 `MD-0180-3`。
+
+#### ⚠️ 已知限制
+
+- 需要特定 Referer 才給看的防盜連圖床，封面仍可能破圖。
+- 自行把網路設成其他 fake-ip 網段（不是 198.18.0.0/15）時，該段位址仍會被擋。
 
 ## [0.17.5] - 2026-10-12
 

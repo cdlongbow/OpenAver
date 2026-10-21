@@ -107,10 +107,10 @@ scrapers/
 
 ## 輔助服務
 
-### `scrapers/actress/` (orchestrator + 4 sources)
+### `scrapers/actress/` (orchestrator + 5 sources)
 **女優資料爬蟲**
-- Orchestrator 並行 4 路：Xcity / Wikipedia JP / Graphis / gfriends
-- 文字資料依欄位逐一合併 Xcity、Wiki、Graphis 的可用值；照片依來源優先序選取
+- Orchestrator 並行 5 路：Wikipedia JP / Xcity / Graphis / avbase / gfriends
+- 文字資料依欄位逐一合併「維基 → xcity → graphis → avbase」的可用值（維基優先，avbase 只補前三家都沒有的欄位）；別名取維基、維基沒有才取 avbase；照片依來源優先序選取，所有來源都沒照片時收藏改從片封面裁頭像
 - 供女優卡（Hero Card）功能使用
 - Phase 42e（2026-04-11）起不再使用 JavBus actress 路徑；影片 pipeline 的 `scrapers/javbus.py` 不受影響
 
@@ -119,6 +119,11 @@ scrapers/
 - 透過片商映射 + jsDelivr CDN HEAD request 定位女優圖片，不下載 Filetree.json、不 clone repo。
 - 維護 `MAKER_TO_GFRIENDS` 對照表，將 maker 名稱映射到 gfriends `Content/` 子資料夾。
 - `lookup_gfriends(name, makers)` — 依片商優先順序嘗試，最終以 `9-AVDBS` 兜底。
+
+### `scrapers/actress/avbase.py`
+**avbase 女優頁解析**（網友共編；舊名新名同一頁）
+- 以 curl_cffi 仿瀏覽器連線讀公開女優頁（一般連線會被 Cloudflare 擋 403），查詢名須出現在頁面列出的名字中才算查到（全半形視為相同）。
+- 頁面什麼都沒有（只有名字或 @ 帳號）視為查無；只有別名也算查到。
 
 ### `scrapers/actress/graphis.py`
 **Graphis Profile 文字解析**
