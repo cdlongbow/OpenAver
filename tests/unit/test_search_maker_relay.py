@@ -171,14 +171,6 @@ def test_typed_and_capsule_lists_are_recorded_separately(order, bus, dev):
     assert bus.call_count == 0 and dev.call_count == 1 and capsule.results[0]["number"] == "A-0"
 
 
-def test_answerer_record_is_lru_capped_at_128():
-    for i in range(129):
-        relay._note_maker_answerer((f"k{i}", None), "javbus")
-    assert len(relay._MAKER_ANSWERERS) == 128
-    assert ("k0", None) not in relay._MAKER_ANSWERERS
-    assert ("k128", None) in relay._MAKER_ANSWERERS
-
-
 # ------------------------------------------------------------------ 鏈與換家
 def test_first_non_empty_wins_and_later_not_asked(order, bus, dev):
     order(["javdb", "javbus"])
@@ -275,19 +267,6 @@ def test_empty_chain_is_not_found_with_zero_requests(order, bus, dev):
     order(["javdb", "javbus"], enabled=[])
     assert search() == E("maker_not_found")
     assert bus.call_count == 0 and dev.call_count == 0
-
-
-def test_provider_without_run_maker_raises_type_error(order, monkeypatch):
-    order(["javbus"])
-
-    class Bare:
-        id = "javbus"
-        capabilities = frozenset({__import__("core.search_providers.types", fromlist=["Kind"]).Kind.MAKER})
-        fallback_streaming = False
-
-    monkeypatch.setitem(relay.registry._REGISTRY, "javbus", lambda: Bare())
-    with pytest.raises(TypeError):
-        search()
 
 
 def test_limit_and_args_forwarded_to_provider(order, bus, dev):

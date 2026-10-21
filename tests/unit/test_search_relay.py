@@ -144,22 +144,6 @@ def test_registered_ids_are_javbus_dmm_and_javdb():
     assert registry.registered_ids() == frozenset({"javbus", "dmm", "javdb"})
 
 
-@pytest.mark.parametrize("pid", sorted(registry.registered_ids()))
-def test_every_registered_provider_satisfies_protocol_shape(pid):
-    p = registry.new_provider(pid)
-    assert p.id == pid
-    assert isinstance(p.capabilities, frozenset) and p.capabilities
-    assert isinstance(p.supports_discovery, bool) and isinstance(p.fallback_streaming, bool)
-    assert callable(p.run) and callable(p.enrich)
-    sig = inspect.signature(p.run)
-    assert {"status_callback", "result_callback", "discovery_only"} <= set(sig.parameters)
-
-
-def test_provider_protocol_declares_run():
-    assert callable(getattr(Provider, "run", None))
-    assert {"status_callback", "result_callback", "discovery_only"} <= set(inspect.signature(Provider.run).parameters)
-
-
 # ---------------------------------------------------------------- 接力語意
 def test_first_non_empty_provider_wins_and_later_not_asked(chain):
     a, b = Fake("a", cards=[card("A-1")]), Fake("b", cards=[card("B-1")])

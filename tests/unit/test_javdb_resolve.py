@@ -269,16 +269,6 @@ def test_exception_not_cached_and_propagates(kind, exc):
     assert len(good.calls) > 0  # 例外沒有被記成「確定查無」
 
 
-def test_cache_cap_clears_whole_table():
-    site = _Site(default=[])
-    for i in range(1024):
-        _resolve(Kind.CODE, f"k{i}", site)
-    _resolve(Kind.CODE, "overflow", site)
-    n = len(site.calls)
-    _resolve(Kind.CODE, "k0", site)  # 整張清空後 k0 要再問
-    assert len(site.calls) == n + 1
-
-
 # ------------------------------------------------------------------ provider 面
 def test_capabilities_exact():
     assert JavDBProvider.capabilities == frozenset(

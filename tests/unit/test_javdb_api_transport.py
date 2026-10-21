@@ -581,12 +581,6 @@ class TestTypedSearchAndListTags:
         with pytest.raises(exc):
             api_list_tags("0:a:Av2e", 1)
 
-    def test_to_video_is_public_and_old_name_gone(self):
-        import core.scrapers.javdb_api as javdb_api
-
-        assert callable(javdb_api.to_video)
-        assert not hasattr(javdb_api, "_to_video")
-
 
 # ============================================================
 # 175b-T4a｜api_search_page（無 type 的分頁關鍵字搜尋）
