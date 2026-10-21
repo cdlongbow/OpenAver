@@ -492,6 +492,16 @@ def _clear_javbus_resolve_cache():
     yield
 
 
+# 175c-T7：DMM 的 Probe 快取是模組層（name_key -> Probe），同樣會讓請求數隨執行順序飄；只清已載入的模組。
+@pytest.fixture(autouse=True)
+def _clear_dmm_probe_cache():
+    import sys as _sys
+    mod = _sys.modules.get("core.search_providers.dmm")
+    if mod is not None:
+        mod.clear_probe_cache()
+    yield
+
+
 # ============ TASK-174-T2：漏 mock 的全域防線（avbase）====
 #
 # 外連防線只攔 Python `socket`，`curl_cffi`（libcurl 在 C 層連線）不在範圍（BE-TEST-43）。
@@ -593,8 +603,9 @@ def empty_library_makers(monkeypatch):
 # 只 patch 既有屬性（不用 create=True，命名錯誤要炸）；T7 加入 DMM 的 resolve 後擴成兩家。
 @pytest.fixture
 def no_entity_lookup(monkeypatch):
-    """opt-in（非 autouse）：JavBus 名稱→實體 resolve 回 None（0 請求）。"""
+    """opt-in（非 autouse）：JavBus、DMM 名稱→實體 resolve 回 None（0 請求）。"""
     monkeypatch.setattr("core.search_providers.javbus.JavBusProvider.resolve", lambda self, kind, name: None)
+    monkeypatch.setattr("core.search_providers.dmm.DMMProvider.resolve", lambda self, kind, name: None)
 
 
 # ============ CI 修復：session 開始前把真實預設資料根真的定版一次 ============

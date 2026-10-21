@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 from core.logger import get_logger
+from core.name_match import split_paren_name
 
 logger = get_logger(__name__)
 from .base import BaseScraper
@@ -29,15 +30,9 @@ _review_supported: Optional[bool] = None
 _shipped_table_cache: Optional[dict] = None
 
 
-_TRAILING_PAREN = re.compile(r'\s*（[^（）]*）\s*$')
-
-
 def _actress_main_name(name):
     """DMM 女優名只留主名：去掉結尾一段全形括號（舊名）；去完為空則回原名。"""
-    if not name:
-        return name
-    main = _TRAILING_PAREN.sub('', name, count=1)
-    return main or name
+    return split_paren_name(name)[0]
 
 
 # ── GraphQL 傳輸層（175c-T6）──────────────────────────────────────────────

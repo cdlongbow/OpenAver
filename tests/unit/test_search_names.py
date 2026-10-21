@@ -12,7 +12,6 @@ from unittest.mock import patch
 import pytest
 
 from core.name_match import fold, split_paren_name
-from core.scrapers.dmm import _actress_main_name
 from core.search_providers import javdb as jp
 from core.search_providers import names as names_mod
 from core.search_providers.names import maker_names
@@ -160,12 +159,6 @@ PAREN_TABLE = [
 @pytest.mark.parametrize("raw, expected", PAREN_TABLE)
 def test_split_paren_name_table(raw, expected):
     assert split_paren_name(raw) == expected
-
-
-@pytest.mark.parametrize("raw, _", PAREN_TABLE)
-def test_split_paren_main_equals_dmm_actress_main_name(raw, _):
-    # T7 才讓 DMM 改呼叫 split_paren_name；在那之前兩邊必須逐項相等，換手時才不會有行為差
-    assert split_paren_name(raw)[0] == _actress_main_name(raw)
 
 
 def test_name_match_import_pulls_no_scraper_or_database():
