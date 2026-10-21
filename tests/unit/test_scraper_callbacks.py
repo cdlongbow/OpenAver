@@ -295,6 +295,25 @@ class TestSearchActressResultCallback:
         assert [s for s, _ in callback_calls].count(-1) == 1
         assert [s for s, _ in callback_calls if s >= 0] == [0]
 
+    def test_javbus_fallback_after_dmm_gets_none(self, monkeypatch):
+        """DMM 排第一、查無，JavBus 接手 → JavBus 不串流（最後結果依日期排序，與今天相同）"""
+        from core.scraper import search_actress
+        from core.scrapers.dmm import DMMScraper
+
+        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['dmm', 'javbus'])
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
+        callback_calls = []
+        mock_scraper = make_mock_scraper_actress([['SONE-001', 'SONE-002']])
+
+        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
+             patch('core.scraper.search_jav', side_effect=lambda n, source='javbus': {'number': n, 'title': 't', 'date': '2024-01-01'}), \
+             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=[]):
+            results = search_actress('三上悠亜', limit=20,
+                                     result_callback=lambda s, d: callback_calls.append((s, d)))
+
+        assert len(results) == 2
+        assert callback_calls == []  # JavBus 後備沒有拿到 callback → 沒有 seed、沒有 result-item
+
     def test_fallback_source_gets_none_after_seed_sent(self, monkeypatch):
         """JavBus 已送出 seed、詳情全失敗 → DMM 拿到 None，不再送第二組骨架卡（R28，I-S3）"""
         from core.scraper import search_actress

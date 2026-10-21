@@ -83,6 +83,9 @@ class Provider(Protocol):
     id: str
     capabilities: frozenset[Kind]
     supports_discovery: bool
+    # 串流送出的順序＝最終回傳的順序 ⇒ 當後備時串流不會改變使用者最後看到的順序（DMM 是；JavBus 補完詳情後
+    # 依日期重排，不是）。每個 provider 要自行宣告（175b 的 JavDB 亦然）。
+    fallback_streaming: bool
 
     def resolve(self, kind: Kind, name: str) -> EntityRef | None:
         """名字 → 實體；沒有／不是 ⇒ None；連不上 ⇒ raise SourceUnreachable／SourceBlocked。"""

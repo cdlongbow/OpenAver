@@ -4,7 +4,8 @@
 - 例外（Exception）或空結果 ⇒ log 後換下一家；全無 ⇒ []。175a 中「查無」與「連不上」對使用者都是 []。
 - 實體梯子（actress）：外圈 provider、內圈 ACTOR→SERIES→DIRECTOR→LABEL；任一 ref 命中走
   list_entity＋run_window(guard=True)，該家不再問 KEYWORD；梯子全空才 run(KEYWORD)（175a 對 JavBus／DMM 是空操作）。
-- seed 規則（CD-175a-4 I-S3）：尚未真的送出 seed（slot == -1 被轉送）前，每家拿得到 callback；送出後一律 None。
+- seed 規則（CD-175a-4 I-S3）：第一個發動的 provider 一律拿得到 callback（同今天 first_dispatched）；之後的 provider
+  只有「尚未真的送出 seed（slot == -1 被轉送）且 fallback_streaming」才拿得到，否則 None（避免後備改變最終順序）。
 - relay 自己不送 status 事件、不補 `_source`、不排序。
 頂層只准 stdlib、core.logger、core.scrapers.errors、core.search_providers.*（BE-PY-08）。
 """
@@ -35,6 +36,11 @@ class _SeedGate:
         self._cb(slot, payload)
         if slot == -1:
             self.seeded = True
+
+
+def _streams_as_fallback(provider) -> bool:
+    """後備（非第一個發動者）能否拿 callback：只有「串流順序＝最終順序」的 provider（fallback_streaming）。"""
+    return bool(getattr(provider, "fallback_streaming", False))
 
 
 def _resolve_refs(provider, kind: Kind, name: str) -> list[EntityRef]:
@@ -94,11 +100,11 @@ def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, 
     providers = registry.providers_for(kinds, discovery_only=discovery_only)
     chain_ids = [p.id for p in providers]
     gate = _SeedGate(result_callback)
-    for provider in providers:
+    for index, provider in enumerate(providers):
         provider_id = provider.id
         if not callable(getattr(provider, "run", None)):
             raise TypeError(f"provider {provider_id!r} has no run()")
-        cb = None if gate.seeded else gate.callback
+        cb = None if gate.seeded or (index and not _streams_as_fallback(provider)) else gate.callback
         try:
             cards = _ask(provider, mode, q, w, status_callback, cb, discovery_only)
         except Exception as exc:

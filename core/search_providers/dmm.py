@@ -20,6 +20,7 @@ class DMMProvider:
     id = SOURCE
     capabilities = frozenset({Kind.KEYWORD})
     supports_discovery = False
+    fallback_streaming = True  # 最終陣列不重排，串流順序＝最終順序
 
     def __init__(self, scraper=None):
         self._scraper_obj = scraper

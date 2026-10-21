@@ -95,6 +95,7 @@ class JavBusProvider:
     id = SOURCE
     capabilities = frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE, Kind.MAKER})
     supports_discovery = True
+    fallback_streaming = False  # 補完詳情後 _sorted（日期）重排，串流順序≠最終順序
 
     # ------------------------------------------------------------ Protocol
     def resolve(self, kind: Kind, name: str) -> EntityRef | None:

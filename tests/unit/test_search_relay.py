@@ -28,8 +28,10 @@ class Fake:
     """行為由建構參數決定：cards＝run 回傳；seed＝拿到 callback 時先送 seed；raises＝run 拋；
     seed 與 raises 同時給＝送 seed 後才拋。"""
 
-    def __init__(self, pid, *, cards=(), seed=None, raises=None, discovery=False, caps=BASE_CAPS):
+    def __init__(self, pid, *, cards=(), seed=None, raises=None, discovery=False, caps=BASE_CAPS,
+                 fallback_streaming=True):
         self.id = pid
+        self.fallback_streaming = fallback_streaming
         self.capabilities = caps
         self.supports_discovery = discovery
         self.cards = list(cards)
@@ -286,6 +288,30 @@ def test_fallback_provider_gets_callback_until_seed_sent(chain):
     assert b.received_callbacks[0] is not None  # 「給過就算」的假實作在這裡會紅
     b.received_callbacks[0](-1, ["B"])
     user.assert_called_once_with(-1, ["B"])  # 轉送到呼叫端
+
+
+def test_non_streaming_fallback_gets_none(chain):
+    """第一家查無、後備的結果會被重排（fallback_streaming=False）→ 後備拿 None，使用者最後看到的順序與今天相同"""
+    a, b = Fake("a"), Fake("b", cards=[card("B")], fallback_streaming=False)
+    chain([a, b])
+    assert search(result_callback=MagicMock()) == [card("B")]
+    assert a.received_callbacks[0] is not None
+    assert b.received_callbacks == [None]
+
+
+def test_first_dispatched_gets_callback_even_if_not_streaming_fallback(chain):
+    a = Fake("a", cards=[card("A")], fallback_streaming=False)
+    chain([a])
+    assert search(result_callback=MagicMock()) == [card("A")]
+    assert a.received_callbacks[0] is not None
+
+
+def test_real_providers_declare_fallback_streaming():
+    from core.search_providers.dmm import DMMProvider
+    from core.search_providers.javbus import JavBusProvider
+
+    assert DMMProvider.fallback_streaming is True  # 串流順序＝最終順序
+    assert JavBusProvider.fallback_streaming is False  # 補完詳情後依日期重排
 
 
 @pytest.mark.parametrize("a_raises", [None, RuntimeError("late")], ids=["seed-then-empty", "seed-then-raise"])
