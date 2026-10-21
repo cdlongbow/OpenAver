@@ -79,7 +79,7 @@ class Env:
             def __init__(self, lang=None):
                 env.lang = lang
 
-            def get_ids_from_search(self, query, page=1, search_type=None):
+            def get_ids_from_search(self, query, page=1, search_type=None, uncensored=False):
                 env.id_calls.append((query, page, search_type))
                 if page > env.pages:
                     return []

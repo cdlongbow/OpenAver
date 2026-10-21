@@ -39,10 +39,11 @@ def _stubs(numbers) -> list[dict]:
     return [{"number": n, "title": ""} for n in numbers]
 
 
-def _fetch_page(fetch_ids, w: Window):
-    """fetch_ids(page_no) -> list[str]。回 (fetch_window 算好的 Page, 是否曾取回任何 id)。
+def _take_window(fetch_ids, w: Window) -> tuple[Page, bool]:
+    """JavBus 清單的唯一取頁入口：fetch_ids(page_no) -> list[str]。回 (fetch_window 算好的 Page, 是否曾取回任何 id)。
 
     「曾取回」另外記：切片後為空（offset 落在該頁筆數之後）與「完全沒有 id」今天的事件不同。
+    404 當尾端（fetch_ids 回 []）；被擋／看不懂／逾時由 scraper 往外丟，這裡不吞。
     """
     seen = []
 
@@ -55,9 +56,15 @@ def _fetch_page(fetch_ids, w: Window):
     return fetch_window(PAGE_SIZE, fetch_page, w), bool(seen)
 
 
-def _fetch_ids(fetch_ids, w: Window):
-    page, got_any = _fetch_page(fetch_ids, w)
-    return [i.number for i in page.items], got_any
+def _take_code_window(scraper, prefix, w: Window) -> tuple[Page, bool]:
+    """CODE（前綴）的一個視窗：先問一般搜尋；整段沒有任何 id（站方 404）才對同一視窗改問無碼區。
+
+    無狀態、不記哪些前綴是無碼；被擋／看不懂／逾時直接往外丟，不會走到無碼區。
+    """
+    page, got_any = _take_window(lambda p: scraper.get_ids_from_search(prefix, page=p, search_type=1), w)
+    if got_any:
+        return page, got_any
+    return _take_window(lambda p: scraper.get_ids_from_search(prefix, page=p, search_type=1, uncensored=True), w)
 
 
 def _progress_hook(status_callback, total):
@@ -225,8 +232,7 @@ class JavBusProvider:
 
     def list_entity(self, ref: EntityRef, w: Window) -> Page:
         if ref.kind is Kind.CODE:
-            scraper = self._scraper()
-            return _fetch_page(lambda p: scraper.get_ids_from_search(ref.id, page=p, search_type=1), w)[0]
+            return _take_code_window(self._scraper(), ref.id, w)[0]
         if ref.kind is Kind.PARTIAL:
             import core.scraper as m
 
@@ -239,7 +245,7 @@ class JavBusProvider:
 
     def search_keyword(self, q: str, w: Window) -> Page:
         scraper = self._scraper()
-        return _fetch_page(lambda p: scraper.get_ids_from_search(q, page=p), w)[0]
+        return _take_window(lambda p: scraper.get_ids_from_search(q, page=p), w)[0]
 
     def enrich(self, item: WorkItem, ref: EntityRef | None) -> Enriched:
         if ref is not None and ref.kind in _ENTITY_KEY:
@@ -308,8 +314,8 @@ class JavBusProvider:
             status_callback("javbus", "searching")
         try:
             scraper = self._scraper()
-            numbers, got_any = _fetch_ids(
-                lambda p: scraper.get_ids_from_search(prefix, page=p, search_type=1), Window(offset, limit))
+            page, got_any = _take_code_window(scraper, prefix, Window(offset, limit))
+            numbers = [i.number for i in page.items]
             if not got_any:
                 if status_callback:
                     status_callback("javbus", "found:0")
@@ -341,7 +347,8 @@ class JavBusProvider:
                     return scraper.get_ids_from_search(name, page=p)
                 return ids_provider(scraper, p)
 
-            numbers, got_any = _fetch_ids(fetch_ids, Window(offset, limit))
+            page, got_any = _take_window(fetch_ids, Window(offset, limit))
+            numbers = [i.number for i in page.items]
             if got_any:
                 if status_callback:
                     status_callback("javbus", f"found:{len(numbers)}")

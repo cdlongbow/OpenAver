@@ -370,7 +370,8 @@ class JavBusScraper(BaseScraper):
         一般搜尋與 searchstar 共用這一份。"""
         return re.sub(r"\s+", "+", keyword.strip())
 
-    def _build_search_url(self, keyword: str, page: int = 1, search_type: int = 0) -> str:
+    def _build_search_url(self, keyword: str, page: int = 1, search_type: int = 0,
+                          uncensored: bool = False) -> str:
         """
         組建搜尋 URL。
 
@@ -378,6 +379,7 @@ class JavBusScraper(BaseScraper):
           第 1 頁：/search/{keyword}
           第 N 頁：/search/{keyword}/{N}
           前綴搜尋：上述 URL 後加 &type=1
+          無碼區：/uncensored 接在語系前綴之後（{語系前綴}/uncensored/search/…），其餘同上
 
         注意：`&type=1` 是 JavBus 的原生非標準 path-suffix 格式（commit 35-T3
         Playwright 實測確認），**不是** 標準 query string——勿「修正」成 `?type=1`。
@@ -385,7 +387,8 @@ class JavBusScraper(BaseScraper):
         `search_type=1` 的 path-suffix 過濾是否生效另論，勿改成標準 query string。
         """
         prefix = self._get_lang_prefix()
-        base = f"{self.BASE_URL}{prefix}/search/{self._plus_join(keyword)}"
+        section = "/uncensored" if uncensored else ""
+        base = f"{self.BASE_URL}{prefix}{section}/search/{self._plus_join(keyword)}"
         if page > 1:
             base += f"/{page}"
         if search_type > 0:
@@ -443,7 +446,8 @@ class JavBusScraper(BaseScraper):
             raise SourceUnreachable(f"JavBus list unreadable (no #waterfall): {url}")
         return self._parse_search_ids(BeautifulSoup(resp.text, "html.parser"))
 
-    def get_ids_from_search(self, keyword: str, page: int = 1, search_type: int = 0) -> list[str]:
+    def get_ids_from_search(self, keyword: str, page: int = 1, search_type: int = 0,
+                            uncensored: bool = False) -> list[str]:
         """
         輕量版搜尋：只回傳番號列表，不 fetch 每筆詳情。
 
@@ -451,6 +455,7 @@ class JavBusScraper(BaseScraper):
             keyword: 搜尋關鍵字或前綴
             page: 頁碼（從 1 開始）
             search_type: 0=一般搜尋，1=前綴搜尋（&type=1，JavBus 原生格式）
+            uncensored: True=改問無碼區（/uncensored/search/…；站方一般搜尋對無碼前綴回 404，如 HEYZO）
 
         Returns:
             番號列表（list[str]）；404（無結果／頁碼超界）回 []
@@ -460,7 +465,7 @@ class JavBusScraper(BaseScraper):
             SourceBlocked: 非 200 非 404（403／429／503…）
             SourceUnreachable: 200 但沒有 #waterfall（看不懂）
         """
-        url = self._build_search_url(keyword, page, search_type)
+        url = self._build_search_url(keyword, page, search_type, uncensored)
         try:
             resp = self._get_list(url)
         except (requests.Timeout, requests.ConnectionError) as e:
