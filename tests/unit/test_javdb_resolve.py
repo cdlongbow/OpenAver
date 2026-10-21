@@ -30,11 +30,9 @@ def _row(id_, name, *, type_=0, vc=100, zht="", other=""):
 @pytest.fixture(autouse=True)
 def _clean():
     clear_resolve_cache()
-    javdb_api.clear_actor_name_cache()
     with patch.object(jp, "_sleep", lambda s: None):
         yield
     clear_resolve_cache()
-    javdb_api.clear_actor_name_cache()
 
 
 class _Site:
@@ -71,7 +69,6 @@ def test_actor_type1_candidate_rejected():
     # 使用者打「人妻」→ 若 type==1 的同名雜項條目被當成女優，清單變成那個條目的作品，而不是標題含「人妻」的片
     site = _Site({("actor", "人妻"): [_row("M1", "人妻", type_=1, vc=42)]})
     assert _resolve(Kind.ACTOR, "人妻", site) is None
-    assert javdb_api.cached_actor_name("M1") is None
 
 
 def test_actor_single_candidate_romaji_accepted():
@@ -124,31 +121,6 @@ def test_actor_misc_type1_not_counted_in_exactly_one():
 def test_actor_multiple_exact_picks_largest():
     site = _Site({("actor", "あい"): [_row("S", "あい", vc=3), _row("L", "あい", vc=90), _row("M", "あい", vc=90)]})
     assert _resolve(Kind.ACTOR, "あい", site).id == "L"
-
-
-def test_actor_hit_records_japanese_name():
-    # 使用者搜「三上悠亞」→ 順手寫入名字，T6 之後不必為了日文名再多打查名請求
-    site = _Site({("actor", "三上悠亞"): [_row("Av2e", "三上悠亜")]})
-    _resolve(Kind.ACTOR, "三上悠亞", site)
-    assert javdb_api.cached_actor_name("Av2e") == "三上悠亜"
-
-
-def test_actor_miss_does_not_record():
-    site = _Site({("actor", "巨乳"): [_row("A", "巨乳A子"), _row("B", "巨乳B子")]})
-    _resolve(Kind.ACTOR, "巨乳", site)
-    assert javdb_api.cached_actor_name("A") is None and javdb_api.cached_actor_name("B") is None
-
-
-def test_actor_name_cache_clear_and_cap():
-    javdb_api.remember_actor_name("a", "甲")
-    assert javdb_api.cached_actor_name("a") == "甲"
-    javdb_api.clear_actor_name_cache()
-    assert javdb_api.cached_actor_name("a") is None
-    for i in range(4096):
-        javdb_api.remember_actor_name(f"k{i}", "n")
-    javdb_api.remember_actor_name("last", "n")
-    assert javdb_api.cached_actor_name("k0") is None
-    assert javdb_api.cached_actor_name("last") == "n"
 
 
 # ------------------------------------------------------------------ 泛詞 × 三種

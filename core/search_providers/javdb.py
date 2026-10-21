@@ -342,8 +342,6 @@ class JavDBProvider:
         ref = None
         if cand is not None:
             ref = EntityRef(kind, cand.name if kind is Kind.CODE else cand.id, cand.name)
-            if kind is Kind.ACTOR:
-                javdb_api.remember_actor_name(cand.id, cand.name)
         if len(_RESOLVE_CACHE) >= _RESOLVE_CACHE_MAX:
             _RESOLVE_CACHE.clear()
         _RESOLVE_CACHE[key] = ref

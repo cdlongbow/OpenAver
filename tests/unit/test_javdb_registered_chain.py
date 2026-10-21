@@ -108,14 +108,12 @@ def _actress_site(site, actor_ids):
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     clear_resolve_cache()
-    javdb_api.clear_actor_name_cache()
     monkeypatch.setattr(jp, "_sleep", lambda s: None)
     monkeypatch.setattr(time, "sleep", lambda s: None)
     monkeypatch.setattr(cf, "ThreadPoolExecutor", SyncExecutor)
     monkeypatch.setattr(JavDBProvider, "_proxies", lambda self: None)
     yield
     clear_resolve_cache()
-    javdb_api.clear_actor_name_cache()
 
 
 @pytest.fixture

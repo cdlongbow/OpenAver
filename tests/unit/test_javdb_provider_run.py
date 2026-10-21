@@ -51,11 +51,9 @@ class SyncExecutor:
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     clear_resolve_cache()
-    javdb_api.clear_actor_name_cache()
     monkeypatch.setattr(jp, "_sleep", lambda s: None)
     yield
     clear_resolve_cache()
-    javdb_api.clear_actor_name_cache()
 
 
 @pytest.fixture
