@@ -285,9 +285,18 @@ def test_avbase_canary():
         return probe_cache[0]
 
     results = []
+    alias_missing = False  # alias sample returned None (not a dict)
     for name, expected_birth in AVBASE_EVERGREEN:
         result = scrape_avbase(name)
         _assert_avbase_alias(name, result)
+        alias_missing = alias_missing or (name == AVBASE_ALIAS_EXPECTED[0] and not result)
         usable = _avbase_usable(result, expected_birth)
         results.append("pass" if usable else _classify(result, lambda r: False, _reachable()))
     _verdict(results, "avbase", "https://www.avbase.net/")
+    # Quorum is green here (>=1 pass). A dead alias sample must still be red
+    # when the site is reachable; unreachable keeps the quorum outcome.
+    if alias_missing and _reachable():
+        pytest.fail(
+            f"avbase: 別名樣本 {AVBASE_ALIAS_EXPECTED[0]} 查無（站可達）— "
+            "常青別名樣本可能被改名/合併/刪除，別名路徑無法驗證"
+        )
