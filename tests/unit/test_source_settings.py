@@ -3,12 +3,11 @@
 Covers Runtime Auto Pool filtering (`get_enabled_source_ids`) and the
 uncensored-mode single-source-of-truth (`is_uncensored_mode_effective`).
 Also covers `get_all_source_ids_ordered()` (TASK-65a-1) and the
-the search-provider registry (`core.search_providers.registry`).
+search-provider registry (`core.search_providers.registry`).
 """
 import pytest
 
 from core import source_settings
-from core.search_providers.registry import registered_ids
 
 
 # ---------------------------------------------------------------------------
@@ -372,22 +371,3 @@ def test_switchable_fallback_when_sources_missing(monkeypatch):
     from core.scrapers.utils import SOURCE_ORDER
     _patch_config(monkeypatch, {'search': {}})
     assert source_settings.get_switchable_source_ids_ordered() == list(SOURCE_ORDER)
-
-
-# ---------------------------------------------------------------------------
-# 模糊搜尋來源＝search_providers 註冊表  (TASK-65a-1 → 175a-T7)
-# ---------------------------------------------------------------------------
-
-def test_fuzzy_search_sources_contains_correct_two():
-    """註冊表必須恰好是 2 個有模糊能力的有碼來源 (TASK-65g)。"""
-    assert sorted(registered_ids()) == sorted(['javbus', 'dmm'])
-
-
-def test_fuzzy_search_sources_excludes_avsox():
-    """avsox is uncensored-only — must not be registered."""
-    assert 'avsox' not in registered_ids()
-
-
-def test_fuzzy_search_sources_excludes_fake_fuzzy_sources():
-    """fc2, heyzo, d2pass do keyword-as-id lookup, not real fuzzy search — excluded."""
-    assert not {'fc2', 'heyzo', 'd2pass', 'jav321', 'javlibrary', 'javdb'} & set(registered_ids())

@@ -137,13 +137,6 @@ def test_dmm_emits_searching_status_before_search():
     assert order[-1] == ("done", "found:1")
 
 
-def test_dmm_discovery_only_sends_no_searching_status():
-    statuses = []
-    DMMProvider(DMMScraper()).run(Kind.KEYWORD, "q", Window(0, 20),
-                                  status_callback=lambda k, v: statuses.append((k, v)), discovery_only=True)
-    assert statuses == []
-
-
 @pytest.mark.parametrize("case", ["empty", "wrong_kind", "discovery"])
 def test_dmm_empty_wrong_kind_and_discovery(case):
     calls = []

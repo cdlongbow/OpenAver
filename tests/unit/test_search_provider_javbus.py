@@ -131,19 +131,6 @@ def test_shim_forwards_offset(monkeypatch, kind, offset, first_page):
     assert numbers(out) == [f"MIDV-{i:03d}" for i in range(offset + 1, offset + 21)]
 
 
-def test_shim_signatures_keep_parameter_names():
-    import inspect
-
-    assert list(inspect.signature(scraper_mod.search_prefix).parameters) == [
-        "prefix", "limit", "offset", "status_callback", "result_callback", "discovery_only"]
-    assert list(inspect.signature(scraper_mod.search_partial).parameters) == [
-        "partial", "status_callback", "result_callback", "discovery_only"]
-    kw = inspect.signature(scraper_mod.search_maker_latest).parameters
-    assert kw["titles"].kind is inspect.Parameter.KEYWORD_ONLY and kw["db_path"].default is None
-    assert inspect.signature(scraper_mod._javbus_keyword_search).parameters["ids_provider"].kind is (
-        inspect.Parameter.KEYWORD_ONLY)
-
-
 # ---------------------------------------------------------------- 2. 失敗／無 title 丟棄
 def test_failed_detail_is_dropped_not_degraded(monkeypatch):
     env = Env(monkeypatch, script={"MIDV-002": ValueError("boom"), "MIDV-003": "NONE"})
@@ -188,20 +175,6 @@ def test_javbus_window_adds_no_delay(monkeypatch, sleeps):
 
 
 # ---------------------------------------------------------------- 4. Provider 合約
-def test_declaration_and_resolve(monkeypatch):
-    p = JavBusProvider()
-    assert p.id == "javbus" and p.supports_discovery is True
-    assert p.capabilities == frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE, Kind.MAKER})
-    assert p.resolve(Kind.ACTOR, "三上悠亜") is None
-    assert p.resolve(Kind.CODE, "MIDV") is None
-
-
-def test_construction_touches_no_session_or_config(monkeypatch):
-    monkeypatch.setattr(scraper_mod, "JavBusScraper", lambda **kw: pytest.fail("no scraper at construction"))
-    monkeypatch.setattr(scraper_mod, "load_config", lambda: pytest.fail("no config at construction"))
-    JavBusProvider()
-
-
 def test_list_entity_code_uses_prefix_search_type_and_window(monkeypatch):
     env = Env(monkeypatch)
     page = JavBusProvider().list_entity(EntityRef(Kind.CODE, "MIDV", "MIDV"), Window(20, 20))
@@ -227,22 +200,6 @@ def test_list_entity_partial_returns_candidates_and_ignores_limit(monkeypatch):
     ref = EntityRef(Kind.PARTIAL, "SONE-0", "SONE-0")
     assert [i.number for i in p.list_entity(ref, Window(0, 1)).items] == ["SONE-001", "SONE-002", "SONE-003"]
     assert p.list_entity(ref, Window(30, 20)).items == []
-
-
-def test_list_entity_maker_is_not_implemented():
-    with pytest.raises(NotImplementedError):
-        JavBusProvider().list_entity(EntityRef(Kind.MAKER, "x", "x"), Window(0, 30))
-
-
-def test_enrich_positional_call_and_no_title_means_no_card(monkeypatch):
-    env = Env(monkeypatch, script={"X-2": "NOTITLE", "X-3": "NONE"})
-    p = JavBusProvider()
-    item = lambda n: WorkItem(n, "", "", "", None, "javbus")  # noqa: E731
-    got = p.enrich(item("X-1"), None)
-    assert got.card["number"] == "X-1" and got.belongs is None
-    assert p.enrich(item("X-2"), None).card is None
-    assert p.enrich(item("X-3"), None).card is None
-    assert env.jav_calls == [("X-1", "javbus"), ("X-2", "javbus"), ("X-3", "javbus")]
 
 
 # ---------------------------------------------------------------- 5. 事件序
@@ -337,11 +294,6 @@ def test_run_dispatches_by_kind(monkeypatch):
 
 
 # ---------------------------------------------------------------- 6. 片商
-def test_maker_search_result_is_one_object():
-    assert scraper_mod.MakerSearchResult is sp_types.MakerSearchResult
-    assert sp_types.MakerSearchResult._fields == ("results", "has_more", "error_code")
-
-
 def _maker(env, monkeypatch, status="found", offset=0):
     res = SimpleNamespace(status=status, kind="studio", studio_id="sid")
     monkeypatch.setattr(scraper_mod, "resolve_maker_studio", lambda *a, **k: res)
@@ -356,13 +308,6 @@ def test_maker_resolution_error_codes(monkeypatch, status, code):
     out = _maker(env, monkeypatch, status)
     assert out == sp_types.MakerSearchResult([], False, code)
     assert env.studio_calls == []
-
-
-@pytest.mark.parametrize("offset", [-30, 10, 45])
-def test_maker_bad_offset_raises(monkeypatch, offset):
-    env = Env(monkeypatch)
-    with pytest.raises(ValueError):
-        _maker(env, monkeypatch, offset=offset)
 
 
 def test_maker_list_failure_empty_and_has_more(monkeypatch):

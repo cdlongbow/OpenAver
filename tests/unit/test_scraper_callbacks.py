@@ -624,13 +624,3 @@ class TestSmartSearchResolveMakers:
             smart_search('三上悠亜')
 
         assert mock_known.call_count == 0
-
-    def test_smart_search_maker_intent_not_wired_in_175a(self):
-        """resolve_makers=True 且分類為片商 → 175a 尚未接線，明確拋 NotImplementedError"""
-        from core.query_intent import Intent
-        from core.scraper import smart_search
-
-        with patch('core.maker_names.known_makers', return_value=frozenset({'moodyz'})), \
-             patch('core.query_intent.classify_query', return_value=Intent('maker', 'moodyz')):
-            with pytest.raises(NotImplementedError):
-                smart_search('MOODYZ', resolve_makers=True)

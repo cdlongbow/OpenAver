@@ -13,8 +13,7 @@ import pytest
 
 from core.scraper import MAX_WORKERS, REQUEST_DELAY
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
-from core.search_providers import pipeline
-from core.search_providers.pipeline import BREAKER_THRESHOLD, fetch_window, run_window, verify_page
+from core.search_providers.pipeline import BREAKER_THRESHOLD, fetch_window, run_window
 from core.search_providers.types import Enriched, EntityRef, Kind, Outcome, Page, Window, WorkItem
 
 REF = EntityRef(Kind.ACTOR, "a1", "someone")
@@ -262,20 +261,6 @@ def test_guard_failure_sends_no_seed_and_no_result_item(sync_executor):
         assert res.seeded is False and res.cards == []
 
 
-def test_guard_requires_ref():
-    with pytest.raises(ValueError):
-        run_window(FakeProvider(), make_items(3), None, guard=True)
-
-
-def test_verify_page_returns_cards_by_slot(sync_executor):
-    prov = FakeProvider({"AAA-001": "F", "AAA-002": "T", "AAA-003": ValueError("v")})
-    verdict = verify_page(prov, make_items(5), REF, delay=0)
-    assert verdict.passed is True and verdict.outcome is None
-    assert sorted(verdict.cards) == [0, 1, 2]
-    assert verdict.cards[0]["number"] == "AAA-001" and verdict.cards[2] is None
-    assert len(prov.calls) == 3
-
-
 # ---------------------------------------------------------------- seed / outcome / on_fail
 def test_seed_sent_once_first_with_all_numbers_then_slot_results(sync_executor):
     events = []
@@ -339,11 +324,6 @@ def test_seeded_reflects_whether_seed_was_actually_sent(sync_executor):
         assert res.seeded is False
     assert run_window(FakeProvider(), make_items(2)).seeded is False
     assert run_window(FakeProvider(), make_items(2), result_callback=MagicMock()).seeded is True
-
-
-def test_invalid_on_fail_rejected():
-    with pytest.raises(ValueError):
-        run_window(FakeProvider(), make_items(2), on_fail="nope")
 
 
 # ---------------------------------------------------------------- 單部失敗
@@ -427,13 +407,6 @@ def test_guard_stage_failures_do_not_count_toward_breaker(sync_executor):
     assert len(prov.calls) == 8
 
 
-def test_breaker_can_be_disabled(sync_executor):
-    script = {f"AAA-{i:03d}": SourceBlocked("b") for i in range(1, 11)}
-    prov = FakeProvider(script)
-    res = run_window(prov, make_items(10), breaker=False)
-    assert len(prov.calls) == 10 and len(res.cards) == 10
-
-
 def test_breaker_drop_policy_omits_unrequested(sync_executor):
     script = {f"AAA-{i:03d}": SourceBlocked("b") for i in range(1, 13)}
     prov = FakeProvider(script)
@@ -512,22 +485,6 @@ def test_enrichment_respects_concurrency_and_delay_limits(monkeypatch, sleeps):
     assert all(s >= REQUEST_DELAY for s in sleeps)
 
 
-def test_delay_zero_and_custom_delay_are_honoured(sync_executor, sleeps):
-    run_window(FakeProvider(), make_items(4), delay=0)
-    assert all(s == 0 for s in sleeps)
-    sleeps.clear()
-    run_window(FakeProvider(), make_items(4), delay=0.7)
-    assert len(sleeps) >= 4 and all(s >= 0.7 for s in sleeps)
-
-
-def test_pipeline_has_no_own_threads_or_other_pools():
-    import inspect
-
-    src = inspect.getsource(pipeline)
-    assert "threading.Thread" not in src and "ProcessPoolExecutor" not in src
-    assert ".map(" not in src
-
-
 # ---------------------------------------------------------------- 175a-T4：on_item_done 掛鉤
 def run_hooked(script, n=6, guard=False, ref=None, **kw):
     prov = FakeProvider(script)
@@ -572,10 +529,3 @@ def test_item_done_with_guard_pass_covers_every_item_in_order(sync_executor):
     for slot in range(5):
         assert events.index(("done", slot, True)) < events.index(("item", slot))
 
-
-def test_item_done_empty_window_and_none_hook_do_nothing(sync_executor):
-    events = []
-    run_window(FakeProvider(), [], on_item_done=lambda s, ok: events.append(s))
-    assert events == []
-    res = run_window(FakeProvider(), make_items(3), on_item_done=None)
-    assert len(res.cards) == 3

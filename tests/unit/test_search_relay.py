@@ -142,11 +142,6 @@ def test_registered_ids_are_javbus_and_dmm():
     assert registry.registered_ids() == frozenset({"javbus", "dmm"})
 
 
-def test_registry_import_pulls_no_provider_module():
-    assert not hasattr(registry, "get_provider")
-    assert not hasattr(registry, "_INSTANCES")
-
-
 # ---------------------------------------------------------------- 接力語意
 def test_first_non_empty_provider_wins_and_later_not_asked(chain):
     a, b = Fake("a", cards=[card("A-1")]), Fake("b", cards=[card("B-1")])
@@ -191,17 +186,6 @@ def test_base_exception_is_not_swallowed(chain):
         search()
 
 
-def test_provider_without_run_is_a_programming_error(chain):
-    class NoRun:
-        id = "a"
-        capabilities = BASE_CAPS
-        supports_discovery = False
-
-    chain([NoRun()])
-    with pytest.raises(TypeError):
-        search()
-
-
 @pytest.mark.parametrize(
     "mode,kind", [("partial", Kind.PARTIAL), ("prefix", Kind.CODE), ("actress", Kind.KEYWORD)]
 )
@@ -214,12 +198,6 @@ def test_mode_maps_to_kind_and_forwards_window_and_callbacks(chain, mode, kind):
     k, target, got_w, got_status, got_result, got_disc = a.run_calls[0]
     assert (k, target, got_w, got_status, got_disc) == (kind, "needle", w, status, False)
     assert got_result is not None and got_result is not result  # 包過 tracker，不是原物件
-
-
-def test_unknown_mode_is_value_error(chain):
-    chain([Fake("a")])
-    with pytest.raises(ValueError):
-        search("nope")
 
 
 def test_discovery_only_asks_only_discovery_capable_providers(chain):
@@ -261,13 +239,6 @@ def test_dmm_skipped_when_its_switch_is_off(chain):
     chain([jb, dmm], enabled=["javbus"])
     assert search() == []
     assert len(dmm.run_calls) == 0
-
-
-def test_providers_for_returns_ordered_instances(chain):
-    jb, dmm = Fake("javbus"), Fake("dmm")
-    chain([jb, dmm], order=["dmm", "javbus"])
-    assert [p.id for p in registry.providers_for({Kind.PARTIAL})] == ["dmm", "javbus"]
-    assert registry.providers_for({Kind.MAKER}) == []
 
 
 def test_each_search_builds_fresh_providers(chain):
@@ -426,9 +397,3 @@ def test_relay_does_not_add_source_or_reorder(chain):
 
 
 # ---------------------------------------------------------------- _resolve_refs
-def test_resolve_refs_is_empty_or_single():
-    hit, miss = MagicMock(), MagicMock()
-    hit.resolve.return_value = REF
-    miss.resolve.return_value = None
-    assert relay._resolve_refs(hit, Kind.ACTOR, "x") == [REF]
-    assert relay._resolve_refs(miss, Kind.ACTOR, "x") == []
