@@ -608,6 +608,21 @@ def no_entity_lookup(monkeypatch):
     monkeypatch.setattr("core.search_providers.dmm.DMMProvider.resolve", lambda self, kind, name: None)
 
 
+# ============ TASK-175c-T8：DMM 官方番號 facts 的隔離（R14 測試遷移）====
+#
+# DMM 列表（關鍵字與實體共用的頁面組裝）現在在回傳前多打一次 `fetch_facts` 取官方番號（CD-175c-7）。
+# 只 patch `list_contents` 的既有測試（假 rows、斷言推導番號）沒有替身可吃這次呼叫，真 `fetch_facts` 會被
+# `_outbound_guard` 擋成 `OutboundConnectionViolation`。這裡把它換成「站方一個 alias 都沒回」（`{}`）＝官方番號全走
+# cid 推導的退路＝等於這些測試今天斷言的值。
+# 不做 autouse：test_dmm_entity_list.py 與 test_dmm_resolve.py 要真的有 facts（受影響的檔案逐檔 pytestmark opt-in）：
+#     pytestmark = pytest.mark.usefixtures("no_dmm_facts")
+# 只 patch 既有屬性（不用 create 旗標，命名錯誤要炸）。
+@pytest.fixture
+def no_dmm_facts(monkeypatch):
+    """opt-in（非 autouse）：DMMScraper.fetch_facts 回 {}（0 請求；官方番號走推導退路）。"""
+    monkeypatch.setattr("core.scrapers.dmm.DMMScraper.fetch_facts", lambda self, content_ids: {})
+
+
 # ============ CI 修復：session 開始前把真實預設資料根真的定版一次 ============
 #
 # 為什麼需要：CI 乾淨 checkout 沒有已定版的 `output/`（gitignored，本機早已

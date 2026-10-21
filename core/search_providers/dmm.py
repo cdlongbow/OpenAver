@@ -1,6 +1,13 @@
-"""DMM 的 Provider（175a-T5）：把 scraper.py 的 DMM「列表＋逐部補詳情」原封包入。
+"""DMM 的 Provider：關鍵字與實體（女優／系列／導演／label）列表、官方番號、守衛 belongs、逐部補詳情。
 
-行為與事件序與搬家前逐一相同（離線 A/B 40 題 ALL SAME 為守門）。
+- 175a-T5 把 scraper.py 的 DMM「列表＋逐部補詳情」包入；175c-T7 加名稱→實體 resolve；175c-T8 起宣告
+  ACTOR／SERIES／DIRECTOR／LABEL／KEYWORD：名稱經 resolve 換成 DMM id，list_entity 用 filter 列出該實體的完整作品
+  （含預購未發行），順序同站方（預購最前、新→舊，不重排）。
+- 關鍵字與實體共用同一個頁面組裝：一次 list_contents ＋ 恰一次 fetch_facts（先於回傳，也就先於 seed）；
+  列表階段的番號用官方 makerContentId，缺值才退 cid 推導（精準搜尋與進階搜尋打 cid 不變）。
+  傳輸失敗（被擋／連不上）原樣往外丟，由 relay 換下一家；contents 為空才是「查無」。
+- 守衛 belongs 全由列表階段已取得的事實算出（enrich 內除 _fetch_by_id 外零網路）；實體路徑自補 _source。
+- 不宣告 CODE／PARTIAL（DMM 前綴是 token 子字串，會混入重製版，CD-175c-10）；MAKER 待 T9 與 run_maker 同時宣告。
 頂層不得 import core.scraper／core.database（BE-PY-08）。補詳情一律經 pipeline.run_window。
 """
 
@@ -12,7 +19,7 @@ from dataclasses import dataclass
 from core.logger import get_logger
 from core.maker_names import maker_key_of
 from core.name_match import fold, split_paren_name
-from core.scrapers.dmm import DMMScraper, Facts, _actress_main_name
+from core.scrapers.dmm import DMMScraper, Facts, ListResult, _actress_main_name
 from core.scrapers.models import Actress, Video
 from core.search_providers.names import maker_names
 from core.search_providers.pipeline import run_window
@@ -138,9 +145,78 @@ def _pick_maker(rows: list[dict], spellings: set[str]) -> EntityRef | None:
     return None if best is None else EntityRef(Kind.MAKER, best[0], best[1])
 
 
+# ---------------------------------------------------------------- 實體清單＋官方番號＋守衛（175c-T8，plan CD-175c-7）
+# 實體 kind → list_contents 的 filter 鍵（MAKER 在表內供 T9 的 run_maker 使用，本卡不宣告 MAKER 能力）
+_FILTER_KEY = {
+    Kind.ACTOR: "actressIds",
+    Kind.SERIES: "seriesIds",
+    Kind.DIRECTOR: "directorIds",
+    Kind.LABEL: "labelIds",
+    Kind.MAKER: "makerIds",
+}
+
+
+def _official_number(scraper, content_id: str, fact: Facts | None) -> str:
+    """列表階段的番號：官方 makerContentId；facts 缺這部、或值為空，才退 cid 推導（不覆寫成空）。"""
+    return (fact.maker_content_id if fact is not None else None) or scraper._content_id_to_number(content_id)
+
+
+def _shallow_video(scraper, row: dict, content_id: str, number: str) -> Video:
+    """列表一列 → shallow Video（詳情失敗時卡片就是它，所以番號用官方值）。
+    女優去括號舊名；title／封面／片商名為 null 皆當空字串，不讓一列壞資料丟掉整頁。"""
+    return Video(
+        number=number,
+        title=row.get("title") or "",
+        actresses=[
+            Actress(name=_actress_main_name(a["name"]))
+            for a in row.get("actresses") or []
+            if isinstance(a, dict) and a.get("name")
+        ],
+        maker=(row.get("maker") or {}).get("name") or "",
+        cover_url=(row.get("packageImage") or {}).get("largeUrl") or "",
+        source=scraper.source_name,
+        detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={content_id}/",
+    )
+
+
+def _row_actress_ids(row: dict) -> frozenset[str]:
+    ids = (_ident(a.get("id")) for a in row.get("actresses") or [] if isinstance(a, dict))
+    return frozenset(i for i in ids if i)
+
+
+def _row_item(scraper, row: dict, fact: Facts | None) -> WorkItem:
+    """列表一列（已確認有 id）→ WorkItem。ref＝(cid, shallow, facts 或 None, 該列女優 id 集合, 該列片商 id)，
+    守衛 belongs 與補詳情都只讀它，不再發請求。"""
+    content_id = row["id"]
+    number = _official_number(scraper, content_id, fact)
+    shallow = _shallow_video(scraper, row, content_id, number)
+    maker_id = _ident((row.get("maker") or {}).get("id"))
+    ref = (content_id, shallow, fact, _row_actress_ids(row), maker_id)
+    return WorkItem(number, shallow.title, shallow.cover_url, shallow.date, None, SOURCE, ref=ref)
+
+
+def _owner_ids(kind: Kind, facts: Facts | None, actress_ids: frozenset[str], maker_id: str | None) -> frozenset[str] | None:
+    """這部作品在 kind 這個維度上的擁有者 id 集合（ACTOR／MAKER 取自列表列，SERIES／LABEL／DIRECTOR 取自 facts）。
+    facts 缺或該欄為 None → 空集合（確定不屬於）；kind 不支援 → None。"""
+    if kind is Kind.ACTOR:
+        return actress_ids
+    if kind is Kind.MAKER:
+        return frozenset([maker_id] if maker_id else [])
+    if kind not in (Kind.SERIES, Kind.LABEL, Kind.DIRECTOR):
+        return None
+    named = [] if facts is None else _named_in(facts, kind)
+    return frozenset(i for i in (_ident(n.id) for n in named) if i)
+
+
+def _belongs(ref: EntityRef, facts: Facts | None, actress_ids: frozenset[str], maker_id: str | None) -> bool | None:
+    """守衛事實：這部作品是否屬於 ref（id 一律 str 後比對）。缺／None 的欄位 → False，不是 None；kind 不支援 → None。"""
+    owners = _owner_ids(ref.kind, facts, actress_ids, maker_id)
+    return None if owners is None else str(ref.id) in owners
+
+
 class DMMProvider:
     id = SOURCE
-    capabilities = frozenset({Kind.KEYWORD})
+    capabilities = frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.KEYWORD})
     supports_discovery = False
     fallback_streaming = True  # 最終陣列不重排，串流順序＝最終順序
 
@@ -177,52 +253,47 @@ class DMMProvider:
                 return ref
         return None
 
-    def search_keyword(self, q: str, w: Window) -> Page:
-        """列表一頁 → WorkItem（shallow Video 的取值沿用舊流程：番號由 cid 推導、女優去括號舊名、不帶日期）。
-        列表失敗（被擋／連不上）原樣往外拋，由 relay 接住換下一家；contents 為空才是『查無』。"""
-        result = self._scraper.list_contents(q, limit=w.limit, offset=w.offset)
-        items = []
-        for row in result.rows:
-            content_id = row.get("id", "")
-            if not content_id:
-                continue
-            shallow = Video(
-                number=self._scraper._content_id_to_number(content_id),
-                title=row.get("title", ""),
-                actresses=[
-                    Actress(name=_actress_main_name(a["name"]))
-                    for a in (row.get("actresses") or [])
-                    if a.get("name")
-                ],
-                maker=(row.get("maker") or {}).get("name", ""),
-                cover_url=(row.get("packageImage") or {}).get("largeUrl", ""),
-                source=self._scraper.source_name,
-                detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={content_id}/",
-            )
-            items.append(
-                WorkItem(
-                    number=shallow.number,
-                    title=shallow.title,
-                    cover_url=shallow.cover_url,
-                    date=shallow.date,
-                    actors=None,
-                    source=SOURCE,
-                    ref=(content_id, shallow),
-                )
-            )
-        return Page(items, has_next=len(items) >= w.limit, total=None)
+    def _page(self, result: ListResult) -> Page:
+        """列表一頁 → Page（關鍵字與實體共用）：丟掉缺 id 的列，對其餘列的 id 做恰一次 fetch_facts
+        （空視窗 0 次；先於回傳＝先於 seed），逐列組 WorkItem。fetch_facts 失敗原樣往外丟（與列表同主機同進退）。"""
+        rows = [r for r in result.rows if r.get("id")]
+        facts = self._scraper.fetch_facts(list(dict.fromkeys(r["id"] for r in rows))) if rows else {}
+        items = [_row_item(self._scraper, row, facts.get(row["id"])) for row in rows]
+        return Page(items, has_next=result.has_next, total=result.total)
 
-    def enrich(self, item: WorkItem, ref=None) -> Enriched:
-        """ref 是實體參照（DMM 無），一律用 item.ref。失敗退 shallow 全欄位卡（與今天相同）。"""
-        content_id, shallow = item.ref
+    def search_keyword(self, q: str, w: Window) -> Page:
+        """標題／關鍵字一頁。呼叫形狀固定 list_contents(q, limit=, offset=)（不傳 filter）。
+        列表失敗（被擋／連不上）原樣往外拋，由 relay 接住換下一家。"""
+        return self._page(self._scraper.list_contents(q, limit=w.limit, offset=w.offset))
+
+    def list_entity(self, ref: EntityRef, w: Window) -> Page:
+        """實體（女優／系列／導演／label／片商）的完整作品，含預購未發行；其他 kind → ValueError（0 請求）。"""
+        key = _FILTER_KEY.get(ref.kind)
+        if key is None:
+            raise ValueError(f"dmm list_entity: unsupported kind {ref.kind}")
+        flt = {key: {"ids": [{"id": ref.id}], "op": "OR"}}
+        return self._page(self._scraper.list_contents(None, filter=flt, limit=w.limit, offset=w.offset))
+
+    def _detail_or_shallow(self, content_id: str, shallow: Video) -> Video:
+        """詳情卡；失敗（例外或回 None）退 shallow（與今天相同）。"""
         try:
             video = self._scraper._fetch_by_id(content_id)
-            if video is None:
-                video = shallow
         except Exception:
             logger.error("DMM enrichment failed: %s", content_id)
-            video = shallow
-        return Enriched(video.to_legacy_dict(), None)
+            return shallow
+        return shallow if video is None else video
+
+    def enrich(self, item: WorkItem, ref=None) -> Enriched:
+        """ref＝實體參照（梯子／片商路徑）或 None（KEYWORD）。卡片沿用 _fetch_by_id；belongs 全由 item.ref 的
+        列表事實算出（零網路）；卡的 number 為空時補 item.number；只有實體路徑自補 _source（梯子沒有 run 的收尾補）。"""
+        content_id, shallow, facts, actress_ids, maker_id = item.ref
+        card = self._detail_or_shallow(content_id, shallow).to_legacy_dict()
+        if not card.get("number"):
+            card["number"] = item.number
+        if ref is None:
+            return Enriched(card, None)
+        card["_source"] = SOURCE
+        return Enriched(card, _belongs(ref, facts, actress_ids, maker_id))
 
     def run(self, kind: Kind, target: str, w: Window, *, status_callback=None, result_callback=None,
             discovery_only: bool = False) -> list[dict]:

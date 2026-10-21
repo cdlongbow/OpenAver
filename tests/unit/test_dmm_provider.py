@@ -12,6 +12,9 @@ from core.scrapers.models import Video
 from core.search_providers.dmm import DMMProvider
 from core.search_providers.types import Kind, Window
 
+# 175c-T8：DMM 列表多一次 fetch_facts（官方番號）；這些案只 patch list_contents，facts 換成 {}＝推導番號退路＝今天的斷言值
+pytestmark = pytest.mark.usefixtures("no_dmm_facts")
+
 
 class SyncExecutor:
     def __init__(self, max_workers=None, **_):
@@ -238,22 +241,21 @@ def test_search_keyword_row_conversion_matches_pre_deletion_vector():
             [a.name for a in it.ref[1].actresses], it.ref[1].maker, it.source, it.ref[1].detail_url)
            for it in page.items]
     assert got == _VECTOR_EXPECTED
-    # WorkItem 欄位與 shallow 卡一致、actors 維持 None、Page 語意本卡不變
+    # WorkItem 欄位與 shallow 卡一致、actors 維持 None
     assert all(it.actors is None and it.ref[1].number == it.number and it.ref[1].title == it.title
                and it.ref[1].source == "dmm" for it in page.items)
-    assert page.has_next is False and page.total is None
+    assert page.has_next is False and page.total == 5  # T8：Page.has_next／total 取自 pageInfo
 
 
-def test_search_keyword_has_next_still_derived_from_window_size():
-    """改採 pageInfo 是 T8（CD-175c-7）；本卡 has_next 維持『筆數 ≥ 視窗』。"""
-    body = {"data": {"legacySearchPPV": {"result": {
-        "pageInfo": {"totalCount": 999, "hasNext": True}, "contents": _VECTOR_ROWS}}}}
-    provider, post_patch = _provider_with_post(_json_resp(200, body))
-    with post_patch:
-        assert provider.search_keyword("x", Window(0, 4)).has_next is True
-    provider, post_patch = _provider_with_post(_json_resp(200, body))
-    with post_patch:
-        assert provider.search_keyword("x", Window(0, 5)).has_next is False
+def test_search_keyword_has_next_and_total_come_from_page_info():
+    """T8（CD-175c-7）：has_next／total 取自 pageInfo，不再用『筆數 ≥ 視窗』猜（缺 id 的丟掉後恆為 4 部）。"""
+    for has_next, window_limit in ((True, 5), (False, 4)):  # 不滿一頁而站方說還有、整頁滿而站方說沒有
+        body = {"data": {"legacySearchPPV": {"result": {
+            "pageInfo": {"totalCount": 999, "hasNext": has_next}, "contents": _VECTOR_ROWS}}}}
+        provider, post_patch = _provider_with_post(_json_resp(200, body))
+        with post_patch:
+            page = provider.search_keyword("x", Window(0, window_limit))
+        assert page.has_next is has_next and page.total == 999
 
 
 @pytest.mark.parametrize("status, expected", [(403, SourceBlocked), (429, SourceBlocked), (503, SourceBlocked),

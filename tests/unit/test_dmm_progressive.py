@@ -14,6 +14,8 @@ from core.scrapers.javbus import JavBusScraper
 from core.scrapers.models import Video
 from core.scraper import smart_search
 
+pytestmark = pytest.mark.usefixtures("no_entity_lookup", "no_dmm_facts")
+
 
 # ============================================================
 # Helper

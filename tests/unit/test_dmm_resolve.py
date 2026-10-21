@@ -509,9 +509,9 @@ def test_clear_probe_cache_forces_a_new_request(transport, provider):
     assert transport.words == ["x", "x"]
 
 
-# ================================================================ 5. I-D1 完整路徑＋capabilities 仍恰為 {KEYWORD}
-def test_capabilities_still_only_keyword_until_t8():
-    assert DMMProvider.capabilities == frozenset({Kind.KEYWORD})  # T8 才翻成四種實體
+# ================================================================ 5. I-D1 完整路徑＋capabilities（T8 起宣告四種實體＋KEYWORD）
+def test_capabilities_declare_four_entities_plus_keyword_since_t8():
+    assert DMMProvider.capabilities == frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.KEYWORD})
 
 
 def test_no_entity_lookup_fixture_covers_dmm(transport, provider, no_entity_lookup):
@@ -540,16 +540,12 @@ class _SyncExecutor:
 
 @pytest.fixture
 def ladder(monkeypatch, transport):
-    """DMM 經真 registry 進鏈、實體能力只在本測試內宣告（T8 才在產品碼裡翻）；傳輸替身＋_fetch_by_id 替身。"""
+    """DMM 經真 registry 進鏈、用產品碼實際宣告的能力（T8 起）；傳輸替身＋_fetch_by_id 替身。"""
     monkeypatch.setattr(cf, "ThreadPoolExecutor", _SyncExecutor)
     monkeypatch.setattr(cf, "as_completed", lambda fs, timeout=None: list(fs))
     monkeypatch.setattr("core.scrapers.dmm.rate_limit", lambda *a, **kw: None)
     monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ["dmm"])
     monkeypatch.setattr("core.scraper.is_source_enabled", lambda pid: pid == "dmm")
-    monkeypatch.setattr(
-        DMMProvider, "capabilities",
-        frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.KEYWORD}),
-    )
     transport.fetched = []
 
     def fetch_by_id(cid):
@@ -573,14 +569,14 @@ def test_ladder_cold_nonentity_word_costs_at_most_four_requests_second_time_at_m
     cold_list, cold_facts = len(t.list_calls), len(t.facts_calls)
     assert cold_list >= 2 and cold_facts >= 1  # 下界：梯子真的問了 DMM（ACTOR 的 stage 1＋KEYWORD；SERIES 的 stage 2）
     assert cold_list + cold_facts <= 4  # I-D1 plan 值
-    assert (cold_list, cold_facts) == (2, 1)  # T7 實況（KEYWORD 官方番號 facts 是 T8 加）
+    assert (cold_list, cold_facts) == (2, 2)  # T8 實況：ACTOR 的 stage 1＋KEYWORD 列表；SERIES 的 stage 2＋KEYWORD 的官方番號 facts
 
     cards2 = relay.search_by_intent("actress", "温泉", WINDOW)
     assert cards2
     second = (len(t.list_calls) - cold_list, len(t.facts_calls) - cold_facts)
     assert second[0] >= 1  # KEYWORD 仍然問了列表
     assert sum(second) <= 2  # I-D1 plan 值
-    assert second == (1, 0)  # T7 實況（Probe 命中快取）
+    assert second == (1, 1)  # T8 實況（Probe 命中快取；KEYWORD 列表 1＋官方番號 facts 1）
 
 
 def test_ladder_probe_is_shared_across_kinds_for_the_same_word(ladder):
@@ -588,4 +584,4 @@ def test_ladder_probe_is_shared_across_kinds_for_the_same_word(ladder):
     t.rows["温泉"] = [_row("sone00001", [], MOODYZ)]
     relay.search_by_intent("actress", "温泉", WINDOW)
     assert t.words.count("温泉") == 2  # 一次 Probe（ACTOR/SERIES/DIRECTOR/LABEL 共用）＋一次 KEYWORD
-    assert len(t.facts_calls) == 1  # SERIES 的 stage 2，DIRECTOR／LABEL 命中快取
+    assert len(t.facts_calls) == 2  # SERIES 的 stage 2（DIRECTOR／LABEL 命中快取）＋KEYWORD 的官方番號 facts（T8）
