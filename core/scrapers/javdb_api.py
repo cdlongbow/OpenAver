@@ -304,7 +304,7 @@ def to_video(detail: dict, number: str) -> Video:
         number=number,
         # 與 HTML 那條走同一支正規化（javdb.py:210）：兩條路的標題處理必須逐字相同，
         # 否則站方哪天在 title 前加上番號，只有其中一條會清掉（F4 破口，review P3）。
-        title=strip_number_prefix(_s(detail.get("title")), number),
+        title=strip_number_prefix(_s(detail.get("origin_title")) or _s(detail.get("title")), number),
         actresses=actresses,
         date=_s(detail.get("release_date")),
         maker=_s(detail.get("maker_name")),

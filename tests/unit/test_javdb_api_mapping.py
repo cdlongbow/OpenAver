@@ -624,3 +624,83 @@ class TestReviewRound1Hardening:
         with pytest.raises(SourceUnreachable) as exc:
             javdb_api.fetch_video("SONE-205")
         assert exc.value is sentinel
+
+
+# ============================================================
+# 175b-T6a｜標題取日文原標題（API origin_title／網頁備援原標題節點）
+# ============================================================
+_SEARCH_PAGE = (
+    '<div class="movie-list"><div class="item">'
+    '<a href="/v/ZZ001"><div class="video-title"><strong>SSIS-001</strong> x</div></a>'
+    '</div></div>'
+)
+
+
+def _detail_page(title_inner: str) -> str:
+    return (
+        '<div class="video-detail"><h2 class="title is-4">'
+        f'{title_inner}'
+        '</h2></div>'
+        '<div class="video-cover"><img src="https://tp.spfcas.com/c/ps.jpg"></div>'
+    )
+
+
+def _html_title(monkeypatch, title_inner: str) -> str:
+    from core.scrapers import javdb
+
+    scraper = javdb.JavDBScraper()
+    pages = iter([_SEARCH_PAGE, _detail_page(title_inner)])
+    monkeypatch.setattr(scraper, "_get_html", lambda url, *a, **k: next(pages))
+    video = scraper.search_via_html("SSIS-001")
+    assert video is not None
+    return video.title
+
+
+def _api_title(monkeypatch, detail: dict) -> str:
+    detail = {"id": "ZZ001", "number": "SSIS-001",
+              "cover_url": "https://tp.spfcas.com/covers/a.jpg", **detail}
+    _setup_api_mocks(monkeypatch, [{"id": "ZZ001", "number": "SSIS-001"}], detail)
+    video = javdb_api.fetch_video("SSIS-001")
+    assert video is not None
+    return video.title
+
+
+class TestOriginTitle:
+    def test_api_title_prefers_origin_title(self, monkeypatch):
+        assert _api_title(monkeypatch, {"title": "中文翻譯", "origin_title": "日本語原題"}) == "日本語原題"
+
+    @pytest.mark.parametrize("origin", [None, "", "   "])
+    def test_api_title_falls_back_to_title(self, monkeypatch, origin):
+        d = {"title": "中文翻譯"}
+        if origin is not None:
+            d["origin_title"] = origin
+        assert _api_title(monkeypatch, d) == "中文翻譯"
+
+    def test_api_origin_title_number_prefix_stripped(self, monkeypatch):
+        assert _api_title(monkeypatch, {"title": "中文", "origin_title": "SSIS-001 日本語原題"}) == "日本語原題"
+
+    def test_html_title_prefers_origin_node(self, monkeypatch):
+        inner = (
+            '<strong>SSIS-001 </strong><strong class="current-title">中文翻譯</strong>'
+            '<a class="meta-link" href="javascript:;">btn</a>'
+            '<span style="display: none" class="origin-title">日本語原題</span>'
+        )
+        assert _html_title(monkeypatch, inner) == "日本語原題"
+
+    def test_html_title_falls_back_to_current_title(self, monkeypatch):
+        inner = '<strong>SSIS-001 </strong><strong class="current-title">中文翻譯</strong>'
+        assert _html_title(monkeypatch, inner) == "中文翻譯"
+
+    def test_html_title_falls_back_to_whole_text(self, monkeypatch):
+        assert _html_title(monkeypatch, "<strong>SSIS-001</strong> 整段文字") == "整段文字"
+
+    def test_both_paths_same_title(self, monkeypatch):
+        chinese, japanese = "中文翻譯", "日本語原題"
+        api = _api_title(monkeypatch, {"title": chinese, "origin_title": japanese})
+        inner = (
+            f'<strong class="current-title">{chinese}</strong>'
+            f'<span class="origin-title">{japanese}</span>'
+        )
+        html = _html_title(monkeypatch, inner)
+        assert api == html == japanese
+        assert api != chinese

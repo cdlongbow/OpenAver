@@ -34,6 +34,9 @@ except ImportError as e:
 # 吞掉 → javdb 瞬回無結果、零 log。補此可觀測性（不改降級行為本身）。
 _warned = False
 
+# 詳情頁 h2 內隱藏的日文原標題節點（CDP 實測 ZY5eq）
+_ORIGIN_TITLE_SELECTOR = "span.origin-title"
+
 _UNSET = object()
 _cainfo_override = _UNSET   # _UNSET=未算 / None=no-op 或降級 / bytes=CAINFO override
 _ca_warned = False
@@ -333,12 +336,15 @@ class JavDBScraper(BaseScraper):
 
             soup = BeautifulSoup(detail_html, 'html.parser')
 
-            # 標題：優先取 strong.current-title，避免混入「顯示原標題」按鈕與隱藏原文
+            # 標題：日文原標題節點 → strong.current-title → 整段文字（避免混入按鈕與隱藏原文）
             title_elem = soup.select_one('.video-detail h2, .title.is-4')
             title = ''
             if title_elem:
+                origin = title_elem.select_one(_ORIGIN_TITLE_SELECTOR)
                 current = title_elem.select_one('strong.current-title')
-                if current is not None:
+                if origin is not None and origin.get_text(strip=True):
+                    title = origin.get_text(separator=' ', strip=True)
+                elif current is not None:
                     title = current.get_text(separator=' ', strip=True)
                 else:
                     title = title_elem.get_text(separator=' ', strip=True)
