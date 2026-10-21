@@ -2,6 +2,7 @@
 import re
 from typing import Optional
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -45,6 +46,14 @@ class StudioVote(NamedTuple):
     """單樣本投票：kind ∈ {'censored','uncensored'}、studio_id 為 JavBus 片商代號。"""
     kind: str
     studio_id: str
+
+
+class ListCard(NamedTuple):
+    """清單頁單張卡：番號／標題／封面縮圖／發行日。cover 是站方相對路徑原樣（如 /pics/thumb/…）；缺值為空字串。"""
+    number: str
+    title: str
+    cover: str
+    date: str
 
 
 # 單樣本的另外兩種結果：Miss 只留 HTTP 404；其餘一切看不懂的都是 Unreachable（BE-PY-03）
@@ -331,6 +340,8 @@ class JavBusScraper(BaseScraper):
         `search_type=1` 的 path-suffix 過濾是否生效另論，勿改成標準 query string。
         """
         prefix = self._get_lang_prefix()
+        # 空白（含全形 U+3000）→ 單一 `+`，首尾空白先去掉；不用 %20（站方對 %20 回 403）
+        keyword = re.sub(r"\s+", "+", keyword.strip())
         base = f"{self.BASE_URL}{prefix}/search/{keyword}"
         if page > 1:
             base += f"/{page}"
@@ -338,27 +349,56 @@ class JavBusScraper(BaseScraper):
             base += f"&type={search_type}"
         return base
 
-    def _parse_search_ids(self, soup) -> list[str]:
-        """從搜尋結果頁解析番號列表。"""
-        ids = []
+    def _parse_list_cards(self, soup) -> list[ListCard]:
+        """從清單頁（搜尋結果／片商頁）解析卡片。
+
+        a.movie-box：第一個 <date> 是番號、第二個是發行日；img[src] 是封面縮圖（相對路徑原樣）、
+        img[title] 是標題。無 <date> 的卡片退 href 最後一段當番號；有 <date> 但番號為空則丟棄（不退 href）。
+        """
         waterfall = soup.find(id="waterfall")
         if not waterfall:
             return []
+        cards = []
         for card in waterfall.find_all("a", class_="movie-box"):
-            # 優先從 <date> 元素取番號（第一個 date 是番號，第二個是日期）
             dates = card.find_all("date")
             if dates:
                 number = dates[0].get_text(strip=True)
-                if number:
-                    ids.append(number)
             else:
-                # fallback：從 href 最後一段提取
-                href = card.get("href", "")
-                if href:
-                    number = href.rstrip("/").split("/")[-1]
-                    if number:
-                        ids.append(number)
-        return ids
+                number = card.get("href", "").rstrip("/").split("/")[-1]
+            if not number:
+                continue
+            date = dates[1].get_text(strip=True) if len(dates) > 1 else ""
+            img = card.find("img")
+            cover = img.get("src", "") if img else ""
+            title = img.get("title", "") if img else ""
+            cards.append(ListCard(number, title, cover, date))
+        return cards
+
+    def _parse_search_ids(self, soup) -> list[str]:
+        """從搜尋結果頁解析番號列表。"""
+        return [c.number for c in self._parse_list_cards(soup)]
+
+    def _get_list(self, url: str):
+        """作品清單 GET（搜尋、片商頁）：先把 session jar 的 existmag 設為 all，再送出。
+
+        站方在 session 的第一個回應就 Set-Cookie: existmag=mag，所以每次請求前都要覆蓋同格 cookie
+        （domain＋path 與站方 cookie 同格才會覆蓋）；只設一次或 per-request cookies= 都會與它並存而失效。
+        不在這裡映射例外、不節流：搜尋與片商兩條路徑各自維持今天的例外型別。
+        """
+        self._session.cookies.set("existmag", "all", domain=urlparse(self.BASE_URL).hostname, path="/")
+        return self._session.get(url, timeout=self.config.timeout)
+
+    def _ids_from_list_response(self, resp, url: str) -> list[str]:
+        """清單回應 → 番號列表。404（頁碼超界／無結果）回 []；看不懂或被擋一律丟例外，絕不回 []。"""
+        has_wf = self._has_waterfall(resp.text) if resp.status_code == 200 else False
+        verdict = classify_list_response(resp.status_code, has_wf)
+        if verdict == LIST_END:
+            return []
+        if verdict == LIST_BLOCKED:
+            raise SourceBlocked(f"JavBus list HTTP {resp.status_code}: {url}")
+        if verdict == LIST_UNREADABLE:
+            raise SourceUnreachable(f"JavBus list unreadable (no #waterfall): {url}")
+        return self._parse_search_ids(BeautifulSoup(resp.text, "html.parser"))
 
     def get_ids_from_search(self, keyword: str, page: int = 1, search_type: int = 0) -> list[str]:
         """
@@ -370,20 +410,19 @@ class JavBusScraper(BaseScraper):
             search_type: 0=一般搜尋，1=前綴搜尋（&type=1，JavBus 原生格式）
 
         Returns:
-            番號列表（list[str]）
+            番號列表（list[str]）；404（無結果／頁碼超界）回 []
 
         Raises:
             TimeoutError: 請求超時
+            SourceBlocked: 非 200 非 404（403／429／503…）
+            SourceUnreachable: 200 但沒有 #waterfall（看不懂）
         """
         url = self._build_search_url(keyword, page, search_type)
         try:
-            resp = self._session.get(url, timeout=self.config.timeout)
+            resp = self._get_list(url)
         except (requests.Timeout, requests.ConnectionError) as e:
             raise TimeoutError(f"Search request timed out for keyword: {keyword}") from e
-        if resp.status_code != 200:
-            return []
-        soup = BeautifulSoup(resp.text, "html.parser")
-        return self._parse_search_ids(soup)
+        return self._ids_from_list_response(resp, url)
 
     def _fetch_by_id(self, id_str: str) -> Optional[Video]:
         """直接用 ID 取得影片資訊（繞過 validate_number，支援 variant ID 如 SONE-001_2026-03-20）"""
@@ -426,7 +465,7 @@ class JavBusScraper(BaseScraper):
         """
         try:
             ids = self.get_ids_from_search(keyword, page=page)
-        except (TimeoutError, requests.ConnectionError):
+        except (TimeoutError, requests.ConnectionError, SourceBlocked, SourceUnreachable):
             return []
         results: list[Video] = []
         for num_id in ids[:limit]:
@@ -479,15 +518,7 @@ class JavBusScraper(BaseScraper):
         """片商列表單頁番號。404（頁碼超界）回 []；看不懂或被擋一律丟例外，絕不回 []。"""
         url = self.build_studio_url(ref, page)
         try:
-            resp = self._session.get(url, timeout=self.config.timeout)
+            resp = self._get_list(url)
         except requests.RequestException as exc:
             raise SourceUnreachable(f"JavBus studio list request failed: {url}") from exc
-        has_wf = self._has_waterfall(resp.text) if resp.status_code == 200 else False
-        verdict = classify_list_response(resp.status_code, has_wf)
-        if verdict == LIST_END:
-            return []
-        if verdict == LIST_BLOCKED:
-            raise SourceBlocked(f"JavBus studio list HTTP {resp.status_code}: {url}")
-        if verdict == LIST_UNREADABLE:
-            raise SourceUnreachable(f"JavBus studio list unreadable (no #waterfall): {url}")
-        return self._parse_search_ids(BeautifulSoup(resp.text, "html.parser"))
+        return self._ids_from_list_response(resp, url)
