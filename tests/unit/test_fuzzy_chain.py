@@ -411,6 +411,74 @@ class TestSmartSearchFuzzyNoPostChainFallback:
 
 
 # ============================================================
+# 175b-T5b — smart_search prefix 分支：三家全關＝查無、jav321 退路看自己的開關
+# ============================================================
+
+_ALL_IDS = ['dmm', 'javbus', 'javdb', 'jav321']
+
+
+def _run_smart(query, enabled, *, jav321_results=(), javbus_ids=()):
+    """從 smart_search 入口跑；回 (results, jav321 mock, javbus get_ids_from_search mock)。
+    開關 patch 使用端 core.scraper.is_source_enabled（BE-TEST-01/02）；jav321 計數 patch 使用端。"""
+    from core.scraper import smart_search
+
+    with patch("core.scraper.get_all_source_ids_ordered", lambda: list(_ALL_IDS)), \
+         patch("core.scraper.is_source_enabled", lambda sid: sid in enabled), \
+         patch("core.scraper.search_jav321_keyword",
+               return_value=list(jav321_results)) as jav321, \
+         patch.object(JavBusScraper, "get_ids_from_search",
+                      return_value=list(javbus_ids)) as javbus:
+        results = smart_search(query, limit=5)
+    return results, jav321, javbus
+
+
+class TestSmartSearchPrefixSwitches:
+
+    def test_prefix_all_sources_off_returns_empty_without_jav321(self):
+        """(7a) 三家全關＋jav321 開 → [] 且 jav321 / JavBus 都 0 次。"""
+        results, jav321, javbus = _run_smart("MIDV", {"jav321"},
+                                             jav321_results=[_make_dict("jav321", "MIDV-001")])
+        assert results == []
+        assert jav321.call_count == 0
+        assert javbus.call_count == 0
+
+    def test_prefix_retreat_skips_jav321_when_its_switch_is_off(self):
+        """(7b) JavBus 開（兩鏈皆空）＋jav321 關 → [] 且 jav321 0 次。"""
+        results, jav321, _ = _run_smart("MIDV", {"javbus"},
+                                        jav321_results=[_make_dict("jav321", "MIDV-001")])
+        assert results == []
+        assert jav321.call_count == 0
+
+    def test_prefix_retreat_reaches_jav321_when_its_switch_is_on(self):
+        """(7c) JavBus 開（兩鏈皆空）＋jav321 開 → 退路照今天：jav321 問 1 次、_mode=keyword。"""
+        results, jav321, _ = _run_smart("MIDV", {"javbus", "jav321"},
+                                        jav321_results=[_make_dict("jav321", "MIDV-001")])
+        assert jav321.call_count == 1
+        assert len(results) == 1
+        assert results[0]["_mode"] == "keyword"
+
+    def test_prefix_with_only_dmm_on_still_reaches_actress_retreat(self):
+        """只開 DMM：前綴鏈（CODE）無人可問，但 DMM 的 KEYWORD 要接得住 actress 退路。"""
+        video = _make_video("dmm", "MIDV-001")
+        with patch.object(DMMScraper, "search_by_keyword_with_ids",
+                          lambda self, *a, **kw: [("midv00001", video)]), \
+             patch.object(DMMScraper, "_fetch_by_id", lambda self, cid: video):
+            results, jav321, javbus = _run_smart("MIDV", {"dmm"})
+        assert len(results) == 1
+        assert results[0]["_mode"] == "actress"
+        assert jav321.call_count == 0
+        assert javbus.call_count == 0
+
+    @pytest.mark.parametrize("query", ["MIDV", "SONE-0", "蒼井そら"])
+    def test_all_sources_off_returns_empty_not_raise(self, query):
+        """(3) 三家全關（含 jav321 關）：prefix／partial／actress 三種查詢都回 [] 且不拋。"""
+        results, jav321, javbus = _run_smart(query, set())
+        assert results == []
+        assert jav321.call_count == 0
+        assert javbus.call_count == 0
+
+
+# ============================================================
 # TestFuzzyDmmSource — DMM _source 一致性（TASK-65g）
 # ============================================================
 

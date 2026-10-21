@@ -85,7 +85,7 @@ core/scrapers/utils.py
 |------|----------|---------|-------------|
 | **exact** | `is_number_format(query)` — 完整番號（SONE-205） | `search_jav_single_source(query, sid)` × enabled sources | 依 `get_enabled_source_ids()` 優先序串接直打，命中即回（early-return），不等其他來源 |
 | **partial** | `is_partial_number(query)` — 縮略番號（MIDV-01） | `search_partial()` → JavBus 固定 | 能力約束：只有 JavBus 能做番號前綴枚舉；非技術債，不動 |
-| **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → JavBus `get_ids_from_search(type=1)` | 同上，JavBus 固定；fallback 依序試 actress → keyword |
+| **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → JavBus `get_ids_from_search(type=1)` | 同上，JavBus 固定；fallback 依序試 actress → keyword。三家（JavBus／DMM／JavDB）全關回 `[]`（查無）；keyword 退路只在 jav321 自己的開關為開時才進 |
 | **actress/keyword** | 其餘 | `search_actress()` → `relay.search_by_intent`（註冊表） | Active-Row 順序選引擎，三家（JavBus／DMM／JavDB）都跟設定頁開關走（見 §3.2） |
 
 ### 3.2 Fuzzy Chain Always-On（CD-65-4）

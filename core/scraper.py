@@ -36,8 +36,9 @@ from core.scrapers.utils import (
 from core.maker_mapping import get_maker_by_prefix
 from core.maker_latest import resolve_maker_studio  # noqa: F401  # 測試 patch 點＋provider 延後取用
 from core.search_providers.javbus import JavBusProvider
+from core.search_providers import registry
 from core.search_providers.relay import search_by_intent
-from core.search_providers.types import MakerSearchResult, Window  # noqa: F401  # MakerSearchResult 重新匯出（web/routers/search.py 使用）
+from core.search_providers.types import Kind, MakerSearchResult, Window  # noqa: F401  # MakerSearchResult 重新匯出（web/routers/search.py 使用）
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
 from core.source_settings import get_enabled_source_ids
@@ -54,6 +55,9 @@ from core.metatube.errors import MetatubeUnavailable, MetatubeNotFound, Metatube
 
 MAX_WORKERS = 2
 REQUEST_DELAY = 0.3
+
+# 前綴搜尋用到的全部 kinds＝前綴鏈（CODE）∪ actress 退路鏈（KEYWORD＋四個實體）；判斷「使用者有沒有開任何一家」用
+_PREFIX_LADDER_KINDS = frozenset({Kind.CODE, Kind.KEYWORD, Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL})
 
 # JavBus 語系對應表（zh-CN 無簡中版，沿用繁中 zh-tw）
 _LOCALE_TO_JAVBUS = {"zh-TW": "zh-tw", "zh-CN": "zh-tw", "ja": "ja", "en": "en"}
@@ -702,6 +706,8 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
 
     # 3. 前綴搜尋
     elif intent.mode == 'prefix':
+        if not registry.providers_for(_PREFIX_LADDER_KINDS):
+            return []
         results = search_prefix(query, limit=limit, offset=offset, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
         mode = 'prefix'
 
@@ -712,7 +718,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
              results = search_actress(query, limit=limit, status_callback=status_callback, discovery_only=discovery_only)
              if results: mode = 'actress'
 
-        if not results:
+        if not results and is_source_enabled('jav321'):
              # Fallback to keyword（search_jav321_keyword 無 as_completed，不透傳 result_callback）
              if status_callback: status_callback('mode', 'keyword')
              results = search_jav321_keyword(query, limit=limit, status_callback=status_callback)
