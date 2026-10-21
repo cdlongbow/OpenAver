@@ -270,7 +270,7 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
         raw = sources.get(src) or {}
         if any(raw.get(field) for field in _COMMON_FIELDS) or (
             src == "wiki" and (any(raw.get(field) for field in _WIKI_ONLY_FIELDS)
-                               or raw.get("other_names"))
+                               or _clean_aliases(raw.get("other_names"), name))
         ):
             primary_text_source = src
             break

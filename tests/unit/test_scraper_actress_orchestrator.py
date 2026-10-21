@@ -919,3 +919,16 @@ class TestAliasChain:
         )
         assert data["all_sources"]["wiki"]["other_names"] == wiki_copy
         assert data["all_sources"]["avbase"]["other_names"] == av_copy
+
+
+class TestPrimarySourceIgnoresFilteredWikiAliases:
+
+    @pytest.mark.parametrize("wiki_names", [[_AL_OWN], ["@x"]], ids=["own_name", "at_account"])
+    def test_primary_is_avbase_when_wiki_only_has_filtered_out_aliases(self, wiki_names):
+        data = _al_profile(
+            _AL_OWN,
+            wiki={"name_ja": _AL_OWN, "other_names": list(wiki_names)},
+            avbase={"birth": "1994-04-04"},
+        )
+        assert data["text"] == {"birth": "1994-04-04"}
+        assert data["primary_text_source"] == "avbase"
