@@ -55,7 +55,7 @@ def sync_executor(monkeypatch):
 def fixed_source_order(monkeypatch):
     """shim 現在經 relay：固定來源順序與開關，不吃 live config（BE-TEST-02／01，patch 使用端）。"""
     monkeypatch.setattr(scraper_mod, "get_all_source_ids_ordered", lambda: ["javbus"])
-    monkeypatch.setattr(scraper_mod, "is_source_enabled", lambda sid: False)
+    monkeypatch.setattr(scraper_mod, "is_source_enabled", lambda sid: sid == "javbus")
 
 
 class Env:

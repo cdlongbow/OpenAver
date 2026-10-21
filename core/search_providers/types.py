@@ -87,6 +87,19 @@ class Provider(Protocol):
     # 依日期重排，不是）。每個 provider 要自行宣告（175b 的 JavDB 亦然）。
     fallback_streaming: bool
 
+    def run(
+        self,
+        kind: Kind,
+        target: str,
+        w: Window,
+        *,
+        status_callback=None,
+        result_callback=None,
+        discovery_only: bool = False,
+    ) -> list[dict]:
+        """統一入口：relay 逐家呼叫；傳輸例外往外丟（relay 會 log 並換下一家）。"""
+        ...
+
     def resolve(self, kind: Kind, name: str) -> EntityRef | None:
         """名字 → 實體；沒有／不是 ⇒ None；連不上 ⇒ raise SourceUnreachable／SourceBlocked。"""
         ...

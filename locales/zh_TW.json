@@ -192,7 +192,7 @@
       "tag_nfo_not_written": "標籤已存，但媒體伺服器讀的那份 NFO 沒有更新",
       "tag_nfo_write_blocked": "標籤已存，但沒有權限寫入 NFO",
       "no_data": "找不到資料",
-      "maker_not_found": "JavBus 找不到「{maker}」的作品頁",
+      "maker_not_found": "找不到「{maker}」的作品頁",
       "search_failed": "搜尋失敗",
       "network_error": "網路錯誤，請重試",
       "no_translation_needed": "當前片無需翻譯",
@@ -1434,7 +1434,7 @@
       "ai_instruction": "貼給 AI agent 就能操作 OpenAver",
       "ai_hint_unsupported": "不適用網頁版聊天",
       "ai_tools": "支援：Claude Code · Cursor · Codex 等 AI agent",
-      "ai_actress_watch": "想追關注女優的新片？可請 agent 用搜尋＋書籤 API 定期查，結果會出現在搜尋頁的書籤分頁。快速探索搜尋目前只有 JavBus 一個來源，被擋時查不到。"
+      "ai_actress_watch": "想追關注女優的新片？可請 agent 用搜尋＋書籤 API 定期查，結果會出現在搜尋頁的書籤分頁。快速探索搜尋只有 JavBus 一個來源，JavBus 被擋或在設定頁關掉時查不到。"
     },
     "agent_auth": {
       "title": "Agent Token",
@@ -1482,8 +1482,8 @@
       "method_full": "<strong>完整番號</strong>：如 <code>SONE-001</code>，精確搜尋單一作品",
       "method_partial": "<strong>部分番號</strong>：如 <code>SONE-0</code>，搜尋 001~009",
       "method_series": "<strong>系列搜尋</strong>：如 <code>SONE</code>，搜尋該系列最新作品",
-      "method_actress": "<strong>女優名</strong>：如 <code>河北彩花</code>，搜尋該演員作品",
-      "method_maker": "<strong>片商最新作品</strong>：搜尋頁空白時列出最近 12 個月最常收的片商，點一下看該片商的最新作品（含片商自己出的總集編）；資料來自 JavBus，JavBus 被擋或關閉時不能用",
+      "method_actress": "<strong>女優名</strong>：如 <code>河北彩花</code>，搜尋該演員作品；繁中、簡中、羅馬字也找得到（需開啟 JavDB）",
+      "method_maker": "<strong>片商最新作品</strong>：搜尋頁空白時列出最近 12 個月最常收的片商，點一下看該片商的最新作品（含片商自己出的總集編）；也可以直接在搜尋框打片商名稱。由設定頁排最前面、查得到該片商的來源回答，被擋或關閉時改問下一個（按「載入更多」時不換來源）",
       "drag_auto": "將影片檔案拖入視窗，自動提取番號並搜尋",
       "drag_batch": "支援多檔案批次處理（一次 20 個）",
       "drag_generate": "整理歸檔：點「整理此片」會依命名規則改名、搬進歸檔資料夾，並下載封面 + 寫 NFO（想讓 OpenAver 建一個乾淨命名媒體庫用這條）",

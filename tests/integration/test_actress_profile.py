@@ -519,6 +519,7 @@ def test_search_api_exact_no_profile(client):
         assert data['actress_profile'] is None
 
 
+@pytest.mark.usefixtures("empty_library_makers")
 def test_search_api_mixed_results_no_profile(client):
     """測試混合結果（consistency < 80%）"""
     def mock_smart_search(q, **kwargs):
@@ -550,6 +551,7 @@ def test_search_api_mixed_results_no_profile(client):
         assert data['actress_profile'] is None  # 未通過 consistency check
 
 
+@pytest.mark.usefixtures("empty_library_makers")
 def test_search_api_few_results_no_profile(client):
     """測試結果 < 3 筆（不觸發）"""
     def mock_smart_search(q, **kwargs):

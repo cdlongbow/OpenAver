@@ -36,8 +36,9 @@ from core.scrapers.utils import (
 from core.maker_mapping import get_maker_by_prefix
 from core.maker_latest import resolve_maker_studio  # noqa: F401  # 測試 patch 點＋provider 延後取用
 from core.search_providers.javbus import JavBusProvider
-from core.search_providers.relay import search_by_intent
-from core.search_providers.types import MakerSearchResult, Window  # noqa: F401  # MakerSearchResult 重新匯出（web/routers/search.py 使用）
+from core.search_providers import registry
+from core.search_providers.relay import search_by_intent, search_maker
+from core.search_providers.types import Kind, MakerSearchResult, Window  # noqa: F401  # MakerSearchResult 重新匯出（web/routers/search.py 使用）
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
 from core.source_settings import get_enabled_source_ids
@@ -54,6 +55,9 @@ from core.metatube.errors import MetatubeUnavailable, MetatubeNotFound, Metatube
 
 MAX_WORKERS = 2
 REQUEST_DELAY = 0.3
+
+# 前綴搜尋用到的全部 kinds＝前綴鏈（CODE）∪ actress 退路鏈（KEYWORD＋四個實體）；判斷「使用者有沒有開任何一家」用
+_PREFIX_LADDER_KINDS = frozenset({Kind.CODE, Kind.KEYWORD, Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL})
 
 # JavBus 語系對應表（zh-CN 無簡中版，沿用繁中 zh-tw）
 _LOCALE_TO_JAVBUS = {"zh-TW": "zh-tw", "zh-CN": "zh-tw", "ja": "ja", "en": "en"}
@@ -515,11 +519,8 @@ def search_maker_latest(
     result_callback: Optional[Callable[[int, Any], None]] = None,
     db_path=None,
 ) -> MakerSearchResult:
-    """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊；175a-T4：實作搬進 JavBusProvider，此處為 shim）。
-
-    不攔 resolve_maker_studio 的未預期例外（交呼叫端）。
-    """
-    return JavBusProvider().run_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
+    """片商最新作品（經 relay 接力，限 30 部一頁；175b-T8b）。"""
+    return search_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
 
 
 def search_actress(
@@ -587,7 +588,43 @@ def _get_uncensored_sources(search_term: str) -> list[str]:
     return mt_pick + builtin
 
 
-def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
+def _library_title_list(db_path):
+    """邏輯片單（同 web/routers/search.py 的 _library_titles；T9 不重構舊碼，兩份並存）。"""
+    from core.config import get_configured_gallery_dirs
+    from core.database import VideoRepository
+    from core.library_titles import logical_title_firsts
+
+    configured_dir_uris, path_mappings = get_configured_gallery_dirs(load_config())
+    repo = VideoRepository(db_path)
+    return logical_title_firsts(repo.get_library_title_rows(), configured_dir_uris, path_mappings)
+
+
+def _search_maker_intent(query, maker_key, limit, offset, status_callback, result_callback, meta=None):
+    """smart_search 的 maker 分支：片庫樣本＋拼法交給 relay.search_maker，逐卡標 _mode（不送 mode 事件）。"""
+    import datetime
+
+    from core.database import get_db_path
+    from core.maker_names import maker_spellings
+
+    db_path = get_db_path()
+    try:
+        titles = _library_title_list(db_path)
+    except Exception as e:  # 片庫只是樣本來源，探針仍可答（待審 D1）
+        logger.warning('maker search: 無法讀取片庫片單，以空片單繼續（%s）', e)
+        titles = []
+    result = search_maker(
+        maker_key, query, maker_spellings(query), offset, limit=limit, titles=titles,
+        today=datetime.date.today(), status_callback=status_callback,
+        result_callback=result_callback, db_path=db_path,
+    )
+    for card in result.results:
+        card['_mode'] = 'maker'
+    if meta is not None:
+        meta['has_more'] = result.has_more
+    return result.results
+
+
+def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False, *, meta: Optional[dict] = None) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
     """
     智慧搜尋：自動判斷搜尋類型並執行
 
@@ -665,7 +702,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
     known = known_makers() if resolve_makers else frozenset()
     intent = classify_query(query, known, resolve_makers=resolve_makers)
     if intent.mode == 'maker':
-        raise NotImplementedError('maker intent is not wired in 175a')
+        return _search_maker_intent(query, intent.maker_key, limit, offset, status_callback, result_callback, meta)
 
     # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
     if intent.mode == 'exact':
@@ -702,6 +739,8 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
 
     # 3. 前綴搜尋
     elif intent.mode == 'prefix':
+        if not registry.providers_for(_PREFIX_LADDER_KINDS):
+            return []
         results = search_prefix(query, limit=limit, offset=offset, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
         mode = 'prefix'
 
@@ -709,10 +748,10 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
              # Fallback to actress（不透傳 result_callback：prefix 的 seed 已送出，
              # actress fallback 不可送第二個 seed，避免 slot index 錯位）
              if status_callback: status_callback('mode', 'actress')
-             results = search_actress(query, limit=limit, status_callback=status_callback)
+             results = search_actress(query, limit=limit, status_callback=status_callback, discovery_only=discovery_only)
              if results: mode = 'actress'
 
-        if not results:
+        if not results and is_source_enabled('jav321'):
              # Fallback to keyword（search_jav321_keyword 無 as_completed，不透傳 result_callback）
              if status_callback: status_callback('mode', 'keyword')
              results = search_jav321_keyword(query, limit=limit, status_callback=status_callback)

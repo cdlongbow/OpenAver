@@ -15,8 +15,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 @pytest.fixture(autouse=True)
 def _dmm_capsule_off(monkeypatch):
-    """預設 DMM 膠囊關：這份檔的案例走 JavBus 路徑，不要依賴本機 config（BE-TEST-01 使用端 patch）。"""
-    monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+    """預設只開 JavBus、DMM 膠囊關：這份檔的案例走 JavBus 路徑，不要依賴本機 config（BE-TEST-01 使用端 patch）。
+    175b：JavBus 也跟開關走，所以要明確開它。"""
+    monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == "javbus")
 
 
 @pytest.fixture(autouse=True)

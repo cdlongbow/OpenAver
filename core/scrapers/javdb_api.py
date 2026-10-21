@@ -33,6 +33,19 @@ _USER_AGENT = "Dart/3.4 (dart:io)"
 
 _SEARCH_PATH = "/api/v2/search"
 _DETAIL_PATH = "/api/v4/movies/{movie_id}"
+_TAGS_PATH = "/api/v1/movies/tags"
+
+# 站方列表頁大小上限與可翻頁數上限（probe-175a (c)：page=100 回空頁）
+PAGE_SIZE = 50
+MAX_PAGE = 99
+
+_TYPED_KEYS = {
+    "actor": "actors",
+    "series": "series",
+    "director": "directors",
+    "maker": "makers",
+    "code": "codes",
+}
 
 _TIMEOUT = 20
 
@@ -166,6 +179,40 @@ def api_search(keyword: str, proxies: Optional[dict] = None) -> list[dict]:
     return movies if isinstance(movies, list) else []
 
 
+def api_search_page(
+    q: str, page: int, limit: int = PAGE_SIZE, proxies: Optional[dict] = None
+) -> list[dict]:
+    """無 type 的分頁關鍵字搜尋；page>MAX_PAGE 不發請求回 []；傳輸例外原樣往外丟。"""
+    if page > MAX_PAGE:
+        return []
+    limit = max(1, min(limit, PAGE_SIZE))
+    data = api_get(_SEARCH_PATH, {"q": q, "page": str(page), "limit": str(limit)}, proxies)
+    movies = data.get("movies")
+    return movies if isinstance(movies, list) else []
+
+
+def api_search_typed(search_type: str, q: str, proxies: Optional[dict] = None) -> list[dict]:
+    """依實體類型搜尋候選（只取第 1 頁）；查無回 []，傳輸例外原樣往外丟（BE-PY-03）。"""
+    key = _TYPED_KEYS.get(search_type)
+    if key is None:
+        raise ValueError(f"unsupported search_type: {search_type!r}")
+    data = api_get(_SEARCH_PATH, {"q": q, "page": "1", "type": search_type}, proxies)
+    rows = data.get(key)
+    return rows if isinstance(rows, list) else []
+
+
+def api_list_tags(
+    filter_by: str, page: int, limit: int = PAGE_SIZE, proxies: Optional[dict] = None
+) -> list[dict]:
+    """依 filter_by（如 ``0:a:Av2e``）取一頁作品；page>MAX_PAGE 不發請求回 []；空頁＝結束。"""
+    if page > MAX_PAGE:
+        return []
+    limit = max(1, min(limit, PAGE_SIZE))
+    data = api_get(_TAGS_PATH, {"filter_by": filter_by, "page": str(page), "limit": str(limit)}, proxies)
+    movies = data.get("movies")
+    return movies if isinstance(movies, list) else []
+
+
 def api_movie_detail(movie_id: str, proxies: Optional[dict] = None) -> dict:
     """回詳情 movie 物件；形狀不對就 raise SourceUnreachable。"""
     data = api_get(_DETAIL_PATH.format(movie_id=movie_id), **({"proxies": proxies} if proxies else {}))
@@ -235,7 +282,7 @@ def _map_sample_images(preview_images: Any) -> list[str]:
     ]
 
 
-def _to_video(detail: dict, number: str) -> Video:
+def to_video(detail: dict, number: str) -> Video:
     detail_id = detail.get("id")
     detail_url = f"https://javdb.com/v/{detail_id}" if detail_id else ""
 
@@ -257,7 +304,7 @@ def _to_video(detail: dict, number: str) -> Video:
         number=number,
         # 與 HTML 那條走同一支正規化（javdb.py:210）：兩條路的標題處理必須逐字相同，
         # 否則站方哪天在 title 前加上番號，只有其中一條會清掉（F4 破口，review P3）。
-        title=strip_number_prefix(_s(detail.get("title")), number),
+        title=strip_number_prefix(_s(detail.get("origin_title")) or _s(detail.get("title")), number),
         actresses=actresses,
         date=_s(detail.get("release_date")),
         maker=_s(detail.get("maker_name")),
@@ -324,9 +371,8 @@ def fetch_video(number: str, proxies: Optional[dict] = None) -> Optional[Video]:
         return None
 
     detail = api_movie_detail(str(movie["id"]), **_pk)
-    video = _to_video(detail, number)
+    video = to_video(detail, number)
     if video.title or video.cover_url:
         _assert_image_urls_proxyable(video)
         return video
     return None
-

@@ -249,7 +249,7 @@ class TestPipeline:
     def test_fuzzy_chain_dmm_capsule_off_falls_through(self, monkeypatch):
         """DMM 排第一 + DMM 膠囊關 → 跳過 DMM，fallback 到 javbus（新鏈行為）"""
         from core.scraper import search_actress
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == "javbus")
         # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
         # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
         # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
@@ -302,7 +302,7 @@ class TestPipeline:
         from core.scraper import JavDBScraper
 
         # DMM returns nothing → should fall through to JavBus path
-        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
+        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321']), \
              patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=[]) as mock_dmm_kw, \
              patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
              patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb_kw:
@@ -458,20 +458,21 @@ class TestFcJavtenDoesNotAffectOtherSources:
 
 
 # ============================================================
-# TestFuzzyGuard — CD-65-4 always-on 與 partial 能力約束護欄
-# （T4，CD-85-7：fuzzy chain always-on / partial javbus 寫死）
+# TestFuzzyGuard — 模糊鏈來源順序與 partial 能力約束護欄
+# （T4，CD-85-7；175b 起開關由 registry.providers_for 過濾，此處只守順序來源）
 # ============================================================
 
 class TestFuzzyGuard:
-    """fuzzy chain 永遠含 javbus（always-on，CD-65-4），
-    partial 固定走 javbus（能力約束），兩者不受 enabled_sids 影響。
+    """fuzzy chain 的順序取自完整來源列表 get_all_source_ids_ordered（不是 enabled_sids），
+    啟用與否由 registry.providers_for 另行過濾；partial 走 javbus（能力約束）。
 
     這些測試守既有行為——現在就 GREEN，T1a cascade 改動後也必須 GREEN。
     Patch target 一律指使用端 core.scraper.*（gotchas-backend.md §Mock Patch Target）。
     """
 
-    def test_fuzzy_chain_always_on_even_if_javbus_disabled(self):
-        """javbus 停用（get_enabled_source_ids→[]）→ fuzzy chain 仍含 javbus（always-on, CD-65-4）
+    def test_fuzzy_chain_order_comes_from_full_source_list(self):
+        """鏈的順序取自完整來源列表（get_all_source_ids_ordered），不是 get_enabled_source_ids；
+        啟用與否由 providers_for 另行過濾（此處 is_source_enabled 恆真，只守順序來源）
 
         突變有效性：把 registry.providers_for 的順序來源改為 get_enabled_source_ids() →
         chain=[]，get_ids_from_search 不被呼叫 → assert_called() RED。
@@ -498,6 +499,7 @@ class TestFuzzyGuard:
         from core.scraper import search_partial
 
         with patch('core.scraper.get_enabled_source_ids', return_value=[]), \
+             patch('core.scraper.get_all_source_ids_ordered', return_value=['javbus', 'dmm']), \
              patch('core.scraper.expand_partial_number', return_value=['MIDV-010', 'MIDV-011']), \
              patch('core.scraper.search_jav', return_value=None) as mock_search_jav:
             search_partial('MIDV-01')

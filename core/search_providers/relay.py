@@ -6,17 +6,21 @@
   list_entity＋run_window(guard=True)，該家不再問 KEYWORD；梯子全空才 run(KEYWORD)（175a 對 JavBus／DMM 是空操作）。
 - seed 規則（CD-175a-4 I-S3）：第一個發動的 provider 一律拿得到 callback（同今天 first_dispatched）；之後的 provider
   只有「尚未真的送出 seed（slot == -1 被轉送）且 fallback_streaming」才拿得到，否則 None（避免後備改變最終順序）。
-- relay 自己不送 status 事件、不補 `_source`、不排序。
+- relay 自己不送 status 事件（唯一例外：宣告實體能力的 provider 的實體梯子，見 _entity_ladder）、不補 `_source`、不排序。
 頂層只准 stdlib、core.logger、core.scrapers.errors、core.search_providers.*（BE-PY-08）。
 """
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
+from typing import NamedTuple
+
 from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked
 from core.search_providers import registry
 from core.search_providers.pipeline import run_window
-from core.search_providers.types import EntityRef, Kind, Window
+from core.search_providers.types import EntityRef, Kind, MakerSearchResult, Window
 
 logger = get_logger(__name__)
 
@@ -49,11 +53,18 @@ def _resolve_refs(provider, kind: Kind, name: str) -> list[EntityRef]:
     return [ref] if ref is not None else []
 
 
-def _entity_ladder(provider, name: str, w: Window, cb) -> list[dict] | None:
-    """None＝梯子沒有任何 ref 命中（呼叫端改問 KEYWORD）；list＝命中了（可為空；該家不再問 KEYWORD）。"""
+def _entity_ladder(provider, name: str, w: Window, cb, status_callback=None) -> list[dict] | None:
+    """None＝梯子沒有任何 ref 命中（呼叫端改問 KEYWORD）；list＝命中了（可為空；該家不再問 KEYWORD）。
+
+    可觀測：只有宣告了實體能力的 provider 才送 status（第一次進入實體 kind 前 searching、有卡時 done）；
+    不宣告實體能力者（JavBus／DMM）梯子是空操作、零事件。"""
+    announced = False
     for kind in _ENTITY_KINDS:
         if kind not in provider.capabilities:
             continue
+        if not announced and status_callback is not None:
+            status_callback(provider.id, "searching")
+        announced = True
         try:
             refs = _resolve_refs(provider, kind, name)
             for ref in refs:
@@ -66,9 +77,14 @@ def _entity_ladder(provider, name: str, w: Window, cb) -> list[dict] | None:
                     guard=True,
                 )
                 if res.cards:
+                    if status_callback is not None:
+                        status_callback("done", f"found:{len(res.cards)}")
                     return res.cards
         except Exception as err:
-            logger.warning("entity ladder failed: %s/%s (%s)", provider.id, kind.value, type(err).__name__)
+            logger.warning(
+                "entity ladder failed: %s/%s (%s%s)",
+                provider.id, kind.value, type(err).__name__, "/blocked" if isinstance(err, SourceBlocked) else "",
+            )
             return []
         if refs:
             return []
@@ -78,7 +94,7 @@ def _entity_ladder(provider, name: str, w: Window, cb) -> list[dict] | None:
 def _ask(provider, mode, q, w, status_callback, cb, discovery_only) -> list[dict]:
     if mode == "actress":
         if not discovery_only:
-            cards = _entity_ladder(provider, q, w, cb)
+            cards = _entity_ladder(provider, q, w, cb, status_callback)
             if cards is not None:
                 return cards
         kind = Kind.KEYWORD
@@ -116,3 +132,101 @@ def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, 
         if cards:
             return cards
     return []
+
+
+def _merge_maker_codes(codes: list[str | None]) -> str:
+    """全鏈都換不出答案時的彙整：有連不上 ⇒ unreachable；全部 no_sample ⇒ no_sample；其餘 not_found。"""
+    if "maker_unreachable" in codes:
+        return "maker_unreachable"
+    if codes and all(c == "maker_no_sample" for c in codes):
+        return "maker_no_sample"
+    return "maker_not_found"
+
+
+_MAKER_ANSWERERS_MAX = 128
+_MAKER_ANSWERERS: OrderedDict = OrderedDict()  # (maker_key, limit) -> 第一頁實際回答的 provider id（LRU，只在記憶體）
+_MAKER_ANSWERERS_LOCK = threading.Lock()
+
+
+def _reset_maker_answerers() -> None:
+    with _MAKER_ANSWERERS_LOCK:
+        _MAKER_ANSWERERS.clear()
+
+
+def _note_maker_answerer(key, provider_id: str) -> None:
+    with _MAKER_ANSWERERS_LOCK:
+        _MAKER_ANSWERERS[key] = provider_id
+        _MAKER_ANSWERERS.move_to_end(key)
+        while len(_MAKER_ANSWERERS) > _MAKER_ANSWERERS_MAX:
+            _MAKER_ANSWERERS.popitem(last=False)
+
+
+def _recall_maker_answerer(key) -> str | None:
+    with _MAKER_ANSWERERS_LOCK:
+        pid = _MAKER_ANSWERERS.get(key)
+        if pid is not None:
+            _MAKER_ANSWERERS.move_to_end(key)
+        return pid
+
+
+def search_maker(maker_key, label, spellings, offset, *, limit=None, titles, today, status_callback=None,
+                 result_callback=None, db_path=None) -> MakerSearchResult:
+    """片商最新作品的接力（175b-T8b）：鏈＝providers_for({MAKER})，逐家 run_maker。
+
+    I-M2（同一份清單不得中途換家）：非空 ⇒ 回；maker_empty ⇒ 終點；offset>0 的 unreachable／例外 ⇒ 終點；
+    其餘（not_found／no_sample／offset==0 的 unreachable／例外）記下並換下一家。
+    offset==0 非空時記下回答者（key＝(maker_key, limit)）；offset>0 命中記錄 ⇒ 只問那一家（175b-F1）。"""
+    providers = registry.providers_for({Kind.MAKER})
+    answerer_key = (maker_key, limit)
+    pinned = _recall_maker_answerer(answerer_key) if offset > 0 else None
+    if pinned is not None:  # 載入更多固定問第一頁回答的那一家；它不在鏈上 ⇒ 終點，不換家
+        providers = [p for p in providers if p.id == pinned]
+        if not providers:
+            return MakerSearchResult([], False, "maker_unreachable")
+    if not providers:
+        return MakerSearchResult([], False, "maker_not_found")
+    chain_ids = [p.id for p in providers]
+    gate = _SeedGate(result_callback)
+    codes: list[str | None] = []
+    for index, provider in enumerate(providers):
+        run_maker = getattr(provider, "run_maker", None)
+        if not callable(run_maker):
+            raise TypeError(f"provider {provider.id!r} has no run_maker()")
+        cb = None if gate.seeded or (index and not _streams_as_fallback(provider)) else gate.callback
+        try:
+            res = run_maker(maker_key, label, spellings, offset, limit=limit, titles=titles, today=today,
+                            status_callback=status_callback, result_callback=cb, db_path=db_path)
+        except Exception as exc:
+            logger.warning(
+                "relay maker: %s failed (%s%s), chain %s",
+                provider.id, type(exc).__name__, "/blocked" if isinstance(exc, SourceBlocked) else "", chain_ids,
+            )
+            if offset > 0:
+                return MakerSearchResult([], False, "maker_unreachable")
+            codes.append("maker_unreachable")
+            continue
+        if res.results:
+            if offset == 0:
+                _note_maker_answerer(answerer_key, provider.id)
+            return res
+        if res.error_code is None:
+            return res  # 認得、也列出了（詳情全缺）：同 maker_empty，終點（173 行為不變）
+        if res.error_code == "maker_empty":
+            return res
+        if res.error_code == "maker_unreachable" and offset > 0:
+            return res
+        codes.append(res.error_code)
+    return MakerSearchResult([], False, _merge_maker_codes(codes))
+
+
+class MakerCapsulePolicy(NamedTuple):
+    enabled: bool  # 鏈上有任何一家做得到片商 ⇒ 顯示膠囊列
+    use_not_found_map: bool  # 只有鏈恰為 javbus 時，才信 maker_javbus_map 的「沒有這家」去藏膠囊
+
+
+def maker_capsule_policy() -> MakerCapsulePolicy:
+    """膠囊列的後端狀態（175b-T8c，CD-175b-3）。"""
+    ids = [p.id for p in registry.providers_for({Kind.MAKER})]
+    enabled = bool(ids)
+    use_not_found_map = ids == ["javbus"]
+    return MakerCapsulePolicy(enabled, use_not_found_map)

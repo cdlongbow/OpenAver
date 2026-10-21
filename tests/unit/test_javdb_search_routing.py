@@ -299,8 +299,7 @@ def test_rate_limit_lives_only_in_search_not_in_search_via_html():
 
     html_src = inspect.getsource(JavDBScraper.search_via_html)
     api_src = inspect.getsource(JavDBScraper.search_via_api)
-    # 節流已隨 review round-2 的 `allow_api` 拆分搬進 `_search_number()`
-    # （`search()` 現在只是它的 `allow_api=True` 入口）。
+    # 節流在 `_search_number()`（`search()` 只是它的入口）。
     search_src = inspect.getsource(JavDBScraper._search_number)
 
     # [lint-guard: pytest-justified] 這裡的 `html_src` 是 `inspect.getsource()` 取出的
@@ -311,7 +310,7 @@ def test_rate_limit_lives_only_in_search_not_in_search_via_html():
         "留兩份會讓每次搜尋節流兩次"
     )
     assert "rate_limit" not in api_src, "search_via_api() 是薄封裝，不該節流"
-    assert search_src.count("rate_limit(") == 3, (
-        "_search_number() 應該剛好有三個 rate_limit 呼叫點（API 命中、html-only、"
-        "HTML 備援），三者互斥所以每次搜尋最多只會執行到一個"
+    assert search_src.count("rate_limit(") == 2, (
+        "_search_number() 應該剛好有兩個 rate_limit 呼叫點（API 命中、"
+        "HTML 備援），兩者互斥所以每次搜尋最多只會執行到一個"
     )

@@ -12,6 +12,7 @@ import requests
 from core.database import Video, VideoRepository, init_db, maker_javbus_map
 from core.path_utils import to_file_uri
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.search_providers.relay import MakerCapsulePolicy
 from core.scrapers.javbus import STUDIO_MISS, JavBusScraper, StudioVote
 
 TODAY = datetime.date(2026, 10, 21)
@@ -33,12 +34,15 @@ def env(tmp_path, monkeypatch):
     init_db(db)
     monkeypatch.setattr("web.routers.search.get_db_path", lambda: db)
     monkeypatch.setattr("web.routers.search._today", lambda: TODAY)
-    monkeypatch.setattr("web.routers.search.is_source_enabled", lambda sid: True)
+    monkeypatch.setattr("web.routers.search.maker_capsule_policy", lambda: MakerCapsulePolicy(True, True))
     monkeypatch.setattr(
         "web.routers.search.get_configured_gallery_dirs",
         lambda cfg: ({to_file_uri(str(video_dir), {})}, {}),
     )
     monkeypatch.setattr("core.scraper.MAX_WORKERS", 1)
+    # 175b-T8b：片商路徑改走接力；173 的情境只驗 JavBus，固定鏈＝只有 javbus
+    monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ["javbus"])
+    monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == "javbus")
     return type("Env", (), {"db": db, "dir": video_dir, "tmp": tmp_path})()
 
 
@@ -180,7 +184,7 @@ def test_capsules_counting_rules(client, env):
     assert m["Multi"] == {"maker": "Multi", "total": 1, "recent": 1}
     assert set(m) == {"Beta", "Multi"}
     assert all(x["recent"] <= x["total"] for x in data["makers"])
-    assert data["javbus_enabled"] is True
+    assert data["maker_search_enabled"] is True and not any("javbus" in k for k in data)
 
 
 def test_not_found_maker_appears_in_hidden_keys(client, env):
@@ -192,17 +196,34 @@ def test_not_found_maker_appears_in_hidden_keys(client, env):
     assert caps(client)["hidden_keys"] == [KEY]
 
 
-def test_capsules_javbus_disabled_skips_db(client, env, monkeypatch):
+def test_capsules_row_disabled_when_no_provider_can_answer(client, env, monkeypatch):
     five_s1(env)
-    monkeypatch.setattr("web.routers.search.is_source_enabled", lambda sid: False)
+    monkeypatch.setattr("web.routers.search.maker_capsule_policy", lambda: MakerCapsulePolicy(False, False))
     with patch("web.routers.search.init_db") as idb, \
          patch("web.routers.search.VideoRepository") as repo, \
          patch("web.routers.search.list_not_found_keys") as lnf:
         data = caps(client)
     assert data["success"] is True
-    assert data["javbus_enabled"] is False
+    assert data["maker_search_enabled"] is False and not any("javbus" in k for k in data)
     assert data["makers"] == [] and data["hidden_keys"] == []
     assert idb.call_count == 0 and repo.call_count == 0 and lnf.call_count == 0
+
+
+def test_capsules_hidden_keys_empty_when_javdb_also_answers(client, env, monkeypatch):
+    five_s1(env)
+    monkeypatch.setattr("web.routers.search.maker_capsule_policy", lambda: MakerCapsulePolicy(True, False))
+    with patch("web.routers.search.list_not_found_keys", return_value=["x"]) as lnf:
+        data = caps(client)
+    assert data["maker_search_enabled"] is True and data["hidden_keys"] == []
+    assert by_maker(data)["S1"]["total"] == 5
+    assert lnf.call_count == 0
+
+
+def test_capsules_hidden_keys_from_table_when_javbus_only(client, env):
+    five_s1(env)
+    with patch("web.routers.search.list_not_found_keys", return_value=["x", "y"]) as lnf:
+        data = caps(client)
+    assert data["hidden_keys"] == ["x", "y"] and lnf.call_count == 1
 
 
 def test_capsules_missing_db_file_is_empty(client, env):

@@ -5,6 +5,7 @@
 """
 
 import concurrent.futures as cf
+import inspect
 import itertools
 import time
 from unittest.mock import MagicMock
@@ -13,11 +14,12 @@ import pytest
 
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.search_providers import registry, relay
-from core.search_providers.types import Enriched, EntityRef, Kind, Page, Window, WorkItem
+from core.search_providers.types import Enriched, EntityRef, Kind, Page, Provider, Window, WorkItem
 
 W = Window(0, 20)
 REF = EntityRef(Kind.ACTOR, "a1", "someone")
 BASE_CAPS = frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE})
+ALL_CAPS = frozenset(Kind)
 
 
 def card(n):
@@ -138,8 +140,8 @@ def search(mode="partial", q="q", w=W, **kw):
 
 
 # ---------------------------------------------------------------- registry
-def test_registered_ids_are_javbus_and_dmm():
-    assert registry.registered_ids() == frozenset({"javbus", "dmm"})
+def test_registered_ids_are_javbus_dmm_and_javdb():
+    assert registry.registered_ids() == frozenset({"javbus", "dmm", "javdb"})
 
 
 # ---------------------------------------------------------------- 接力語意
@@ -228,10 +230,36 @@ def test_dmm_first_order_asks_dmm_first(chain):
     assert log == ["dmm", "javbus"]  # 不在 order 的已註冊者（aaa-extra）不被問
 
 
-def test_javbus_asked_when_its_switch_is_off(chain):
-    jb = Fake("javbus", cards=[card("J")])
-    chain([jb], enabled=[])
-    assert search() == [card("J")]  # CD-65-4：JavBus 不看開關
+def test_javbus_skipped_when_its_switch_is_off(chain):
+    jb, dmm = Fake("javbus", cards=[card("J")]), Fake("dmm", cards=[card("D")])
+    chain([jb, dmm], enabled=["dmm"])
+    assert search() == [card("D")]  # 175b：JavBus 也跟設定頁開關走
+    assert len(jb.run_calls) == 0
+
+
+def test_all_three_off_gives_empty_chain_and_empty_result(chain):
+    jb, dmm, jd = (Fake(pid, cards=[card(pid)], caps=ALL_CAPS) for pid in ("javbus", "dmm", "javdb"))
+    chain([jb, dmm, jd], enabled=[])
+    for kinds in ({Kind.PARTIAL}, {Kind.ACTOR}, {Kind.KEYWORD}, {Kind.CODE}, {Kind.MAKER}):
+        assert registry.providers_for(kinds) == []
+    assert search() == []
+    assert len(jb.run_calls) == len(dmm.run_calls) == len(jd.run_calls) == 0
+
+
+def test_javbus_off_excluded_from_providers_for_every_kind(chain):
+    jb, dmm, jd = (Fake(pid, caps=ALL_CAPS) for pid in ("javbus", "dmm", "javdb"))
+    chain([jb, dmm, jd], enabled=["dmm", "javdb"])
+    for kinds in ({Kind.PARTIAL}, {Kind.ACTOR}, {Kind.KEYWORD}, {Kind.CODE}, {Kind.MAKER}):
+        assert [p.id for p in registry.providers_for(kinds)] == ["dmm", "javdb"]
+
+
+@pytest.mark.parametrize("order", [["javdb", "javbus", "dmm"], ["javbus", "dmm", "javdb"]])
+def test_three_on_first_non_empty_wins_and_later_not_asked(chain, order):
+    fakes = {pid: Fake(pid, cards=[card(pid.upper())]) for pid in order}
+    chain([fakes[pid] for pid in order], order=order)
+    assert search() == [card(order[0].upper())]
+    assert len(fakes[order[0]].run_calls) == 1
+    assert [len(fakes[pid].run_calls) for pid in order[1:]] == [0, 0]
 
 
 def test_dmm_skipped_when_its_switch_is_off(chain):
@@ -397,3 +425,49 @@ def test_relay_does_not_add_source_or_reorder(chain):
 
 
 # ---------------------------------------------------------------- _resolve_refs
+
+# ---------------------------------------------------------------- 175b-T4b：實體梯子可觀測
+def test_ladder_sends_status_only_for_providers_declaring_entity_kinds(chain):
+    a = EntityFake("a", n_items=3)
+    plain = Fake("plain")  # 先問、查無
+    chain([plain, a])
+    status = MagicMock()
+    search("actress", "someone", status_callback=status)
+    events = [c.args for c in status.call_args_list]
+    assert ("a", "searching") in events
+    assert ("done", "found:3") in events
+    assert all(e[0] != "plain" for e in events)
+
+
+def test_ladder_without_entity_capability_emits_zero_events(chain):
+    a, b = Fake("a"), Fake("b", cards=[card("B")])
+    chain([a, b])
+    status = MagicMock()
+    search("actress", "someone", status_callback=status)
+    assert status.call_count == 0
+
+
+def test_ladder_status_callback_none_is_safe(chain):
+    a = EntityFake("a", n_items=2)
+    chain([a])
+    assert len(search("actress", "someone", status_callback=None)) == 2
+
+
+def test_ladder_no_done_event_when_page_unrelated(chain):
+    a = EntityFake("a", belongs=False)
+    chain([a, Fake("b", cards=[card("B")])])
+    status = MagicMock()
+    search("actress", "someone", status_callback=status)
+    events = [c.args for c in status.call_args_list]
+    assert ("a", "searching") in events
+    assert not any(e[0] == "done" for e in events)
+
+
+@pytest.mark.parametrize("exc,tag", [(SourceBlocked("b"), True), (SourceUnreachable("u"), False)])
+def test_ladder_failure_log_marks_blocked_only_for_blocked(chain, caplog, exc, tag):
+    a = EntityFake("a", resolve_raises=exc)
+    chain([a, Fake("b", cards=[card("B")])])
+    with caplog.at_level("WARNING"):
+        assert search("actress", "someone") == [card("B")]
+    lines = [r.getMessage() for r in caplog.records if "entity ladder failed" in r.getMessage()]
+    assert len(lines) == 1 and ("/blocked" in lines[0]) is tag

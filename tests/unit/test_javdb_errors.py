@@ -4,7 +4,7 @@ test_javdb_errors.py - javdb typed exception 與例外傳播單元測試（TASK-
 AC-1：core/scrapers/errors.py 兩個 typed exception 與 docstring
 AC-2：_get_html() 三態分類（連線層 Unreachable / 403,429,503與CF Blocked / 404,500 None）
 AC-3：log 升 WARNING 且區分連不上與被擋
-AC-4：search() 與 search_by_keyword() 放行新例外（三個吞點）
+AC-4：search() 放行新例外
 AC-5：查無此片回 None 不拋例外（反向鎖）
 AC-6：404/500 回 None 不拋例外（反向鎖）
 AC-7：CURL_CFFI_AVAILABLE=False 回 None 不拋新例外（反向鎖）
@@ -200,7 +200,7 @@ class TestGetHtmlErrorHandling:
 
 
 # ============================================================
-# AC-4：search() 與 search_by_keyword() 放行新例外（三個吞點）
+# AC-4：search() 放行新例外
 # ============================================================
 
 class TestPublicApiPropagatesErrors:
@@ -224,63 +224,6 @@ class TestPublicApiPropagatesErrors:
 
         with pytest.raises(SourceUnreachable):
             scraper.search("SSIS-001")
-
-    def test_search_by_keyword_outer_propagates_blocked(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        mock_resp.text = "Forbidden"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with pytest.raises(SourceBlocked):
-            scraper.search_by_keyword("SSIS")
-
-    def test_search_by_keyword_inner_propagates_unreachable(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        # 關鍵字搜尋頁面成功回傳 1 筆結果
-        search_list_html = (
-            '<div class="movie-list">'
-            '  <div class="item">'
-            '    <div class="video-title"><strong>SSIS-001</strong></div>'
-            '    <a href="/v/abc123">link</a>'
-            '  </div>'
-            '</div>'
-        )
-
-        def mock_search_impl(number):
-            raise SourceUnreachable("inner detail connection failed")
-
-        monkeypatch.setattr(scraper, "_get_html", lambda url: search_list_html)
-        monkeypatch.setattr(scraper, "search_via_html", mock_search_impl)
-
-        with pytest.raises(SourceUnreachable):
-            scraper.search_by_keyword("SSIS")
-
-    def test_search_by_keyword_inner_propagates_blocked(self, scraper, monkeypatch):
-        """內層 except tuple 的**另一項**（SourceBlocked）也要走得出來。
-
-        BE-TEST-16 的同族問題：只測 tuple 裡的一項，另一項被刪掉不會有任何測試轉紅。
-        本測試就是那一項的守衛（Opus 獨立 mutation 發現的缺口，sonnet review 同時抓到）。
-        """
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        search_list_html = (
-            '<div class="movie-list">'
-            '  <div class="item">'
-            '    <div class="video-title"><strong>SSIS-001</strong></div>'
-            '    <a href="/v/abc123">link</a>'
-            '  </div>'
-            '</div>'
-        )
-
-        def mock_search_impl(number):
-            raise SourceBlocked("inner detail blocked by CF")
-
-        monkeypatch.setattr(scraper, "_get_html", lambda url: search_list_html)
-        monkeypatch.setattr(scraper, "search_via_html", mock_search_impl)
-
-        with pytest.raises(SourceBlocked):
-            scraper.search_by_keyword("SSIS")
 
 
 # ============================================================

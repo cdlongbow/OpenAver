@@ -85,7 +85,7 @@ class TestFuzzyChain:
         """DMM 排第一 + DMM 膠囊關 → DMM 不呼叫，javbus 命中"""
         from core.scraper import search_actress
 
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == 'javbus')
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])
@@ -124,12 +124,12 @@ class TestFuzzyChain:
         assert len(results) >= 1
         assert results[0]['source'] == 'javbus'
 
-    # ---- 4. 停用的候選池源模糊仍用（always-on） ----
-    def test_disabled_source_still_reached_by_chain(self, monkeypatch):
-        """get_all_source_ids_ordered 回含 javbus（不管 enabled），鏈仍能到達並命中"""
+    # ---- 4. 鏈的順序取自完整來源列表（啟用與否由 providers_for 另行過濾） ----
+    def test_chain_order_reads_full_source_list(self, monkeypatch):
+        """鏈的順序讀 get_all_source_ids_ordered 的完整列表，列表含 javbus 即能到達並命中"""
         from core.scraper import search_actress
 
-        # get_all_source_ids_ordered 不過濾 enabled，停用但仍在列表
+        # get_all_source_ids_ordered 回完整列表（不依 enabled 過濾）
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['javbus'])
 
@@ -200,7 +200,7 @@ class TestFuzzyChain:
         """order=['dmm','javbus']，DMM 膠囊關（DMM 被跳過）→ seed 由 javbus 送，恰好 1 次"""
         from core.scraper import search_actress
 
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == 'javbus')
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])
@@ -247,19 +247,26 @@ class TestFuzzyChain:
         mock_jb.assert_called()        # JavBus tried as next
         assert len(results) == 1
 
-    # ---- 10. javdb 不在 search provider 註冊表 → 鏈忽略 javdb（TASK-65g） ----
-    def test_javdb_excluded_from_fuzzy_pool(self, monkeypatch):
-        """javdb 不在 search provider 註冊表 → order=['javdb'] 交集後 chain=[] → 回 []"""
+    # ---- 10. javdb 已註冊（175b-T4b）：在順序內且開關開 ⇒ 被問；開關關 ⇒ 不被問 ----
+    def test_javdb_asked_when_enabled_and_not_asked_when_disabled(self, monkeypatch):
+        """R27 翻轉：order=['javdb'] 且開關開 ⇒ JavDBProvider.run 被呼叫；開關關 ⇒ 0 次（patch 使用端，不連外）"""
+        from unittest.mock import MagicMock
+
         from core.scraper import search_actress
+        from core.search_providers.javdb import JavDBProvider
 
-        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
-                            lambda: ['javdb'])
+        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javdb'])
+        run = MagicMock(return_value=[])
+        monkeypatch.setattr(JavDBProvider, "run", run)
+        monkeypatch.setattr(JavDBProvider, "resolve", lambda self, kind, name: None)
 
-        with patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb:
-            results = search_actress("actress")
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
+        assert search_actress("actress") == []
+        assert run.call_count == 1
 
-        mock_javdb.assert_not_called()  # javdb filtered out by search provider 註冊表 intersection
-        assert results == []
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        assert search_actress("actress") == []
+        assert run.call_count == 1  # 開關關了沒再被問
 
     # ---- 11. `_get_fuzzy_source` 已刪 ----
     def test_get_fuzzy_source_deleted(self):
@@ -401,6 +408,74 @@ class TestSmartSearchFuzzyNoPostChainFallback:
             f"search_jav321_keyword must NOT be called via fuzzy chain (jav321 removed from pool), got {len(call_count)} calls"
         assert results == [], \
             f"Expected [] when chain exhausted, got {results}"
+
+
+# ============================================================
+# 175b-T5b — smart_search prefix 分支：三家全關＝查無、jav321 退路看自己的開關
+# ============================================================
+
+_ALL_IDS = ['dmm', 'javbus', 'javdb', 'jav321']
+
+
+def _run_smart(query, enabled, *, jav321_results=(), javbus_ids=()):
+    """從 smart_search 入口跑；回 (results, jav321 mock, javbus get_ids_from_search mock)。
+    開關 patch 使用端 core.scraper.is_source_enabled（BE-TEST-01/02）；jav321 計數 patch 使用端。"""
+    from core.scraper import smart_search
+
+    with patch("core.scraper.get_all_source_ids_ordered", lambda: list(_ALL_IDS)), \
+         patch("core.scraper.is_source_enabled", lambda sid: sid in enabled), \
+         patch("core.scraper.search_jav321_keyword",
+               return_value=list(jav321_results)) as jav321, \
+         patch.object(JavBusScraper, "get_ids_from_search",
+                      return_value=list(javbus_ids)) as javbus:
+        results = smart_search(query, limit=5)
+    return results, jav321, javbus
+
+
+class TestSmartSearchPrefixSwitches:
+
+    def test_prefix_all_sources_off_returns_empty_without_jav321(self):
+        """(7a) 三家全關＋jav321 開 → [] 且 jav321 / JavBus 都 0 次。"""
+        results, jav321, javbus = _run_smart("MIDV", {"jav321"},
+                                             jav321_results=[_make_dict("jav321", "MIDV-001")])
+        assert results == []
+        assert jav321.call_count == 0
+        assert javbus.call_count == 0
+
+    def test_prefix_retreat_skips_jav321_when_its_switch_is_off(self):
+        """(7b) JavBus 開（兩鏈皆空）＋jav321 關 → [] 且 jav321 0 次。"""
+        results, jav321, _ = _run_smart("MIDV", {"javbus"},
+                                        jav321_results=[_make_dict("jav321", "MIDV-001")])
+        assert results == []
+        assert jav321.call_count == 0
+
+    def test_prefix_retreat_reaches_jav321_when_its_switch_is_on(self):
+        """(7c) JavBus 開（兩鏈皆空）＋jav321 開 → 退路照今天：jav321 問 1 次、_mode=keyword。"""
+        results, jav321, _ = _run_smart("MIDV", {"javbus", "jav321"},
+                                        jav321_results=[_make_dict("jav321", "MIDV-001")])
+        assert jav321.call_count == 1
+        assert len(results) == 1
+        assert results[0]["_mode"] == "keyword"
+
+    def test_prefix_with_only_dmm_on_still_reaches_actress_retreat(self):
+        """只開 DMM：前綴鏈（CODE）無人可問，但 DMM 的 KEYWORD 要接得住 actress 退路。"""
+        video = _make_video("dmm", "MIDV-001")
+        with patch.object(DMMScraper, "search_by_keyword_with_ids",
+                          lambda self, *a, **kw: [("midv00001", video)]), \
+             patch.object(DMMScraper, "_fetch_by_id", lambda self, cid: video):
+            results, jav321, javbus = _run_smart("MIDV", {"dmm"})
+        assert len(results) == 1
+        assert results[0]["_mode"] == "actress"
+        assert jav321.call_count == 0
+        assert javbus.call_count == 0
+
+    @pytest.mark.parametrize("query", ["MIDV", "SONE-0", "蒼井そら"])
+    def test_all_sources_off_returns_empty_not_raise(self, query):
+        """(3) 三家全關（含 jav321 關）：prefix／partial／actress 三種查詢都回 [] 且不拋。"""
+        results, jav321, javbus = _run_smart(query, set())
+        assert results == []
+        assert jav321.call_count == 0
+        assert javbus.call_count == 0
 
 
 # ============================================================

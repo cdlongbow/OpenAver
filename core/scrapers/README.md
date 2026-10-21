@@ -14,7 +14,7 @@
 | `dmm` | DMM | ✅ | ✅ | ❌ | ⚠️ 依地區 | ❌ | ❌ | GraphQL API；部分地區需日本 IP（VPN/proxy）；數位 PPV 新片優先；封面高畫質 |
 | `javbus` | JavBus | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 直打 detail URL；封面無浮水印但**僅右半裁切**；~~搜尋端點 `/search/` 已 404~~ → **2026-08-29 實測回 200、30 筆**（variant 探查於 spec-85 移除是產品決定，與端點死活無關，見 §2 與陷阱表） |
 | `jav321` | Jav321 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | keyword 搜尋恆回空，故不註冊為 search provider |
-| `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | 網頁有／API 無 | 重複 keyword 呼叫觸發 Cloudflare ban，故不註冊為 search provider；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
+| `javdb` | JavDB | ✅ | ✅ | ✅ | ❌ | ⚠️ | 網頁有／API 無 | 模糊搜尋由 `core/search_providers/javdb.py` 負責（`search_by_keyword` 恆回 `[]`）；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
 | `javlibrary` | JavLibrary | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | **manual_only**：不進 SOURCE_ORDER fan-out；exact-only（CD-70b）；需 CfTransport（桌面版限定）；封面 hotlink DMM CDN（`pl.jpg`，同 dmm 無浮水印）；手動版本切換：**eager 全抓、新片優先、三手動入口（lightbox/search/switch-source）多版本皆出切換器**（spec-86 done，含 T7 switch-source follow-on） |
 
 ### 1.2 無碼來源（UNCENSORED_SOURCES）
@@ -84,17 +84,16 @@ core/scrapers/utils.py
 | 模式 | 觸發條件 | 實際呼叫 | 引擎選擇原則 |
 |------|----------|---------|-------------|
 | **exact** | `is_number_format(query)` — 完整番號（SONE-205） | `search_jav_single_source(query, sid)` × enabled sources | 依 `get_enabled_source_ids()` 優先序串接直打，命中即回（early-return），不等其他來源 |
-| **partial** | `is_partial_number(query)` — 縮略番號（MIDV-01） | `search_partial()` → JavBus 固定 | 能力約束：只有 JavBus 能做番號前綴枚舉；非技術債，不動 |
-| **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → JavBus `get_ids_from_search(type=1)` | 同上，JavBus 固定；fallback 依序試 actress → keyword |
-| **actress/keyword** | 其餘 | `search_actress()` → `relay.search_by_intent`（註冊表） | Active-Row 順序選引擎，always-on（見 §3.2） |
+| **partial** | `is_partial_number(query)` — 縮略番號（MIDV-01） | `search_partial()` → `relay.search_by_intent`，鏈上有此能力的來源（JavBus／JavDB，依設定頁順序，關閉即略過） | 能力約束：只有部分來源能做番號前綴枚舉；非技術債，不動 |
+| **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → `relay.search_by_intent`，鏈上有此能力的來源（JavBus／JavDB，依設定頁順序，關閉即略過） | 同上；JavBus 端的 `type=1` 其實是「映画」頁籤、不是前綴搜尋（與不帶 type 逐筆相同，無害，見 `findings-javbus.md` §4）；fallback 依序試 actress → keyword。三家（JavBus／DMM／JavDB）全關回 `[]`（查無）；keyword 退路只在 jav321 自己的開關為開時才進 |
+| **actress/keyword** | 其餘 | `search_actress()` → `relay.search_by_intent`（註冊表） | Active-Row 順序選引擎，三家（JavBus／DMM／JavDB）都跟設定頁開關走（見 §3.2） |
 
-### 3.2 Fuzzy Chain Always-On（CD-65-4）
+### 3.2 模糊鏈跟設定頁開關走（175b 起）
 
-search_providers 註冊表（`javbus`、`dmm`）是**能力白名單**，不跟隨 enabled 開關：
+search_providers 註冊表（`javbus`、`dmm`、`javdb`）是**能力白名單**，是否參與由設定頁開關決定：
 
-- 使用 `get_all_source_ids_ordered()`（含停用來源），而非 `get_enabled_source_ids()`。
-- 理由：metatube 等其他來源不具模糊能力；javbus / dmm 是「模糊引擎」角色，與主來源開關正交。
-- 排除 jav321（keyword 恆回空）、javdb（重複呼叫觸發 CF ban）。
+- 順序取 `get_all_source_ids_ordered()`，啟用與否由 `providers_for` 過濾；三家都跟設定頁開關走，關閉即略過、全關＝查無。
+- 排除 jav321 與 metatube（無模糊能力）。
 
 ### 3.3 Exact 模式設計決策（spec-85 確立）
 
@@ -217,6 +216,6 @@ post-spec-85（T1c 解耦後）：standalone 函式，不再實例化 `JavBusScr
 | DMM 開關與代理範圍 | DMM 能不能被用只看設定頁來源膠囊（`config.sources[]` 的 `enabled`），與 Proxy 欄是否填寫無關；Proxy 欄填了之後哪些連線走代理由 `core/proxy_policy.py` 依「僅 DMM／所有來源」決定 |
 | ~~JavBus 搜尋端點已死~~ | ⛔ **2026-08-29 實測推翻**：`/search/{keyword}` 回的是 **HTTP 200、30 筆**，不是 404（`get_ids_from_search('a')` 當場驗過，`_build_search_url` 本來就在組這個網址）。舊敘述「**不可**再實作任何依賴 `/search/` 的功能」曾讓一位 reviewer 判定某個 task 的樣本來源已死並下 BLOCK。**exact 走 detail URL、partial/prefix 走 `get_ids_from_search`** 這半仍然正確，是分工不是能力限制。⚠️ 這是 live-only 事實，要據此做決定前**自己再驗一次**（見 `gotchas-backend.md` `BE-VERIFY-03`）|
 | javlibrary manual_only | `get_enabled_source_ids()` 自動排除 manual_only 來源，javlibrary 不進 cascade head；只能由進階搜尋顯式指定 |
-| fuzzy always-on | 停用 javbus/dmm 只影響 exact cascade。模糊路徑：JavBus 仍 always-on（設計如此，CD-65-4）；DMM 例外，看膠囊（關閉即略過）；explicit 指定來源不受膠囊限制 |
+| 模糊搜尋跟開關走 | 模糊路徑（女優／關鍵字／前綴／部分番號）三家（JavBus／DMM／JavDB）都看設定頁來源膠囊，關閉即略過、三家全關＝查無（175b 起；舊的「JavBus always-on」已廢）；explicit 指定來源不受膠囊限制 |
 | ~~FC2 無發行日~~ | ⛔ **0.13.12 起作廢**：該不變式屬於舊的 javten 鏡像實作（0.13.13 起為 `fc2_javten.py`／來源 `fc-javten`，仍硬定 `date=""`——站方結構性沒有這個欄位）。現行 `fc2` 走官方站 `fc2_official.py`，**會回傳發行日**（spec-118 AC-1.2 就是要它）。看到 FC2 有日期**不是 bug**，看到它恆空才是 |
 | 路徑處理 | `file:///` URI 轉換一律用 `core/path_utils.py`，禁止手動 strip/建構 |
