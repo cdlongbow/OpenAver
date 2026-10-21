@@ -6,12 +6,18 @@
 
 from __future__ import annotations
 
+import re
+import time
+import unicodedata
 from dataclasses import dataclass
 
 from core.logger import get_logger
+from core.maker_mapping import load_name_mapping, load_search_aliases
+from core.maker_names import maker_key_of
+from core.scrapers import javdb_api
 from core.scrapers.javdb_api import MAX_PAGE, PAGE_SIZE
 from core.scrapers.utils import strip_number_prefix
-from core.search_providers.types import Page, WorkItem
+from core.search_providers.types import EntityRef, Kind, Page, WorkItem
 
 logger = get_logger(__name__)
 
@@ -136,3 +142,154 @@ def parse_detail_facts(movie) -> DetailFacts:
         origin_title=_s(m.get("origin_title")),
         title=_s(m.get("title")),
     )
+
+
+# ---------------------------------------------------------------- 名字 → 實體（175b-T3）
+_STRIP = set("・·-_")
+_SPLIT = re.compile(r"[,、，/／]")
+_SERIES_MIN_VIDEOS = 5
+_MAKER_MAX_NAMES = 4
+_MAKER_REQUEST_GAP = 0.3  # 秒；片商候選名逐名請求之間的最小間隔（主 session 裁決 D4）
+_RESOLVE_CACHE_MAX = 1024
+_RESOLVE_CACHE: dict[tuple[str, str], EntityRef | None] = {}
+_SEARCH_TYPE = {
+    Kind.ACTOR: "actor",
+    Kind.SERIES: "series",
+    Kind.DIRECTOR: "director",
+    Kind.MAKER: "maker",
+    Kind.CODE: "code",
+}
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def clear_resolve_cache() -> None:
+    _RESOLVE_CACHE.clear()
+
+
+def fold(s) -> str:
+    """NFKC → casefold → 去空白與 ・·-_（不做漢字字形對照，CD-175b-1）。"""
+    t = unicodedata.normalize("NFKC", s if isinstance(s, str) else "").casefold()
+    return "".join(ch for ch in t if not ch.isspace() and ch not in _STRIP)
+
+
+def _names(c: Candidate) -> list[str]:
+    return [n for n in (c.name, c.name_zht, *_SPLIT.split(c.other_name)) if n]
+
+
+def _largest(cands: list[Candidate]) -> Candidate:
+    return max(cands, key=lambda c: c.videos_count)  # max 遇平手取先出現
+
+
+def _pick_actor(cands: list[Candidate], qf: str) -> Candidate | None:
+    pool = [c for c in cands if c.type == 0]
+    exact = [c for c in pool if any(fold(n) == qf for n in _names(c))]
+    if exact:
+        return _largest(exact)
+    if len(pool) == 1 and not any(qf in fold(n) for n in _names(pool[0])):
+        return pool[0]
+    return None
+
+
+def _named_enough(c: Candidate, qf: str) -> bool:
+    return fold(c.name) == qf and c.videos_count >= _SERIES_MIN_VIDEOS
+
+
+def _pick_named(cands: list[Candidate], qf: str) -> Candidate | None:
+    ok = [c for c in cands if _named_enough(c, qf)]
+    return _largest(ok) if ok else None
+
+
+def _pick_code(cands: list[Candidate], qf: str) -> Candidate | None:
+    ok = [c for c in cands if fold(c.name) == qf]
+    return _largest(ok) if ok else None
+
+
+def _pick_maker(cands: list[Candidate], wanted: set[str]) -> Candidate | None:
+    accepted = [
+        c
+        for c in cands
+        if fold(c.name) in wanted and c.videos_count > 0
+    ]
+    if not accepted:
+        return None
+    return max(accepted, key=lambda c: c.videos_count)
+
+
+def _maker_names(q: str) -> list[str]:
+    """候選名集合 S：[輸入、正名、該正名底下全部別名]，以 maker_key_of 去重保序，最多 4 個。"""
+    canon_of: dict[str, str] = {}
+    members: dict[str, list[str]] = {}
+    for table in (load_name_mapping(), load_search_aliases()):
+        for alias, canon in table.items():
+            canon_of[maker_key_of(alias)] = canon
+            members.setdefault(maker_key_of(canon), []).append(alias)
+    canon = canon_of.get(maker_key_of(q), q)
+    out: list[str] = []
+    seen: set[str] = set()
+    for n in (q, canon, *members.get(maker_key_of(canon), [])):
+        k = maker_key_of(n)
+        if k and k not in seen:
+            seen.add(k)
+            out.append(n)
+    return out[:_MAKER_MAX_NAMES]
+
+
+class JavDBProvider:
+    id = SOURCE
+    capabilities = frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE})
+
+    def __init__(self, scraper=None):
+        self._scraper_obj = scraper
+
+    @property
+    def _scraper(self):
+        if self._scraper_obj is None:
+            from core.scrapers.javdb import JavDBScraper  # 延後 import（BE-PY-08）
+
+            self._scraper_obj = JavDBScraper()
+        return self._scraper_obj
+
+    def _search(self, search_type: str, q: str) -> list[Candidate]:
+        proxies = self._scraper._proxy_kwargs().get("proxies")
+        return parse_candidates(javdb_api.api_search_typed(search_type, q, proxies=proxies))
+
+    def _lookup(self, kind: Kind, q: str, qf: str) -> Candidate | None:
+        if kind is Kind.MAKER:
+            names = _maker_names(q)
+            wanted = {fold(n) for n in names}
+            for i, name in enumerate(names):
+                if i:
+                    _sleep(_MAKER_REQUEST_GAP)
+                hit = _pick_maker(self._search("maker", name), wanted)
+                if hit is not None:
+                    return hit
+            return None
+        cands = self._search(_SEARCH_TYPE[kind], q)
+        if kind is Kind.ACTOR:
+            return _pick_actor(cands, qf)
+        if kind is Kind.CODE:
+            return _pick_code(cands, qf)
+        return _pick_named(cands, qf)
+
+    def resolve(self, kind: Kind, q: str) -> EntityRef | None:
+        if kind not in _SEARCH_TYPE:
+            return None
+        qf = fold(q)
+        if not qf:
+            return None
+        key = (kind.value, maker_key_of(q))
+        if key in _RESOLVE_CACHE:
+            return _RESOLVE_CACHE[key]
+        cand = self._lookup(kind, q, qf)  # 例外原樣往外丟，不入快取（BE-PY-03）
+        ref = None
+        if cand is not None:
+            ref = EntityRef(kind, cand.name if kind is Kind.CODE else cand.id, cand.name)
+            if kind is Kind.ACTOR:
+                javdb_api.remember_actor_name(cand.id, cand.name)
+        if len(_RESOLVE_CACHE) >= _RESOLVE_CACHE_MAX:
+            _RESOLVE_CACHE.clear()
+        _RESOLVE_CACHE[key] = ref
+        return ref

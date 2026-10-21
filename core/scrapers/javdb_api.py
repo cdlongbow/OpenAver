@@ -365,3 +365,25 @@ def fetch_video(number: str, proxies: Optional[dict] = None) -> Optional[Video]:
         return video
     return None
 
+
+
+# ---------------------------------------------------------------- 女優名快取（175b-T3）
+# id → 日文名。resolve 命中時順手寫入；讀取端（T6）不必為了日文名再打請求。
+_ACTOR_NAME_CACHE: dict[str, str] = {}
+_ACTOR_NAME_CACHE_MAX = 4096
+
+
+def remember_actor_name(actor_id: str, name: str) -> None:
+    if not actor_id or not name:
+        return
+    if actor_id not in _ACTOR_NAME_CACHE and len(_ACTOR_NAME_CACHE) >= _ACTOR_NAME_CACHE_MAX:
+        _ACTOR_NAME_CACHE.clear()
+    _ACTOR_NAME_CACHE[actor_id] = name
+
+
+def cached_actor_name(actor_id: str) -> Optional[str]:
+    return _ACTOR_NAME_CACHE.get(actor_id)
+
+
+def clear_actor_name_cache() -> None:
+    _ACTOR_NAME_CACHE.clear()
