@@ -61,12 +61,12 @@ def get_enabled_source_ids(
 
 
 def get_all_source_ids_ordered() -> list[str]:
-    """回傳全部來源 id（含停用），依 order 升冪。模糊鏈 always-on 用（CD-65-4）。
+    """回傳全部來源 id（含停用），依 order 升冪。模糊鏈取順序用（開關由 providers_for 另行過濾，175b 起三家都看）。
 
     與 get_enabled_source_ids() 的差異：
     - 不過濾 enabled / manual_only / type / availability。
     - 純粹「全部來源依拖曳順序」，包含停用、manual_only、metatube 離線等條目。
-    - 不接受任何參數（模糊鏈語意是 always-on，不依賴 runtime availability）。
+    - 不接受任何參數（只回順序；是否啟用由呼叫端依 is_source_enabled 過濾）。
 
     防禦：缺 sources 段回 []；malformed 非 dict 條目跳過不 crash；
     缺 order key 的條目以 0 計排序。

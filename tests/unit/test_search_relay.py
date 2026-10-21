@@ -19,6 +19,7 @@ from core.search_providers.types import Enriched, EntityRef, Kind, Page, Provide
 W = Window(0, 20)
 REF = EntityRef(Kind.ACTOR, "a1", "someone")
 BASE_CAPS = frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE})
+ALL_CAPS = frozenset(Kind)
 
 
 def card(n):
@@ -245,10 +246,36 @@ def test_dmm_first_order_asks_dmm_first(chain):
     assert log == ["dmm", "javbus"]  # 不在 order 的已註冊者（aaa-extra）不被問
 
 
-def test_javbus_asked_when_its_switch_is_off(chain):
-    jb = Fake("javbus", cards=[card("J")])
-    chain([jb], enabled=[])
-    assert search() == [card("J")]  # CD-65-4：JavBus 不看開關
+def test_javbus_skipped_when_its_switch_is_off(chain):
+    jb, dmm = Fake("javbus", cards=[card("J")]), Fake("dmm", cards=[card("D")])
+    chain([jb, dmm], enabled=["dmm"])
+    assert search() == [card("D")]  # 175b：JavBus 也跟設定頁開關走
+    assert len(jb.run_calls) == 0
+
+
+def test_all_three_off_gives_empty_chain_and_empty_result(chain):
+    jb, dmm, jd = (Fake(pid, cards=[card(pid)], caps=ALL_CAPS) for pid in ("javbus", "dmm", "javdb"))
+    chain([jb, dmm, jd], enabled=[])
+    for kinds in ({Kind.PARTIAL}, {Kind.ACTOR}, {Kind.KEYWORD}, {Kind.CODE}, {Kind.MAKER}):
+        assert registry.providers_for(kinds) == []
+    assert search() == []
+    assert len(jb.run_calls) == len(dmm.run_calls) == len(jd.run_calls) == 0
+
+
+def test_javbus_off_excluded_from_providers_for_every_kind(chain):
+    jb, dmm, jd = (Fake(pid, caps=ALL_CAPS) for pid in ("javbus", "dmm", "javdb"))
+    chain([jb, dmm, jd], enabled=["dmm", "javdb"])
+    for kinds in ({Kind.PARTIAL}, {Kind.ACTOR}, {Kind.KEYWORD}, {Kind.CODE}, {Kind.MAKER}):
+        assert [p.id for p in registry.providers_for(kinds)] == ["dmm", "javdb"]
+
+
+@pytest.mark.parametrize("order", [["javdb", "javbus", "dmm"], ["javbus", "dmm", "javdb"]])
+def test_three_on_first_non_empty_wins_and_later_not_asked(chain, order):
+    fakes = {pid: Fake(pid, cards=[card(pid.upper())]) for pid in order}
+    chain([fakes[pid] for pid in order], order=order)
+    assert search() == [card(order[0].upper())]
+    assert len(fakes[order[0]].run_calls) == 1
+    assert [len(fakes[pid].run_calls) for pid in order[1:]] == [0, 0]
 
 
 def test_dmm_skipped_when_its_switch_is_off(chain):

@@ -85,7 +85,7 @@ class TestFuzzyChain:
         """DMM 排第一 + DMM 膠囊關 → DMM 不呼叫，javbus 命中"""
         from core.scraper import search_actress
 
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == 'javbus')
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])
@@ -200,7 +200,7 @@ class TestFuzzyChain:
         """order=['dmm','javbus']，DMM 膠囊關（DMM 被跳過）→ seed 由 javbus 送，恰好 1 次"""
         from core.scraper import search_actress
 
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == 'javbus')
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])

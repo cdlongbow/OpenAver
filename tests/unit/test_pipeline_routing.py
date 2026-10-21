@@ -249,7 +249,7 @@ class TestPipeline:
     def test_fuzzy_chain_dmm_capsule_off_falls_through(self, monkeypatch):
         """DMM 排第一 + DMM 膠囊關 → 跳過 DMM，fallback 到 javbus（新鏈行為）"""
         from core.scraper import search_actress
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid == "javbus")
         # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
         # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
         # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是

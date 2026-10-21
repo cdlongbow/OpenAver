@@ -86,7 +86,7 @@ core/scrapers/utils.py
 | **exact** | `is_number_format(query)` — 完整番號（SONE-205） | `search_jav_single_source(query, sid)` × enabled sources | 依 `get_enabled_source_ids()` 優先序串接直打，命中即回（early-return），不等其他來源 |
 | **partial** | `is_partial_number(query)` — 縮略番號（MIDV-01） | `search_partial()` → JavBus 固定 | 能力約束：只有 JavBus 能做番號前綴枚舉；非技術債，不動 |
 | **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → JavBus `get_ids_from_search(type=1)` | 同上，JavBus 固定；fallback 依序試 actress → keyword |
-| **actress/keyword** | 其餘 | `search_actress()` → `relay.search_by_intent`（註冊表） | Active-Row 順序選引擎，always-on（見 §3.2） |
+| **actress/keyword** | 其餘 | `search_actress()` → `relay.search_by_intent`（註冊表） | Active-Row 順序選引擎，三家（JavBus／DMM／JavDB）都跟設定頁開關走（見 §3.2） |
 
 ### 3.2 Fuzzy Chain Always-On（CD-65-4）
 
@@ -217,6 +217,6 @@ post-spec-85（T1c 解耦後）：standalone 函式，不再實例化 `JavBusScr
 | DMM 開關與代理範圍 | DMM 能不能被用只看設定頁來源膠囊（`config.sources[]` 的 `enabled`），與 Proxy 欄是否填寫無關；Proxy 欄填了之後哪些連線走代理由 `core/proxy_policy.py` 依「僅 DMM／所有來源」決定 |
 | ~~JavBus 搜尋端點已死~~ | ⛔ **2026-08-29 實測推翻**：`/search/{keyword}` 回的是 **HTTP 200、30 筆**，不是 404（`get_ids_from_search('a')` 當場驗過，`_build_search_url` 本來就在組這個網址）。舊敘述「**不可**再實作任何依賴 `/search/` 的功能」曾讓一位 reviewer 判定某個 task 的樣本來源已死並下 BLOCK。**exact 走 detail URL、partial/prefix 走 `get_ids_from_search`** 這半仍然正確，是分工不是能力限制。⚠️ 這是 live-only 事實，要據此做決定前**自己再驗一次**（見 `gotchas-backend.md` `BE-VERIFY-03`）|
 | javlibrary manual_only | `get_enabled_source_ids()` 自動排除 manual_only 來源，javlibrary 不進 cascade head；只能由進階搜尋顯式指定 |
-| fuzzy always-on | 停用 javbus/dmm 只影響 exact cascade。模糊路徑：JavBus 仍 always-on（設計如此，CD-65-4）；DMM 例外，看膠囊（關閉即略過）；explicit 指定來源不受膠囊限制 |
+| 模糊搜尋跟開關走 | 模糊路徑（女優／關鍵字／前綴／部分番號）三家（JavBus／DMM／JavDB）都看設定頁來源膠囊，關閉即略過、三家全關＝查無（175b 起；舊的「JavBus always-on」已廢）；explicit 指定來源不受膠囊限制 |
 | ~~FC2 無發行日~~ | ⛔ **0.13.12 起作廢**：該不變式屬於舊的 javten 鏡像實作（0.13.13 起為 `fc2_javten.py`／來源 `fc-javten`，仍硬定 `date=""`——站方結構性沒有這個欄位）。現行 `fc2` 走官方站 `fc2_official.py`，**會回傳發行日**（spec-118 AC-1.2 就是要它）。看到 FC2 有日期**不是 bug**，看到它恆空才是 |
 | 路徑處理 | `file:///` URI 轉換一律用 `core/path_utils.py`，禁止手動 strip/建構 |
