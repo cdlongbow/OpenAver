@@ -3458,3 +3458,30 @@ class TestAddFavoriteCropWhenNoCloudPhoto:
         assert resp2.status_code == 200
         assert resp2.json()["actress"]["photo_source"] is None
         assert not resp2.json()["photo_downloaded"]
+
+
+class TestPreviewIncludesAvbase:
+    """174-T3（AC13）：真的 get_actress_profile_preview＋_fetch_all_sources 跑，
+    只 patch 五個來源函式；預覽的 sources 多一份 avbase，照片候選不含 avbase。"""
+
+    def test_preview_sources_include_avbase_dict(self, client):
+        name = "二階堂麗"
+        avbase_dict = {"birth": "1999-11-30", "other_names": ["二階堂れい"]}
+        wiki_dict = {"name_ja": name, "photo_url": "https://example.com/wiki-photo.jpg"}
+
+        with patch("core.scrapers.actress.xcity.scrape_xcity", return_value=None), \
+             patch("core.scrapers.actress.wiki_ja.scrape_wiki_ja", return_value=wiki_dict), \
+             patch("core.scrapers.actress.graphis.scrape_graphis_photo", return_value=None), \
+             patch("core.scrapers.actress.gfriends.lookup_gfriends", return_value=None), \
+             patch("core.scrapers.actress.avbase.scrape_avbase", return_value=avbase_dict):
+            resp = client.post("/api/actresses/preview", json={"name": name})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data["sources"]) == {"xcity", "wiki", "graphis", "gfriends", "avbase"}
+        assert data["sources"]["avbase"] == avbase_dict
+        assert data["sources"]["wiki"] == wiki_dict
+        assert data["photo_candidates"] == [
+            {"source": "wiki", "url": "https://example.com/wiki-photo.jpg"}
+        ]
+

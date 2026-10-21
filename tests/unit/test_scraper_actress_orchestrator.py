@@ -12,6 +12,7 @@ Patch targets (source-module paths):
     core.scrapers.actress.gfriends.lookup_gfriends
 """
 
+import threading
 import time
 from datetime import datetime
 from unittest.mock import patch, MagicMock
@@ -28,6 +29,7 @@ _PATCH_XCITY  = 'core.scrapers.actress.xcity.scrape_xcity'
 _PATCH_WIKI     = 'core.scrapers.actress.wiki_ja.scrape_wiki_ja'
 _PATCH_GRAPHIS  = 'core.scrapers.actress.graphis.scrape_graphis_photo'
 _PATCH_GFRIENDS = 'core.scrapers.actress.gfriends.lookup_gfriends'
+_PATCH_AVBASE = 'core.scrapers.actress.avbase.scrape_avbase'
 
 _ACTRESS_NAME = "明里つむぎ"
 
@@ -594,3 +596,140 @@ def test_sources_to_photo_candidates_no_photos():
 
     assert orchestrator._sources_to_photo_candidates(sources) == []
 
+
+# ---------------------------------------------------------------------------
+# 174-T3: avbase 第五路（五路並行、共享預算不變）
+# ---------------------------------------------------------------------------
+
+_AV_XCITY = {"name_ja": "測試女優", "birth": "1990-01-01", "photo_url": "https://x.example/xcity.jpg"}
+_AV_WIKI = {"name_ja": "測試女優", "nickname": "維基暱稱", "photo_url": "https://x.example/wiki.jpg"}
+_AV_GRAPHIS = {"prof_url": "https://x.example/graphis.jpg"}
+_AV_GFRIENDS = "https://x.example/gfriends.jpg"
+_AV_AVBASE = {"birth": "1991-02-03", "other_names": ["アヴベース別名"]}
+_AV_NAME = "測試女優"
+_AV_SAFETY_S = 5  # 替身自己的安全上限：測試中途崩潰也不會讓行程永久卡住
+
+
+def _hanging_stub(ev, done, result=None):
+    """可釋放的卡住替身：等 ev（帶安全上限），結束時發 done 信號。"""
+    def _stub(*args, **kwargs):
+        try:
+            ev.wait(timeout=_AV_SAFETY_S)
+            return result
+        finally:
+            done.release()
+    return _stub
+
+
+def _run_fetch(xcity, wiki, graphis, gfriends, avbase):
+    """五個來源函式全部替身後跑 _fetch_all_sources；回傳 (sources, 牆鐘秒數)。"""
+    with patch(_PATCH_XCITY, xcity), patch(_PATCH_WIKI, wiki), \
+         patch(_PATCH_GRAPHIS, graphis), patch(_PATCH_GFRIENDS, gfriends), \
+         patch(_PATCH_AVBASE, avbase):
+        t0 = time.perf_counter()
+        sources = orchestrator._fetch_all_sources(_AV_NAME, ["S1"])
+        return sources, time.perf_counter() - t0
+
+
+class TestFetchAllSourcesAvbase:
+    """_fetch_all_sources 多一路 avbase（CD-174-9）；avbase 失敗不影響其餘四源。"""
+
+    def test_avbase_value_reaches_sources_and_each_source_called_once(self):
+        xcity = MagicMock(return_value=_AV_XCITY)
+        wiki = MagicMock(return_value=_AV_WIKI)
+        graphis = MagicMock(return_value=_AV_GRAPHIS)
+        gfriends = MagicMock(return_value=_AV_GFRIENDS)
+        avbase = MagicMock(return_value=_AV_AVBASE)
+
+        sources, _ = _run_fetch(xcity, wiki, graphis, gfriends, avbase)
+
+        assert dict(sources) == {
+            "xcity": _AV_XCITY,
+            "wiki": _AV_WIKI,
+            "graphis": _AV_GRAPHIS,
+            "gfriends": _AV_GFRIENDS,
+            "avbase": _AV_AVBASE,
+        }
+        assert sources.timed_out is False
+        for stub in (xcity, wiki, graphis, gfriends, avbase):
+            assert stub.call_count == 1
+        xcity.assert_called_once_with(_AV_NAME)
+        wiki.assert_called_once_with(_AV_NAME)
+        graphis.assert_called_once_with(_AV_NAME)
+        gfriends.assert_called_once_with(_AV_NAME, ["S1"])
+        avbase.assert_called_once_with(_AV_NAME)
+
+    def test_avbase_hang_returns_within_budget(self, monkeypatch):
+        monkeypatch.setattr(orchestrator, "_FETCH_BUDGET_S", 0.3)
+        ev = threading.Event()
+        done = threading.Semaphore(0)
+        try:
+            sources, elapsed = _run_fetch(
+                MagicMock(return_value=_AV_XCITY),
+                MagicMock(return_value=_AV_WIKI),
+                MagicMock(return_value=_AV_GRAPHIS),
+                MagicMock(return_value=_AV_GFRIENDS),
+                _hanging_stub(ev, done, result=_AV_AVBASE),
+            )
+            assert elapsed <= 0.3 + 0.5
+            assert sources.timed_out is True
+            assert dict(sources) == {
+                "xcity": _AV_XCITY,
+                "wiki": _AV_WIKI,
+                "graphis": _AV_GRAPHIS,
+                "gfriends": _AV_GFRIENDS,
+                "avbase": None,
+            }
+        finally:
+            ev.set()
+        assert done.acquire(timeout=_AV_SAFETY_S + 1), "avbase worker 未結束"
+
+    @pytest.mark.parametrize("avbase_failure", [
+        MagicMock(return_value=None),
+        MagicMock(side_effect=RuntimeError("avbase boom")),
+    ], ids=["returns_none", "raises"])
+    def test_avbase_failure_leaves_other_sources_untouched(self, avbase_failure):
+        def _others():
+            return (MagicMock(return_value=_AV_XCITY), MagicMock(return_value=_AV_WIKI),
+                    MagicMock(return_value=_AV_GRAPHIS), MagicMock(return_value=_AV_GFRIENDS))
+
+        baseline, _ = _run_fetch(*_others(), MagicMock(return_value=None))
+        sources, _ = _run_fetch(*_others(), avbase_failure)
+
+        assert dict(sources) == {
+            "xcity": _AV_XCITY,
+            "wiki": _AV_WIKI,
+            "graphis": _AV_GRAPHIS,
+            "gfriends": _AV_GFRIENDS,
+            "avbase": None,
+        }
+        assert sources.timed_out is False
+        assert baseline.timed_out is False
+        assert dict(sources) == dict(baseline)
+        assert avbase_failure.call_count == 1
+
+    def test_existing_sources_all_hang_avbase_still_delivered(self, monkeypatch):
+        monkeypatch.setattr(orchestrator, "_FETCH_BUDGET_S", 0.3)
+        ev = threading.Event()
+        done = threading.Semaphore(0)
+        try:
+            sources, elapsed = _run_fetch(
+                _hanging_stub(ev, done),
+                _hanging_stub(ev, done),
+                _hanging_stub(ev, done),
+                _hanging_stub(ev, done),
+                MagicMock(return_value=_AV_AVBASE),
+            )
+            assert elapsed <= 0.3 + 0.5
+            assert sources.timed_out is True
+            assert dict(sources) == {
+                "xcity": None,
+                "wiki": None,
+                "graphis": None,
+                "gfriends": None,
+                "avbase": _AV_AVBASE,
+            }
+        finally:
+            ev.set()
+        for _ in range(4):
+            assert done.acquire(timeout=_AV_SAFETY_S + 1), "卡住的 worker 未結束"
