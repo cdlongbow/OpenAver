@@ -11,6 +11,7 @@ import re
 from types import SimpleNamespace
 
 from core.logger import get_logger
+from core.name_match import fold
 from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
 from core.search_providers.pipeline import fetch_window, run_window
 from core.search_providers.types import (
@@ -94,6 +95,41 @@ def _sorted(cards):
     return m.sort_results_by_date(cards)
 
 
+# ---------------------------------------------------------------- 名稱→實體（175c-T3，plan CD-175c-3）
+_RESOLVE_CACHE_MAX = 1024
+_RESOLVE_CACHE: dict[tuple[str, str], EntityRef | None] = {}
+_ENTITY_SEGMENT = {Kind.SERIES: "series", Kind.DIRECTOR: "director", Kind.LABEL: "label"}
+
+
+def clear_resolve_cache() -> None:
+    _RESOLVE_CACHE.clear()
+
+
+def _same_name(candidate, wanted) -> bool:
+    """名稱精確相等（fold 後）。子字串不算：站方 searchstar 回的是子字串候選（三上→三上悠亜…）。"""
+    return fold(candidate) == fold(wanted)
+
+
+def _pick_star(cards, wanted):
+    """searchstar 候選中同名者：有碼記錄優先，再取頁面順序第一；沒有同名 → None。"""
+    exact = [c for c in cards if _same_name(c.name, wanted)]
+    if not exact:
+        return None
+    return min(exact, key=lambda c: c.uncensored)
+
+
+def _resolve_cached(kind: Kind, name: str, lookup) -> EntityRef | None:
+    """(kind, 折疊名) → 結果的模組層快取；只記「確定命中／確定查無」，lookup 的例外原樣往外丟、不入快取（BE-PY-03）。"""
+    key = (kind.value, fold(name))
+    if key in _RESOLVE_CACHE:
+        return _RESOLVE_CACHE[key]
+    ref = lookup()
+    if len(_RESOLVE_CACHE) >= _RESOLVE_CACHE_MAX:
+        _RESOLVE_CACHE.clear()
+    _RESOLVE_CACHE[key] = ref
+    return ref
+
+
 _PROBE_PREFIXES = 2
 _PROBE_MAX_REQUESTS = 4
 _PROBE_SAMPLES = 5
@@ -149,7 +185,21 @@ class JavBusProvider:
 
     # ------------------------------------------------------------ Protocol
     def resolve(self, kind: Kind, name: str) -> EntityRef | None:
-        return None
+        """女優／系列／導演／label 名稱 → 站上同一個實體；MAKER／CODE／PARTIAL／KEYWORD 與空白輸入 → None（0 請求）。
+
+        一律走 /ja（與 UI 語言無關）；傳輸只經 search_stars／fetch_entity_link 兩個方法名。例外原樣往外丟。
+        """
+        if (kind is not Kind.ACTOR and kind not in _ENTITY_SEGMENT) or not fold(name):
+            return None
+        return _resolve_cached(kind, name, lambda: self._lookup(kind, name))
+
+    def _lookup(self, kind: Kind, name: str) -> EntityRef | None:
+        scraper = self._entity_scraper()
+        if kind is Kind.ACTOR:
+            star = _pick_star(scraper.search_stars(name), name)
+            return None if star is None else EntityRef(Kind.ACTOR, star.id, star.name)
+        found = scraper.fetch_entity_link(name, _ENTITY_SEGMENT[kind])
+        return None if found is None else EntityRef(kind, found[0], found[1])
 
     def list_entity(self, ref: EntityRef, w: Window) -> Page:
         if ref.kind is Kind.CODE:
@@ -363,3 +413,9 @@ class JavBusProvider:
         import core.scraper as m
 
         return m.JavBusScraper(lang=m.get_javbus_lang())
+
+    def _entity_scraper(self):
+        """名稱→實體的 scraper：固定 /ja（站上原文名稱；不隨 UI 語言變，否則比對全落空）。"""
+        import core.scraper as m
+
+        return m.JavBusScraper(lang="ja")

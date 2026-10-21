@@ -478,6 +478,20 @@ def _no_startup_update_network(request, monkeypatch):
     yield
 
 
+# ============ TASK-175c-T3：JavBus resolve 模組層快取，每個測試前清 ============
+#
+# `core.search_providers.javbus` 的 resolve 快取是模組層級（重啟才清），測試間不清會讓「同名第二次 0 請求」
+# 這類斷言被前一個測試的結果污染。只清「已載入」的模組，不主動 import（同 `_no_startup_update_network`：
+# 守衛自測會把本 conftest 複製到暫存 repo 跑，主動 import 會在那裡長出副作用）。
+@pytest.fixture(autouse=True)
+def _clear_javbus_resolve_cache():
+    import sys as _sys
+    mod = _sys.modules.get("core.search_providers.javbus")
+    if mod is not None:
+        mod.clear_resolve_cache()
+    yield
+
+
 # ============ TASK-174-T2：漏 mock 的全域防線（avbase）====
 #
 # 外連防線只攔 Python `socket`，`curl_cffi`（libcurl 在 C 層連線）不在範圍（BE-TEST-43）。

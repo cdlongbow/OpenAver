@@ -8,16 +8,17 @@ from __future__ import annotations
 
 import re
 import time
-import unicodedata
 from dataclasses import dataclass
 
 from core.logger import get_logger
 from core.maker_mapping import load_name_mapping, load_search_aliases
 from core.maker_names import maker_key_of
+from core.name_match import fold
 from core.scrapers import javdb_api
 from core.scrapers.errors import SourceBlocked
 from core.scrapers.javdb_api import MAX_PAGE, PAGE_SIZE
 from core.scrapers.utils import strip_number_prefix
+from core.search_providers.names import maker_names
 from core.search_providers.pipeline import fetch_window, run_window
 from core.search_providers.types import (
     Enriched,
@@ -157,10 +158,8 @@ def parse_detail_facts(movie) -> DetailFacts:
 
 
 # ---------------------------------------------------------------- 名字 → 實體（175b-T3）
-_STRIP = set("・·-_")
 _SPLIT = re.compile(r"[,、，/／]")
 _SERIES_MIN_VIDEOS = 5
-_MAKER_MAX_NAMES = 4
 _RESOLVE_CACHE_MAX = 1024
 _RESOLVE_CACHE: dict[tuple[str, str], EntityRef | None] = {}
 _SEARCH_TYPE = {
@@ -229,12 +228,6 @@ def clear_resolve_cache() -> None:
     _RESOLVE_CACHE.clear()
 
 
-def fold(s) -> str:
-    """NFKC → casefold → 去空白與 ・·-_（不做漢字字形對照，CD-175b-1）。"""
-    t = unicodedata.normalize("NFKC", s if isinstance(s, str) else "").casefold()
-    return "".join(ch for ch in t if not ch.isspace() and ch not in _STRIP)
-
-
 def _names(c: Candidate) -> list[str]:
     return [n for n in (c.name, c.name_zht, *_SPLIT.split(c.other_name)) if n]
 
@@ -279,22 +272,8 @@ def _pick_maker(cands: list[Candidate], wanted: set[str]) -> Candidate | None:
 
 
 def _maker_names(q: str) -> list[str]:
-    """候選名集合 S：[輸入、正名、該正名底下全部別名]，以 maker_key_of 去重保序，最多 4 個。"""
-    canon_of: dict[str, str] = {}
-    members: dict[str, list[str]] = {}
-    for table in (load_name_mapping(), load_search_aliases()):
-        for alias, canon in table.items():
-            canon_of[maker_key_of(alias)] = canon
-            members.setdefault(maker_key_of(canon), []).append(alias)
-    canon = canon_of.get(maker_key_of(q), q)
-    out: list[str] = []
-    seen: set[str] = set()
-    for n in (q, canon, *members.get(maker_key_of(canon), [])):
-        k = maker_key_of(n)
-        if k and k not in seen:
-            seen.add(k)
-            out.append(n)
-    return out[:_MAKER_MAX_NAMES]
+    """薄包裝：對照表從本模組的 load_* 取（既有測試 patch 的是這兩個名字），展開邏輯在 names.maker_names。"""
+    return maker_names(q, name_mapping=load_name_mapping(), search_aliases=load_search_aliases())
 
 
 def _sort_items_like_results(items):
