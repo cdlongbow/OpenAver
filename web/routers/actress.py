@@ -315,7 +315,7 @@ def add_favorite(req: FavoriteRequest):
                     status_code=504,
                     content={"error": "timeout", "message": "Scraper 超時"}
                 )
-            # TASK-122-T10：四來源全 miss、非超時 —— 片庫裡若有這位女優的片
+            # TASK-122-T10：五來源全 miss、非超時 —— 片庫裡若有這位女優的片
             # （NFO 已掃描寫進 videos.actresses），改建一張只有名字的本地卡，
             # 照片 best-effort 從她任一部有封面的片裁右側 3:4。庫裡沒有她的
             # 片才維持現行 404（見 CD-T10-2）。
