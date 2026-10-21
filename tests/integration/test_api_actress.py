@@ -3312,3 +3312,149 @@ class TestAddFavoriteLocalCropFallback:
         data = resp.json()
         assert data["actress"]["photo_url"] is None
         assert data["photo_downloaded"] is False
+
+
+# ---------------------------------------------------------------------------
+# TASK-174-T3a / CD-174-17：沒有任何雲端照片 → 收藏時從片封面裁頭像
+# ---------------------------------------------------------------------------
+
+class TestAddFavoriteCropWhenNoCloudPhoto:
+    """POST /api/actresses/favorite：orchestrator 有資料（例：只有 avbase）但所有
+    照片來源都沒照片時，片庫裡有她的片 → 從片封面裁頭像；沒有片 → 照片空白仍 200；
+    有雲端照片 → 照舊下載、不裁圖。
+
+    以 `_fetch_all_sources` 替身跑真的 get_actress_profile 與真快取（不 patch
+    get_actress_profile／get_cached_profile），才驗得到 cache hit 的共享 dict。
+    """
+
+    ACTRESS = "甘夏唯"
+
+    @pytest.fixture(autouse=True)
+    def _clear_profile_cache(self):
+        from core.scrapers.actress import orchestrator
+        orchestrator._cache.clear()
+        yield
+        orchestrator._cache.clear()
+
+    @staticmethod
+    def _sources(graphis=None):
+        from core.scrapers.actress.orchestrator import _FetchedSources
+        return _FetchedSources({
+            "xcity": None,
+            "wiki": None,
+            "graphis": graphis,
+            "gfriends": None,
+            "avbase": {"birth": "1999-11-30", "height": "162cm"},
+        })
+
+    def _save_video(self, tmp_path, actress_name):
+        from core.database import VideoRepository, Video
+
+        video_fs = str(tmp_path / "video.mp4")
+        cover_fs = str(tmp_path / "cover.jpg")
+        Path(cover_fs).write_bytes(b"\xff\xd8\xff\xe0fake_cover")
+        VideoRepository().upsert(Video(
+            path=to_file_uri(video_fs),
+            title="Test Video",
+            actresses=[actress_name],
+            cover_path=to_file_uri(cover_fs),
+        ))
+
+    @pytest.mark.parametrize("warm_cache", [False, True], ids=["cache_miss", "cache_hit"])
+    def test_no_cloud_photo_crops_cover(self, client, tmp_path, warm_cache):
+        """①④：只有 avbase 有料、無任何照片、片庫有她的片 → 裁封面當頭像"""
+        from core.scrapers.actress.orchestrator import get_actress_profile
+
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP"
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()) as mock_fetch, \
+             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg) as mock_crop, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            if warm_cache:
+                get_actress_profile(self.ACTRESS)
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["photo_downloaded"] is True
+        assert data["actress"]["photo_source"] == "local_crop"
+        assert mock_crop.call_count == 1
+        # miss＝端點那次抓取；hit＝預熱那次，收藏沒有再抓
+        assert mock_fetch.call_count == 1
+        written = list(gfriends.glob("*.jpg"))
+        assert len(written) == 1
+        assert written[0].read_bytes() == fake_jpeg
+
+    def test_no_cloud_photo_no_videos_stays_blank_200(self, client, tmp_path):
+        """②：沒有任何雲端照片、片庫也沒有她的片 → 照片空白，仍 200"""
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()), \
+             patch("web.routers.actress.crop_video_cover", return_value=b"x") as mock_crop, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        assert resp.json()["actress"]["photo_source"] is None
+        assert mock_crop.call_count == 0
+
+    def test_cloud_photo_present_never_crops(self, client, tmp_path):
+        """③：有雲端照片（graphis）且片庫有她的片 → 照舊下載、不裁圖"""
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources(graphis={"prof_url": "https://example.com/p.jpg"})), \
+             patch("web.routers.actress._try_local_crop_photo") as mock_try_crop, \
+             patch("web.routers.actress.download_actress_photo", return_value=True) as mock_dl, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        assert resp.json()["actress"]["photo_source"] == "graphis"
+        assert mock_try_crop.call_count == 0
+        assert mock_dl.call_count == 1
+
+    def test_crop_does_not_mutate_cached_profile(self, client, tmp_path):
+        """⑤（I-P1）：裁圖成功後快取內容不變；取消收藏後同名再收藏、這次裁圖失敗
+        → 不能被記成「照片來源＝裁圖」"""
+        import copy
+        from core.scrapers.actress.orchestrator import get_actress_profile, get_cached_profile
+
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            get_actress_profile(self.ACTRESS)
+            snapshot = copy.deepcopy(get_cached_profile(self.ACTRESS))
+
+            with patch("web.routers.actress.crop_video_cover",
+                       return_value=b"\xff\xd8\xff\xe0FAKE"):
+                resp1 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+            assert resp1.status_code == 200
+            assert resp1.json()["actress"]["photo_source"] == "local_crop"
+            assert get_cached_profile(self.ACTRESS) == snapshot
+
+            del_resp = client.delete(f"/api/actresses/{self.ACTRESS}")
+            assert del_resp.status_code == 200
+
+            with patch("web.routers.actress.crop_video_cover", return_value=None):
+                resp2 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp2.status_code == 200
+        assert resp2.json()["actress"]["photo_source"] is None
+        assert not resp2.json()["photo_downloaded"]

@@ -306,6 +306,7 @@ def add_favorite(req: FavoriteRequest):
 
     # 4. cache miss → 重新抓取
     local_crop_ok = False
+    crop_attempted = False
     if profile is None:
         result = get_actress_profile(name, makers=resolved_makers)
         if result.data is None:
@@ -318,6 +319,7 @@ def add_favorite(req: FavoriteRequest):
             # （NFO 已掃描寫進 videos.actresses），改建一張只有名字的本地卡，
             # 照片 best-effort 從她任一部有封面的片裁右側 3:4。庫裡沒有她的
             # 片才維持現行 404（見 CD-T10-2）。
+            crop_attempted = True
             videos = _get_actress_videos(name)
             if not videos:
                 return JSONResponse(
@@ -334,6 +336,14 @@ def add_favorite(req: FavoriteRequest):
             }
         else:
             profile = result.data
+
+    # TASK-174-T3a / CD-174-17：沒有任何雲端照片 → 從片庫挑片裁封面（cache hit／miss 共用）。
+    # 複製不就地改：get_cached_profile 回的是 orchestrator 1 小時快取的共享 dict。
+    if not profile.get("photo_url") and not crop_attempted:
+        videos = _get_actress_videos(name)
+        if videos and _try_local_crop_photo(name, videos):
+            local_crop_ok = True
+            profile = {**profile, "photo_source": "local_crop"}
 
     # 4. 組裝 Actress dataclass
     text = profile.get("text") or {}
