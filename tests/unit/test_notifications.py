@@ -3,6 +3,7 @@ tests/unit/test_notifications.py — 通知 buffer 純函式邏輯測試（53b�
 
 全 mock，不啟動 FastAPI。依 CLAUDE.md 測試分層：純邏輯 → unit/。
 """
+import queue
 import sqlite3
 import pytest
 
@@ -551,8 +552,14 @@ def test_stop_notification_persistence_is_bounded_by_its_timeout(tmp_path, monke
     finally:
         release.set()
         stuck.join(timeout=2)
-        with notif_mod._write_queue.mutex:
-            notif_mod._write_queue.queue.clear()
+        # 配對排空：每個 get 都要 task_done，否則 unfinished_tasks 殘留，
+        # 同 worker 之後的 _write_queue.join() 會永久卡死
+        while True:
+            try:
+                notif_mod._write_queue.get_nowait()
+            except queue.Empty:
+                break
+            notif_mod._write_queue.task_done()
 
 
 def test_read_notification_does_not_silence_the_next_occurrence():

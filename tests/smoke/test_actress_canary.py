@@ -1,8 +1,8 @@
 """Live smoke canary — actress source health check (TASK-118a-T12).
 
-Four independent sources: xcity / wiki_ja / graphis / gfriends. Each has
-its own `test_{source}_canary` function; a dead source never drags down the
-other three (owner hard constraint — see TASK-118a-T12 §技術要點).
+Five independent sources: xcity / wiki_ja / graphis / gfriends / avbase. Each
+has its own `test_{source}_canary` function; a dead source never drags down
+the other four (owner hard constraint — see TASK-118a-T12 §技術要點).
 
 This file deliberately does NOT import `tests/smoke/_canary_core.py` — owner
 decision: the actress line writes its own simple per-source verdict logic
@@ -22,7 +22,11 @@ sub-parse (graphis.py:162-165), so a non-None return can still carry an empty
 `prof_url`; `orchestrator.py:190` only ever consumes `prof_url`, so that is
 what this canary checks too.
 
-ZERO production scraper changes — this file only reads the four public
+avbase (TASK-174-T7) checks birthday + the alias path (`other_names`) on two
+evergreen names and probes lazily (only when a name is unusable) via
+`curl_cffi` impersonate — bare `requests` is always 403'd by that site.
+
+ZERO production scraper changes — this file only reads the public
 scrape/lookup entry points. Must NOT be collected by the standard PR command
 (`--ignore=tests/smoke --ignore=tests/e2e -m "not smoke and not e2e"`).
 """
@@ -33,6 +37,7 @@ from core.scrapers.actress.xcity import scrape_xcity
 from core.scrapers.actress.wiki_ja import scrape_wiki_ja
 from core.scrapers.actress.graphis import scrape_graphis_photo
 from core.scrapers.actress.gfriends import lookup_gfriends
+from core.scrapers.actress.avbase import scrape_avbase
 from core.scrapers.actress.orchestrator import _has_meaningful_text
 from core.actress_photo import validate_photo_url
 
@@ -46,6 +51,15 @@ XCITY_EVERGREEN = [
     ("波多野結衣", "1988-05-24"),
     ("明日花キララ", "1988-10-02"),
 ]
+# avbase evergreen (TASK-174-T7): only two names -> a green run is exactly two
+# live requests. Birthdays verified against the live site on 2026-10-21.
+AVBASE_EVERGREEN = [
+    ("三上悠亜", "1993-08-16"),
+    ("二階堂麗", "1999-11-30"),
+]
+# Alias-path oracle: this name's `other_names` must carry the query name itself
+# plus this alias, otherwise the avbase alias route is broken.
+AVBASE_ALIAS_EXPECTED = ("二階堂麗", "あかね麗")
 
 # Bare `requests` UA gets 403'd by ja.wikipedia.org (research
 # finding, TASK-118a-T12 §探測設計) — probes must look like a real browser.
@@ -108,6 +122,23 @@ def _probe_graphis() -> bool:
 def _probe_gfriends() -> bool:
     try:
         resp = requests.get(_GFRIENDS_PROBE_URL, timeout=_PROBE_TIMEOUT)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _probe_avbase() -> bool:
+    """HTTP status only — never touches scrape_avbase / any parser.
+
+    Must use curl_cffi impersonate: bare `requests` is always 403 on avbase,
+    which would read as "site dead" and turn a real red into a skip.
+    """
+    try:
+        from curl_cffi import requests as cffi_requests
+
+        resp = cffi_requests.get(
+            "https://www.avbase.net/", impersonate="chrome", timeout=_PROBE_TIMEOUT
+        )
         return resp.status_code == 200
     except Exception:
         return False
@@ -225,3 +256,47 @@ def test_gfriends_canary():
         fetch_fn=lookup_gfriends,
         usable_fn=lambda result: bool(result),
     )
+
+
+def _avbase_usable(result, expected_birth) -> bool:
+    return bool(result and result.get("birth") == expected_birth)
+
+
+def _assert_avbase_alias(name, result) -> None:
+    """Independent of the quorum verdict: a green 三上悠亜 must not hide a dead alias path."""
+    alias_name, alias = AVBASE_ALIAS_EXPECTED
+    if name != alias_name or not result:
+        return
+    others = result.get("other_names") or []
+    missing = [n for n in (alias_name, alias) if n not in others]
+    if missing:
+        pytest.fail(
+            f"avbase: 別名路徑壞了 (not birthday) — {alias_name} 的 other_names "
+            f"缺少 {missing}，實得 {others}"
+        )
+
+
+def test_avbase_canary():
+    probe_cache = []  # lazy: probed at most once, only when a name is unusable
+
+    def _reachable() -> bool:
+        if not probe_cache:
+            probe_cache.append(_probe_avbase())
+        return probe_cache[0]
+
+    results = []
+    alias_missing = False  # alias sample returned None (not a dict)
+    for name, expected_birth in AVBASE_EVERGREEN:
+        result = scrape_avbase(name)
+        _assert_avbase_alias(name, result)
+        alias_missing = alias_missing or (name == AVBASE_ALIAS_EXPECTED[0] and not result)
+        usable = _avbase_usable(result, expected_birth)
+        results.append("pass" if usable else _classify(result, lambda r: False, _reachable()))
+    _verdict(results, "avbase", "https://www.avbase.net/")
+    # Quorum is green here (>=1 pass). A dead alias sample must still be red
+    # when the site is reachable; unreachable keeps the quorum outcome.
+    if alias_missing and _reachable():
+        pytest.fail(
+            f"avbase: 別名樣本 {AVBASE_ALIAS_EXPECTED[0]} 查無（站可達）— "
+            "常青別名樣本可能被改名/合併/刪除，別名路徑無法驗證"
+        )

@@ -1,14 +1,15 @@
 """
-女優爬蟲 Orchestrator — 四來源並行抓取（Phase 42b T3）
+女優爬蟲 Orchestrator — 五來源並行抓取（Phase 42b T3）
 
 Routes:
-    C1 text  : per-field XCity → Wikipedia → Graphis merge
-    C2 parallel: xcity + wiki + graphis + gfriends (max_workers=4, 5s budget)
+    C1 text  : per-field Wikipedia → XCity → Graphis → AVBase merge
+    C2 parallel: xcity + wiki + graphis + gfriends + avbase (max_workers=5, 5s budget)
     C3 photo : Graphis prof_url → gfriends URL → Wiki photo_url → XCity photo_url → None
     C4 return: nested new fields + legacy flat shortcuts
     TD-1     : current_age computed from text.birth, never read from source
 """
 
+import unicodedata
 from collections import namedtuple
 from datetime import datetime
 from typing import Optional, Dict
@@ -28,13 +29,43 @@ _MEANINGFUL_TEXT_FIELDS = (
     "nickname", "exclusive_makers", "debut_year", "other_names",
 )
 
-_FIELD_MERGE_PRIORITY = ("xcity", "wiki", "graphis")  # 依序找第一個非空值
+_FIELD_MERGE_PRIORITY = ("wiki", "xcity", "graphis", "avbase")  # 依序找第一個非空值
 _COMMON_FIELDS = ("name_en", "birth", "height", "bust", "waist", "hip", "cup",
                   "hometown", "hobby")  # 不含 blood，見下方說明
 _WIKI_ONLY_FIELDS = ("nickname",)  # 不含 exclusive_makers/debut_year，見下方說明
 
 
-def _merge_text_fields(sources: dict) -> dict:
+_ALIAS_SOURCE_PRIORITY = ("wiki", "avbase")  # 別名來源鏈：前面的過濾後非空就用
+
+
+def _clean_aliases(names, own_name: str) -> list:
+    """別名過濾（CD-174-5）：丟空白／非字串／`@` 開頭帳號／等於查詢名；原字串去重、保序。"""
+    if not isinstance(names, list):
+        return []
+    own = unicodedata.normalize("NFKC", own_name or "").strip()
+    cleaned, seen = [], set()
+    for raw in names:
+        if not isinstance(raw, str):
+            continue
+        norm = unicodedata.normalize("NFKC", raw).strip()
+        if not norm or norm.startswith("@") or norm == own:
+            continue
+        if raw.strip() not in seen:
+            seen.add(raw.strip())
+            cleaned.append(raw.strip())
+    return cleaned
+
+
+def _pick_aliases(sources: dict, own_name: str) -> list:
+    """依 _ALIAS_SOURCE_PRIORITY 取第一個「過濾後非空」的來源別名；都空回 []。"""
+    for src in _ALIAS_SOURCE_PRIORITY:
+        cleaned = _clean_aliases((sources.get(src) or {}).get("other_names"), own_name)
+        if cleaned:
+            return cleaned
+    return []
+
+
+def _merge_text_fields(sources: dict, name: str) -> dict:
     merged = {}
     for field in _COMMON_FIELDS:
         for src in _FIELD_MERGE_PRIORITY:
@@ -46,15 +77,15 @@ def _merge_text_fields(sources: dict) -> dict:
         val = (sources.get("wiki") or {}).get(field)
         if val:
             merged[field] = val
-    # aliases 例外：唯一供應端是 wiki 的 other_names（見下方說明）
-    other_names = (sources.get("wiki") or {}).get("other_names")
-    if other_names:
-        merged["aliases"] = other_names
+    # aliases 例外：與其他欄位來源互不影響，走 _ALIAS_SOURCE_PRIORITY（維基 → avbase）
+    aliases = _pick_aliases(sources, name)
+    if aliases:
+        merged["aliases"] = aliases
     return merged
 
 
 class _FetchedSources(dict):
-    """Four source values plus timeout state for the legacy ProfileResult."""
+    """Five source values plus timeout state for the legacy ProfileResult."""
 
     def __init__(self, *args, timed_out=False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -73,6 +104,7 @@ def _has_meaningful_text(result: Optional[Dict]) -> bool:
 # Cache 結構（模組層級變數）
 _cache = {}          # key: str (正規化女優名), value: dict (profile + timestamp)
 _CACHE_TTL = 3600    # 1 小時
+_FETCH_BUDGET_S = 5  # 五路並行抓取的共享預算（秒）；於 _fetch_all_sources 函式體內讀取
 
 
 def _normalize_name(name: str) -> str:
@@ -112,33 +144,35 @@ def get_cached_profile(name: str) -> Optional[dict]:
 
 
 def _fetch_all_sources(name: str, makers: list = None) -> dict:
-    """Fetch four raw sources in parallel within a shared five-second budget."""
+    """Fetch five raw sources in parallel within a shared five-second budget."""
     import time
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
     from core.scrapers.actress.xcity import scrape_xcity
     from core.scrapers.actress.wiki_ja import scrape_wiki_ja
     from core.scrapers.actress.graphis import scrape_graphis_photo
     from core.scrapers.actress.gfriends import lookup_gfriends
+    from core.scrapers.actress.avbase import scrape_avbase
 
-    # 並行抓取（4 routes，嚴格 5s 上限，shutdown 不等待背景執行緒）
-    executor = ThreadPoolExecutor(max_workers=4)
+    # 並行抓取（5 routes，嚴格 5s 上限，shutdown 不等待背景執行緒）
+    executor = ThreadPoolExecutor(max_workers=5)
     xcity_future    = executor.submit(scrape_xcity, name)
     wiki_future     = executor.submit(scrape_wiki_ja, name)
     graphis_future  = executor.submit(scrape_graphis_photo, name)
     gfriends_future = executor.submit(lookup_gfriends, name, makers)
+    avbase_future   = executor.submit(scrape_avbase, name)
 
     start = time.time()
     any_timed_out = False
 
     try:
-        xcity_result = xcity_future.result(timeout=5)
+        xcity_result = xcity_future.result(timeout=_FETCH_BUDGET_S)
     except FuturesTimeoutError:
         xcity_result = None
         any_timed_out = True
     except Exception:
         xcity_result = None
 
-    remaining = max(0, 5 - (time.time() - start))
+    remaining = max(0, _FETCH_BUDGET_S - (time.time() - start))
     try:
         wiki_result = wiki_future.result(timeout=remaining)
     except FuturesTimeoutError:
@@ -147,7 +181,7 @@ def _fetch_all_sources(name: str, makers: list = None) -> dict:
     except Exception:
         wiki_result = None
 
-    remaining = max(0, 5 - (time.time() - start))
+    remaining = max(0, _FETCH_BUDGET_S - (time.time() - start))
     try:
         graphis_result = graphis_future.result(timeout=remaining)
     except FuturesTimeoutError:
@@ -156,7 +190,7 @@ def _fetch_all_sources(name: str, makers: list = None) -> dict:
     except Exception:
         graphis_result = None
 
-    remaining = max(0, 5 - (time.time() - start))
+    remaining = max(0, _FETCH_BUDGET_S - (time.time() - start))
     try:
         gfriends_url = gfriends_future.result(timeout=remaining)
     except FuturesTimeoutError:
@@ -165,6 +199,16 @@ def _fetch_all_sources(name: str, makers: list = None) -> dict:
     except Exception:
         gfriends_url = None
 
+    remaining = max(0, _FETCH_BUDGET_S - (time.time() - start))
+    try:
+        avbase_result = avbase_future.result(timeout=remaining)
+    except FuturesTimeoutError:
+        avbase_result = None
+        any_timed_out = True
+    except Exception as exc:
+        logger.warning("[avbase] fetch failed for %s: %s", name, type(exc).__name__)
+        avbase_result = None
+
     executor.shutdown(wait=False)
 
     return _FetchedSources({
@@ -172,6 +216,7 @@ def _fetch_all_sources(name: str, makers: list = None) -> dict:
         "wiki": wiki_result or None,
         "graphis": graphis_result or None,
         "gfriends": gfriends_url or None,
+        "avbase": avbase_result or None,
     }, timed_out=any_timed_out)
 
 
@@ -218,14 +263,14 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
         return ProfileResult(data=None, timed_out=sources.timed_out)
 
     # C1 — each field takes the first non-empty value in source priority order.
-    merged = _merge_text_fields(sources)
+    merged = _merge_text_fields(sources, name)
     text = merged or None
     primary_text_source = None
     for src in _FIELD_MERGE_PRIORITY:
-        raw = sources[src] or {}
+        raw = sources.get(src) or {}
         if any(raw.get(field) for field in _COMMON_FIELDS) or (
             src == "wiki" and (any(raw.get(field) for field in _WIKI_ONLY_FIELDS)
-                               or raw.get("other_names"))
+                               or _clean_aliases(raw.get("other_names"), name))
         ):
             primary_text_source = src
             break
@@ -252,13 +297,13 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
     # C4 — mixed return shape: new nested fields + legacy flat shortcuts
     result = {
         # === NEW nested fields (Phase 43 consumers) ===
-        "primary_text_source": primary_text_source,   # "xcity"|"wiki"|"graphis"|None
+        "primary_text_source": primary_text_source,   # "wiki"|"xcity"|"graphis"|"avbase"|None
         "text": text,                                  # merged text fields, or None
         "photo_url": photo_url,                        # winner of photo cascade, or None
         "photo_source": photo_source,                  # "graphis"|"gfriends"|"wiki"|"xcity"|None
         "backdrop_url": backdrop_url,                  # Graphis-only, or None
         "current_age": current_age,                    # int or None (TD-1 fix)
-        "all_sources": dict(sources),                  # four unmerged dict/dict/dict/str values
+        "all_sources": dict(sources),                  # five unmerged dict/dict/dict/str/dict values
 
         # === LEGACY flat shortcuts (derived) ===
         # Existing template/JS/test assertions depend on these keys.

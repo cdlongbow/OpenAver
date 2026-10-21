@@ -960,9 +960,11 @@ _TOOLS: list[dict] = [
             "寫入 DB + 下載照片到 output/Gfriends/。"
             "批次收藏多位女優時應序列呼叫或最多併發 2，不得無限制平行 POST"
             "（爬蟲/下載壓力限制，與前端手動連點的節流是同一個不變式）。"
-            "四來源都刮不到資料時，若片庫裡已有這位女優的片（NFO 已標名字），"
+            "五個資料來源都刮不到資料時，若片庫裡已有這位女優的片（NFO 已標名字），"
             "會改建一張只有名字的本地卡，並用該片封面右側裁一張照片當頭像"
             "（best-effort，裁不到也照樣建卡）；片庫裡沒有她的片仍回 404。"
+            "查到資料但沒有任何雲端照片時（例如只有維基資料），別名同步後也會"
+            "從片庫她的片封面裁頭像；片庫沒有她的片則照片空白。"
         ),
         "method": "POST",
         "path": "/api/actresses/favorite",
@@ -1605,7 +1607,7 @@ _TOOLS: list[dict] = [
     {
         "name": "preview_actress_sources",
         "description": (
-            "查詢女優的四個資料來源（xcity/wiki/graphis/gfriends），"
+            "查詢女優的五個資料來源（xcity/wiki/graphis/gfriends/avbase），"
             "每個來源的結果分開回傳，不合併、不挑贏家，讓 AI 自己比對後決定"
             "要用哪個值。身分判斷優先於「查詢名字自己有沒有資料列」：若查詢的"
             "名字是某位已收藏女優的別名，一律先判定為別名（alias_of 會一併出現，"
@@ -1632,8 +1634,11 @@ _TOOLS: list[dict] = [
         "output_schema": {
             "name": "string — 查詢的女優名",
             "sources": (
-                "{xcity, wiki, graphis, gfriends} — 各來源各自的原始欄位 dict，"
-                "查無/下架/例外時該來源為 null，彼此獨立不合併"
+                "{xcity, wiki, graphis, gfriends, avbase} — 各來源各自的原始欄位 dict，"
+                "查無/下架/例外時該來源為 null，彼此獨立不合併。"
+                "avbase 的 other_names 是她用過的所有名字，含 @ 開頭的社群帳號與"
+                "查詢名字自己，是否採用由 AI 自行判斷；要補別名就走既有的別名功能"
+                "（POST /api/actress-aliases/{name}/alias）"
             ),
             "current": (
                 "Actress|null — 查詢名字已收藏時是它自己的資料；查詢名字是某已收藏"

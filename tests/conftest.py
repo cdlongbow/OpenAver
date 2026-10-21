@@ -478,6 +478,31 @@ def _no_startup_update_network(request, monkeypatch):
     yield
 
 
+# ============ TASK-174-T2：漏 mock 的全域防線（avbase）====
+#
+# 外連防線只攔 Python `socket`，`curl_cffi`（libcurl 在 C 層連線）不在範圍（BE-TEST-43）。
+# 間接走到 orchestrator 的測試（女優卡、別名線上搜尋、收藏端點…）若忘了 mock avbase，
+# 會真的對 avbase 發請求且可能照樣綠，反覆打站會讓開發機 IP 被 Cloudflare 封。
+# 預設把 `scrape_avbase` 換成回 None 的替身；要測真函式的測試標 `real_avbase` opt-out。
+# 測試內自己的 patch 晚於本 fixture，會蓋過它。smoke／e2e（金絲雀要打真站）不動。
+@pytest.fixture(autouse=True)
+def _no_real_avbase(request, monkeypatch):
+    if (request.node.get_closest_marker("smoke") or request.node.get_closest_marker("e2e")
+            or request.node.get_closest_marker("real_avbase")):
+        yield
+        return
+    # 與 _no_startup_update_network 相反：這裡必須主動 import。orchestrator 在函式體內才
+    # `from … import scrape_avbase`，模組尚未載入時 patch 不到，之後拿到的會是真函式。
+    # 守衛自測把本 conftest 複製到暫存 repo 時模組不一定在 → 吞 ImportError，不讓 fixture 自己炸。
+    try:
+        import core.scrapers.actress.avbase as _avbase
+    except ImportError:
+        yield
+        return
+    monkeypatch.setattr(_avbase, "scrape_avbase", lambda *a, **kw: None)
+    yield
+
+
 # ============ TASK-141a-T5：對帳 hook 的 DB 隔離（named fixture，非 autouse）====
 #
 # 為什麼需要它：141a-T5 讓 `generate_avlist()` 與 `enrich_single_endpoint()` 在收尾

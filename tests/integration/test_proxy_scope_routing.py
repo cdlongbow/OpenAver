@@ -375,3 +375,29 @@ def test_excluded_connections_never_asked_policy(recorders):
 
     assert {'metatube.test', 'ollama.test'} <= recorders.sys_hosts(), recorders.sys_hosts()
     assert recorders.pol_hosts() == set()
+
+
+# ── avbase（TASK-174-T2）：不進 _sink_table() ─────────────────────────────────
+# 共用表是整張表一個參數化函式，無法只對 avbase 單列 opt-out，而全域替身 `_no_real_avbase`
+# 會把它攔成永遠測不到真連線（驗收假綠）。所以另開一支獨立測試、標 `real_avbase`，
+# 讓「真的」curl_cffi Session 連進 recorder——不得以替身取代 Session。
+@pytest.mark.real_avbase
+@pytest.mark.parametrize('scope', ['dmm', 'all', 'blank'])
+def test_avbase_connection_follows_proxy_scope(recorders, scope):
+    """all → 只走設定代理；dmm／Proxy 欄空白 → 只走系統代理（libcurl 讀環境變數）。"""
+    import core.scrapers.actress.avbase as avbase_mod
+
+    write_search_config(
+        proxy_url='' if scope == 'blank' else recorders.pol,
+        scope='all' if scope == 'all' else 'dmm',
+    )
+    with contextlib.suppress(Exception):
+        avbase_mod.scrape_avbase('テスト')
+
+    host = 'www.avbase.net'
+    if scope == 'all':
+        assert host in recorders.pol_hosts(), (recorders.pol_hosts(), recorders.sys_hosts())
+        assert host not in recorders.sys_hosts()
+    else:
+        assert host in recorders.sys_hosts(), (recorders.pol_hosts(), recorders.sys_hosts())
+        assert host not in recorders.pol_hosts()

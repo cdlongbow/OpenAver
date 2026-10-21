@@ -3312,3 +3312,460 @@ class TestAddFavoriteLocalCropFallback:
         data = resp.json()
         assert data["actress"]["photo_url"] is None
         assert data["photo_downloaded"] is False
+
+
+# ---------------------------------------------------------------------------
+# TASK-174-T3a / CD-174-17：沒有任何雲端照片 → 收藏時從片封面裁頭像
+# ---------------------------------------------------------------------------
+
+class TestAddFavoriteCropWhenNoCloudPhoto:
+    """POST /api/actresses/favorite：orchestrator 有資料（例：只有 avbase）但所有
+    照片來源都沒照片時，片庫裡有她的片 → 從片封面裁頭像；沒有片 → 照片空白仍 200；
+    有雲端照片 → 照舊下載、不裁圖。
+
+    以 `_fetch_all_sources` 替身跑真的 get_actress_profile 與真快取（不 patch
+    get_actress_profile／get_cached_profile），才驗得到 cache hit 的共享 dict。
+    """
+
+    ACTRESS = "甘夏唯"
+
+    @pytest.fixture(autouse=True)
+    def _clear_profile_cache(self):
+        from core.scrapers.actress import orchestrator
+        orchestrator._cache.clear()
+        yield
+        orchestrator._cache.clear()
+
+    @staticmethod
+    def _sources(graphis=None):
+        from core.scrapers.actress.orchestrator import _FetchedSources
+        return _FetchedSources({
+            "xcity": None,
+            "wiki": None,
+            "graphis": graphis,
+            "gfriends": None,
+            "avbase": {"birth": "1999-11-30", "height": "162cm"},
+        })
+
+    def _save_video(self, tmp_path, actress_name):
+        from core.database import VideoRepository, Video
+
+        video_fs = str(tmp_path / "video.mp4")
+        cover_fs = str(tmp_path / "cover.jpg")
+        Path(cover_fs).write_bytes(b"\xff\xd8\xff\xe0fake_cover")
+        VideoRepository().upsert(Video(
+            path=to_file_uri(video_fs),
+            title="Test Video",
+            actresses=[actress_name],
+            cover_path=to_file_uri(cover_fs),
+        ))
+
+    @pytest.mark.parametrize("warm_cache", [False, True], ids=["cache_miss", "cache_hit"])
+    def test_no_cloud_photo_crops_cover(self, client, tmp_path, warm_cache):
+        """①④：只有 avbase 有料、無任何照片、片庫有她的片 → 裁封面當頭像"""
+        from core.scrapers.actress.orchestrator import get_actress_profile
+
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP"
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()) as mock_fetch, \
+             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg) as mock_crop, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            if warm_cache:
+                get_actress_profile(self.ACTRESS)
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["photo_downloaded"] is True
+        assert data["actress"]["photo_source"] == "local_crop"
+        assert mock_crop.call_count == 1
+        # miss＝端點那次抓取；hit＝預熱那次，收藏沒有再抓
+        assert mock_fetch.call_count == 1
+        written = list(gfriends.glob("*.jpg"))
+        assert len(written) == 1
+        assert written[0].read_bytes() == fake_jpeg
+
+    def test_no_cloud_photo_no_videos_stays_blank_200(self, client, tmp_path):
+        """②：沒有任何雲端照片、片庫也沒有她的片 → 照片空白，仍 200"""
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()), \
+             patch("web.routers.actress.crop_video_cover", return_value=b"x") as mock_crop, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        assert resp.json()["actress"]["photo_source"] is None
+        assert mock_crop.call_count == 0
+
+    def test_cloud_photo_present_never_crops(self, client, tmp_path):
+        """③：有雲端照片（graphis）且片庫有她的片 → 照舊下載、不裁圖"""
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources(graphis={"prof_url": "https://example.com/p.jpg"})), \
+             patch("web.routers.actress._try_local_crop_photo") as mock_try_crop, \
+             patch("web.routers.actress.download_actress_photo", return_value=True) as mock_dl, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        assert resp.json()["actress"]["photo_source"] == "graphis"
+        assert mock_try_crop.call_count == 0
+        assert mock_dl.call_count == 1
+
+    def test_crop_does_not_mutate_cached_profile(self, client, tmp_path):
+        """⑤（I-P1）：裁圖成功後快取內容不變；取消收藏後同名再收藏、這次裁圖失敗
+        → 不能被記成「照片來源＝裁圖」"""
+        import copy
+        from core.scrapers.actress.orchestrator import get_actress_profile, get_cached_profile
+
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            get_actress_profile(self.ACTRESS)
+            snapshot = copy.deepcopy(get_cached_profile(self.ACTRESS))
+
+            with patch("web.routers.actress.crop_video_cover",
+                       return_value=b"\xff\xd8\xff\xe0FAKE"):
+                resp1 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+            assert resp1.status_code == 200
+            assert resp1.json()["actress"]["photo_source"] == "local_crop"
+            assert get_cached_profile(self.ACTRESS) == snapshot
+
+            del_resp = client.delete(f"/api/actresses/{self.ACTRESS}")
+            assert del_resp.status_code == 200
+
+            with patch("web.routers.actress.crop_video_cover", return_value=None):
+                resp2 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp2.status_code == 200
+        assert resp2.json()["actress"]["photo_source"] is None
+        assert not resp2.json()["photo_downloaded"]
+
+
+class TestPreviewIncludesAvbase:
+    """174-T3（AC13）：真的 get_actress_profile_preview＋_fetch_all_sources 跑，
+    只 patch 五個來源函式；預覽的 sources 多一份 avbase，照片候選不含 avbase。"""
+
+    def test_preview_sources_include_avbase_dict(self, client):
+        name = "二階堂麗"
+        avbase_dict = {"birth": "1999-11-30", "other_names": ["二階堂れい"]}
+        wiki_dict = {"name_ja": name, "photo_url": "https://example.com/wiki-photo.jpg"}
+
+        with patch("core.scrapers.actress.xcity.scrape_xcity", return_value=None), \
+             patch("core.scrapers.actress.wiki_ja.scrape_wiki_ja", return_value=wiki_dict), \
+             patch("core.scrapers.actress.graphis.scrape_graphis_photo", return_value=None), \
+             patch("core.scrapers.actress.gfriends.lookup_gfriends", return_value=None), \
+             patch("core.scrapers.actress.avbase.scrape_avbase", return_value=avbase_dict):
+            resp = client.post("/api/actresses/preview", json={"name": name})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data["sources"]) == {"xcity", "wiki", "graphis", "gfriends", "avbase"}
+        assert data["sources"]["avbase"] == avbase_dict
+        assert data["sources"]["wiki"] == wiki_dict
+        assert data["photo_candidates"] == [
+            {"source": "wiki", "url": "https://example.com/wiki-photo.jpg"}
+        ]
+
+
+
+# ---------------------------------------------------------------------------
+# TASK-174-T4a：文字欄位順序「維基 → xcity → graphis → avbase」（五源替身 → 收藏 → DB）
+# ---------------------------------------------------------------------------
+
+def _t4a_sources(xcity=None, wiki=None, avbase=None):
+    """五鍵一律給齊；graphis／gfriends 為 None（不走下載與裁圖）。"""
+    from core.scrapers.actress.orchestrator import _FetchedSources
+    return _FetchedSources({
+        "xcity": xcity,
+        "wiki": wiki,
+        "graphis": None,
+        "gfriends": None,
+        "avbase": avbase,
+    })
+
+
+@pytest.fixture
+def _t4a_clear_profile_cache():
+    from core.scrapers.actress import orchestrator
+    orchestrator._cache.clear()
+    yield
+    orchestrator._cache.clear()
+
+
+_T4A_XCITY = {"name_ja": "順序女優", "birth": "1992-02-02", "bust": "82cm", "height": "152cm"}
+_T4A_WIKI = {"name_ja": "順序女優", "birth": "1991-01-01", "bust": "81cm", "height": "151cm"}
+_T4A_AVBASE = {"birth": "1994-04-04", "bust": "84cm", "height": "154cm"}
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestAddFavoriteTextSourceOrder:
+    """174-T4a：收藏後 DB 的 bust／birth／primary_text_source 依新順序取值。"""
+
+    ACTRESS = "順序女優"
+
+    @pytest.mark.parametrize(
+        "xcity,wiki,avbase,exp_bust,exp_birth,exp_primary",
+        [
+            (_T4A_XCITY, _T4A_WIKI, _T4A_AVBASE, 81, "1991-01-01", "wiki"),
+            (_T4A_XCITY, None, _T4A_AVBASE, 82, "1992-02-02", "xcity"),
+            (None, None, _T4A_AVBASE, 84, "1994-04-04", "avbase"),
+        ],
+        ids=["wiki_over_xcity_over_avbase", "xcity_when_wiki_absent", "avbase_only"],
+    )
+    def test_db_row_follows_field_order(self, client, xcity, wiki, avbase,
+                                        exp_bust, exp_birth, exp_primary):
+        from core.database import ActressRepository
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(xcity, wiki, avbase)), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        stored = ActressRepository().get_by_name(self.ACTRESS)
+        assert type(stored.bust) is int
+        assert stored.bust == exp_bust
+        assert stored.birth == exp_birth
+        assert stored.primary_text_source == exp_primary
+        assert resp.json()["actress"]["primary_text_source"] == exp_primary
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestAddFavoriteExistingNotRewritten:
+    """174-T4a（plan F4）：已收藏的女優再收藏 → 409，DB 值一個字不變、不重抓。"""
+
+    ACTRESS = "順序女優"
+
+    def test_second_favorite_409_leaves_db_row_unchanged(self, client):
+        from core.database import ActressRepository
+        from core.scrapers.actress import orchestrator
+
+        first = _t4a_sources(
+            xcity={"name_ja": self.ACTRESS, "birth": "1990-01-01", "bust": "80cm"},
+            wiki={"name_ja": self.ACTRESS, "birth": "1999-11-30", "bust": "86cm",
+                  "other_names": ["あかね麗"]},
+            avbase={"birth": "1994-04-04", "bust": "84cm"},
+        )
+        second = _t4a_sources(
+            xcity={"name_ja": self.ACTRESS, "birth": "2001-05-05", "bust": "70cm"},
+            wiki={"name_ja": self.ACTRESS, "birth": "2000-12-31", "bust": "71cm",
+                  "other_names": ["べつ名"]},
+            avbase={"birth": "2002-06-06", "bust": "72cm"},
+        )
+
+        def _row():
+            a = ActressRepository().get_by_name(self.ACTRESS)
+            return (a.birth, a.bust, list(a.aliases or []), a.photo_source,
+                    a.primary_text_source)
+
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=first), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp1 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+        assert resp1.status_code == 200
+        before = _row()
+        assert before == ("1999-11-30", 86, ["あかね麗"], None, "wiki")
+
+        orchestrator._cache.clear()
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=second) as mock_fetch, \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp2 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp2.status_code == 409
+        assert resp2.json()["error"] == "already_exists"
+        assert mock_fetch.call_count == 0
+        assert _row() == before
+
+
+# ---------------------------------------------------------------------------
+# TASK-174-T4b：別名來源鏈（維基 → avbase）＋別名過濾器 → 別名群組／線上搜尋建議
+# ---------------------------------------------------------------------------
+
+_T4B_NEW = "二階堂麗"
+_T4B_OLD = "あかね麗"
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestAddFavoriteAliasGroup:
+    """174-T4b：收藏後別名群組含另一個名字、不含自己重複與 @ 帳號。
+
+    端點把別名同步包在 try/except（失敗只寫 warning、仍回 200），
+    所以必須讀 tmp DB 的別名群組，不能只看 HTTP 200。
+    """
+
+    @pytest.mark.parametrize(
+        "query,other",
+        [(_T4B_NEW, _T4B_OLD), (_T4B_OLD, _T4B_NEW)],
+        ids=["query_new_name", "query_old_name"],
+    )
+    def test_favorite_writes_other_name_into_alias_group(self, client, query, other):
+        from core.database import ActressRepository, AliasRepository
+
+        avbase = {"birth": "1999-11-30",
+                  "other_names": [_T4B_NEW, _T4B_OLD, "@Faerina"]}
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(avbase=avbase)), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp = client.post("/api/actresses/favorite", json={"name": query})
+
+        assert resp.status_code == 200
+        assert resp.json()["skipped_aliases"] == []
+        assert AliasRepository().resolve(query) == {_T4B_NEW, _T4B_OLD}
+        assert list(ActressRepository().get_by_name(query).aliases) == [other]
+
+    def test_favorite_alias_only_avbase_still_writes_alias_group(self, client):
+        from core.database import ActressRepository, AliasRepository
+
+        avbase = {"other_names": [_T4B_NEW, _T4B_OLD]}
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(avbase=avbase)), \
+             patch("web.routers.actress.download_actress_photo", return_value=False), \
+             patch("web.routers.actress._get_actress_videos", return_value=[]):
+            resp = client.post("/api/actresses/favorite", json={"name": _T4B_NEW})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["skipped_aliases"] == []
+        assert body["actress"]["primary_text_source"] is None
+        assert AliasRepository().resolve(_T4B_NEW) == {_T4B_NEW, _T4B_OLD}
+        assert list(ActressRepository().get_by_name(_T4B_NEW).aliases) == [_T4B_OLD]
+
+
+@pytest.mark.usefixtures("_t4a_clear_profile_cache")
+class TestSearchOnlineAliasChain:
+    """174-T4b（F2）：真的 get_actress_profile ＋ 替身五源，打 search-online。"""
+
+    def test_search_online_returns_200_empty_when_text_is_none(self, client):
+        from core.scrapers.actress.orchestrator import _FetchedSources
+
+        sources = _FetchedSources({
+            "xcity": None,
+            "wiki": {"name_ja": _T4B_NEW, "other_names": [_T4B_NEW]},
+            "graphis": {"prof_url": "https://example.com/p.jpg"},
+            "gfriends": None,
+            "avbase": None,
+        })
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=sources):
+            resp = client.post("/api/actress-aliases/search-online",
+                               json={"name": _T4B_NEW})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["suggested_aliases"] == []
+
+    def test_search_online_suggests_avbase_names_without_self_or_accounts(self, client):
+        avbase = {"other_names": [_T4B_NEW, "@Faerina", _T4B_OLD]}
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=_t4a_sources(avbase=avbase)):
+            resp = client.post("/api/actress-aliases/search-online",
+                               json={"name": _T4B_NEW})
+
+        assert resp.status_code == 200
+        assert resp.json()["suggested_aliases"] == [_T4B_OLD]
+
+
+class TestAddFavoriteCropAfterAliasSync:
+    """TASK-174-T3a 第 2 輪（Codex review P2）：裁封面備援要在別名同步「之後」跑——
+    新別名剛寫進 actress_aliases，她的片可能全以舊名登錄。"""
+
+    NEW_NAME = "二階堂麗"
+    OLD_NAME = "あかね麗"
+
+    @pytest.fixture(autouse=True)
+    def _clear_profile_cache(self):
+        from core.scrapers.actress import orchestrator
+        orchestrator._cache.clear()
+        yield
+        orchestrator._cache.clear()
+
+    def _sources(self):
+        from core.scrapers.actress.orchestrator import _FetchedSources
+        return _FetchedSources({
+            "xcity": None,
+            "wiki": None,
+            "graphis": None,
+            "gfriends": None,
+            "avbase": {"birth": "1999-11-30", "other_names": [self.OLD_NAME]},
+        })
+
+    def _save_old_name_video(self, tmp_path):
+        from core.database import VideoRepository, Video
+
+        cover_fs = str(tmp_path / "cover.jpg")
+        Path(cover_fs).write_bytes(b"\xff\xd8\xff\xe0fake_cover")
+        VideoRepository().upsert(Video(
+            path=to_file_uri(str(tmp_path / "video.mp4")),
+            title="Old Name Video",
+            actresses=[self.OLD_NAME],
+            cover_path=to_file_uri(cover_fs),
+        ))
+
+    def _post_favorite(self, client, tmp_path):
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()), \
+             patch("web.routers.actress.crop_video_cover",
+                   return_value=b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP") as mock_crop, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.NEW_NAME})
+        return resp, mock_crop, gfriends
+
+    def test_new_name_crops_cover_of_old_name_videos(self, client, tmp_path):
+        """首次以新名收藏、片全以舊名登錄、無任何雲端照片 → 用舊名的片裁頭像，DB 也記 local_crop"""
+        from core.database import ActressRepository
+
+        self._save_old_name_video(tmp_path)
+        resp, mock_crop, gfriends = self._post_favorite(client, tmp_path)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["skipped_aliases"] == []
+        assert data["actress"]["photo_source"] == "local_crop"
+        assert data["photo_downloaded"] is True
+        assert mock_crop.call_count == 1
+        assert len(list(gfriends.glob("*.jpg"))) == 1
+        assert ActressRepository().get_by_name(self.NEW_NAME).photo_source == "local_crop"
+
+    def test_rejected_conflict_alias_videos_not_used_for_crop(self, client, tmp_path):
+        """舊名已屬於別的女優群組（衝突別名被拒）→ 不拿那些片裁，照片空白、仍 200"""
+        from core.database import ActressRepository, AliasRepository
+
+        AliasRepository().sync_from_favorite("他人", [self.OLD_NAME])
+        self._save_old_name_video(tmp_path)
+        resp, mock_crop, gfriends = self._post_favorite(client, tmp_path)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["skipped_aliases"] == [self.OLD_NAME]
+        assert data["actress"]["photo_source"] is None
+        assert not data["photo_downloaded"]
+        assert mock_crop.call_count == 0
+        assert ActressRepository().get_by_name(self.NEW_NAME).photo_source is None
