@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked
 from core.search_providers import registry
@@ -178,3 +180,16 @@ def search_maker(maker_key, label, spellings, offset, *, limit=None, titles, tod
             return res
         codes.append(res.error_code)
     return MakerSearchResult([], False, _merge_maker_codes(codes))
+
+
+class MakerCapsulePolicy(NamedTuple):
+    enabled: bool  # 鏈上有任何一家做得到片商 ⇒ 顯示膠囊列
+    use_not_found_map: bool  # 只有鏈恰為 javbus 時，才信 maker_javbus_map 的「沒有這家」去藏膠囊
+
+
+def maker_capsule_policy() -> MakerCapsulePolicy:
+    """膠囊列的後端狀態（175b-T8c，CD-175b-3）。"""
+    ids = [p.id for p in registry.providers_for({Kind.MAKER})]
+    enabled = bool(ids)
+    use_not_found_map = ids == ["javbus"]
+    return MakerCapsulePolicy(enabled, use_not_found_map)

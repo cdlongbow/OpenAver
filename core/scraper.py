@@ -588,6 +588,40 @@ def _get_uncensored_sources(search_term: str) -> list[str]:
     return mt_pick + builtin
 
 
+def _library_title_list(db_path):
+    """邏輯片單（同 web/routers/search.py 的 _library_titles；T9 不重構舊碼，兩份並存）。"""
+    from core.config import get_configured_gallery_dirs
+    from core.database import VideoRepository
+    from core.library_titles import logical_title_firsts
+
+    configured_dir_uris, path_mappings = get_configured_gallery_dirs(load_config())
+    repo = VideoRepository(db_path)
+    return logical_title_firsts(repo.get_library_title_rows(), configured_dir_uris, path_mappings)
+
+
+def _search_maker_intent(query, maker_key, limit, offset, status_callback, result_callback):
+    """smart_search 的 maker 分支：片庫樣本＋拼法交給 relay.search_maker，逐卡標 _mode（不送 mode 事件）。"""
+    import datetime
+
+    from core.database import get_db_path
+    from core.maker_names import maker_spellings
+
+    db_path = get_db_path()
+    try:
+        titles = _library_title_list(db_path)
+    except Exception as e:  # 片庫只是樣本來源，探針仍可答（待審 D1）
+        logger.warning('maker search: 無法讀取片庫片單，以空片單繼續（%s）', e)
+        titles = []
+    result = search_maker(
+        maker_key, query, maker_spellings(query), offset, limit=limit, titles=titles,
+        today=datetime.date.today(), status_callback=status_callback,
+        result_callback=result_callback, db_path=db_path,
+    )
+    for card in result.results:
+        card['_mode'] = 'maker'
+    return result.results
+
+
 def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
     """
     智慧搜尋：自動判斷搜尋類型並執行
@@ -666,7 +700,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
     known = known_makers() if resolve_makers else frozenset()
     intent = classify_query(query, known, resolve_makers=resolve_makers)
     if intent.mode == 'maker':
-        raise NotImplementedError('maker intent is not wired in 175a')
+        return _search_maker_intent(query, intent.maker_key, limit, offset, status_callback, result_callback)
 
     # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
     if intent.mode == 'exact':

@@ -423,3 +423,19 @@ def test_default_window_is_30_and_load_more_continues_without_gap(site, order, b
     assert n2 == [f"AAA-{i:03d}" for i in range(31, 46)]
     assert not set(n1) & set(n2) and len(n1) + len(n2) == 45
     assert bus.call_count == 0
+
+
+# ------------------------------------------------------------------ 175b-T8c 膠囊列政策
+@pytest.mark.parametrize(
+    "ids,enabled,use_map",
+    [
+        (["javbus"], True, True),
+        (["javdb"], True, False),
+        (["javdb", "javbus"], True, False),
+        ([], False, False),
+    ],
+)
+def test_capsule_policy_matrix(order, ids, enabled, use_map):
+    order(["javdb", "javbus"], enabled=ids)
+    p = relay.maker_capsule_policy()
+    assert p.enabled is enabled and p.use_not_found_map is use_map
