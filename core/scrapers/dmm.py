@@ -29,6 +29,17 @@ _review_supported: Optional[bool] = None
 _shipped_table_cache: Optional[dict] = None
 
 
+_TRAILING_PAREN = re.compile(r'\s*（[^（）]*）\s*$')
+
+
+def _actress_main_name(name):
+    """DMM 女優名只留主名：去掉結尾一段全形括號（舊名）；去完為空則回原名。"""
+    if not name:
+        return name
+    main = _TRAILING_PAREN.sub('', name, count=1)
+    return main or name
+
+
 def _flatten_shipped_table(raw: dict) -> dict[str, dict]:
     """展平出貨表 makers → {prefix: entry}；跨片商撞名時 raise。"""
     flat: dict[str, dict] = {}
@@ -593,7 +604,7 @@ class DMMScraper(BaseScraper):
             item = data['data']['ppvContent']
 
             actresses = [
-                Actress(name=a['name'])
+                Actress(name=_actress_main_name(a['name']))
                 for a in item.get('actresses', [])
             ]
 
@@ -779,7 +790,7 @@ class DMMScraper(BaseScraper):
                 if not content_id:
                     continue
                 actresses = [
-                    Actress(name=a['name'])
+                    Actress(name=_actress_main_name(a['name']))
                     for a in (item.get('actresses') or [])
                     if a.get('name')
                 ]
@@ -842,7 +853,7 @@ class DMMScraper(BaseScraper):
                 if video is None:
                     # Fallback: 從搜尋結果建構 shallow Video
                     actresses = [
-                        Actress(name=a['name'])
+                        Actress(name=_actress_main_name(a['name']))
                         for a in (item.get('actresses') or [])
                         if a.get('name')
                     ]
