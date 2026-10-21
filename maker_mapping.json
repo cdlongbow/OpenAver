@@ -1,9 +1,15 @@
 {
   "_meta": {
     "format": "hybrid",
-    "updated": "2026-07-06"
+    "updated": "2026-10-21"
   },
-  "search_aliases": {},
+  "search_aliases": {
+    "カリビアンコム": "Caribbeancom",
+    "エスワン": "S1",
+    "エスオーディー": "SOD Create",
+    "ソフト・オン・デマンド": "SOD Create",
+    "レアル・ワークス": "Real Works"
+  },
   "name_mapping": {
     "エスワン ナンバーワンスタイル": "S1",
     "エスワンナンバーワンスタイル": "S1",
