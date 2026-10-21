@@ -582,6 +582,21 @@ def empty_library_makers(monkeypatch):
     monkeypatch.setattr("core.maker_names.library_maker_names", lambda: set())
 
 
+# ============ TASK-175c-T4：名稱→實體 resolve 的隔離（R14 測試遷移）====
+#
+# JavBus 宣告 ACTOR／SERIES／DIRECTOR／LABEL 能力後，relay 的實體梯子對 `actress` 模式會先 `resolve`
+# 才輪到 KEYWORD：真 `JavBusProvider.resolve` 會發 searchstar／搜尋請求（被 `_outbound_guard` 擋成
+# `OutboundConnectionViolation`），或在假 scraper 沒有 `search_stars` 時被梯子吞成 `[]` 而讓 KEYWORD 沒被問。
+# 這些既有測試要驗的是 KEYWORD／前綴／部分番號的舊行為，所以把 resolve 換成「查無」讓梯子走空。
+# 不做 autouse：resolve 自己的測試與 test_javbus_entity_list.py 要真的 resolve（受影響的檔案逐檔 pytestmark opt-in）：
+#     pytestmark = pytest.mark.usefixtures("no_entity_lookup")
+# 只 patch 既有屬性（不用 create=True，命名錯誤要炸）；T7 加入 DMM 的 resolve 後擴成兩家。
+@pytest.fixture
+def no_entity_lookup(monkeypatch):
+    """opt-in（非 autouse）：JavBus 名稱→實體 resolve 回 None（0 請求）。"""
+    monkeypatch.setattr("core.search_providers.javbus.JavBusProvider.resolve", lambda self, kind, name: None)
+
+
 # ============ CI 修復：session 開始前把真實預設資料根真的定版一次 ============
 #
 # 為什麼需要：CI 乾淨 checkout 沒有已定版的 `output/`（gitignored，本機早已

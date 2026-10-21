@@ -14,6 +14,7 @@ from core.scrapers.javbus import JavBusScraper
 from core.scrapers.models import Video
 from core.scrapers.utils import SOURCE_ORDER
 from core.scraper import search_jav, smart_search
+pytestmark = pytest.mark.usefixtures("no_entity_lookup")
 
 
 @pytest.fixture(autouse=True)

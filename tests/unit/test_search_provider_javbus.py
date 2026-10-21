@@ -16,6 +16,7 @@ from core.scrapers.errors import SourceBlocked
 from core.search_providers import types as sp_types
 from core.search_providers.javbus import JavBusProvider
 from core.search_providers.types import EntityRef, Kind, WorkItem, Window
+pytestmark = pytest.mark.usefixtures("no_entity_lookup")
 
 
 # ---------------------------------------------------------------- fixtures

@@ -273,6 +273,7 @@ class JavBusScraper(BaseScraper):
             label=parsed.get("label", ""),
             series=parsed.get("series", ""),
             sample_images=sample_images,
+            entity_ids=self._parse_entity_ids(info),
         )
 
         rate_limit(self.config.delay)
@@ -338,6 +339,30 @@ class JavBusScraper(BaseScraper):
             i += 1
 
         return result
+
+    @staticmethod
+    def _parse_entity_ids(info) -> dict[str, list[str]]:
+        """詳情頁 info 區塊內的實體連結代號（女優／導演／系列／label）；去重保序、無該類不出鍵。
+
+        只掃 `div.col-md-3.info` 內的 a[href]（頁面別處的 avatar-waterfall 另有一份女優連結，不算）。
+        href 的 /ja、/en、無前綴皆認；片商（studio）與類別（genre）連結不收。
+        重用 `_STAR_HREF_RE`／`_ENTITY_HREF_RE`（與名稱→實體同一份判斷）。
+        """
+        ids: dict[str, list[str]] = {}
+        for a in info.find_all("a", href=True):
+            href = a["href"].strip()
+            m = _STAR_HREF_RE.match(href)
+            if m:
+                key, code = "actors", m.group(2)
+            else:
+                m = _ENTITY_HREF_RE.match(href)
+                if not m:
+                    continue
+                key, code = m.group(1), m.group(2)
+            bucket = ids.setdefault(key, [])
+            if code not in bucket:
+                bucket.append(code)
+        return ids
 
     @staticmethod
     def _plus_join(keyword: str) -> str:
@@ -623,3 +648,22 @@ class JavBusScraper(BaseScraper):
             if m and m.group(1) == segment and fold(text) == wanted:
                 return f"{segment}/{m.group(2)}", text
         return None
+
+    # ---------- 實體清單（175c-T4）----------
+
+    def get_entries_from_entity(self, entity_id: str, page: int = 1) -> list[ListCard]:
+        """實體頁（女優／系列／導演／label）單頁作品卡。entity_id 形如 `star/okq`、`uncensored/star/23f`、`series/rvz`。
+
+        URL＝<BASE_URL><語系前綴>/<entity_id>，第 N≥2 頁尾綴 `/<N>`。走 `_get_list`（帶 existmag=all，否則近期無磁鏈新片缺席）。
+        404（頁碼超界）→ []；被擋（403／429／503…）→ SourceBlocked；200 無 #waterfall → SourceUnreachable；
+        requests 例外 → SourceUnreachable。絕不把擋下或看不懂變成 []（BE-PY-03）。
+        """
+        url = f"{self.BASE_URL}{self._get_lang_prefix()}/{entity_id}"
+        if page > 1:
+            url += f"/{page}"
+        try:
+            resp = self._get_list(url)
+        except requests.RequestException as exc:
+            raise SourceUnreachable(f"JavBus entity page request failed: {url}") from exc
+        soup = self._list_soup(resp, url)
+        return [] if soup is None else self._parse_list_cards(soup)

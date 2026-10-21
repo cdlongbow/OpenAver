@@ -651,7 +651,8 @@ def test_blank_input_returns_none_without_any_request(fake, kind, blank):
 
 
 def test_capabilities_unchanged_in_this_task():
-    assert JavBusProvider.capabilities == frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE, Kind.MAKER})
+    assert JavBusProvider.capabilities == frozenset({
+        Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD})
 
 
 @pytest.mark.parametrize("kind", [Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD])

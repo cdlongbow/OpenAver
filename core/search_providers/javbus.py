@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 from core.logger import get_logger
 from core.name_match import fold
-from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
+from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE, JavBusScraper
 from core.search_providers.pipeline import fetch_window, run_window
 from core.search_providers.types import (
     MAKER_RESOLUTION_ERRORS,
@@ -74,6 +74,25 @@ def _progress_hook(status_callback, total):
     return on_item_done
 
 
+def _entry_item(card) -> WorkItem:
+    """實體清單頁的一張卡 → WorkItem；封面相對路徑補成絕對網址，演員列表沒給（None，靠 enrich 補）。"""
+    cover = card.cover
+    if cover and not cover.startswith("http"):
+        cover = JavBusScraper.BASE_URL + cover
+    return WorkItem(card.number, card.title, cover, card.date, None, SOURCE, ref=card.number)
+
+
+def _entity_page(scraper, entity_id: str, page_no: int) -> Page:
+    cards = scraper.get_entries_from_entity(entity_id, page_no)
+    return Page([_entry_item(card) for card in cards], has_next=len(cards) >= PAGE_SIZE)
+
+
+def _belongs(video, ref: EntityRef) -> bool:
+    """詳情頁的連結代號是否含該實體（ref.id 最後一段代號）；缺該類的鍵 → False（不是 None）。"""
+    code = ref.id.rsplit("/", 1)[-1]
+    return code in video.entity_ids.get(_ENTITY_KEY[ref.kind], ())
+
+
 def _detail_window(provider, numbers, result_callback, on_item_done=None) -> list[dict]:
     """對一批番號抓詳情：失敗／無 title 就丟、不斷路、不加延遲（與今天相同）。"""
     return run_window(
@@ -99,6 +118,8 @@ def _sorted(cards):
 _RESOLVE_CACHE_MAX = 1024
 _RESOLVE_CACHE: dict[tuple[str, str], EntityRef | None] = {}
 _ENTITY_SEGMENT = {Kind.SERIES: "series", Kind.DIRECTOR: "director", Kind.LABEL: "label"}
+# 實體 kind → Video.entity_ids 的鍵（守衛 belongs 與實體清單的 kind 範圍共用這一張表）
+_ENTITY_KEY = {Kind.ACTOR: "actors", Kind.DIRECTOR: "director", Kind.SERIES: "series", Kind.LABEL: "label"}
 
 
 def clear_resolve_cache() -> None:
@@ -179,7 +200,8 @@ def _probe_titles(scraper_mod, maker_key, spellings, titles, today, db_path):
 
 class JavBusProvider:
     id = SOURCE
-    capabilities = frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE, Kind.MAKER})
+    capabilities = frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.CODE,
+                              Kind.PARTIAL, Kind.KEYWORD})
     supports_discovery = True
     fallback_streaming = False  # 補完詳情後 _sorted（日期）重排，串流順序≠最終順序
 
@@ -210,6 +232,9 @@ class JavBusProvider:
 
             numbers = m.expand_partial_number(ref.id) if w.offset <= 0 else []
             return Page([_stub(n) for n in numbers])
+        if ref.kind in _ENTITY_KEY:
+            scraper = self._entity_scraper()  # 固定 /ja，與 UI 語言無關（實體代號與名稱以日文站為準）
+            return fetch_window(PAGE_SIZE, lambda p: _entity_page(scraper, ref.id, p), w)
         raise NotImplementedError(f"javbus list_entity: {ref.kind}")
 
     def search_keyword(self, q: str, w: Window) -> Page:
@@ -217,12 +242,31 @@ class JavBusProvider:
         return _fetch_page(lambda p: scraper.get_ids_from_search(q, page=p), w)[0]
 
     def enrich(self, item: WorkItem, ref: EntityRef | None) -> Enriched:
+        if ref is not None and ref.kind in _ENTITY_KEY:
+            return self._enrich_entity(item, ref)
         import core.scraper as m
 
         data = m.search_jav(item.number, SOURCE)
         if data and data.get("title"):
             return Enriched(card=data, belongs=None)
         return Enriched(card=None)
+
+    def _enrich_entity(self, item: WorkItem, ref: EntityRef) -> Enriched:
+        """實體清單的詳情＋守衛事實。用 UI 語系的 scraper（卡片 tags 不變日文），卡片後處理與舊路徑共用 build_card。
+
+        例外與舊路徑同寬：吞掉記 log、card=None（該部在清單裡降級顯示，不整批失敗）。belongs 由原 video 算。
+        """
+        import core.scraper as m
+
+        number = m.normalize_number(item.number)
+        try:
+            video = self._scraper().search(number)
+        except Exception as e:
+            logger.info("[Search] %s 例外 %s: %s", number, type(e).__name__, e)
+            return Enriched(card=None)
+        if not (video and video.title):
+            return Enriched(card=None)
+        return Enriched(card=m.build_card(video, number), belongs=_belongs(video, ref))
 
     # ------------------------------------------------------------ 統一入口
     def run(self, kind: Kind, target: str, w: Window, *, status_callback=None, result_callback=None,

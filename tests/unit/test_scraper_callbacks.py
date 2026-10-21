@@ -11,6 +11,7 @@ test_scraper_callbacks.py - result_callback 參數行為單元測試
 import pytest
 from unittest.mock import patch, MagicMock, call
 from concurrent.futures import ThreadPoolExecutor
+pytestmark = pytest.mark.usefixtures("no_entity_lookup")
 
 
 @pytest.fixture(autouse=True)
