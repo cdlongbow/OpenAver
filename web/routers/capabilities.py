@@ -1605,7 +1605,7 @@ _TOOLS: list[dict] = [
     {
         "name": "preview_actress_sources",
         "description": (
-            "查詢女優的四個資料來源（xcity/wiki/graphis/gfriends），"
+            "查詢女優的五個資料來源（xcity/wiki/graphis/gfriends/avbase），"
             "每個來源的結果分開回傳，不合併、不挑贏家，讓 AI 自己比對後決定"
             "要用哪個值。身分判斷優先於「查詢名字自己有沒有資料列」：若查詢的"
             "名字是某位已收藏女優的別名，一律先判定為別名（alias_of 會一併出現，"
@@ -1632,8 +1632,11 @@ _TOOLS: list[dict] = [
         "output_schema": {
             "name": "string — 查詢的女優名",
             "sources": (
-                "{xcity, wiki, graphis, gfriends} — 各來源各自的原始欄位 dict，"
-                "查無/下架/例外時該來源為 null，彼此獨立不合併"
+                "{xcity, wiki, graphis, gfriends, avbase} — 各來源各自的原始欄位 dict，"
+                "查無/下架/例外時該來源為 null，彼此獨立不合併。"
+                "avbase 的 other_names 是她用過的所有名字，含 @ 開頭的社群帳號與"
+                "查詢名字自己，是否採用由 AI 自行判斷；要補別名就走既有的別名功能"
+                "（POST /api/actress-aliases/{name}/alias）"
             ),
             "current": (
                 "Actress|null — 查詢名字已收藏時是它自己的資料；查詢名字是某已收藏"

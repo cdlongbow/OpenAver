@@ -1,4 +1,6 @@
 """測試 GET /api/capabilities"""
+import re
+
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
@@ -473,6 +475,32 @@ class TestCapabilitiesSourceEnum:
         enum = item_props["source"]["enum"]
         assert enum == get_source_enum(include_auto=True)
         assert "auto" in enum
+
+
+class TestPreviewActressSourcesContract:
+    """174-T6：preview_actress_sources 的 sources 說明鍵集合 == 預覽實際回傳鍵集合。"""
+
+    def test_preview_actress_sources_schema_keys_match_orchestrator(self, client):
+        tool = next(
+            t for t in client.get("/api/capabilities").json()["tools"]
+            if t["name"] == "preview_actress_sources"
+        )
+        m = re.match(r"\{([^}]*)\}", tool["output_schema"]["sources"])
+        assert m, "output_schema.sources 開頭必須是 {鍵清單}"
+        schema_keys = {k.strip() for k in m.group(1).split(",") if k.strip()}
+        assert schema_keys
+
+        with patch("core.scrapers.actress.xcity.scrape_xcity", return_value=None), \
+                patch("core.scrapers.actress.wiki_ja.scrape_wiki_ja", return_value=None), \
+                patch("core.scrapers.actress.graphis.scrape_graphis_photo", return_value=None), \
+                patch("core.scrapers.actress.gfriends.lookup_gfriends", return_value=None), \
+                patch("core.scrapers.actress.avbase.scrape_avbase", return_value=None):
+            from core.scrapers.actress.orchestrator import get_actress_profile_preview
+            actual_keys = set(get_actress_profile_preview("契約測試用名")["sources"])
+
+        assert schema_keys == actual_keys, (
+            f"schema={sorted(schema_keys)} actual={sorted(actual_keys)}"
+        )
 
 
 class TestTranslateTitleTools:
