@@ -121,8 +121,27 @@ def test_dmm_done_status_sent_once_and_no_result_callback_ok():
     statuses = []
     out, _, _ = _run(_pairs(2), {"return_value": _enriched("SONE-001")},
                      status_cb=lambda k, v: statuses.append((k, v)))
-    assert statuses == [("done", "found:2")]
+    assert statuses == [("dmm", "searching"), ("done", "found:2")]
     assert len(out) == 2
+
+
+def test_dmm_emits_searching_status_before_search():
+    order = []
+    pairs = _pairs(1)
+    with patch.object(DMMScraper, "search_by_keyword_with_ids",
+                      side_effect=lambda *a, **k: order.append("search") or pairs), \
+         patch.object(DMMScraper, "_fetch_by_id", return_value=_enriched("SONE-001")):
+        DMMProvider(DMMScraper()).run(Kind.KEYWORD, "q", Window(0, 20),
+                                      status_callback=lambda k, v: order.append((k, v)))
+    assert order[:2] == [("dmm", "searching"), "search"]
+    assert order[-1] == ("done", "found:1")
+
+
+def test_dmm_discovery_only_sends_no_searching_status():
+    statuses = []
+    DMMProvider(DMMScraper()).run(Kind.KEYWORD, "q", Window(0, 20),
+                                  status_callback=lambda k, v: statuses.append((k, v)), discovery_only=True)
+    assert statuses == []
 
 
 @pytest.mark.parametrize("case", ["empty", "wrong_kind", "discovery"])
@@ -145,6 +164,7 @@ def test_dmm_empty_wrong_kind_and_discovery(case):
                 p.run(*args, **cbs)
             return
         assert p.run(*args, **cbs, **kw) == []
-    assert calls == []
+    # 查無：只有「正在查 DMM」一個進度事件，沒有 done／seed；discovery 與例外情形則完全無事件
+    assert calls == ([("dmm", "searching")] if case == "empty" else [])
     if case == "discovery":
         search.assert_not_called()

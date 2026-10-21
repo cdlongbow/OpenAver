@@ -473,7 +473,7 @@ class TestFuzzyGuard:
     def test_fuzzy_chain_always_on_even_if_javbus_disabled(self):
         """javbus 停用（get_enabled_source_ids→[]）→ fuzzy chain 仍含 javbus（always-on, CD-65-4）
 
-        突變有效性：把 _fuzzy_search_chain L674 改為 get_enabled_source_ids() →
+        突變有效性：把 registry.providers_for 的順序來源改為 get_enabled_source_ids() →
         chain=[]，get_ids_from_search 不被呼叫 → assert_called() RED。
         """
         from core.scraper import search_actress

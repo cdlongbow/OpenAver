@@ -28,7 +28,6 @@ from core.proxy_policy import source_needs_jp_ip
 from core.scrapers.utils import (
     SOURCE_NAMES,
     extract_number as _new_extract_number,
-    FUZZY_SEARCH_SOURCES,
     normalize_number_impl,
     is_strict_number,
     is_uncensored_route,
@@ -37,10 +36,12 @@ from core.scrapers.utils import (
 from core.maker_mapping import get_maker_by_prefix
 from core.maker_latest import resolve_maker_studio  # noqa: F401  # 測試 patch 點＋provider 延後取用
 from core.search_providers.javbus import JavBusProvider
-from core.search_providers.types import MakerSearchResult  # noqa: F401  # 重新匯出（web/routers/search.py 使用）
+from core.search_providers.relay import search_by_intent
+from core.search_providers.types import MakerSearchResult, Window  # noqa: F401  # MakerSearchResult 重新匯出（web/routers/search.py 使用）
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
-from core.source_settings import get_enabled_source_ids, get_all_source_ids_ordered, is_source_enabled
+from core.source_settings import get_enabled_source_ids
+from core.source_settings import get_all_source_ids_ordered, is_source_enabled  # noqa: F401  # relay 與測試 patch 點（呼叫當下經 core.scraper 讀）
 
 # 63c metatube routing imports（CD-63c-1 / CD-63c-2 / CD-63c-3）
 from core.metatube.client import MetatubeHttpClient, pick_movie_result
@@ -474,36 +475,13 @@ def search_partial(partial: str,
                    status_callback: Optional[Callable[[str, str], None]] = None,
                    result_callback: Optional[Callable[[int, Any], None]] = None,
                    discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """局部搜尋（175a-T4：實作搬進 JavBusProvider，此處為 shim）"""
-    return JavBusProvider().run_partial(partial, status_callback, result_callback, discovery_only)
+    """局部搜尋（175a-T7：經 relay 接力；partial 不看 limit）"""
+    return search_by_intent("partial", partial, Window(0, 0), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
 
 
 def search_prefix(prefix: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """前綴搜尋（175a-T4：實作搬進 JavBusProvider，此處為 shim）"""
-    return JavBusProvider().run_prefix(prefix, limit, offset, status_callback, result_callback, discovery_only)
-
-
-def _dmm_keyword_search_progressive(
-    dmm_scraper,
-    query: str,
-    limit: int,
-    status_callback,
-    result_callback,
-    offset: int = 0,
-) -> Optional[List[Dict[str, Any]]]:
-    """DMM keyword search with progressive enrichment（175a-T5：實作搬進 DMMProvider，此處為薄轉接）。
-
-    Returns a list of result dicts on success, or None if DMM returned nothing
-    (caller should fall through to JavBus).
-    """
-    from core.search_providers.dmm import DMMProvider
-    from core.search_providers.types import Kind, Window
-
-    results = DMMProvider(dmm_scraper).run(
-        Kind.KEYWORD, query, Window(offset, limit),
-        status_callback=status_callback, result_callback=result_callback,
-    )
-    return results or None
+    """前綴搜尋（175a-T7：經 relay 接力）"""
+    return search_by_intent("prefix", prefix, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
 
 
 def _javbus_keyword_search(
@@ -520,7 +498,7 @@ def _javbus_keyword_search(
 
     ids_provider（173）：取代「取番號那一步」，簽名 (scraper, page) -> ids；None＝關鍵字搜尋。
     Returns list[dict] (empty list on failure / no ids).
-    JavDB fallback is NOT included; fuzzy fallback is limited to FUZZY_SEARCH_SOURCES.
+    JavDB fallback is NOT included; 模糊搜尋的來源由 search_providers 註冊表決定。
     """
     return JavBusProvider().run_keyword(name, limit, offset, status_callback, result_callback, discovery_only, ids_provider=ids_provider)
 
@@ -544,74 +522,6 @@ def search_maker_latest(
     return JavBusProvider().run_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
 
 
-def _fuzzy_one(
-    source: str,
-    query: str,
-    limit: int,
-    offset: int,
-    status_callback: Optional[Callable[[str, str], None]],
-    result_callback: Optional[Callable[[int, Any], None]],
-    discovery_only: bool = False,
-) -> List[Dict[str, Any]]:
-    """統一 adapter：將兩個 keyword 入口歸一為 list[dict]（空 → []，永不回 None）。
-
-    Caller must already have confirmed DMM is enabled before passing 'dmm' here.
-
-    discovery_only semantics: only javbus has a stub-return mode; all other sources
-    perform full enrichment and therefore must NOT participate when discovery_only=True.
-    """
-    if discovery_only and source != 'javbus':
-        return []
-
-    if source == 'dmm':
-        if status_callback:
-            status_callback('dmm', 'searching')
-        dmm_scraper = DMMScraper()
-        result = _dmm_keyword_search_progressive(
-            dmm_scraper, query, limit, status_callback, result_callback, offset=offset
-        )
-        result = result if result is not None else []
-        return result
-
-    if source == 'javbus':
-        return _javbus_keyword_search(
-            query, limit, offset, status_callback, result_callback,
-            discovery_only=discovery_only,
-        )
-
-    return []
-
-
-def _fuzzy_search_chain(
-    query: str,
-    limit: int = 20,
-    offset: int = 0,
-    status_callback: Optional[Callable[[str, str], None]] = None,
-    result_callback: Optional[Callable[[int, Any], None]] = None,
-    discovery_only: bool = False,
-) -> List[Dict[str, Any]]:
-    """Active-Row-ordered fuzzy fallback chain (CD-plan-65-5).
-
-    Iterates get_all_source_ids_ordered() ∩ FUZZY_SEARCH_SOURCES in order.
-    Stops at first non-empty result. Passes result_callback only to the first
-    actually-dispatched source (seed rule). Returns [] when chain is exhausted.
-    """
-    chain = [s for s in get_all_source_ids_ordered() if s in FUZZY_SEARCH_SOURCES]
-    first_dispatched = False
-    for source in chain:
-        if source == 'dmm' and not is_source_enabled('dmm'):
-            continue  # 不可達，跳過（不算 dispatched）
-        cb = result_callback if not first_dispatched else None
-        results = _fuzzy_one(
-            source, query, limit, offset, status_callback, cb,
-            discovery_only=discovery_only,
-        )
-        first_dispatched = True  # 第一個實際發動後，後續 seed 不送
-        if results:
-            return results
-    return []
-
-
 def search_actress(
     name: str,
     limit: int = 20,
@@ -620,15 +530,8 @@ def search_actress(
     result_callback: Optional[Callable[[int, Any], None]] = None,
     discovery_only: bool = False,
 ) -> List[Dict[str, Any]]:
-    """女優搜尋 — thin wrapper delegating to _fuzzy_search_chain."""
-    return _fuzzy_search_chain(
-        name,
-        limit=limit,
-        offset=offset,
-        status_callback=status_callback,
-        result_callback=result_callback,
-        discovery_only=discovery_only,
-    )
+    """女優搜尋（175a-T7：經 relay 接力；來源與順序由註冊表＋設定頁順序決定）"""
+    return search_by_intent("actress", name, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
 
 
 def search_jav321_keyword(keyword: str, limit: int = 20, status_callback: Optional[Callable[[str, str], None]] = None) -> List[Dict[str, Any]]:
@@ -684,7 +587,7 @@ def _get_uncensored_sources(search_term: str) -> list[str]:
     return mt_pick + builtin
 
 
-def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
+def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
     """
     智慧搜尋：自動判斷搜尋類型並執行
 
@@ -694,6 +597,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         offset: 分頁偏移
         status_callback: 狀態回調函數
         uncensored_mode: 無碼模式（只搜 AVSOX / FC2）
+        resolve_makers: 互動搜尋才傳 True（175b 接線）；預設不讀片庫、不辨識片商
     """
     query = query.strip()
 
@@ -755,8 +659,16 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
             r['_mode'] = 'uncensored'
         return results
 
+    # 查詢分類（175a-T7：core.query_intent.classify_query；兩道前置閘留在其前）
+    from core.query_intent import classify_query
+    from core.maker_names import known_makers
+    known = known_makers() if resolve_makers else frozenset()
+    intent = classify_query(query, known, resolve_makers=resolve_makers)
+    if intent.mode == 'maker':
+        raise NotImplementedError('maker intent is not wired in 175a')
+
     # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
-    if is_number_format(target):
+    if intent.mode == 'exact':
         query = normalize_number(target)
         if offset > 0:
             return []
@@ -782,14 +694,14 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         return []
 
     # 2. 局部搜尋
-    elif is_partial_number(query):
+    elif intent.mode == 'partial':
         if offset > 0: return []
         results = search_partial(query, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
         for r in results: r['_mode'] = 'partial'
         return results
 
     # 3. 前綴搜尋
-    elif is_prefix_only(query):
+    elif intent.mode == 'prefix':
         results = search_prefix(query, limit=limit, offset=offset, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
         mode = 'prefix'
 
@@ -811,7 +723,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
 
     # 4. 女優/關鍵字搜尋
     else:
-        # CD-plan-65-5: chain = get_all_source_ids_ordered() ∩ FUZZY_SEARCH_SOURCES.
+        # CD-plan-65-5: chain = 設定頁順序 ∩ search_providers 註冊表（175a-T7）。
         # Chain result (including []) is final — "Active Row order is truth".
         # No post-chain fallback: a hardcoded jav321 fallback here would bypass Active Row
         # order and run jav321 a second time if it was already in the chain.

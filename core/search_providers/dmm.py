@@ -64,6 +64,8 @@ class DMMProvider:
             raise ValueError(f"dmm run: unsupported kind {kind}")
         if discovery_only:
             return []
+        if status_callback:
+            status_callback("dmm", "searching")
         page = self.search_keyword(target, w)
         if not page.items:
             return []

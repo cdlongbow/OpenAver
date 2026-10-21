@@ -222,8 +222,8 @@ class AVSOXScraper(BaseScraper):
         """
         關鍵字搜尋
 
-        ⚠️ DEAD CODE（feature/65 CL-3 / CD-65-7）：AVSOX 不在 FUZZY_SEARCH_SOURCES
-        白名單內（core/scrapers/utils.py），模糊鏈 `_fuzzy_search_chain` 永不呼叫此方法。
+        ⚠️ DEAD CODE（feature/65 CL-3 / CD-65-7）：AVSOX 不註冊為 search provider
+        （core/search_providers/registry.py），模糊搜尋的 relay 永不呼叫此方法。
         無碼模式 × 模糊搜尋已定案維持「回空」，AVSOX keyword 搜刻意不接線（實用性低）。
         保留方法本體但不啟用；勿據此誤以為 AVSOX 有參與模糊搜尋。
 

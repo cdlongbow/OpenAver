@@ -267,46 +267,55 @@ class TestSearchActressResultCallback:
                 f"Slot {slot} should be {expected_number}, got {data['number']}"
             )
 
-    def test_fallback_source_does_not_reseed(self, make_mock_search_jav, monkeypatch):
-        """DMM fallback 路徑 (JavBus 找不到) 不應呼叫 result_callback（seed 合約）
+    @staticmethod
+    def _dmm_video(number):
+        from core.scrapers.models import Video
+        return Video(number=number, title='T', source='dmm', date='2024-01-01')
 
-        When JavBus (first dispatched source) returns empty and DMM (fallback) returns
-        results, the fuzzy chain must NOT pass result_callback to DMM — seed is sent
-        at most once, by the first dispatched source.  After TASK-65g javdb is no longer
-        in FUZZY_SEARCH_SOURCES; this test uses the actual 2-source pool (javbus + dmm).
-        """
+    def test_fallback_source_receives_callback_when_javbus_has_no_ids(self, monkeypatch):
+        """JavBus 查無（沒送過 seed）→ 後備的 DMM 拿得到 callback，骨架卡邊補邊顯示（175a 新規則）"""
         from core.scraper import search_actress
         from core.scrapers.dmm import DMMScraper
-        from core.scrapers.models import Video
 
-        def _dmm_video(number):
-            return Video(number=number, title='T', source='dmm', date='2024-01-01')
-
-        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
-                            lambda: ['javbus', 'dmm'])
+        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javbus', 'dmm'])
         monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
-
         callback_calls = []
-
-        def result_callback(slot, data):
-            callback_calls.append((slot, data))
-
-        # JavBusScraper returns empty list → first_dispatched=True, then DMM is tried
         mock_scraper = make_mock_scraper_actress([[]])
 
         with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
              patch.object(DMMScraper, 'search_by_keyword_with_ids',
-                          return_value=[('sone00100', _dmm_video('SONE-100'))]) as mock_dmm, \
-             patch.object(DMMScraper, '_fetch_by_id', return_value=_dmm_video('SONE-100')):
+                          return_value=[('sone00100', self._dmm_video('SONE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, '_fetch_by_id', return_value=self._dmm_video('SONE-100')):
             results = search_actress('三上悠亜', limit=20,
-                                     result_callback=result_callback)
+                                     result_callback=lambda s, d: callback_calls.append((s, d)))
 
-        # DMM must have been called (fallback ran)
         mock_dmm.assert_called_once()
-        # Critically: DMM must have received result_callback=None (not the caller's callback).
-        # pairs 非空且真的跑了補詳情，所以 callback 若被傳進去就會有 seed／item 事件。
-        assert callback_calls == [], \
-            f"Fallback source should not call result_callback, got {callback_calls}"
+        assert len(results) == 1
+        assert callback_calls[0] == (-1, ['SONE-100'])
+        assert [s for s, _ in callback_calls].count(-1) == 1
+        assert [s for s, _ in callback_calls if s >= 0] == [0]
+
+    def test_fallback_source_gets_none_after_seed_sent(self, monkeypatch):
+        """JavBus 已送出 seed、詳情全失敗 → DMM 拿到 None，不再送第二組骨架卡（R28，I-S3）"""
+        from core.scraper import search_actress
+        from core.scrapers.dmm import DMMScraper
+
+        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javbus', 'dmm'])
+        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
+        callback_calls = []
+        mock_scraper = make_mock_scraper_actress([['SONE-001', 'SONE-002']])
+
+        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
+             patch('core.scraper.search_jav', return_value=None), \
+             patch.object(DMMScraper, 'search_by_keyword_with_ids',
+                          return_value=[('sone00100', self._dmm_video('SONE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, '_fetch_by_id', return_value=self._dmm_video('SONE-100')):
+            results = search_actress('三上悠亜', limit=20,
+                                     result_callback=lambda s, d: callback_calls.append((s, d)))
+
+        mock_dmm.assert_called_once()
+        assert len(results) == 1
+        assert callback_calls == [(-1, ['SONE-001', 'SONE-002'])]  # 只有 JavBus 的 seed，DMM 沒送任何事件
 
 
 # ============ smart_search result_callback 透傳測試 ============
@@ -582,3 +591,27 @@ class TestDisabledSourceRouting:
         assert 'fc2' in searched, \
             f"uncensored Rule 2 fallback should search fc2 even when all disabled, got {searched}"
         assert len(results) == 1
+
+
+class TestSmartSearchResolveMakers:
+    """175a-T7：smart_search 的 resolve_makers 預設關閉"""
+
+    def test_smart_search_default_never_reads_library(self):
+        """預設（非互動呼叫端）不讀片庫：known_makers 不被呼叫"""
+        from core.scraper import smart_search
+
+        with patch('core.maker_names.known_makers') as mock_known, \
+             patch('core.scraper.search_actress', return_value=[{'number': 'X-1'}]):
+            smart_search('三上悠亜')
+
+        assert mock_known.call_count == 0
+
+    def test_smart_search_maker_intent_not_wired_in_175a(self):
+        """resolve_makers=True 且分類為片商 → 175a 尚未接線，明確拋 NotImplementedError"""
+        from core.query_intent import Intent
+        from core.scraper import smart_search
+
+        with patch('core.maker_names.known_makers', return_value=frozenset({'moodyz'})), \
+             patch('core.query_intent.classify_query', return_value=Intent('maker', 'moodyz')):
+            with pytest.raises(NotImplementedError):
+                smart_search('MOODYZ', resolve_makers=True)

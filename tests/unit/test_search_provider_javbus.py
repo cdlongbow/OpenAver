@@ -51,6 +51,13 @@ def sync_executor(monkeypatch):
     monkeypatch.setattr(cf, "as_completed", lambda fs, timeout=None: list(fs))
 
 
+@pytest.fixture(autouse=True)
+def fixed_source_order(monkeypatch):
+    """shim 現在經 relay：固定來源順序與開關，不吃 live config（BE-TEST-02／01，patch 使用端）。"""
+    monkeypatch.setattr(scraper_mod, "get_all_source_ids_ordered", lambda: ["javbus"])
+    monkeypatch.setattr(scraper_mod, "is_source_enabled", lambda sid: False)
+
+
 class Env:
     """合成的 JavBus：每頁 30 筆、最多 pages 頁；search_jav 依 script 回應。"""
 
@@ -111,11 +118,13 @@ def numbers(cards):
 
 # ---------------------------------------------------------------- 1. shim 把 offset 傳到底
 @pytest.mark.parametrize("offset,first_page", [(20, 1), (40, 2)])
-@pytest.mark.parametrize("kind", ["prefix", "keyword"])
+@pytest.mark.parametrize("kind", ["prefix", "keyword", "actress"])
 def test_shim_forwards_offset(monkeypatch, kind, offset, first_page):
     env = Env(monkeypatch)
     if kind == "prefix":
         out = scraper_mod.search_prefix("midv", 20, offset)
+    elif kind == "actress":
+        out = scraper_mod.search_actress("MIDV", 20, offset)
     else:
         out = scraper_mod._javbus_keyword_search("MIDV", 20, offset, None, None)
     assert env.id_calls[0][1] == first_page
