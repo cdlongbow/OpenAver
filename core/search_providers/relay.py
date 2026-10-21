@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from typing import NamedTuple
 
 from core.logger import get_logger
@@ -141,13 +143,46 @@ def _merge_maker_codes(codes: list[str | None]) -> str:
     return "maker_not_found"
 
 
+_MAKER_ANSWERERS_MAX = 128
+_MAKER_ANSWERERS: OrderedDict = OrderedDict()  # (maker_key, limit) -> 第一頁實際回答的 provider id（LRU，只在記憶體）
+_MAKER_ANSWERERS_LOCK = threading.Lock()
+
+
+def _reset_maker_answerers() -> None:
+    with _MAKER_ANSWERERS_LOCK:
+        _MAKER_ANSWERERS.clear()
+
+
+def _note_maker_answerer(key, provider_id: str) -> None:
+    with _MAKER_ANSWERERS_LOCK:
+        _MAKER_ANSWERERS[key] = provider_id
+        _MAKER_ANSWERERS.move_to_end(key)
+        while len(_MAKER_ANSWERERS) > _MAKER_ANSWERERS_MAX:
+            _MAKER_ANSWERERS.popitem(last=False)
+
+
+def _recall_maker_answerer(key) -> str | None:
+    with _MAKER_ANSWERERS_LOCK:
+        pid = _MAKER_ANSWERERS.get(key)
+        if pid is not None:
+            _MAKER_ANSWERERS.move_to_end(key)
+        return pid
+
+
 def search_maker(maker_key, label, spellings, offset, *, limit=None, titles, today, status_callback=None,
                  result_callback=None, db_path=None) -> MakerSearchResult:
     """片商最新作品的接力（175b-T8b）：鏈＝providers_for({MAKER})，逐家 run_maker。
 
     I-M2（同一份清單不得中途換家）：非空 ⇒ 回；maker_empty ⇒ 終點；offset>0 的 unreachable／例外 ⇒ 終點；
-    其餘（not_found／no_sample／offset==0 的 unreachable／例外）記下並換下一家。"""
+    其餘（not_found／no_sample／offset==0 的 unreachable／例外）記下並換下一家。
+    offset==0 非空時記下回答者（key＝(maker_key, limit)）；offset>0 命中記錄 ⇒ 只問那一家（175b-F1）。"""
     providers = registry.providers_for({Kind.MAKER})
+    answerer_key = (maker_key, limit)
+    pinned = _recall_maker_answerer(answerer_key) if offset > 0 else None
+    if pinned is not None:  # 載入更多固定問第一頁回答的那一家；它不在鏈上 ⇒ 終點，不換家
+        providers = [p for p in providers if p.id == pinned]
+        if not providers:
+            return MakerSearchResult([], False, "maker_unreachable")
     if not providers:
         return MakerSearchResult([], False, "maker_not_found")
     chain_ids = [p.id for p in providers]
@@ -171,6 +206,8 @@ def search_maker(maker_key, label, spellings, offset, *, limit=None, titles, tod
             codes.append("maker_unreachable")
             continue
         if res.results:
+            if offset == 0:
+                _note_maker_answerer(answerer_key, provider.id)
             return res
         if res.error_code is None:
             return res  # 認得、也列出了（詳情全缺）：同 maker_empty，終點（173 行為不變）

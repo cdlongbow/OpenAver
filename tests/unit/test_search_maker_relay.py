@@ -55,12 +55,14 @@ class SyncExecutor:
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     clear_resolve_cache()
+    relay._reset_maker_answerers()
     monkeypatch.setattr(jp, "_sleep", lambda s: None)
     monkeypatch.setattr(time, "sleep", lambda s: None)
     monkeypatch.setattr(cf, "ThreadPoolExecutor", SyncExecutor)
     monkeypatch.setattr(JavDBProvider, "_proxies", lambda self: None)
     yield
     clear_resolve_cache()
+    relay._reset_maker_answerers()
 
 
 @pytest.fixture
@@ -89,6 +91,92 @@ def dev():
 
 def search(offset=0, **kw):
     return relay.search_maker(*ARGS, offset, **KW, **kw)
+
+
+# ------------------------------------------------------------------ 載入更多固定同一家（175b-F1）
+def _twenty(prefix):
+    return R(*[f"{prefix}-{i}" for i in range(20)])
+
+
+def test_load_more_stays_with_fallback_provider_when_first_choice_still_blocked(order, bus, dev):
+    order(["javdb", "javbus"])
+    dev.return_value = E("maker_unreachable")
+    bus.return_value = _twenty("B")
+    assert len(search(offset=0, limit=20).results) == 20
+    dev.reset_mock()
+    out = search(offset=20, limit=20)
+    assert dev.call_count == 0
+    assert bus.call_count == 2 and len(out.results) == 20
+
+
+def test_load_more_stays_with_fallback_provider_after_first_choice_recovers(order, bus, dev):
+    order(["javdb", "javbus"])
+    dev.return_value = E("maker_unreachable")
+    bus.return_value = _twenty("B")
+    search(offset=0, limit=20)
+    dev.reset_mock()
+    dev.return_value = _twenty("A")
+    out = search(offset=20, limit=20)
+    assert dev.call_count == 0
+    assert out.results[0]["number"] == "B-0"
+
+
+def test_load_more_ends_when_answering_provider_fails(order, bus, dev):
+    order(["javdb", "javbus"])
+    dev.return_value = _twenty("A")
+    search(offset=0, limit=20)
+    dev.return_value = E("maker_unreachable")
+    bus.return_value = _twenty("B")
+    assert search(offset=20, limit=20) == E("maker_unreachable")
+    assert bus.call_count == 0
+
+
+def test_load_more_without_record_keeps_current_behavior(order, bus, dev):
+    order(["javdb", "javbus"])
+    dev.return_value = E("maker_not_found")
+    bus.return_value = R("B-1")
+    out = search(offset=20, limit=20)
+    assert out.results[0]["number"] == "B-1"
+    assert dev.call_count == 1 and bus.call_count == 1
+
+
+def test_answering_provider_disabled_midway_ends_list(order, bus, dev):
+    order(["javdb", "javbus"])
+    bus.return_value = _twenty("B")
+    search(offset=0, limit=20)
+    dev.reset_mock()
+    order(["javdb", "javbus"], enabled=["javdb"])
+    dev.return_value = _twenty("A")
+    assert search(offset=20, limit=20) == E("maker_unreachable")
+    assert dev.call_count == 0
+
+
+def test_typed_and_capsule_lists_are_recorded_separately(order, bus, dev):
+    order(["javdb", "javbus"])
+
+    def dev_side(self, key, label, spellings, offset, *, limit=None, **kw):
+        return _twenty("A") if limit is None else E("maker_not_found")
+
+    dev.side_effect = dev_side
+    bus.return_value = _twenty("B")
+    search(offset=0, limit=20)  # javdb not_found -> javbus
+    search(offset=0, limit=None)  # javdb answers
+    dev.reset_mock()
+    bus.reset_mock()
+    typed = search(offset=20, limit=20)
+    assert dev.call_count == 0 and bus.call_count == 1 and typed.results[0]["number"] == "B-0"
+    dev.reset_mock()
+    bus.reset_mock()
+    capsule = search(offset=30, limit=None)
+    assert bus.call_count == 0 and dev.call_count == 1 and capsule.results[0]["number"] == "A-0"
+
+
+def test_answerer_record_is_lru_capped_at_128():
+    for i in range(129):
+        relay._note_maker_answerer((f"k{i}", None), "javbus")
+    assert len(relay._MAKER_ANSWERERS) == 128
+    assert ("k0", None) not in relay._MAKER_ANSWERERS
+    assert ("k128", None) in relay._MAKER_ANSWERERS
 
 
 # ------------------------------------------------------------------ 鏈與換家
