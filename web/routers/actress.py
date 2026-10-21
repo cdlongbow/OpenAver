@@ -337,14 +337,6 @@ def add_favorite(req: FavoriteRequest):
         else:
             profile = result.data
 
-    # TASK-174-T3a / CD-174-17：沒有任何雲端照片 → 從片庫挑片裁封面（cache hit／miss 共用）。
-    # 複製不就地改：get_cached_profile 回的是 orchestrator 1 小時快取的共享 dict。
-    if not profile.get("photo_url") and not crop_attempted:
-        videos = _get_actress_videos(name)
-        if videos and _try_local_crop_photo(name, videos):
-            local_crop_ok = True
-            profile = {**profile, "photo_source": "local_crop"}
-
     # 4. 組裝 Actress dataclass
     text = profile.get("text") or {}
 
@@ -390,6 +382,17 @@ def add_favorite(req: FavoriteRequest):
     except Exception as e:
         logger.warning("[actress] alias sync failed (non-blocking): %s", e)
         skipped_aliases = []
+
+    # TASK-174-T3a / CD-174-17：沒有任何雲端照片 → 從片庫挑片裁封面（cache hit／miss 共用）。
+    # 必須在別名同步「之後」：新別名（例：維基／avbase 帶來的舊藝名）剛寫進 actress_aliases，
+    # 她的片可能全以舊名登錄；影片查詢與 video_count 同一來源（resolve(actress.name)），
+    # 被拒的衝突別名自然不納入。不碰 profile（共享快取 dict，I-P1）；只更新 DB 與本次回應。
+    if not profile.get("photo_url") and not crop_attempted:
+        videos = _get_actress_videos(actress.name)
+        if videos and _try_local_crop_photo(actress.name, videos):
+            local_crop_ok = True
+            actress.photo_source = "local_crop"
+            repo.update_fields(actress.name, {"photo_source": "local_crop"})
 
     # 5. 下載照片（photo_url 可能為 None，函數內部已有 guard）
     # TASK-122-T10：local_crop fallback 已經裁圖成功時（local_crop_ok=True）

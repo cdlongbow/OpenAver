@@ -3688,3 +3688,84 @@ class TestSearchOnlineAliasChain:
 
         assert resp.status_code == 200
         assert resp.json()["suggested_aliases"] == [_T4B_OLD]
+
+
+class TestAddFavoriteCropAfterAliasSync:
+    """TASK-174-T3a 第 2 輪（Codex review P2）：裁封面備援要在別名同步「之後」跑——
+    新別名剛寫進 actress_aliases，她的片可能全以舊名登錄。"""
+
+    NEW_NAME = "二階堂麗"
+    OLD_NAME = "あかね麗"
+
+    @pytest.fixture(autouse=True)
+    def _clear_profile_cache(self):
+        from core.scrapers.actress import orchestrator
+        orchestrator._cache.clear()
+        yield
+        orchestrator._cache.clear()
+
+    def _sources(self):
+        from core.scrapers.actress.orchestrator import _FetchedSources
+        return _FetchedSources({
+            "xcity": None,
+            "wiki": None,
+            "graphis": None,
+            "gfriends": None,
+            "avbase": {"birth": "1999-11-30", "other_names": [self.OLD_NAME]},
+        })
+
+    def _save_old_name_video(self, tmp_path):
+        from core.database import VideoRepository, Video
+
+        cover_fs = str(tmp_path / "cover.jpg")
+        Path(cover_fs).write_bytes(b"\xff\xd8\xff\xe0fake_cover")
+        VideoRepository().upsert(Video(
+            path=to_file_uri(str(tmp_path / "video.mp4")),
+            title="Old Name Video",
+            actresses=[self.OLD_NAME],
+            cover_path=to_file_uri(cover_fs),
+        ))
+
+    def _post_favorite(self, client, tmp_path):
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
+                   return_value=self._sources()), \
+             patch("web.routers.actress.crop_video_cover",
+                   return_value=b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP") as mock_crop, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.NEW_NAME})
+        return resp, mock_crop, gfriends
+
+    def test_new_name_crops_cover_of_old_name_videos(self, client, tmp_path):
+        """首次以新名收藏、片全以舊名登錄、無任何雲端照片 → 用舊名的片裁頭像，DB 也記 local_crop"""
+        from core.database import ActressRepository
+
+        self._save_old_name_video(tmp_path)
+        resp, mock_crop, gfriends = self._post_favorite(client, tmp_path)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["skipped_aliases"] == []
+        assert data["actress"]["photo_source"] == "local_crop"
+        assert data["photo_downloaded"] is True
+        assert mock_crop.call_count == 1
+        assert len(list(gfriends.glob("*.jpg"))) == 1
+        assert ActressRepository().get_by_name(self.NEW_NAME).photo_source == "local_crop"
+
+    def test_rejected_conflict_alias_videos_not_used_for_crop(self, client, tmp_path):
+        """舊名已屬於別的女優群組（衝突別名被拒）→ 不拿那些片裁，照片空白、仍 200"""
+        from core.database import ActressRepository, AliasRepository
+
+        AliasRepository().sync_from_favorite("他人", [self.OLD_NAME])
+        self._save_old_name_video(tmp_path)
+        resp, mock_crop, gfriends = self._post_favorite(client, tmp_path)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["skipped_aliases"] == [self.OLD_NAME]
+        assert data["actress"]["photo_source"] is None
+        assert not data["photo_downloaded"]
+        assert mock_crop.call_count == 0
+        assert ActressRepository().get_by_name(self.NEW_NAME).photo_source is None
