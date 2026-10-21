@@ -96,3 +96,37 @@ def test_threesize_inch_row_after_cm_row_ignored():
         ("スリーサイズ", "31.5 - 22.8 - 32.7 in"),
     ])
     assert (result["bust"], result["waist"], result["hip"]) == ("80cm", "58cm", "83cm")
+
+
+# ---------------------------------------------------------------------------
+# 註腳標記不進欄位文字（174-T8）——合成 infobox，不收站方存檔
+# ---------------------------------------------------------------------------
+
+_FOOTNOTE = '<sup class="reference"><a href="#cite_note-1">[2]</a></sup>'
+
+
+def test_footnote_markers_stripped_from_text_fields():
+    result = _parse([
+        ("出身地", f"三重県{_FOOTNOTE}<sup class=\"reference\"><a>[3]</a></sup>"),
+        ("愛称", f"モリヒナ{_FOOTNOTE}"),
+        ("専属契約", f"S1{_FOOTNOTE}"),
+    ])
+    assert result["hometown"] == "三重県"
+    assert result["nickname"] == "モリヒナ"
+    assert result["exclusive_makers"] == "S1"
+    for key in ("hometown", "nickname", "exclusive_makers"):
+        assert "[" not in result[key]
+
+
+def test_footnote_markers_stripped_when_not_wrapped_in_sup():
+    result = _parse([
+        ("出身地", "三重県[ 2 ] [注 3]"),
+        ("愛称", "モリヒナ [1]"),
+    ])
+    assert result["hometown"] == "三重県"
+    assert result["nickname"] == "モリヒナ"
+
+
+def test_footnote_strip_keeps_other_sup_content():
+    result = _parse([("愛称", "ヒナ<sup>2</sup>")])
+    assert result["nickname"] == "ヒナ 2"

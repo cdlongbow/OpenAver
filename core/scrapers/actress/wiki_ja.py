@@ -55,6 +55,21 @@ def _flatten(value_text: str) -> str:
     return re.sub(r"\s*\|\s*", " ", value_text).strip()
 
 
+_FOOTNOTE_RE = re.compile(r"\[\s*(?:注\s*)?\d+\s*\]")
+
+
+def _cell_text(td) -> str:
+    """infobox 欄位值文字，註腳標記（[2]、[注 3]）一律剔除。
+
+    所有文字欄位共用此處：先刪 <sup class="reference"> 節點，
+    再以正則收掉殘留的純文字標記，最後收斂空白。
+    """
+    for sup in td.select("sup.reference"):
+        sup.decompose()
+    text = _flatten(td.get_text(" | ", strip=True))
+    return re.sub(r"\s{2,}", " ", _FOOTNOTE_RE.sub("", text)).strip()
+
+
 def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
     """
     Parse Wikipedia JP HTML and extract infobox fields.
@@ -99,7 +114,7 @@ def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
         if not th or not td:
             continue
         label = th.get_text(" ", strip=True)
-        value = _flatten(td.get_text(" | ", strip=True))
+        value = _cell_text(td)
 
         if "愛称" in label:
             result["nickname"] = value
