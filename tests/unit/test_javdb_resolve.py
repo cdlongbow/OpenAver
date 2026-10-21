@@ -238,7 +238,8 @@ def test_maker_requests_are_spaced():
     with patch.object(jp, "_sleep", sleeps.append):
         _resolve(Kind.MAKER, "Canon", site, name_map=nm)
     assert len(site.calls) == 3
-    assert len(sleeps) == 2 and all(s >= 0.3 for s in sleeps)
+    # 175b-T4a：節流併入單一後置點（每次請求完成後 sleep），3 次請求 ⇒ 3 次
+    assert len(sleeps) == 3 and all(s >= 0.3 for s in sleeps)
 
 
 # ------------------------------------------------------------------ 快取
@@ -309,7 +310,7 @@ def test_cache_cap_clears_whole_table():
 # ------------------------------------------------------------------ provider 面
 def test_capabilities_exact():
     assert JavDBProvider.capabilities == frozenset(
-        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE})
+        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD})
 
 
 @pytest.mark.parametrize("kind", [Kind.LABEL, Kind.KEYWORD, Kind.PARTIAL])

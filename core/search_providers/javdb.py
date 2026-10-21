@@ -17,7 +17,8 @@ from core.maker_names import maker_key_of
 from core.scrapers import javdb_api
 from core.scrapers.javdb_api import MAX_PAGE, PAGE_SIZE
 from core.scrapers.utils import strip_number_prefix
-from core.search_providers.types import EntityRef, Kind, Page, WorkItem
+from core.search_providers.pipeline import fetch_window, run_window
+from core.search_providers.types import Enriched, EntityRef, Kind, Page, Window, WorkItem
 
 logger = get_logger(__name__)
 
@@ -149,7 +150,6 @@ _STRIP = set("・·-_")
 _SPLIT = re.compile(r"[,、，/／]")
 _SERIES_MIN_VIDEOS = 5
 _MAKER_MAX_NAMES = 4
-_MAKER_REQUEST_GAP = 0.3  # 秒；片商候選名逐名請求之間的最小間隔（主 session 裁決 D4）
 _RESOLVE_CACHE_MAX = 1024
 _RESOLVE_CACHE: dict[tuple[str, str], EntityRef | None] = {}
 _SEARCH_TYPE = {
@@ -162,7 +162,55 @@ _SEARCH_TYPE = {
 
 
 def _sleep(seconds: float) -> None:
+    """本檔唯一的 sleep 點（測試 patch 它）。"""
     time.sleep(seconds)
+
+
+def _request_delay() -> float:
+    import core.scraper as m  # 函式內 import：頂層不得 import core.scraper（BE-PY-08）
+
+    return m.REQUEST_DELAY
+
+
+def _paced(fn, *args, **kwargs):
+    """序列階段的每次 JavDB 請求：完成後（含失敗）至少等 REQUEST_DELAY（I-A1：任兩次請求 ≥0.3 秒）。
+    後置 sleep 同時保證「最後一次列表請求 → 第一批詳情」也有間隔。詳情階段的間隔由 pipeline 負責。"""
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _sleep(_request_delay())
+
+
+def norm_number(number) -> str:
+    return (number or "").upper().replace("-", "").strip() if isinstance(number, str) else ""
+
+
+_LIST_FILTER = {
+    Kind.ACTOR: "a",
+    Kind.SERIES: "s",
+    Kind.DIRECTOR: "d",
+    Kind.MAKER: "m",
+    Kind.CODE: "c",
+}
+
+
+def _partial_matches(items, want):
+    out = []
+    for it in items:
+        if norm_number(it.number).startswith(want):
+            out.append(it)
+    return out
+
+
+def _keep_newer(items):
+    """同號異片（撞號）只留發行日較新者；保留首次出現的順序。"""
+    best: dict[str, WorkItem] = {}
+    for it in items:
+        key = norm_number(it.number)
+        prev = best.get(key)
+        if prev is None or it.date > prev.date:
+            best[key] = it
+    return list(best.values())
 
 
 def clear_resolve_cache() -> None:
@@ -239,7 +287,12 @@ def _maker_names(q: str) -> list[str]:
 
 class JavDBProvider:
     id = SOURCE
-    capabilities = frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE})
+    capabilities = frozenset(
+        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD}
+    )
+    supports_discovery = False
+    # 補完詳情後依日期重排，串流順序≠最終順序（BE-DATA-20）
+    fallback_streaming = False
 
     def __init__(self, scraper=None):
         self._scraper_obj = scraper
@@ -252,17 +305,19 @@ class JavDBProvider:
             self._scraper_obj = JavDBScraper()
         return self._scraper_obj
 
+    def _proxies(self):
+        return self._scraper._proxy_kwargs().get("proxies")
+
     def _search(self, search_type: str, q: str) -> list[Candidate]:
-        proxies = self._scraper._proxy_kwargs().get("proxies")
-        return parse_candidates(javdb_api.api_search_typed(search_type, q, proxies=proxies))
+        proxies = self._proxies()
+        rows = _paced(lambda: javdb_api.api_search_typed(search_type, q, proxies=proxies))
+        return parse_candidates(rows)
 
     def _lookup(self, kind: Kind, q: str, qf: str) -> Candidate | None:
         if kind is Kind.MAKER:
             names = _maker_names(q)
             wanted = {fold(n) for n in names}
-            for i, name in enumerate(names):
-                if i:
-                    _sleep(_MAKER_REQUEST_GAP)
+            for name in names:
                 hit = _pick_maker(self._search("maker", name), wanted)
                 if hit is not None:
                     return hit
@@ -293,3 +348,128 @@ class JavDBProvider:
             _RESOLVE_CACHE.clear()
         _RESOLVE_CACHE[key] = ref
         return ref
+
+    # ------------------------------------------------------------ 清單
+    def list_entity(self, ref: EntityRef, w: Window) -> Page:
+        flag = _LIST_FILTER.get(ref.kind)
+        if flag is None:
+            raise ValueError(f"javdb list_entity: unsupported kind {ref.kind}")
+        filter_by = f"0:{flag}:{ref.id}"
+        proxies = self._proxies()
+
+        def fetch_page(p: int) -> Page:
+            rows = _paced(lambda: javdb_api.api_list_tags(filter_by, p, proxies=proxies))
+            return list_page(rows, p)
+
+        return fetch_window(PAGE_SIZE, fetch_page, w, max_page=MAX_PAGE)
+
+    def search_keyword(self, q: str, w: Window) -> Page:
+        proxies = self._proxies()
+
+        def fetch_page(p: int) -> Page:
+            rows = _paced(lambda: javdb_api.api_search_page(q, p, proxies=proxies))
+            return list_page(rows, p)
+
+        return fetch_window(PAGE_SIZE, fetch_page, w, max_page=MAX_PAGE)
+
+    # ------------------------------------------------------------ 補詳情
+    def _belongs(self, item: WorkItem, ref: EntityRef | None, facts: DetailFacts) -> bool | None:
+        if ref is None:
+            return None
+        if ref.kind is Kind.ACTOR:
+            return ref.id in facts.actor_ids
+        if ref.kind is Kind.SERIES:
+            return facts.series_id == ref.id
+        if ref.kind is Kind.DIRECTOR:
+            return facts.director_id == ref.id
+        if ref.kind is Kind.MAKER:
+            return facts.maker_id == ref.id
+        if ref.kind is Kind.CODE:
+            return norm_number(item.number).startswith(norm_number(ref.id))
+        return None
+
+    def enrich(self, item: WorkItem, ref: EntityRef | None) -> Enriched:
+        """不自己 sleep：詳情間隔由 pipeline 負責（雙重 sleep 會砍半吞吐）。"""
+        detail = javdb_api.api_movie_detail(item.ref, proxies=self._proxies())
+        card = javdb_api.to_video(detail, item.number).to_legacy_dict()
+        card["_source"] = SOURCE
+        return Enriched(card, self._belongs(item, ref, parse_detail_facts(detail)))
+
+    # ------------------------------------------------------------ 統一入口
+    def run(self, kind: Kind, target: str, w: Window, *, status_callback=None, result_callback=None,
+            discovery_only: bool = False) -> list[dict]:
+        if kind not in (Kind.CODE, Kind.KEYWORD, Kind.PARTIAL):
+            raise ValueError(f"javdb run: unsupported kind {kind}")
+        if discovery_only:
+            return []
+        if status_callback:
+            status_callback(SOURCE, "searching")
+        if kind is Kind.CODE:
+            cards = self._run_code(target, w, result_callback)
+        elif kind is Kind.KEYWORD:
+            cards = self._run_keyword(target, w, result_callback)
+        else:
+            cards = self._run_partial(target, w, result_callback)
+        if not cards:
+            return []
+        if status_callback:
+            status_callback("done", f"found:{len(cards)}")
+        import core.scraper as m
+
+        cards = m.sort_results_by_date(cards)
+        for card in cards:
+            card["_source"] = SOURCE
+        return cards
+
+    def _run_code(self, target, w, result_callback) -> list[dict]:
+        ref = self.resolve(Kind.CODE, target.strip().upper())
+        if ref is None:
+            return []
+        page = self.list_entity(ref, w)
+        if not page.items:
+            return []
+        return run_window(
+            self,
+            page.items,
+            ref,
+            result_callback=result_callback,
+            on_fail="degrade",
+            delay=None,
+            guard=True,
+            breaker=True,
+        ).cards
+
+    def _run_keyword(self, target, w, result_callback) -> list[dict]:
+        page = self.search_keyword(target, w)
+        if not page.items:
+            return []
+        return run_window(
+            self,
+            page.items,
+            None,
+            result_callback=result_callback,
+            on_fail="degrade",
+            delay=None,
+            guard=False,
+            breaker=True,
+        ).cards
+
+    def _run_partial(self, target, w, result_callback) -> list[dict]:
+        """局部搜尋：忽略 w.limit（relay 傳 Window(0,0)）、只取第 1 頁、客戶端過濾前綴。"""
+        if w.offset > 0:
+            return []
+        proxies = self._proxies()
+        rows = _paced(lambda: javdb_api.api_search_page(target.strip(), 1, proxies=proxies))
+        items = _keep_newer(_partial_matches(parse_list_rows(rows), norm_number(target)))
+        if not items:
+            return []
+        return run_window(
+            self,
+            items,
+            None,
+            result_callback=result_callback,
+            on_fail="degrade",
+            delay=None,
+            guard=False,
+            breaker=True,
+        ).cards

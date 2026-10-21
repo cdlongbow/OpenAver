@@ -586,3 +586,48 @@ class TestTypedSearchAndListTags:
 
         assert callable(javdb_api.to_video)
         assert not hasattr(javdb_api, "_to_video")
+
+
+# ============================================================
+# 175b-T4a｜api_search_page（無 type 的分頁關鍵字搜尋）
+# ============================================================
+
+class TestSearchPage:
+    def test_sends_page_and_limit_without_type(self, monkeypatch):
+        from core.scrapers.javdb_api import api_search_page
+
+        mock_get = _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope({"movies": [{"id": "M1"}]})))
+        assert api_search_page("人妻", 3, limit=20) == [{"id": "M1"}]
+        params = mock_get.call_args.kwargs["params"]
+        assert params["q"] == "人妻" and params["page"] == "3" and params["limit"] == "20"
+        assert "type" not in params
+        assert mock_get.call_args.args[0].endswith("/api/v2/search")
+
+    def test_limit_clamped(self, monkeypatch):
+        from core.scrapers.javdb_api import api_search_page
+
+        mock_get = _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope({"movies": []})))
+        api_search_page("q", 1, limit=999)
+        assert mock_get.call_args.kwargs["params"]["limit"] == "50"
+
+    def test_page_over_cap_sends_no_request(self, monkeypatch):
+        from core.scrapers.javdb_api import api_search_page
+
+        mock_get = _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope({"movies": [{"id": "X"}]})))
+        assert api_search_page("q", 100) == []
+        assert mock_get.call_count == 0
+
+    @pytest.mark.parametrize("data", [{}, {"movies": None}, {"movies": "x"}])
+    def test_missing_or_bad_movies_returns_empty(self, monkeypatch, data):
+        from core.scrapers.javdb_api import api_search_page
+
+        _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope(data)))
+        assert api_search_page("q", 1) == []
+
+    @pytest.mark.parametrize("kw,exc", [(p.values[0], p.values[1]) for p in _error_side_effects()])
+    def test_transport_errors_propagate(self, monkeypatch, kw, exc):
+        from core.scrapers.javdb_api import api_search_page
+
+        _patch_get(monkeypatch, **kw)
+        with pytest.raises(exc):
+            api_search_page("q", 1)

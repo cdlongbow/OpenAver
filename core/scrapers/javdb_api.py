@@ -179,6 +179,18 @@ def api_search(keyword: str, proxies: Optional[dict] = None) -> list[dict]:
     return movies if isinstance(movies, list) else []
 
 
+def api_search_page(
+    q: str, page: int, limit: int = PAGE_SIZE, proxies: Optional[dict] = None
+) -> list[dict]:
+    """無 type 的分頁關鍵字搜尋；page>MAX_PAGE 不發請求回 []；傳輸例外原樣往外丟。"""
+    if page > MAX_PAGE:
+        return []
+    limit = max(1, min(limit, PAGE_SIZE))
+    data = api_get(_SEARCH_PATH, {"q": q, "page": str(page), "limit": str(limit)}, proxies)
+    movies = data.get("movies")
+    return movies if isinstance(movies, list) else []
+
+
 def api_search_typed(search_type: str, q: str, proxies: Optional[dict] = None) -> list[dict]:
     """依實體類型搜尋候選（只取第 1 頁）；查無回 []，傳輸例外原樣往外丟（BE-PY-03）。"""
     key = _TYPED_KEYS.get(search_type)
