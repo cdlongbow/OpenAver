@@ -599,7 +599,7 @@ def _library_title_list(db_path):
     return logical_title_firsts(repo.get_library_title_rows(), configured_dir_uris, path_mappings)
 
 
-def _search_maker_intent(query, maker_key, limit, offset, status_callback, result_callback):
+def _search_maker_intent(query, maker_key, limit, offset, status_callback, result_callback, meta=None):
     """smart_search 的 maker 分支：片庫樣本＋拼法交給 relay.search_maker，逐卡標 _mode（不送 mode 事件）。"""
     import datetime
 
@@ -619,10 +619,12 @@ def _search_maker_intent(query, maker_key, limit, offset, status_callback, resul
     )
     for card in result.results:
         card['_mode'] = 'maker'
+    if meta is not None:
+        meta['has_more'] = result.has_more
     return result.results
 
 
-def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
+def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False, *, meta: Optional[dict] = None) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
     """
     智慧搜尋：自動判斷搜尋類型並執行
 
@@ -700,7 +702,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
     known = known_makers() if resolve_makers else frozenset()
     intent = classify_query(query, known, resolve_makers=resolve_makers)
     if intent.mode == 'maker':
-        return _search_maker_intent(query, intent.maker_key, limit, offset, status_callback, result_callback)
+        return _search_maker_intent(query, intent.maker_key, limit, offset, status_callback, result_callback, meta)
 
     # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
     if intent.mode == 'exact':

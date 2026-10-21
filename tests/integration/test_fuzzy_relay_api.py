@@ -13,11 +13,47 @@ def _cards(n):
     return [{"number": f"SOD-{i:03d}", "title": f"t{i}", "actors": [], "_mode": "maker"} for i in range(n)]
 
 
-def _smart(n, seen):
+def _smart(n, seen, more=None):
     def fake(q, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
         seen.append(kwargs)
+        if more is not None and kwargs.get("meta") is not None:
+            kwargs["meta"]["has_more"] = more
         return _cards(n)
     return fake
+
+
+def _rest_maker(client, n, more):
+    with patch("web.routers.search.smart_search", side_effect=_smart(n, [], more)):
+        return client.get("/api/search", params={"q": "SOD", "limit": LIMIT}).json()
+
+
+def test_rest_typed_maker_uses_provider_has_more_when_page_is_short(client, monkeypatch):
+    """這頁有 1 部詳情失敗只剩 19 張，來源說還有 → 「載入更多」不能消失"""
+    _known(monkeypatch)
+    body = _rest_maker(client, LIMIT - 1, True)
+    assert body["mode"] == "maker" and body["has_more"] is True
+
+
+def test_rest_typed_maker_last_full_page_without_more_is_false(client, monkeypatch):
+    """最後一頁剛好 20 部、來源說沒了 → 不再多一顆空的「載入更多」"""
+    _known(monkeypatch)
+    assert _rest_maker(client, LIMIT, False)["has_more"] is False
+
+
+def _stream_more(client, parse_sse_events, n, more):
+    with patch("web.routers.search.smart_search", side_effect=_smart(n, [], more)):
+        r = client.get("/api/search/stream", params={"q": "SOD", "limit": LIMIT})
+    return _result(parse_sse_events(r.text))
+
+
+def test_stream_typed_maker_uses_provider_has_more_when_page_is_short(client, parse_sse_events, monkeypatch):
+    _known(monkeypatch)
+    assert _stream_more(client, parse_sse_events, LIMIT - 1, True)["has_more"] is True
+
+
+def test_stream_typed_maker_last_full_page_without_more_is_false(client, parse_sse_events, monkeypatch):
+    _known(monkeypatch)
+    assert _stream_more(client, parse_sse_events, LIMIT, False)["has_more"] is False
 
 
 def _known(monkeypatch):

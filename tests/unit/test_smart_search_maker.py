@@ -37,6 +37,19 @@ def test_maker_branch_no_longer_raises_and_returns_list(env):
     env.sm.assert_called_once()
 
 
+def test_meta_carries_maker_has_more(env):
+    """使用者打片商名、這頁有 1 部詳情失敗只剩 19 張 → 「載入更多」仍依來源 has_more"""
+    env.sm.return_value = MakerSearchResult(_cards(*[f"SOD-{i}" for i in range(19)]), True, None)
+    meta = {}
+    smart_search("SOD", resolve_makers=True, meta=meta)
+    assert meta == {"has_more": True}
+    env.sm.return_value = MakerSearchResult(_cards(*[f"SOD-{i}" for i in range(20)]), False, None)
+    meta = {}
+    smart_search("SOD", resolve_makers=True, meta=meta)
+    assert meta == {"has_more": False}
+    assert smart_search("SOD", resolve_makers=True)  # 不傳 meta 不報錯
+
+
 def test_maker_cards_are_tagged_with_maker_mode(env):
     out = smart_search("SOD", resolve_makers=True)
     assert out and all(c["_mode"] == "maker" for c in out)

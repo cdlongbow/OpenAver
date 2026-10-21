@@ -168,6 +168,13 @@ def _maker_has_more(result) -> bool:
     return result.has_more
 
 
+def _maker_aware_has_more(is_maker_mode: bool, results: list, limit: int, meta: dict) -> bool:
+    """打字搜片商（auto 判成 maker）以來源的 has_more 為準：詳情失敗丟卡會讓頁長 < limit（175b-F4）。"""
+    if is_maker_mode and "has_more" in meta:
+        return bool(meta["has_more"])
+    return len(results) >= limit
+
+
 def _maker_result_extras(maker_key: str, results: list, result) -> dict:
     """result 事件／REST 失敗體共用的 maker 欄位：maker_key，失敗且有代碼時加 error_code。"""
     extras = {"maker_key": maker_key}
@@ -352,8 +359,9 @@ def search(
     use_discovery = discovery and mode in ('actress', 'partial', 'prefix')
 
     # 自動模式使用 smart_search
+    meta: dict = {}
     if mode == "auto":
-        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, discovery_only=use_discovery, resolve_makers=True)
+        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, discovery_only=use_discovery, resolve_makers=True, meta=meta)
     elif mode == "exact":
         if source:
             # 指定來源搜索
@@ -457,7 +465,9 @@ def search(
                     logger.info(f"[Actress Profile] Not found for: {top_actor}")
 
         # 判斷是否還有更多結果（prefix/actress 模式且結果數 = limit）
-        has_more = detected_mode in ('prefix', 'actress', 'maker') and len(results) >= limit
+        has_more = detected_mode in ('prefix', 'actress') and len(results) >= limit
+        if detected_mode == 'maker':
+            has_more = _maker_aware_has_more(True, results, limit, meta)
 
         response_data = {
             "success": True,
@@ -762,13 +772,14 @@ async def search_stream(
             status_queue.put({'type': 'result-item', 'slot': slot, 'data': data})
 
     maker_out = []
+    meta: dict = {}
 
     def run_search():
         """在背景執行搜尋"""
         if is_maker:
             maker_out.append(_run_maker_search(maker_key, maker, spellings, offset, status_callback, result_callback))
             return maker_out[0].results
-        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, result_callback=result_callback, resolve_makers=True)
+        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, result_callback=result_callback, resolve_makers=True, meta=meta)
 
     async def event_generator():
         nonlocal sent_seed
@@ -834,7 +845,8 @@ async def search_stream(
 
                 # 判斷是否還有更多結果
                 has_more = _maker_has_more(maker_out[0]) if is_maker else (
-                    mode in ('prefix', 'actress', 'maker') and len(results) >= limit)
+                    mode in ('prefix', 'actress') and len(results) >= limit
+                    or (mode == 'maker' and _maker_aware_has_more(True, results, limit, meta)))
 
                 # 若漸進路徑被使用，先送 result-complete（供 T4 消費者用）
                 if sent_seed:
