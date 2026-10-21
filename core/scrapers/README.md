@@ -14,7 +14,7 @@
 | `dmm` | DMM | ✅ | ✅ | ❌ | ⚠️ 依地區 | ❌ | ❌ | GraphQL API；部分地區需日本 IP（VPN/proxy）；數位 PPV 新片優先；封面高畫質 |
 | `javbus` | JavBus | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 直打 detail URL；封面無浮水印但**僅右半裁切**；~~搜尋端點 `/search/` 已 404~~ → **2026-08-29 實測回 200、30 筆**（variant 探查於 spec-85 移除是產品決定，與端點死活無關，見 §2 與陷阱表） |
 | `jav321` | Jav321 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | keyword 搜尋恆回空，故不註冊為 search provider |
-| `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | 網頁有／API 無 | 重複 keyword 呼叫觸發 Cloudflare ban，故不註冊為 search provider；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
+| `javdb` | JavDB | ✅ | ✅ | ✅ | ❌ | ⚠️ | 網頁有／API 無 | 模糊搜尋由 `core/search_providers/javdb.py` 負責（`search_by_keyword` 恆回 `[]`）；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
 | `javlibrary` | JavLibrary | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | **manual_only**：不進 SOURCE_ORDER fan-out；exact-only（CD-70b）；需 CfTransport（桌面版限定）；封面 hotlink DMM CDN（`pl.jpg`，同 dmm 無浮水印）；手動版本切換：**eager 全抓、新片優先、三手動入口（lightbox/search/switch-source）多版本皆出切換器**（spec-86 done，含 T7 switch-source follow-on） |
 
 ### 1.2 無碼來源（UNCENSORED_SOURCES）
@@ -84,17 +84,16 @@ core/scrapers/utils.py
 | 模式 | 觸發條件 | 實際呼叫 | 引擎選擇原則 |
 |------|----------|---------|-------------|
 | **exact** | `is_number_format(query)` — 完整番號（SONE-205） | `search_jav_single_source(query, sid)` × enabled sources | 依 `get_enabled_source_ids()` 優先序串接直打，命中即回（early-return），不等其他來源 |
-| **partial** | `is_partial_number(query)` — 縮略番號（MIDV-01） | `search_partial()` → JavBus 固定 | 能力約束：只有 JavBus 能做番號前綴枚舉；非技術債，不動 |
-| **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → JavBus `get_ids_from_search(type=1)` | 同上，JavBus 固定；fallback 依序試 actress → keyword。三家（JavBus／DMM／JavDB）全關回 `[]`（查無）；keyword 退路只在 jav321 自己的開關為開時才進 |
+| **partial** | `is_partial_number(query)` — 縮略番號（MIDV-01） | `search_partial()` → `relay.search_by_intent`，鏈上有此能力的來源（JavBus／JavDB，依設定頁順序，關閉即略過） | 能力約束：只有部分來源能做番號前綴枚舉；非技術債，不動 |
+| **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → `relay.search_by_intent`，鏈上有此能力的來源（JavBus／JavDB，依設定頁順序，關閉即略過） | 同上；JavBus 端的 `type=1` 其實是「映画」頁籤、不是前綴搜尋（與不帶 type 逐筆相同，無害，見 `findings-javbus.md` §4）；fallback 依序試 actress → keyword。三家（JavBus／DMM／JavDB）全關回 `[]`（查無）；keyword 退路只在 jav321 自己的開關為開時才進 |
 | **actress/keyword** | 其餘 | `search_actress()` → `relay.search_by_intent`（註冊表） | Active-Row 順序選引擎，三家（JavBus／DMM／JavDB）都跟設定頁開關走（見 §3.2） |
 
-### 3.2 Fuzzy Chain Always-On（CD-65-4）
+### 3.2 模糊鏈跟設定頁開關走（175b 起）
 
-search_providers 註冊表（`javbus`、`dmm`）是**能力白名單**，不跟隨 enabled 開關：
+search_providers 註冊表（`javbus`、`dmm`、`javdb`）是**能力白名單**，是否參與由設定頁開關決定：
 
-- 使用 `get_all_source_ids_ordered()`（含停用來源），而非 `get_enabled_source_ids()`。
-- 理由：metatube 等其他來源不具模糊能力；javbus / dmm 是「模糊引擎」角色，與主來源開關正交。
-- 排除 jav321（keyword 恆回空）、javdb（重複呼叫觸發 CF ban）。
+- 順序取 `get_all_source_ids_ordered()`，啟用與否由 `providers_for` 過濾；三家都跟設定頁開關走，關閉即略過、全關＝查無。
+- 排除 jav321 與 metatube（無模糊能力）。
 
 ### 3.3 Exact 模式設計決策（spec-85 確立）
 

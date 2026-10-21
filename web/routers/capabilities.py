@@ -21,14 +21,14 @@ _CUSTOM_SOURCE_ID_NOTE = "也可填 `custom:<id>`（使用者自訂來源）：�
 _TOOLS: list[dict] = [
     {
         "name": "search",
-        "description": "搜尋單一番號或女優，回傳 metadata + 封面 URL。不修改資料庫",
+        "description": "搜尋單一番號、女優或片商名（auto 模式打片商名會列出該片商的最新作品），回傳 metadata + 封面 URL。不修改資料庫",
         "side_effect": False,
         "method": "GET",
         "path": "/api/search",
         "input_schema": {
             "type": "object",
             "properties": {
-                "q": {"type": "string", "description": "番號、女優名、或關鍵字"},
+                "q": {"type": "string", "description": "番號、女優名、片商名、或關鍵字"},
                 "mode": {
                     "type": "string",
                     "enum": ["auto", "exact", "partial", "prefix", "actress", "keyword", "uncensored"],

@@ -458,20 +458,21 @@ class TestFcJavtenDoesNotAffectOtherSources:
 
 
 # ============================================================
-# TestFuzzyGuard — CD-65-4 always-on 與 partial 能力約束護欄
-# （T4，CD-85-7：fuzzy chain always-on / partial javbus 寫死）
+# TestFuzzyGuard — 模糊鏈來源順序與 partial 能力約束護欄
+# （T4，CD-85-7；175b 起開關由 registry.providers_for 過濾，此處只守順序來源）
 # ============================================================
 
 class TestFuzzyGuard:
-    """fuzzy chain 永遠含 javbus（always-on，CD-65-4），
-    partial 固定走 javbus（能力約束），兩者不受 enabled_sids 影響。
+    """fuzzy chain 的順序取自完整來源列表 get_all_source_ids_ordered（不是 enabled_sids），
+    啟用與否由 registry.providers_for 另行過濾；partial 走 javbus（能力約束）。
 
     這些測試守既有行為——現在就 GREEN，T1a cascade 改動後也必須 GREEN。
     Patch target 一律指使用端 core.scraper.*（gotchas-backend.md §Mock Patch Target）。
     """
 
-    def test_fuzzy_chain_always_on_even_if_javbus_disabled(self):
-        """javbus 停用（get_enabled_source_ids→[]）→ fuzzy chain 仍含 javbus（always-on, CD-65-4）
+    def test_fuzzy_chain_order_comes_from_full_source_list(self):
+        """鏈的順序取自完整來源列表（get_all_source_ids_ordered），不是 get_enabled_source_ids；
+        啟用與否由 providers_for 另行過濾（此處 is_source_enabled 恆真，只守順序來源）
 
         突變有效性：把 registry.providers_for 的順序來源改為 get_enabled_source_ids() →
         chain=[]，get_ids_from_search 不被呼叫 → assert_called() RED。

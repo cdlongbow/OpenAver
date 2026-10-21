@@ -124,12 +124,12 @@ class TestFuzzyChain:
         assert len(results) >= 1
         assert results[0]['source'] == 'javbus'
 
-    # ---- 4. 停用的候選池源模糊仍用（always-on） ----
-    def test_disabled_source_still_reached_by_chain(self, monkeypatch):
-        """get_all_source_ids_ordered 回含 javbus（不管 enabled），鏈仍能到達並命中"""
+    # ---- 4. 鏈的順序取自完整來源列表（啟用與否由 providers_for 另行過濾） ----
+    def test_chain_order_reads_full_source_list(self, monkeypatch):
+        """鏈的順序讀 get_all_source_ids_ordered 的完整列表，列表含 javbus 即能到達並命中"""
         from core.scraper import search_actress
 
-        # get_all_source_ids_ordered 不過濾 enabled，停用但仍在列表
+        # get_all_source_ids_ordered 回完整列表（不依 enabled 過濾）
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['javbus'])
 

@@ -408,16 +408,10 @@ class JavDBScraper(BaseScraper):
         Returns:
             Video 物件或 None
         """
-        return self._search_number(number, allow_api=True)
+        return self._search_number(number)
 
-    def _search_number(self, number: str, *, allow_api: bool) -> Optional[Video]:
-        """`search()` 與 `search_by_keyword()` 共用的番號查詢本體。
-
-        `allow_api=False` ＝ 只走 HTML，給關鍵字搜尋用。
-        **spec-132 Non-Goals：關鍵字搜尋維持現行 HTML 做法。** plan 的 CD-132b-12
-        以為「`search_by_keyword()` 一個字都不動」就等於這件事，但那支是逐筆呼叫
-        `search()` 取詳情的——`search()` 改成 API 優先之後，一次關鍵字搜尋會對資料介面
-        打最多 20 次，而那正是我們想省著用、且精準番號搜尋唯一依賴的那條路。
+    def _search_number(self, number: str) -> Optional[Video]:
+        """`search()` 的番號查詢本體。
 
         正規化與格式檢查留在這裡（CD-132b-13）：兩條路徑之前只做一次，
         搬進任一條就會漂移，而 parity 測試抓不到（BE-TEST-14）。
@@ -426,12 +420,6 @@ class JavDBScraper(BaseScraper):
 
         if not self.validate_number(number):
             raise ValueError(f"Invalid number format: {number}")
-
-        if not allow_api:
-            video = self.search_via_html(number)
-            if video is not None:
-                rate_limit(self.config.delay)
-            return video
 
         try:
             video = self.search_via_api(number)
@@ -453,50 +441,8 @@ class JavDBScraper(BaseScraper):
 
     def search_by_keyword(self, keyword: str, limit: int = 20) -> list[Video]:
         """
-        關鍵字搜尋
+        不使用：JavDB 的模糊搜尋由 `core/search_providers/javdb.py` 負責。
 
-        Args:
-            keyword: 搜尋關鍵字
-            limit: 最大結果數
-
-        Returns:
-            Video 列表
+        `BaseScraper` 的抽象方法，保留簽章、恆回空列表、不發任何請求。
         """
-        try:
-            url = f"https://javdb.com/search?q={quote(keyword)}&f=all"
-            html = self._get_html(url)
-
-            if not html:
-                return []
-
-            soup = BeautifulSoup(html, 'html.parser')
-            results = []
-
-            for item in soup.select('.movie-list .item')[:limit]:
-                try:
-                    uid_elem = item.select_one('.video-title strong')
-                    number = uid_elem.text.strip() if uid_elem else ''
-
-                    if not number:
-                        continue
-
-                    # 逐筆取詳情。**刻意不呼叫 `search()`**：那支是 API 優先的，
-                    # 關鍵字搜尋走它等於一次搜尋打最多 20 次資料介面
-                    # （spec-132 Non-Goals：關鍵字搜尋維持 HTML）。
-                    video = self._search_number(number, allow_api=False)
-                    if video:
-                        results.append(video)
-
-                except (SourceUnreachable, SourceBlocked):
-                    raise
-                except Exception as e:
-                    logger.debug(f"JavDB keyword search item failed: {e}")
-                    continue
-
-            return results
-
-        except (SourceUnreachable, SourceBlocked):
-            raise
-        except Exception as e:
-            logger.warning(f"JavDB keyword search failed for {keyword}: {e}")
-            return []
+        return []
