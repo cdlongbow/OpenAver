@@ -20,7 +20,7 @@ scrapers/
 ├── base.py             # BaseScraper 抽象類
 ├── models.py           # Pydantic 資料模型
 ├── utils.py            # 共用工具函數
-├── javbus.py           # JavBusScraper
+├── javbus.py           # JavBusScraper（含片商作品頁列表能力，供 maker_latest 使用）
 ├── jav321.py           # JAV321Scraper
 ├── javdb.py            # JavDBScraper (需 curl_cffi)
 ├── fc2_official.py     # FC2OfficialScraper（`fc2` 來源的現行實作：官方站 adult.contents.fc2.com）
@@ -76,6 +76,15 @@ scrapers/
 - `user_tags` JSON 欄位 — 用戶自訂標籤（評分、書籤、分類），與 scraper `tags` 完全分離，scraper refresh 不覆蓋。
 - **UPSERT 保留契約**：`upsert()` 收到 `user_tags='[]'` 時**不覆蓋** DB 既有值（避免 refresh_full 流程吞掉用戶標籤）。
 - `update_user_tags(path, tags)` — 安全更新方法，只更新 user_tags 欄位 + `updated_at`，不動其他欄位。
+
+### `library_titles.py`
+**邏輯片單**：只算片庫目錄內的片，分集（-cd1、-cd2…）算一部；搜尋頁「片商最新作品」膠囊列用它統計各片商近 12 個月的入庫數。
+
+### `maker_latest.py`
+**片商作品頁解析器**：從片庫該片商的幾部片取樣、到 JavBus 反查作品頁（取樣的每部片各投一票，有票就採用；平手取發行較新那部的票，任一代號達 2 票就提前停），再列出該片商最新作品；只有 JavBus 回 404 才記為「找不到」，連不上／被擋不記任何東西。
+
+### `database/maker_javbus_map.py`
+**片商 → JavBus 作品頁對應表**：三態：found（已對應到作品頁代號）／not_found（JavBus 回 404，確定找不到）／沒有列（還沒查過）；寫入單調（已對應不會被降級；not_found 之後查到仍可升為 found）。
 
 ### `translate_service.py`
 **AI 翻譯服務**

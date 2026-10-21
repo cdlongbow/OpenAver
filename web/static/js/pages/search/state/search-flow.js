@@ -3,6 +3,8 @@
  * 包含：搜尋流程（doSearch, fallbackSearch, cancelSearch, handleSearchStatus）
  */
 
+import { buildSearchUrl } from '../search-url.js';
+
 // TASK-113c-T3b（本任務唯一決定「staging 卡片預覽能不能生效」的賦值運算式，見
 // TASK-113c-T3b.md 顯示點對帳表 #9）：preview_cover_url 優先，空字串 fallback
 // 回 cover（FE-JS-01：|| 對空字串 fallback 正是本任務要的行為，preview_cover_url
@@ -92,6 +94,7 @@ export function searchStateSearchFlow() {
         this.searchResults = [];
         this.currentIndex = 0;
         this.currentQuery = '';
+        this.currentMaker = null;
         this.searchQuery = '';  // 清空搜尋框
         this.currentOffset = 0;
         this.hasMoreResults = false;
@@ -122,13 +125,21 @@ export function searchStateSearchFlow() {
     /**
      * 執行搜尋（SSE 串流）
      * @param {string} query - 搜尋關鍵字（可選，預設讀取 input）
+     * @param {object} [opts]
+     * @param {{key:string,label:string,spellings:string[]}} [opts.maker] - 173 CD-173-10：片商入口
+     *   （存在時不讀 searchQuery、不要求 query，其餘起手式與關鍵字入口共用同一份程式）
      */
-    async doSearch(query) {
+    async doSearch(query, opts = {}) {
+        const maker = opts.maker ?? null;
         // 1. 取得搜尋關鍵字（V1c: 優先從 Alpine state 讀取）
-        if (!query) {
-            query = this.searchQuery?.trim();
+        if (maker) {
+            query = '';
+        } else {
+            if (!query) {
+                query = this.searchQuery?.trim();
+            }
+            if (!query) return;
         }
-        if (!query) return;
 
         // 2. 取消現有搜尋
         this.cancelSearch();
@@ -151,6 +162,7 @@ export function searchStateSearchFlow() {
             actressProfile: this.actressProfile,
             displayMode: this.displayMode,      // T3 fix: 還原 Grid 狀態
             currentMode: this.currentMode,      // T3 fix: 還原搜尋模式（toggle 顯示依賴）
+            currentMaker: this.currentMaker,    // 173 CD-173-12：取消時還原片商
             errorText: this.errorText,           // T6c fix: 還原錯誤訊息
             errorKind: this.errorKind,
         };
@@ -158,7 +170,12 @@ export function searchStateSearchFlow() {
         // 5. 初始化狀態（修正 1: 使用 showState）
         this.pageState = 'loading';
         this.progressLog = window.t('search.button.searching');
-        this.currentMode = '';
+        this.currentMode = maker ? 'maker' : '';
+        // 173 CD-173-9：片商入口存純物件複本（不共用呼叫端參照）；關鍵字入口順手清掉（衛生）
+        this.currentMaker = maker
+            ? { key: maker.key, label: maker.label, spellings: [...(maker.spellings || [])] }
+            : null;
+        if (maker) this.searchQuery = '';  // 片商模式搜尋框維持空白
         this.detailDone = 0;
         this.detailTotal = 0;
         this._resetCoverState();
@@ -205,7 +222,7 @@ export function searchStateSearchFlow() {
         // 檔案列表由 x-show 自動隱藏（listMode=null, fileList=[]）
 
         // 6. 建立 SSE 連線並追蹤
-        this.activeEventSource = this._trackConnection(new EventSource(`/api/search/stream?q=${encodeURIComponent(query)}`));
+        this.activeEventSource = this._trackConnection(new EventSource(buildSearchUrl({ stream: true, query, maker })));
         const eventSource = this.activeEventSource;
 
         eventSource.onmessage = (event) => {
@@ -362,7 +379,7 @@ export function searchStateSearchFlow() {
                             }
                             this.listMode = 'search';
                             if (data.mode) this.currentMode = data.mode;
-                            if ((data.mode === 'actress' || data.mode === 'prefix') && data.data.length >= 10) {
+                            if (this._isAutoGridMode(data.mode) && data.data.length >= 10) {
                                 this.displayMode = 'grid';
                             } else {
                                 this.displayMode = 'detail';
@@ -431,8 +448,8 @@ export function searchStateSearchFlow() {
                         // 查詢本地狀態（非同步）
                         this.checkLocalStatus(this.searchResults);
 
-                        // T2b/T3a: 模糊搜尋自動切 Grid（actress/prefix ≥10 筆）
-                        if ((this.currentMode === 'actress' || this.currentMode === 'prefix') && data.data.length >= 10) {
+                        // T2b/T3a: 模糊搜尋自動切 Grid（actress/prefix/maker ≥10 筆）
+                        if (this._isAutoGridMode(this.currentMode) && data.data.length >= 10) {
                             this.displayMode = 'grid';
                         }
 
@@ -455,9 +472,13 @@ export function searchStateSearchFlow() {
                         this.addingTag = false;
                     } else {
                         this._searchSnapshot = null; // Fix 2: 清空 snapshot（搜尋失敗）
-                        this.errorText = window.t('search.error.no_data');  // T6c: Alpine state
-                        this.errorKind = 'no_data';
-                        this.pageState = 'error';
+                        if (this.activeMaker()) {
+                            this._applyMakerError(data);
+                        } else {
+                            this.errorText = window.t('search.error.no_data');  // T6c: Alpine state
+                            this.errorKind = 'no_data';
+                            this.pageState = 'error';
+                        }
                     }
                 }
                 else if (data.type === 'error') {
@@ -521,7 +542,7 @@ export function searchStateSearchFlow() {
         this._fallbackAbortController = new AbortController();
 
         try {
-            const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+            const response = await fetch(buildSearchUrl({ query, maker: this.activeMaker() }), {
                 signal: this._fallbackAbortController.signal
             });
             const data = await response.json();
@@ -555,8 +576,8 @@ export function searchStateSearchFlow() {
                 // 查詢本地狀態
                 this.checkLocalStatus(this.searchResults);
 
-                // T2b/T3a: 模糊搜尋自動切 Grid（actress/prefix ≥10 筆）
-                if ((data.mode === 'actress' || data.mode === 'prefix') && data.data.length >= 10) {
+                // T2b/T3a: 模糊搜尋自動切 Grid（actress/prefix/maker ≥10 筆）
+                if (this._isAutoGridMode(data.mode) && data.data.length >= 10) {
                     this.displayMode = 'grid';
                 }
 
@@ -582,9 +603,13 @@ export function searchStateSearchFlow() {
                 if (this._heroSlotReserved) {
                     this._heroSlotReserved = false;
                 }
-                this.errorText = data.error || window.t('search.error.no_data');  // T6c: Alpine state
-                this.errorKind = 'no_data';
-                this.pageState = 'error';
+                if (this.activeMaker()) {
+                    this._applyMakerError(data);
+                } else {
+                    this.errorText = data.error || window.t('search.error.no_data');  // T6c: Alpine state
+                    this.errorKind = 'no_data';
+                    this.pageState = 'error';
+                }
             }
         } catch (err) {
             // AbortError：離頁或新搜尋取消，靜默忽略
@@ -600,6 +625,26 @@ export function searchStateSearchFlow() {
     },
 
     /**
+     * 173 CD-173-13：片商搜尋失敗的錯誤頁（只處理片商；兩個失敗分支以 activeMaker() 分流後呼叫）。
+     * maker_not_found ⇒ 片商錯誤頁＋隱藏該膠囊（hideMakerCapsule 屬 T11，未定義時 optional call 不拋錯）；
+     * 其他 code／無 code ⇒ 一般 no_data、不隱藏（暫時連不上不該讓膠囊消失）。
+     * 不顯示後端失敗體的 error 文字，只依 error_code。
+     */
+    _applyMakerError(data) {
+        const maker = this.activeMaker();
+        if (data?.error_code === 'maker_not_found') {
+            this.errorText = window.t('search.error.maker_not_found', { maker: maker.label });
+            this.errorKind = 'maker_not_found';
+            this.pageState = 'error';
+            this.hideMakerCapsule?.(maker.key);
+        } else {
+            this.errorText = window.t('search.error.no_data');
+            this.errorKind = 'no_data';
+            this.pageState = 'error';
+        }
+    },
+
+    /**
      * compose 態：搜尋框非空、與上次送出字不同、且非 loading（US1 自動膠囊 gate）。
      * Alpine 自動追蹤 pageState / searchQuery / currentQuery 三個 reactive 欄位（CD-74a-2）。
      */
@@ -607,6 +652,25 @@ export function searchStateSearchFlow() {
         return this.pageState !== 'loading'
             && (this.searchQuery || '').trim() !== ''
             && (this.searchQuery || '').trim() !== (this.currentQuery || '').trim();
+    },
+
+    /**
+     * 173 CD-173-9：目前生效的片商（{key, label, spellings}）或 null。
+     * 惰性靠 currentMode==='maker' 閘：其他搜尋改寫 currentMode 時，殘留的 currentMaker 自動失效，
+     * 不必在每個寫入點清除。所有讀取端一律經這裡，不直接讀 currentMaker。
+     */
+    activeMaker() {
+        return this.currentMode === 'maker' && this.currentMaker ? this.currentMaker : null;
+    },
+
+    /** 進度標題裡引號內的字：片商模式顯示片商名（搜尋框在片商模式是空的），其餘顯示 currentQuery。 */
+    progressQueryText() {
+        return this.activeMaker()?.label ?? this.currentQuery;
+    },
+
+    /** 結果 ≥10 筆時自動切 Grid 的模式（模糊搜尋類）。 */
+    _isAutoGridMode(mode) {
+        return mode === 'actress' || mode === 'prefix' || mode === 'maker';
     },
 
     /**
@@ -681,6 +745,7 @@ export function searchStateSearchFlow() {
             this.actressProfile = snap.actressProfile;
             this.displayMode = snap.displayMode || 'detail';
             this.currentMode = snap.currentMode || '';
+            this.currentMaker = snap.currentMaker ?? null;
             this.errorText = snap.errorText || '';
             this.errorKind = snap.errorKind || '';
 

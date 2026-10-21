@@ -836,6 +836,20 @@ class VideoRepository:
         finally:
             conn.close()
 
+    def get_library_title_rows(self) -> List[Video]:
+        """輕量取列：只填 path／number／maker／release_date（其餘取預設），不 SELECT *。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("SELECT path, number, maker, release_date FROM videos ORDER BY id")
+            return [
+                Video(path=path, number=number, maker=maker, release_date=release_date)
+                for path, number, maker, release_date in cursor.fetchall()
+            ]
+        finally:
+            conn.close()
+
     def get_mtime_index(self) -> dict:
         """取得 {path: (mtime, nfo_mtime, sample_count)} 索引，用於增量比對。
 

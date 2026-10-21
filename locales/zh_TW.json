@@ -166,6 +166,9 @@
       "running": "目前正在執行一輪",
       "config_failed": "操作失敗，請稍後再試"
     },
+    "maker_latest": {
+      "title": "片商最新作品"
+    },
     "empty": {
       "hint": "輸入番號搜尋，或加入影片檔案",
       "drag_hint": "也可直接拖入檔案或資料夾",
@@ -189,6 +192,7 @@
       "tag_nfo_not_written": "標籤已存，但媒體伺服器讀的那份 NFO 沒有更新",
       "tag_nfo_write_blocked": "標籤已存，但沒有權限寫入 NFO",
       "no_data": "找不到資料",
+      "maker_not_found": "JavBus 找不到「{maker}」的作品頁",
       "search_failed": "搜尋失敗",
       "network_error": "網路錯誤，請重試",
       "no_translation_needed": "當前片無需翻譯",
@@ -284,7 +288,8 @@
       "prefix": "系列搜尋",
       "actress": "模糊搜尋",
       "keyword": "全文搜尋",
-      "uncensored": "無碼搜尋"
+      "uncensored": "無碼搜尋",
+      "maker": "片商最新作品"
     },
     "filelist": {
       "search_all_title": "搜尋所有尚未搜尋的檔案",
@@ -1478,6 +1483,7 @@
       "method_partial": "<strong>部分番號</strong>：如 <code>SONE-0</code>，搜尋 001~009",
       "method_series": "<strong>系列搜尋</strong>：如 <code>SONE</code>，搜尋該系列最新作品",
       "method_actress": "<strong>女優名</strong>：如 <code>河北彩花</code>，搜尋該演員作品",
+      "method_maker": "<strong>片商最新作品</strong>：搜尋頁空白時列出最近 12 個月最常收的片商，點一下看該片商的最新作品（含片商自己出的總集編）；資料來自 JavBus，JavBus 被擋或關閉時不能用",
       "drag_auto": "將影片檔案拖入視窗，自動提取番號並搜尋",
       "drag_batch": "支援多檔案批次處理（一次 20 個）",
       "drag_generate": "整理歸檔：點「整理此片」會依命名規則改名、搬進歸檔資料夾，並下載封面 + 寫 NFO（想讓 OpenAver 建一個乾淨命名媒體庫用這條）",

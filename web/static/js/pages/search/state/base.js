@@ -11,6 +11,7 @@ export function searchStateBase() {
         searchResults: [],
         currentIndex: 0,
         currentQuery: '',
+        currentMaker: null,  // 173 CD-173-9：null | {key, label, spellings}；只經 activeMaker() 讀（惰性靠 currentMode==='maker'）
         searchQuery: '',  // V1c: 對應 input 即時輸入值（x-model 綁定）
         currentOffset: 0,
         hasMoreResults: false,
@@ -207,7 +208,9 @@ export function searchStateBase() {
         // loading 態恆回 false（清除鈕不與取消鈕並排），移除散落 8 處手動賦值的整類遺漏。
         // getter 惰性求值，render 時取 final pageState/results，無中間態順序問題。
         get hasContent() {
-            return this.pageState !== 'loading' && (this.searchResults.length > 0 || this.fileList.length > 0);
+            // 173 CD-173-9：片商搜尋失敗的錯誤頁也要有 ✕（回到膠囊列）；先判 error 再呼叫 activeMaker()，
+            // 既有測試用 Object.assign 組 fake this 時會先求值 getter，所以先判 pageState 再讀 activeMaker()。
+            return this.pageState !== 'loading' && (this.searchResults.length > 0 || this.fileList.length > 0 || (this.pageState === 'error' && !!this.activeMaker()));
         },
 
         actressLightboxMode() {

@@ -22,6 +22,7 @@ from .notifications import (
     load_recent_notifications,
 )
 from . import organize_failures
+from . import maker_javbus_map
 
 __all__ = [
     "get_db_path",
@@ -46,5 +47,6 @@ __all__ = [
     "clear_all_notifications",
     "load_recent_notifications",
     "organize_failures",
+    "maker_javbus_map",
 ]
 

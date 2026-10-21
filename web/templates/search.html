@@ -545,6 +545,12 @@
                 </div>
             </div>
             <small class="state-page-hint">{{ t('search.empty.drag_hint') }}</small>
+            <div class="maker-latest" x-show="makerCapsules.length > 0">
+                <span class="maker-latest-title" x-text="window.t('search.maker_latest.title')">{{ t('search.maker_latest.title') }}</span>
+                <template x-for="capsule in makerCapsules" :key="capsule.key">
+                    <button type="button" class="maker-latest-chip" @click="startMakerSearch(capsule)" x-text="capsule.label"></button>
+                </template>
+            </div>
             <div class="empty-explainer">
                 <p class="empty-explainer-line">{{ t('search.empty.explain_add') }}</p>
 
@@ -587,7 +593,7 @@
             <div class="progress-container">
                 <!-- 搜尋標題 -->
                 <div class="progress-header">
-                    <span class="progress-query" x-text="'&quot;' + currentQuery + '&quot;'"></span>
+                    <span class="progress-query" x-text="'&quot;' + progressQueryText() + '&quot;'"></span>
                 </div>
 
                 <!-- 單行日誌 -->
@@ -614,7 +620,7 @@
                 variant='action',
                 icon='bi-sliders',
                 extra_classes='state-page-action',
-                attrs='@click="openRescrape(null, \'search\'); rescrapeNumber = (currentQuery || \'\').trim()"'
+                attrs='x-show="!activeMaker()" @click="openRescrape(null, \'search\'); rescrapeNumber = (currentQuery || \'\').trim()"'
             ) }}
             <p class="empty-explainer-line"
                x-show="pageState === 'error' && errorKind === 'no_data' && (currentMode === 'exact' || currentMode === 'prefix')"

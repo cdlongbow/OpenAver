@@ -129,6 +129,7 @@ export function searchStatePersistence() {
             // 在書籤頁重新整理再點回搜尋段，仍然會掉進 'search' 而不是原本的 'file'。
             this._preWishlistListMode = state._preWishlistListMode || null;
             this.currentMode = state.currentMode || '';  // T3 fix: 還原搜尋模式
+            this.currentMaker = state.currentMaker ?? null;
             this.actressProfile = state.actressProfile || null;  // T5: 恢復女優資料
 
             // 還原搜尋框輸入值
@@ -199,6 +200,7 @@ export function searchStatePersistence() {
                 _preWishlistDisplayMode: live._preWishlistDisplayMode,
                 _preWishlistListMode: live._preWishlistListMode,
                 currentMode: snap.currentMode,
+                currentMaker: snap.currentMaker ?? null,
                 actressProfile: snap.actressProfile
             };
             sessionStorage.setItem(this.STATE_KEY, JSON.stringify(state));
@@ -221,6 +223,7 @@ export function searchStatePersistence() {
             _preWishlistDisplayMode: live._preWishlistDisplayMode,
                 _preWishlistListMode: live._preWishlistListMode,
             currentMode: this.currentMode,  // T3 fix: 持久化搜尋模式
+            currentMaker: this.currentMaker ?? null,
             actressProfile: this.actressProfile  // T5: 持久化女優資料
         };
         sessionStorage.setItem(this.STATE_KEY, JSON.stringify(state));

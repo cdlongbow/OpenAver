@@ -12,6 +12,7 @@ import { browseDirState }          from '@/shared/state-browse-dir.js';
 import { toastState }              from '@/shared/state-toast.js';
 import { searchStateWishlist }    from '@/search/state/wishlist.js';
 import { searchStateEmptyExplainer } from '@/search/state/empty-explainer.js';
+import { searchStateMakerLatest }    from '@/search/state/maker-latest.js';
 import { mergeState }              from '@/shared/merge-state.js';
 
 let _dragTimeoutHandle = null;
@@ -37,6 +38,7 @@ export function searchPage() {
         toastState(),
         searchStateWishlist(),
         searchStateEmptyExplainer(),
+        searchStateMakerLatest(),
         {
             // ===== 頁面組裝層 lifecycle（從 state/index.js 搬移）=====
             _armDragHeartbeat(e) {
@@ -83,6 +85,7 @@ export function searchPage() {
 
                 // 3. 還原 sessionStorage 狀態
                 this.restoreState();
+                this.loadMakerCapsules();   // 不 await：吞錯在方法內，膠囊晚到不擋 init
 
                 // 4. 載入書籤數量（badge；失敗不擋後續 init）
                 await this.loadWishlistCount();
