@@ -129,8 +129,8 @@ def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
         elif "身長" in label:
             # Handle both "身長 / 体重" combined row AND standalone "身長" row.
             # Prefer metric (cm); imperial (ft/in) is skipped by the cm regex check.
-            if re.search(r"\d+\s*cm", value):
-                m = re.search(r"(\d+)\s*cm", value)
+            if re.search(r"\d+(?:\.\d+)?\s*cm", value):
+                m = re.search(r"(\d+)(?:\.\d+)?\s*cm", value)
                 if m:
                     result["height"] = f"{m.group(1)}cm"
 
@@ -139,7 +139,7 @@ def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
             # Filter to prefer the cm row; if bust already set (cm row was first), skip.
             if "cm" in value and not result["bust"]:
                 m = re.search(
-                    r"(\d+)\s*[-‐−–]\s*(\d+)\s*[-‐−–]\s*(\d+)\s*cm", value
+                    r"(\d+)(?:\.\d+)?\s*[-‐−–]\s*(\d+)(?:\.\d+)?\s*[-‐−–]\s*(\d+)(?:\.\d+)?\s*cm", value
                 )
                 if m:
                     result["bust"] = f"{m.group(1)}cm"
