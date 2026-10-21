@@ -155,7 +155,7 @@ def test_probe_found_writes_mapping_and_lists(db, prefixes):
     assert len(fetcher.calls) == 2  # 兩票一致即停
 
 
-def test_probe_searches_at_most_two_sorted_prefixes_with_prefix_search_type(db, prefixes):
+def test_probe_tries_more_prefixes_only_when_first_two_are_empty(db, prefixes):
     seen = []
 
     def fake(self, keyword, page=1, search_type=0):
@@ -165,7 +165,91 @@ def test_probe_searches_at_most_two_sorted_prefixes_with_prefix_search_type(db, 
     with patch.object(JavBusScraper, "get_ids_from_search", fake):
         out = _run(db, 20, 0)
     assert out.error_code == "maker_no_sample"
-    assert seen == [("SDDE", 1, 1), ("SOD", 1, 1)]
+    assert seen == [("SDDE", 1, 1), ("SOD", 1, 1), ("STARS", 1, 1)]
+
+
+def _set_prefixes(monkeypatch, names):
+    monkeypatch.setattr("core.maker_mapping.load_prefix_mapping", lambda: {n: LABEL for n in names})
+
+
+def _recording_search(by_prefix, seen):
+    def fake(self, keyword, page=1, search_type=0):
+        seen.append(keyword)
+        if isinstance(by_prefix.get(keyword), Exception):
+            raise by_prefix[keyword]
+        return by_prefix.get(keyword, [])
+    return patch.object(JavBusScraper, "get_ids_from_search", fake)
+
+
+def _swamped(names):
+    """每個前綴只回更長前綴的番號（被擠滿），完全相同前綴過濾後全空。"""
+    return {n: [f"{n}X-{i:03d}" for i in range(1, 4)] for n in names}
+
+
+def _probe_recorded(db, by_prefix, seen):
+    fetcher = Fetcher((V7Q,) * 5)
+    with _recording_search(by_prefix, seen), \
+         patch.object(JavBusScraper, "fetch_studio_sample", side_effect=fetcher), \
+         _listing({1: _nums(30)}), patch("core.scraper.search_jav", side_effect=_detail):
+        out = _run(db, 20, 0)
+    return out, fetcher
+
+
+def test_probe_continues_past_two_prefixes_when_first_two_are_swamped(db, monkeypatch):
+    # 邊界 1：HMN→HMNF-*、HND→HNDS-*，第 3 個 HNDS 才拿到樣本
+    _set_prefixes(monkeypatch, ["HMN", "HND", "HNDS"])
+    by = {"HMN": ["HMNF-001", "HMNF-002"], "HND": ["HNDS-001"], "HNDS": ["HNDS-001", "HNDS-002"]}
+    seen = []
+    out, fetcher = _probe_recorded(db, by, seen)
+    assert out.error_code is None and len(out.results) == 20
+    assert seen == ["HMN", "HND", "HNDS"]
+    assert fetcher.calls and all(n.startswith("HNDS-") for n in fetcher.calls)
+
+
+def test_probe_two_prefixes_with_samples_makes_exactly_two_requests(db, monkeypatch):
+    # 邊界 2：前 2 個就有樣本 → 恰 2 次請求（迴歸鎖）
+    _set_prefixes(monkeypatch, ["ADN", "AKB", "ZZZ"])
+    by = {"ADN": ["ADN-001"], "AKB": ["AKB-001"], "ZZZ": ["ZZZ-001"]}
+    seen = []
+    out, fetcher = _probe_recorded(db, by, seen)
+    assert out.error_code is None
+    assert seen == ["ADN", "AKB"]
+    assert sorted(fetcher.calls) == ["ADN-001", "AKB-001"]
+
+
+def test_probe_stops_after_four_requests_when_all_swamped(db, monkeypatch):
+    # 邊界 3：6 個前綴全被蓋住 → 恰 4 次後停、無樣本、表無新增列
+    names = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
+    _set_prefixes(monkeypatch, names)
+    seen = []
+    out, fetcher = _probe_recorded(db, _swamped(names), seen)
+    assert out.error_code == "maker_no_sample"
+    assert seen == ["AAA", "BBB", "CCC", "DDD"]
+    assert fetcher.calls == []
+    assert maker_javbus_map.get_mapping(KEY, db_path=db) is None
+
+
+def test_probe_single_prefix_makes_one_request(db, monkeypatch):
+    # 邊界 4：只有 1 個前綴 → 1 次請求
+    _set_prefixes(monkeypatch, ["AAA"])
+    seen = []
+    out, _ = _probe_recorded(db, _swamped(["AAA"]), seen)
+    assert out.error_code == "maker_no_sample"
+    assert seen == ["AAA"]
+
+
+def test_probe_third_prefix_exception_is_unreachable_and_writes_nothing(db, monkeypatch):
+    # 邊界 5：第 3 個前綴丟例外 → maker_unreachable、表無新增列
+    names = ["AAA", "BBB", "CCC"]
+    _set_prefixes(monkeypatch, names)
+    by = _swamped(["AAA", "BBB"])
+    by["CCC"] = TimeoutError("t")
+    seen = []
+    out, fetcher = _probe_recorded(db, by, seen)
+    assert out.error_code == "maker_unreachable"
+    assert seen == names
+    assert fetcher.calls == []
+    assert maker_javbus_map.get_mapping(KEY, db_path=db) is None
 
 
 def test_probe_drops_other_makers_numbers(db, prefixes):

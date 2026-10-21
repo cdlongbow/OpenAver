@@ -95,6 +95,7 @@ def _sorted(cards):
 
 
 _PROBE_PREFIXES = 2
+_PROBE_MAX_REQUESTS = 4
 _PROBE_SAMPLES = 5
 
 
@@ -122,7 +123,9 @@ def _probe_titles(scraper_mod, maker_key, spellings, titles, today, db_path):
     keys = {maker_key} | {maker_key_of(s) for s in spellings}
     chosen = sorted((p, v) for p, v in load_prefix_mapping().items() if maker_key_of(v) in keys)
     synthetic, extra = [], []
-    for prefix, value in chosen[:_PROBE_PREFIXES]:
+    for i, (prefix, value) in enumerate(chosen[:_PROBE_MAX_REQUESTS]):
+        if i >= _PROBE_PREFIXES and synthetic:
+            break
         try:
             ids = scraper.get_ids_from_search(prefix, page=1, search_type=1)
         except Exception as e:
