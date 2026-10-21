@@ -116,6 +116,22 @@ class TestLoadNameMapping:
 
 # ============ load_prefix_mapping ============
 
+class TestLoadSearchAliases:
+    @pytest.mark.parametrize("raw", [
+        {"_meta": {}, "name_mapping": {}, "prefix_mapping": {}},          # 缺節
+        {"_meta": {}, "search_aliases": {}},                               # 空節
+        {"_meta": {}, "search_aliases": ["a", "b"]},                       # 清單
+        {"_meta": {}, "search_aliases": "x"},                              # 字串
+        {"_meta": {}, "search_aliases": None},
+    ])
+    def test_search_aliases_bad_shapes_return_empty(self, tmp_path, monkeypatch, raw):
+        import core.maker_mapping as mm
+        p = tmp_path / "maker_mapping.json"
+        p.write_text(json.dumps(raw), encoding="utf-8")
+        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", p)
+        monkeypatch.setattr(mm, "_cache", None)
+        assert mm.load_search_aliases() == {}
+
 class TestLoadPrefixMapping:
     def test_new_format_returns_prefix_mapping(self, new_format_file, monkeypatch):
         """新格式：load_prefix_mapping() 回傳 prefix_mapping 層（含前綴 key）"""

@@ -418,7 +418,8 @@ class JavBusScraper(BaseScraper):
         Returns:
             Video 列表
 
-        注意：production pipeline（`core.scraper._javbus_keyword_search`）不呼叫此方法。
+        注意：production pipeline（`core/search_providers/javbus.py` 的
+        `JavBusProvider.run_keyword`；`core.scraper._javbus_keyword_search` 只剩 shim）不呼叫此方法。
         該路徑改用 `get_ids_from_search` 取 ID 列表後，以 ThreadPoolExecutor 平行呼叫
         `search_jav`，速度更快。本方法是 BaseScraper 介面（@abstractmethod）的循序參考
         實作，非 dead code、非 deprecated，但非主路徑——僅 smoke 測試與單元測試直呼。

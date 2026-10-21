@@ -2756,6 +2756,13 @@ const RULES = [
     note: '[168b-T8-clipboard-copyoutputpath-uses-shared] 使用者在區網瀏覽器（非安全環境、沒有 navigator.clipboard）的掃描頁按複製輸出路徑 → 直接失敗、不再走備援，貼上是舊內容或沒東西',
   },
 
+  // ---- [175a-T7] 模糊搜尋的來源只認 search_providers 註冊表 ----
+  // forbidden-string 不剝註解：core／web／tests 的 .py 註解與 docstring 也不得寫出舊白名單常數（本規則在 scripts/，不在掃描範圍）。
+  ...['core', 'web', 'tests'].map((dir) => ({
+    file: { dir, ext: ['.py'], recursive: true }, kind: 'forbidden-string', pattern: 'FUZZY_SEARCH_SOURCES',
+    note: `[175a-T7-no-fuzzy-whitelist] 有人把舊白名單常數加回 ${dir}/ → 模糊搜尋出現第二份「哪些來源參與」的真理，與 core/search_providers/registry.py 註冊表漂移：使用者在設定頁排序／開關的結果與實際被查的來源對不上`,
+  })),
+
   // ---- [168c-T6] 桌面 client 收尾守衛：安裝指令單一來源（CD-168c-7）／client.json 單一寫入出口（CD-168c-2）／導航空窗原生 origin 複查（CD-168c-10） ----
   // L2 forbidden-string 不剝註解：web／windows／core 的 .py 註解與 docstring 也不得寫出 install.ps1／install.sh（唯一放行 core/self_update.py）。
   ...['web', 'windows', 'core'].map((dir) => ({

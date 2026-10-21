@@ -928,6 +928,16 @@ class VideoRepository:
         finally:
             conn.close()
 
+    def get_distinct_makers(self) -> List[str]:
+        """片庫中出現過的片商名（distinct；濾掉 NULL／空字串）"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT maker FROM videos WHERE maker IS NOT NULL AND maker != ''")
+            return [row[0] for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
     def count(self) -> int:
         """取得總數"""
         conn = self._get_connection()

@@ -263,6 +263,15 @@ class TestVideoRepository:
         deleted = repo.delete_by_paths([to_file_uri("/not_exist.mp4")])
         assert deleted == 0
 
+    def test_get_distinct_makers(self, temp_db, sample_video):
+        """get_distinct_makers：重複片商只回一次，NULL／空字串不回"""
+        import dataclasses
+        repo = VideoRepository(temp_db)
+        for i, mk in enumerate(["S1", "S1", "Moodyz", "", None]):
+            repo.upsert(dataclasses.replace(
+                sample_video, path=to_file_uri(f"C:/Videos/mk{i}.mp4"), number=f"MK-{i:03d}", maker=mk))
+        assert sorted(repo.get_distinct_makers()) == ["Moodyz", "S1"]
+
     def test_count_empty(self, temp_db):
         """測試 count 空資料庫"""
         repo = VideoRepository(temp_db)

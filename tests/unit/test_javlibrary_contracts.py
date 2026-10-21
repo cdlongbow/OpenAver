@@ -5,7 +5,7 @@ tests/unit/test_javlibrary_contracts.py — T3 javlibrary 來源系統 contract 
   - validate_source_id 放行
   - CENSORED_SOURCES 包含（不觸發 L77 warning）
   - SOURCE_ORDER 不含（不污染 fan-out）
-  - FUZZY_SEARCH_SOURCES 不含（exact-only）
+  - 不在 search_providers 註冊表（exact-only）
   - get_manual_only_sources() 回傳正確屬性
   - JavLibraryScraper importable + in __all__
   - get_enabled_source_ids 不含 javlibrary（manual_only=True 被過濾）
@@ -34,10 +34,10 @@ def test_javlibrary_not_in_source_order():
     assert 'javlibrary' not in SOURCE_ORDER
 
 
-# 4. 不在 FUZZY_SEARCH_SOURCES（exact-only）
+# 4. 不在 search_providers 註冊表（exact-only）
 def test_javlibrary_not_in_fuzzy_search_sources():
-    from core.scrapers.utils import FUZZY_SEARCH_SOURCES
-    assert 'javlibrary' not in FUZZY_SEARCH_SOURCES
+    from core.search_providers.registry import registered_ids
+    assert 'javlibrary' not in registered_ids()
 
 
 # 5. get_manual_only_sources() 回傳 javlibrary，屬性正確

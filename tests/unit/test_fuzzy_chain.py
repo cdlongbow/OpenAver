@@ -64,15 +64,16 @@ class TestFuzzyChain:
     # ---- 1. 鏈順序跟 Active Row（非寫死） ----
     def test_chain_follows_active_row_order(self, monkeypatch):
         """mock order=['javbus','dmm']，javbus 空 → dmm 命中（TASK-65g: 2 源池）"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['javbus', 'dmm'])
 
         with patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
-             patch('core.scraper._dmm_keyword_search_progressive',
-                   return_value=[{'number': 'MIDE-100', 'source': 'dmm'}]) as mock_dmm:
-            results = _fuzzy_search_chain("some actress")
+             patch.object(DMMScraper, 'search_by_keyword_with_ids',
+                          return_value=[('mide00100', _make_video('dmm', 'MIDE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, '_fetch_by_id', return_value=_make_video('dmm', 'MIDE-100')):
+            results = search_actress("some actress")
 
         mock_jb.assert_called()          # javbus reached but returned empty
         mock_dmm.assert_called_once()    # dmm reached and hit
@@ -82,7 +83,7 @@ class TestFuzzyChain:
     # ---- 2. DMM 排第一但膠囊關 → 跳過，繼續到 javbus ----
     def test_dmm_first_capsule_off_falls_through_to_javbus(self, monkeypatch):
         """DMM 排第一 + DMM 膠囊關 → DMM 不呼叫，javbus 命中"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
 
@@ -94,7 +95,7 @@ class TestFuzzyChain:
                           return_value=['SONE-205']) as mock_jb, \
              patch('core.scraper.search_jav',
                    return_value=_make_dict("javbus", "SONE-205")):
-            results = _fuzzy_search_chain("三上悠亜")
+            results = search_actress("三上悠亜")
 
         mock_dmm.assert_not_called()  # DMM bypassed — capsule off
         mock_jb.assert_called()
@@ -103,8 +104,8 @@ class TestFuzzyChain:
 
     # ---- 3. AVSOX 排第一 → 跳過 ----
     def test_non_fuzzy_source_avsox_skipped(self, monkeypatch):
-        """avsox 不在 FUZZY_SEARCH_SOURCES → 跳過，直達 javbus"""
-        from core.scraper import _fuzzy_search_chain
+        """avsox 不在 search provider 註冊表 → 跳過，直達 javbus"""
+        from core.scraper import search_actress
         from core.scrapers.avsox import AVSOXScraper
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
@@ -116,7 +117,7 @@ class TestFuzzyChain:
                           side_effect=[['TEST-001'], []]) as mock_jb, \
              patch('core.scraper.search_jav',
                    return_value=_make_dict("javbus", "TEST-001")):
-            results = _fuzzy_search_chain("actress")
+            results = search_actress("actress")
 
         mock_avsox.assert_not_called()
         mock_jb.assert_called()
@@ -126,7 +127,7 @@ class TestFuzzyChain:
     # ---- 4. 停用的候選池源模糊仍用（always-on） ----
     def test_disabled_source_still_reached_by_chain(self, monkeypatch):
         """get_all_source_ids_ordered 回含 javbus（不管 enabled），鏈仍能到達並命中"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
 
         # get_all_source_ids_ordered 不過濾 enabled，停用但仍在列表
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
@@ -136,15 +137,15 @@ class TestFuzzyChain:
                           side_effect=[['SONE-111'], []]) as mock_jb, \
              patch('core.scraper.search_jav',
                    return_value=_make_dict("javbus", "SONE-111")):
-            results = _fuzzy_search_chain("actress")
+            results = search_actress("actress")
 
         mock_jb.assert_called()
         assert len(results) >= 1
 
     # ---- 5. 非模糊源 / metatube 排最前 → 跳過 ----
     def test_metatube_and_fc2_skipped(self, monkeypatch):
-        """metatube:abc 和 fc2 不在 FUZZY_SEARCH_SOURCES → 鏈從 javbus 開始"""
-        from core.scraper import _fuzzy_search_chain
+        """metatube:abc 和 fc2 不在 search provider 註冊表 → 鏈從 javbus 開始"""
+        from core.scraper import search_actress
         from core.scrapers.fc2_official import FC2OfficialScraper
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
@@ -155,7 +156,7 @@ class TestFuzzyChain:
                           side_effect=[['FC2-TEST'], []]) as mock_jb, \
              patch('core.scraper.search_jav',
                    return_value=_make_dict("javbus", "FC2-TEST")):
-            results = _fuzzy_search_chain("actress")
+            results = search_actress("actress")
 
         mock_fc2.assert_not_called()
         mock_jb.assert_called()
@@ -165,7 +166,7 @@ class TestFuzzyChain:
     # ---- 6. 候選池 4 源排在一堆非模糊源之後 ----
     def test_fuzzy_sources_reached_after_non_fuzzy_sources(self, monkeypatch):
         """heyzo、d2pass、metatube:x 排前面，javbus 排後面 → 鏈最終到達 javbus"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
         from core.scrapers.heyzo import HEYZOScraper
         from core.scrapers.d2pass import D2PassScraper
 
@@ -178,7 +179,7 @@ class TestFuzzyChain:
                           side_effect=[['SONE-001'], []]) as mock_jb, \
              patch('core.scraper.search_jav',
                    return_value=_make_dict("javbus", "SONE-001")):
-            results = _fuzzy_search_chain("actress")
+            results = search_actress("actress")
 
         mock_jb.assert_called()
         assert len(results) >= 1
@@ -186,18 +187,18 @@ class TestFuzzyChain:
     # ---- 7. 空鏈（所有候選池源都被過濾掉）→ [] ----
     def test_empty_chain_returns_empty_list(self, monkeypatch):
         """get_all_source_ids_ordered 只回 heyzo、fc2 → chain=[] → 回 []"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['heyzo', 'fc2'])
 
-        results = _fuzzy_search_chain("actress")
+        results = search_actress("actress")
         assert results == []
 
     # ---- 8. seed 只由第一個實際發動源送 ----
     def test_seed_sent_exactly_once_by_first_dispatched_source(self, monkeypatch):
         """order=['dmm','javbus']，DMM 膠囊關（DMM 被跳過）→ seed 由 javbus 送，恰好 1 次"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: False)
 
@@ -215,7 +216,7 @@ class TestFuzzyChain:
                           side_effect=[['SONE-205'], []]) as mock_jb, \
              patch('core.scraper.search_jav',
                    return_value=_make_dict("javbus", "SONE-205")):
-            results = _fuzzy_search_chain(
+            results = search_actress(
                 "三上悠亜",
                 result_callback=mock_result_callback,
             )
@@ -228,7 +229,7 @@ class TestFuzzyChain:
     def test_dmm_none_result_falls_through_to_javbus(self, monkeypatch):
         """DMM search_by_keyword_with_ids 回 []（progressive 回 None）→ adapter 轉 []
         → 鏈繼續，javbus 命中"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])
@@ -240,24 +241,24 @@ class TestFuzzyChain:
              patch('core.scraper.search_jav',
                    return_value=_make_dict("javbus", "SONE-205")), \
              patch('core.scrapers.dmm.rate_limit'):
-            results = _fuzzy_search_chain("actress")
+            results = search_actress("actress")
 
         mock_dmm.assert_called_once()  # DMM called but returned nothing
         mock_jb.assert_called()        # JavBus tried as next
         assert len(results) == 1
 
-    # ---- 10. javdb 不在 FUZZY_SEARCH_SOURCES → 鏈忽略 javdb（TASK-65g） ----
+    # ---- 10. javdb 不在 search provider 註冊表 → 鏈忽略 javdb（TASK-65g） ----
     def test_javdb_excluded_from_fuzzy_pool(self, monkeypatch):
-        """javdb 不在 FUZZY_SEARCH_SOURCES → order=['javdb'] 交集後 chain=[] → 回 []"""
-        from core.scraper import _fuzzy_search_chain
+        """javdb 不在 search provider 註冊表 → order=['javdb'] 交集後 chain=[] → 回 []"""
+        from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['javdb'])
 
         with patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb:
-            results = _fuzzy_search_chain("actress")
+            results = search_actress("actress")
 
-        mock_javdb.assert_not_called()  # javdb filtered out by FUZZY_SEARCH_SOURCES intersection
+        mock_javdb.assert_not_called()  # javdb filtered out by search provider 註冊表 intersection
         assert results == []
 
     # ---- 11. `_get_fuzzy_source` 已刪 ----
@@ -349,7 +350,7 @@ class TestSmartSearchFuzzyNoPostChainFallback:
     call search_jav321_keyword after the chain is exhausted (CD-plan-65-5).
 
     The Active Row order is the single source of truth.  A hardcoded jav321
-    fallback after _fuzzy_search_chain returns [] would:
+    fallback after search_actress（relay）returns [] would:
       (a) bypass Active Row ordering entirely, and
       (b) call jav321 a second time if it was already in the chain.
     """
@@ -377,7 +378,7 @@ class TestSmartSearchFuzzyNoPostChainFallback:
 
     # ---- 17. jav321 removed from fuzzy pool → never called via chain ----
     def test_jav321_removed_from_fuzzy_pool_not_called(self, monkeypatch):
-        """jav321 is NOT in FUZZY_SEARCH_SOURCES (TASK-65g) → order=['javbus'],
+        """jav321 is NOT in search provider 註冊表 (TASK-65g) → order=['javbus'],
         javbus empty → chain exhausted → search_jav321_keyword call_count == 0."""
         from core.scraper import smart_search
 
@@ -411,19 +412,19 @@ class TestFuzzyDmmSource:
 
     def test_dmm_fuzzy_result_carries_internal_source(self, monkeypatch):
         """DMM 命中時，每個結果 dict 應含 _source='dmm'（鏡像 javbus 在 search_jav L354 的行為）"""
-        from core.scraper import _fuzzy_search_chain
+        from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus'])
 
-        # DMM returns 1 result (no _source yet — _fuzzy_one must add it)
-        monkeypatch.setattr(
-            "core.scraper._dmm_keyword_search_progressive",
-            lambda *a, **kw: [{'number': 'STARS-001', 'source': 'dmm'}],
-        )
+        # DMM returns 1 result (no _source yet — DMMProvider.run must add it)
+        video = _make_video('dmm', 'STARS-001')
+        monkeypatch.setattr(DMMScraper, 'search_by_keyword_with_ids',
+                            lambda self, *a, **kw: [('stars00001', video)])
+        monkeypatch.setattr(DMMScraper, '_fetch_by_id', lambda self, cid: video)
 
         # 膠囊開（autouse fixture）所以 DMM 閘放行
-        results = _fuzzy_search_chain("actress")
+        results = search_actress("actress")
 
         assert len(results) == 1, f"Expected 1 result, got {results}"
         assert results[0]['_source'] == 'dmm', \

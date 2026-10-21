@@ -11,6 +11,17 @@
 - 靜態載入片商對照表 (`maker_mapping.json`) 並做名稱/前綴正規化；此表隨版本出貨，沒有 runtime 更新或學習。
 - 實際爬取邏輯已移至 `scrapers/` 子模組。
 
+### `search_providers/` 套件
+**模糊搜尋共用介面**（175a）
+- 型別（查詢契約）、註冊表、視窗換算與進度式補詳情、接力（relay，依來源順序逐家嘗試）；目前註冊 JavBus、DMM。
+- 頂層不得 import `core.scraper`／`core.database`（需要時函式內延後取用）。
+
+### `query_intent.py`
+- 查詢分類 `classify_query`：判斷輸入是女優名、關鍵字、番號前綴、部分番號或完整番號。
+
+### `maker_names.py`
+- 片商鍵 `maker_key_of` 與片商清單；與前端 `makerKey()` 共用同一份向量檔。
+
 ### `scrapers/` 子模組
 **模組化爬蟲架構** (Phase 16 重構)
 

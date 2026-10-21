@@ -398,17 +398,12 @@ CENSORED_SOURCES = ['dmm', 'javbus', 'jav321', 'javdb']
 UNCENSORED_SOURCES = ['d2pass', 'heyzo', 'fc2', 'avsox']
 PROXY_SOURCES = {'dmm'}  # 需要日本 IP 的來源
 
-# 模糊候選池白名單（CL-1 / CD-plan-65-4 / TASK-65g）：javbus + dmm 兩源。
-# 排除：AVSOX（無碼專用）、FC2/HEYZO/D2Pass（keyword=番號，非真模糊）、
-# jav321（keyword 恆回空）、javdb（重複呼叫觸發 Cloudflare ban）。
-FUZZY_SEARCH_SOURCES = ['javbus', 'dmm']
-
 SOURCE_ORDER = CENSORED_SOURCES + UNCENSORED_SOURCES
 
 # CD-70b-10：javlibrary 有碼 manual_only BETA。
 # - 加入 CENSORED_SOURCES 讓 SourceConfig.is_censored（builtin 分支）查到，避免 L77 warning。
 # - 不加入 SOURCE_ORDER（manual_only 不進 fan-out 排序；SOURCE_ORDER = 8-elem fan-out 順序）。
-# - 不加入 FUZZY_SEARCH_SOURCES（CD-70b：exact-only）。
+# - 不註冊為 search provider（CD-70b：exact-only；模糊搜尋的來源由 core/search_providers/registry.py 決定）。
 # - 必須在 SOURCE_ORDER 建立後才 append，否則 SOURCE_ORDER tuple 已含 javlibrary（污染 fan-out）。
 CENSORED_SOURCES.append('javlibrary')
 # CD-118a-1：fc-javten 無碼 manual_only BETA。鏡射 javlibrary 的 append 時機（SOURCE_ORDER 建立後）。

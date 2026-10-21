@@ -3,12 +3,11 @@
 Covers Runtime Auto Pool filtering (`get_enabled_source_ids`) and the
 uncensored-mode single-source-of-truth (`is_uncensored_mode_effective`).
 Also covers `get_all_source_ids_ordered()` (TASK-65a-1) and the
-`FUZZY_SEARCH_SOURCES` constant from `core.scrapers.utils`.
+search-provider registry (`core.search_providers.registry`).
 """
 import pytest
 
 from core import source_settings
-from core.scrapers.utils import CENSORED_SOURCES, FUZZY_SEARCH_SOURCES
 
 
 # ---------------------------------------------------------------------------
@@ -372,29 +371,3 @@ def test_switchable_fallback_when_sources_missing(monkeypatch):
     from core.scrapers.utils import SOURCE_ORDER
     _patch_config(monkeypatch, {'search': {}})
     assert source_settings.get_switchable_source_ids_ordered() == list(SOURCE_ORDER)
-
-
-# ---------------------------------------------------------------------------
-# FUZZY_SEARCH_SOURCES constant  (TASK-65a-1)
-# ---------------------------------------------------------------------------
-
-def test_fuzzy_search_sources_contains_correct_two():
-    """FUZZY_SEARCH_SOURCES must contain exactly the 2 fuzzy-capable censored sources (TASK-65g)."""
-    assert sorted(FUZZY_SEARCH_SOURCES) == sorted(['javbus', 'dmm'])
-
-
-def test_fuzzy_search_sources_excludes_avsox():
-    """avsox is uncensored-only — must not be in FUZZY_SEARCH_SOURCES."""
-    assert 'avsox' not in FUZZY_SEARCH_SOURCES
-
-
-def test_fuzzy_search_sources_excludes_fake_fuzzy_sources():
-    """fc2, heyzo, d2pass do keyword-as-id lookup, not real fuzzy search — excluded."""
-    assert 'fc2' not in FUZZY_SEARCH_SOURCES
-    assert 'heyzo' not in FUZZY_SEARCH_SOURCES
-    assert 'd2pass' not in FUZZY_SEARCH_SOURCES
-
-
-def test_fuzzy_search_sources_is_independent_constant():
-    """FUZZY_SEARCH_SOURCES must be a distinct object from CENSORED_SOURCES, not reused."""
-    assert FUZZY_SEARCH_SOURCES is not CENSORED_SOURCES

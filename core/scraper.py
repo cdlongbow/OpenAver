@@ -5,14 +5,14 @@ Scraper 模組（向後相容層）
 包含 smart_search 等高階搜尋邏輯。
 """
 import re
-import time
+import time  # noqa: F401  # 測試 patch 點（core.scraper.time.sleep）＋provider 延後取用
 
 from core.logger import get_logger
 from core.config import load_config
 
 logger = get_logger(__name__)
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List, Dict, Any, Callable, NamedTuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, List, Dict, Any, Callable
 
 # 引入新版爬蟲模組
 from core.scrapers import (
@@ -28,18 +28,20 @@ from core.proxy_policy import source_needs_jp_ip
 from core.scrapers.utils import (
     SOURCE_NAMES,
     extract_number as _new_extract_number,
-    FUZZY_SEARCH_SOURCES,
     normalize_number_impl,
     is_strict_number,
     is_uncensored_route,
     resolve_route_target,
 )
 from core.maker_mapping import get_maker_by_prefix
-from core.maker_latest import resolve_maker_studio
-from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
+from core.maker_latest import resolve_maker_studio  # noqa: F401  # 測試 patch 點＋provider 延後取用
+from core.search_providers.javbus import JavBusProvider
+from core.search_providers.relay import search_by_intent
+from core.search_providers.types import MakerSearchResult, Window  # noqa: F401  # MakerSearchResult 重新匯出（web/routers/search.py 使用）
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
-from core.source_settings import get_enabled_source_ids, get_all_source_ids_ordered, is_source_enabled
+from core.source_settings import get_enabled_source_ids
+from core.source_settings import get_all_source_ids_ordered, is_source_enabled  # noqa: F401  # relay 與測試 patch 點（呼叫當下經 core.scraper 讀）
 
 # 63c metatube routing imports（CD-63c-1 / CD-63c-2 / CD-63c-3）
 from core.metatube.client import MetatubeHttpClient, pick_movie_result
@@ -57,7 +59,7 @@ REQUEST_DELAY = 0.3
 _LOCALE_TO_JAVBUS = {"zh-TW": "zh-tw", "zh-CN": "zh-tw", "ja": "ja", "en": "en"}
 
 
-def _get_javbus_lang() -> str:
+def get_javbus_lang() -> str:
     """從 config 讀取 locale 並轉換為 JavBus lang code"""
     try:
         config = load_config()
@@ -271,7 +273,7 @@ def search_jav(
     if javbus_lang is not None and javbus_lang not in VALID_JAVBUS_LANGS:
         logger.warning("[Search] 無效的 javbus_lang: %s，fallback 到 config", javbus_lang)
         javbus_lang = None
-    _javbus_lang = javbus_lang if javbus_lang is not None else _get_javbus_lang()
+    _javbus_lang = javbus_lang if javbus_lang is not None else get_javbus_lang()
 
     # 來源 id → scraper factory（無參數 callable，回 scraper instance list）。
     # DMM 與 JavBus 是攜帶 closure 參數的特例：
@@ -473,169 +475,13 @@ def search_partial(partial: str,
                    status_callback: Optional[Callable[[str, str], None]] = None,
                    result_callback: Optional[Callable[[int, Any], None]] = None,
                    discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """局部搜尋"""
-    candidates = expand_partial_number(partial)
-    results = []
-
-    if status_callback:
-        status_callback('javbus', 'searching')
-
-    # Seed callback: 通知前端準備 skeleton grid
-    if candidates and result_callback:
-        result_callback(-1, candidates)
-
-    if discovery_only:
-        if status_callback:
-            status_callback('done', f'found:{len(candidates)}')
-        return [{'number': num, 'title': ''} for num in candidates]
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # 記錄 slot index 以支援 result_callback 正確定位
-        futures = {}
-        for idx, num in enumerate(candidates):
-            future = executor.submit(search_jav, num, 'javbus')
-            futures[future] = (idx, num)
-
-        for future in as_completed(futures):
-            idx, num = futures[future]
-            try:
-                data = future.result()
-                if data and data.get('title'):
-                    results.append(data)
-                    if result_callback:
-                        result_callback(idx, data)
-            except Exception:
-                logger.error('search_partial: %s failed', num)
-            time.sleep(REQUEST_DELAY)
-
-    if status_callback:
-        status_callback('done', f'found:{len(results)}')
-
-    return sort_results_by_date(results)
+    """局部搜尋（175a-T7：經 relay 接力；partial 不看 limit）"""
+    return search_by_intent("partial", partial, Window(0, 0), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
 
 
 def search_prefix(prefix: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """前綴搜尋"""
-    results = []
-    prefix = prefix.strip().upper()
-
-    if status_callback:
-        status_callback('javbus', 'searching')
-
-    try:
-        scraper = JavBusScraper(lang=_get_javbus_lang())
-        start_page = (offset // 30) + 1
-        skip_in_page = offset % 30
-        pages_needed = ((limit + skip_in_page) // 30) + 2
-
-        all_ids: List[str] = []
-        for page in range(start_page, start_page + pages_needed):
-            ids = scraper.get_ids_from_search(prefix, page=page, search_type=1)
-            if ids:
-                all_ids.extend(ids)
-                if len(all_ids) >= limit + skip_in_page:
-                    break
-            else:
-                break
-
-        if not all_ids:
-            if status_callback:
-                status_callback('javbus', 'found:0')
-            return []
-
-        target_ids = all_ids[skip_in_page:][:limit]
-
-        if status_callback:
-            status_callback('javbus', f'found:{len(target_ids)}')
-
-        if discovery_only:
-            if status_callback:
-                status_callback('done', f'found:{len(target_ids)}')
-            return [{'number': num, 'title': ''} for num in target_ids]
-
-        if status_callback:
-            status_callback('javbus', 'fetching_details')
-
-        if target_ids and result_callback:
-            result_callback(-1, target_ids)
-
-        completed_count = 0
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {}
-            for idx, num in enumerate(target_ids):
-                future = executor.submit(search_jav, num, 'javbus')
-                futures[future] = (idx, num)
-
-            for future in as_completed(futures):
-                idx, num = futures[future]
-                completed_count += 1
-                if status_callback:
-                    status_callback('javbus', f'details:{completed_count}/{len(target_ids)}')
-                try:
-                    data = future.result()
-                    if data and data.get('title'):
-                        results.append(data)
-                        if result_callback:
-                            result_callback(idx, data)
-                except Exception:
-                    logger.error('search_prefix: %s failed', num)
-                time.sleep(REQUEST_DELAY)
-
-    except Exception as e:
-        logger.error('search_prefix failed: %s', e)
-
-    if status_callback:
-        status_callback('done', f'found:{len(results)}')
-
-    return sort_results_by_date(results)
-
-
-def _dmm_keyword_search_progressive(
-    dmm_scraper,
-    query: str,
-    limit: int,
-    status_callback,
-    result_callback,
-    offset: int = 0,
-) -> Optional[List[Dict[str, Any]]]:
-    """DMM keyword search with progressive enrichment (mirrors JavBus pattern).
-
-    Returns a list of result dicts on success, or None if DMM returned nothing
-    (caller should fall through to JavBus).
-    """
-    pairs = dmm_scraper.search_by_keyword_with_ids(query, limit=limit, offset=offset)
-    if not pairs:
-        return None
-
-    # Seed: frontend renders skeleton cards immediately
-    if result_callback:
-        seed_ids = [video.number for _, video in pairs]
-        result_callback(-1, seed_ids)
-
-    results = [None] * len(pairs)  # pre-allocate to preserve seed order
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {}
-        for idx, (content_id, shallow) in enumerate(pairs):
-            future = executor.submit(dmm_scraper._fetch_by_id, content_id)
-            futures[future] = (idx, content_id, shallow)
-
-        for future in as_completed(futures):
-            idx, content_id, shallow = futures[future]
-            try:
-                video = future.result()
-                if video is None:
-                    video = shallow
-            except Exception:
-                logger.error('DMM enrichment failed: %s', content_id)
-                video = shallow
-            data = video.to_legacy_dict()
-            results[idx] = data  # slot-indexed, not append
-            if result_callback:
-                result_callback(idx, data)
-
-    if status_callback:
-        status_callback('done', f'found:{len(results)}')
-    return results
+    """前綴搜尋（175a-T7：經 relay 接力）"""
+    return search_by_intent("prefix", prefix, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
 
 
 def _javbus_keyword_search(
@@ -648,89 +494,13 @@ def _javbus_keyword_search(
     *,
     ids_provider: Optional[Callable[[JavBusScraper, int], List[str]]] = None,
 ) -> List[Dict[str, Any]]:
-    """JavBus keyword search — extracted from search_actress.
+    """JavBus keyword search — extracted from search_actress（175a-T4：實作搬進 JavBusProvider，此處為 shim）。
 
     ids_provider（173）：取代「取番號那一步」，簽名 (scraper, page) -> ids；None＝關鍵字搜尋。
-
     Returns list[dict] (empty list on failure / no ids).
-    JavDB fallback is NOT included; fuzzy fallback is limited to FUZZY_SEARCH_SOURCES.
+    JavDB fallback is NOT included; 模糊搜尋的來源由 search_providers 註冊表決定。
     """
-    try:
-        if status_callback:
-            status_callback('javbus', 'searching')
-
-        scraper = JavBusScraper(lang=_get_javbus_lang())
-        start_page = (offset // 30) + 1
-        skip_in_page = offset % 30
-        pages_needed = ((limit + skip_in_page) // 30) + 2
-
-        all_ids = []
-        for page in range(start_page, start_page + pages_needed):
-            if ids_provider is None:
-                ids = scraper.get_ids_from_search(name, page=page)
-            else:
-                ids = ids_provider(scraper, page)
-            if ids:
-                all_ids.extend(ids)
-                if len(all_ids) >= limit + skip_in_page:
-                    break
-            else:
-                break
-
-        if all_ids:
-            all_ids = all_ids[skip_in_page:]
-            target_ids = all_ids[:limit]
-
-            if status_callback:
-                status_callback('javbus', f'found:{len(target_ids)}')
-
-            if discovery_only:
-                if status_callback:
-                    status_callback('done', f'found:{len(target_ids)}')
-                return [{'number': num, 'title': ''} for num in target_ids]
-
-            if target_ids and result_callback:
-                result_callback(-1, target_ids)
-
-            results = []
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                futures = {}
-                for idx, num in enumerate(target_ids):
-                    future = executor.submit(search_jav, num, 'javbus')
-                    futures[future] = (idx, num)
-
-                for future in as_completed(futures):
-                    idx, num = futures[future]
-                    try:
-                        data = future.result()
-                        if data and data.get('title'):
-                            results.append(data)
-                            if result_callback:
-                                result_callback(idx, data)
-                    except Exception:
-                        logger.error('_javbus_keyword_search: %s failed', num)
-
-            if status_callback:
-                status_callback('done', f'found:{len(results)}')
-            return sort_results_by_date(results)
-
-    except Exception as e:
-        logger.error('_javbus_keyword_search failed: %s', e)
-
-    return []
-
-
-class MakerSearchResult(NamedTuple):
-    results: List[Dict[str, Any]]
-    has_more: bool
-    error_code: Optional[str]
-
-
-_MAKER_RESOLUTION_ERRORS = {
-    'absent': 'maker_not_found',
-    'unreachable': 'maker_unreachable',
-    'no_sample': 'maker_no_sample',
-}
+    return JavBusProvider().run_keyword(name, limit, offset, status_callback, result_callback, discovery_only, ids_provider=ids_provider)
 
 
 def search_maker_latest(
@@ -745,118 +515,11 @@ def search_maker_latest(
     result_callback: Optional[Callable[[int, Any], None]] = None,
     db_path=None,
 ) -> MakerSearchResult:
-    """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊）。
+    """片商最新作品（JavBus 片商頁，一次一頁 30 部，發行日新到舊；175a-T4：實作搬進 JavBusProvider，此處為 shim）。
 
     不攔 resolve_maker_studio 的未預期例外（交呼叫端）。
     """
-    if offset < 0 or offset % JAVBUS_LIST_PAGE_SIZE:
-        raise ValueError(f'offset must be a non-negative multiple of {JAVBUS_LIST_PAGE_SIZE}: {offset}')
-    if status_callback:
-        status_callback('javbus', 'searching')
-    resolution = resolve_maker_studio(
-        maker_key, label, spellings, titles, today=today, db_path=db_path)
-    if resolution.status != 'found':
-        code = _MAKER_RESOLUTION_ERRORS.get(resolution.status, 'maker_unreachable')
-        return MakerSearchResult([], False, code)
-
-    ref = (resolution.kind, resolution.studio_id)
-    request_page = offset // JAVBUS_LIST_PAGE_SIZE + 1
-    counts: Dict[int, int] = {}
-    errors: List[BaseException] = []
-
-    def provider(scraper: JavBusScraper, page: int) -> List[str]:
-        if page != request_page:
-            return []
-        try:
-            ids = scraper.get_ids_from_studio(ref, page)
-        except Exception as e:
-            errors.append(e)
-            raise
-        counts[page] = len(ids)
-        return ids
-
-    results = _javbus_keyword_search(
-        label, JAVBUS_LIST_PAGE_SIZE, offset, status_callback, result_callback,
-        ids_provider=provider,
-    )
-    if errors:
-        logger.error('maker %s list failed: %s: %s', maker_key, type(errors[0]).__name__, errors[0])
-        return MakerSearchResult([], False, 'maker_unreachable')
-    if not counts.get(request_page):
-        logger.info('maker %s page %d empty', maker_key, request_page)
-        return MakerSearchResult([], False, 'maker_empty')
-    has_more = counts.get(request_page, 0) >= JAVBUS_LIST_PAGE_SIZE
-    return MakerSearchResult(results, has_more, None)
-
-
-def _fuzzy_one(
-    source: str,
-    query: str,
-    limit: int,
-    offset: int,
-    status_callback: Optional[Callable[[str, str], None]],
-    result_callback: Optional[Callable[[int, Any], None]],
-    discovery_only: bool = False,
-) -> List[Dict[str, Any]]:
-    """統一 adapter：將兩個 keyword 入口歸一為 list[dict]（空 → []，永不回 None）。
-
-    Caller must already have confirmed DMM is enabled before passing 'dmm' here.
-
-    discovery_only semantics: only javbus has a stub-return mode; all other sources
-    perform full enrichment and therefore must NOT participate when discovery_only=True.
-    """
-    if discovery_only and source != 'javbus':
-        return []
-
-    if source == 'dmm':
-        if status_callback:
-            status_callback('dmm', 'searching')
-        dmm_scraper = DMMScraper()
-        result = _dmm_keyword_search_progressive(
-            dmm_scraper, query, limit, status_callback, result_callback, offset=offset
-        )
-        result = result if result is not None else []
-        for d in result:
-            d['_source'] = 'dmm'  # 鏡像 javbus（search_jav L354）：模糊結果補內部來源標記
-        return result
-
-    if source == 'javbus':
-        return _javbus_keyword_search(
-            query, limit, offset, status_callback, result_callback,
-            discovery_only=discovery_only,
-        )
-
-    return []
-
-
-def _fuzzy_search_chain(
-    query: str,
-    limit: int = 20,
-    offset: int = 0,
-    status_callback: Optional[Callable[[str, str], None]] = None,
-    result_callback: Optional[Callable[[int, Any], None]] = None,
-    discovery_only: bool = False,
-) -> List[Dict[str, Any]]:
-    """Active-Row-ordered fuzzy fallback chain (CD-plan-65-5).
-
-    Iterates get_all_source_ids_ordered() ∩ FUZZY_SEARCH_SOURCES in order.
-    Stops at first non-empty result. Passes result_callback only to the first
-    actually-dispatched source (seed rule). Returns [] when chain is exhausted.
-    """
-    chain = [s for s in get_all_source_ids_ordered() if s in FUZZY_SEARCH_SOURCES]
-    first_dispatched = False
-    for source in chain:
-        if source == 'dmm' and not is_source_enabled('dmm'):
-            continue  # 不可達，跳過（不算 dispatched）
-        cb = result_callback if not first_dispatched else None
-        results = _fuzzy_one(
-            source, query, limit, offset, status_callback, cb,
-            discovery_only=discovery_only,
-        )
-        first_dispatched = True  # 第一個實際發動後，後續 seed 不送
-        if results:
-            return results
-    return []
+    return JavBusProvider().run_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
 
 
 def search_actress(
@@ -867,15 +530,8 @@ def search_actress(
     result_callback: Optional[Callable[[int, Any], None]] = None,
     discovery_only: bool = False,
 ) -> List[Dict[str, Any]]:
-    """女優搜尋 — thin wrapper delegating to _fuzzy_search_chain."""
-    return _fuzzy_search_chain(
-        name,
-        limit=limit,
-        offset=offset,
-        status_callback=status_callback,
-        result_callback=result_callback,
-        discovery_only=discovery_only,
-    )
+    """女優搜尋（175a-T7：經 relay 接力；來源與順序由註冊表＋設定頁順序決定）"""
+    return search_by_intent("actress", name, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
 
 
 def search_jav321_keyword(keyword: str, limit: int = 20, status_callback: Optional[Callable[[str, str], None]] = None) -> List[Dict[str, Any]]:
@@ -931,7 +587,7 @@ def _get_uncensored_sources(search_term: str) -> list[str]:
     return mt_pick + builtin
 
 
-def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
+def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
     """
     智慧搜尋：自動判斷搜尋類型並執行
 
@@ -941,6 +597,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         offset: 分頁偏移
         status_callback: 狀態回調函數
         uncensored_mode: 無碼模式（只搜 AVSOX / FC2）
+        resolve_makers: 互動搜尋才傳 True（175b 接線）；預設不讀片庫、不辨識片商
     """
     query = query.strip()
 
@@ -1002,8 +659,16 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
             r['_mode'] = 'uncensored'
         return results
 
+    # 查詢分類（175a-T7：core.query_intent.classify_query；兩道前置閘留在其前）
+    from core.query_intent import classify_query
+    from core.maker_names import known_makers
+    known = known_makers() if resolve_makers else frozenset()
+    intent = classify_query(query, known, resolve_makers=resolve_makers)
+    if intent.mode == 'maker':
+        raise NotImplementedError('maker intent is not wired in 175a')
+
     # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
-    if is_number_format(target):
+    if intent.mode == 'exact':
         query = normalize_number(target)
         if offset > 0:
             return []
@@ -1029,14 +694,14 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         return []
 
     # 2. 局部搜尋
-    elif is_partial_number(query):
+    elif intent.mode == 'partial':
         if offset > 0: return []
         results = search_partial(query, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
         for r in results: r['_mode'] = 'partial'
         return results
 
     # 3. 前綴搜尋
-    elif is_prefix_only(query):
+    elif intent.mode == 'prefix':
         results = search_prefix(query, limit=limit, offset=offset, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
         mode = 'prefix'
 
@@ -1058,7 +723,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
 
     # 4. 女優/關鍵字搜尋
     else:
-        # CD-plan-65-5: chain = get_all_source_ids_ordered() ∩ FUZZY_SEARCH_SOURCES.
+        # CD-plan-65-5: chain = 設定頁順序 ∩ search_providers 註冊表（175a-T7）。
         # Chain result (including []) is final — "Active Row order is truth".
         # No post-chain fallback: a hardcoded jav321 fallback here would bypass Active Row
         # order and run jav321 a second time if it was already in the chain.

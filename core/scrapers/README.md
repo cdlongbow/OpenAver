@@ -13,8 +13,8 @@
 |---------|--------|-----------|---------------|------------|---------|------------|-----------|------|
 | `dmm` | DMM | ✅ | ✅ | ❌ | ⚠️ 依地區 | ❌ | ❌ | GraphQL API；部分地區需日本 IP（VPN/proxy）；數位 PPV 新片優先；封面高畫質 |
 | `javbus` | JavBus | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 直打 detail URL；封面無浮水印但**僅右半裁切**；~~搜尋端點 `/search/` 已 404~~ → **2026-08-29 實測回 200、30 筆**（variant 探查於 spec-85 移除是產品決定，與端點死活無關，見 §2 與陷阱表） |
-| `jav321` | Jav321 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | keyword 搜尋恆回空，故不入 FUZZY_SEARCH_SOURCES |
-| `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | 網頁有／API 無 | 重複 keyword 呼叫觸發 Cloudflare ban，故不入 FUZZY_SEARCH_SOURCES；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
+| `jav321` | Jav321 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | keyword 搜尋恆回空，故不註冊為 search provider |
+| `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | 網頁有／API 無 | 重複 keyword 呼叫觸發 Cloudflare ban，故不註冊為 search provider；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
 | `javlibrary` | JavLibrary | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | **manual_only**：不進 SOURCE_ORDER fan-out；exact-only（CD-70b）；需 CfTransport（桌面版限定）；封面 hotlink DMM CDN（`pl.jpg`，同 dmm 無浮水印）；手動版本切換：**eager 全抓、新片優先、三手動入口（lightbox/search/switch-source）多版本皆出切換器**（spec-86 done，含 T7 switch-source follow-on） |
 
 ### 1.2 無碼來源（UNCENSORED_SOURCES）
@@ -35,7 +35,7 @@ core/scrapers/utils.py
   UNCENSORED_SOURCES  = ['d2pass', 'heyzo', 'fc2', 'avsox']  (+ fc-javten append)
   SOURCE_ORDER        = CENSORED_SOURCES + UNCENSORED_SOURCES  # 8 elem，不含 javlibrary
   PROXY_SOURCES       = {'dmm'}  # 可能需日本 IP 的來源（依地區；非「必須有 proxy」），DMM 是否啟用只看來源膠囊
-  FUZZY_SEARCH_SOURCES = ['javbus', 'dmm']
+  （模糊搜尋來源不在此檔：見 core/search_providers/registry.py 註冊表）
 ```
 
 > `javlibrary` 在 `SOURCE_ORDER` 建立後才 `append` 進 `CENSORED_SOURCES`，確保不污染 fan-out 排序（CD-70b-10）。
@@ -86,11 +86,11 @@ core/scrapers/utils.py
 | **exact** | `is_number_format(query)` — 完整番號（SONE-205） | `search_jav_single_source(query, sid)` × enabled sources | 依 `get_enabled_source_ids()` 優先序串接直打，命中即回（early-return），不等其他來源 |
 | **partial** | `is_partial_number(query)` — 縮略番號（MIDV-01） | `search_partial()` → JavBus 固定 | 能力約束：只有 JavBus 能做番號前綴枚舉；非技術債，不動 |
 | **prefix** | `is_prefix_only(query)` — 純前綴（MIDV） | `search_prefix()` → JavBus `get_ids_from_search(type=1)` | 同上，JavBus 固定；fallback 依序試 actress → keyword |
-| **actress/keyword** | 其餘 | `_fuzzy_search_chain()` → FUZZY_SEARCH_SOURCES | Active-Row 順序選引擎，always-on（見 §3.2） |
+| **actress/keyword** | 其餘 | `search_actress()` → `relay.search_by_intent`（註冊表） | Active-Row 順序選引擎，always-on（見 §3.2） |
 
 ### 3.2 Fuzzy Chain Always-On（CD-65-4）
 
-`FUZZY_SEARCH_SOURCES = ['javbus', 'dmm']` 是**能力白名單**，不跟隨 enabled 開關：
+search_providers 註冊表（`javbus`、`dmm`）是**能力白名單**，不跟隨 enabled 開關：
 
 - 使用 `get_all_source_ids_ordered()`（含停用來源），而非 `get_enabled_source_ids()`。
 - 理由：metatube 等其他來源不具模糊能力；javbus / dmm 是「模糊引擎」角色，與主來源開關正交。
