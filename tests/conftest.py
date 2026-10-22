@@ -611,6 +611,18 @@ def no_entity_lookup(monkeypatch):
     monkeypatch.setattr("core.search_providers.javbus.JavBusProvider.resolve", lambda self, kind, name: None)
     monkeypatch.setattr("core.search_providers.dmm.DMMProvider.resolve", lambda self, kind, name: None)
     monkeypatch.setattr("core.search_providers.dmm.DMMProvider._resolve_maker", lambda self, names: None)
+    # 175d：relay 的多代號／換名可選方法同樣是「名稱→實體」查詢，一併換成「查無」（0 請求）
+    monkeypatch.setattr("core.search_providers.javbus.JavBusProvider.resolve_all", lambda self, kind, name: [])
+    monkeypatch.setattr("core.search_providers.javdb.JavDBProvider.alt_names", lambda self, kind, name: [])
+
+
+# ============ TASK-175d-T2：本機女優別名表的隔離 ============
+# 接力會讀使用者資料庫的別名表（`actor_names.load_alias_groups`）；依賴「別名展開」以外行為的測試用它把別名表換成空，
+# 不讓本機 DB 內容影響結果。opt-in（非 autouse），只 patch 既有屬性。
+@pytest.fixture
+def no_actor_aliases(monkeypatch):
+    """opt-in（非 autouse）：本機別名表回 []（不讀 DB）。"""
+    monkeypatch.setattr("core.search_providers.actor_names.load_alias_groups", lambda *a, **k: [])
 
 
 # ============ TASK-175c-T8：DMM 官方番號 facts 的隔離（R14 測試遷移）====

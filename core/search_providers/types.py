@@ -117,6 +117,11 @@ class Provider(Protocol):
         """管線掛鉤：把 WorkItem 補成結果卡（legacy dict）＋成員資格事實。"""
         ...
 
+    # 可選方法與屬性（175d；Protocol 不強制，沒有就視為不支援，relay 以 getattr 探測；DMM 不實作）：
+    #   resolve_all(kind, name) -> list[EntityRef]   名字 → 全部對應實體（JavBus：同名女優的有碼／無碼代號，有碼在前）
+    #   alt_names(kind, name) -> list[str]           名字 → 換名候選（JavDB：日文正名＋other_name 的非拉丁 token）
+    #   list_chunk: int                              一次取頁的單位筆數（JavBus 30、JavDB 50）
+
 
 class MakerSearchResult(NamedTuple):
     """片商最新作品的回覆（173）；欄位與順序不可變。"""

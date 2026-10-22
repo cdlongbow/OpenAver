@@ -123,7 +123,7 @@ def _sorted(cards):
 
 # ---------------------------------------------------------------- 名稱→實體（175c-T3，plan CD-175c-3）
 _RESOLVE_CACHE_MAX = 1024
-_RESOLVE_CACHE: dict[tuple[str, str], EntityRef | None] = {}
+_RESOLVE_CACHE: dict[tuple[str, str], tuple[EntityRef, ...]] = {}
 _ENTITY_SEGMENT = {Kind.SERIES: "series", Kind.DIRECTOR: "director", Kind.LABEL: "label"}
 # 實體 kind → Video.entity_ids 的鍵（守衛 belongs 與實體清單的 kind 範圍共用這一張表）
 _ENTITY_KEY = {Kind.ACTOR: "actors", Kind.DIRECTOR: "director", Kind.SERIES: "series", Kind.LABEL: "label"}
@@ -138,24 +138,24 @@ def _same_name(candidate, wanted) -> bool:
     return fold(candidate) == fold(wanted)
 
 
-def _pick_star(cards, wanted):
-    """searchstar 候選中同名者：有碼記錄優先，再取頁面順序第一；沒有同名 → None。"""
+def _pick_stars(cards, wanted):
+    """searchstar 候選中同名者：有碼、無碼各取頁面順序第一筆，有碼在前（最多 2 筆）；沒有同名 → []。"""
     exact = [c for c in cards if _same_name(c.name, wanted)]
-    if not exact:
-        return None
-    return min(exact, key=lambda c: c.uncensored)
+    censored = [c for c in exact if not c.uncensored][:1]
+    uncensored = [c for c in exact if c.uncensored][:1]
+    return censored + uncensored
 
 
-def _resolve_cached(kind: Kind, name: str, lookup) -> EntityRef | None:
-    """(kind, 折疊名) → 結果的模組層快取；只記「確定命中／確定查無」，lookup 的例外原樣往外丟、不入快取（BE-PY-03）。"""
+def _resolve_cached(kind: Kind, name: str, lookup) -> tuple[EntityRef, ...]:
+    """(kind, 折疊名) → 結果 tuple 的模組層快取（空 tuple＝確定查無）；只記確定結果，lookup 的例外原樣往外丟、不入快取（BE-PY-03）。"""
     key = (kind.value, fold(name))
     if key in _RESOLVE_CACHE:
         return _RESOLVE_CACHE[key]
-    ref = lookup()
+    refs = tuple(lookup())
     if len(_RESOLVE_CACHE) >= _RESOLVE_CACHE_MAX:
         _RESOLVE_CACHE.clear()
-    _RESOLVE_CACHE[key] = ref
-    return ref
+    _RESOLVE_CACHE[key] = refs
+    return refs
 
 
 _PROBE_PREFIXES = 2
@@ -211,24 +211,29 @@ class JavBusProvider:
                               Kind.PARTIAL, Kind.KEYWORD})
     supports_discovery = True
     fallback_streaming = False  # 補完詳情後 _sorted（日期）重排，串流順序≠最終順序
+    list_chunk = PAGE_SIZE
 
     # ------------------------------------------------------------ Protocol
     def resolve(self, kind: Kind, name: str) -> EntityRef | None:
-        """女優／系列／導演／label 名稱 → 站上同一個實體；MAKER／CODE／PARTIAL／KEYWORD 與空白輸入 → None（0 請求）。
+        """女優／系列／導演／label 名稱 → 站上同一個實體（有碼優先的第一筆）；MAKER／CODE／PARTIAL／KEYWORD 與空白輸入 → None（0 請求）。
 
         一律走 /ja（與 UI 語言無關）；傳輸只經 search_stars／fetch_entity_link 兩個方法名。例外原樣往外丟。
         """
-        if (kind is not Kind.ACTOR and kind not in _ENTITY_SEGMENT) or not fold(name):
-            return None
-        return _resolve_cached(kind, name, lambda: self._lookup(kind, name))
+        refs = self.resolve_all(kind, name)
+        return refs[0] if refs else None
 
-    def _lookup(self, kind: Kind, name: str) -> EntityRef | None:
+    def resolve_all(self, kind: Kind, name: str) -> list[EntityRef]:
+        """可選方法（175d）：女優 → 同名的有碼／無碼代號（有碼在前，最多 2 筆）；系列／導演／label ≤1 筆；其餘與空白 → []（0 請求）。"""
+        if (kind is not Kind.ACTOR and kind not in _ENTITY_SEGMENT) or not fold(name):
+            return []
+        return list(_resolve_cached(kind, name, lambda: self._lookup(kind, name)))
+
+    def _lookup(self, kind: Kind, name: str) -> tuple[EntityRef, ...]:
         scraper = self._entity_scraper()
         if kind is Kind.ACTOR:
-            star = _pick_star(scraper.search_stars(name), name)
-            return None if star is None else EntityRef(Kind.ACTOR, star.id, star.name)
+            return tuple(EntityRef(Kind.ACTOR, s.id, s.name) for s in _pick_stars(scraper.search_stars(name), name))
         found = scraper.fetch_entity_link(name, _ENTITY_SEGMENT[kind])
-        return None if found is None else EntityRef(kind, found[0], found[1])
+        return () if found is None else (EntityRef(kind, found[0], found[1]),)
 
     def list_entity(self, ref: EntityRef, w: Window) -> Page:
         if ref.kind is Kind.CODE:

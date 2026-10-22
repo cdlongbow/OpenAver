@@ -162,6 +162,7 @@ _SPLIT = re.compile(r"[,、，/／]")
 _SERIES_MIN_VIDEOS = 5
 _RESOLVE_CACHE_MAX = 1024
 _RESOLVE_CACHE: dict[tuple[str, str], EntityRef | None] = {}
+_ALT_NAMES_CACHE: dict[tuple[str, str], tuple[str, ...]] = {}  # 與 _RESOLVE_CACHE 同鍵、同一次請求寫入（175d）
 _SEARCH_TYPE = {
     Kind.ACTOR: "actor",
     Kind.SERIES: "series",
@@ -224,8 +225,31 @@ def _keep_newer(items):
     return list(best.values())
 
 
-def clear_resolve_cache() -> None:
+def _clear_caches() -> None:
     _RESOLVE_CACHE.clear()
+    _ALT_NAMES_CACHE.clear()
+
+
+def clear_resolve_cache() -> None:
+    _clear_caches()
+
+
+def actor_alt_names(cand: Candidate) -> list[str]:
+    """候選 → 可拿去別家比對的名字：name 永遠第一；other_name 切出的 token 丟純 ASCII（羅馬字／數字）者；
+    name_zht 不納入；以 fold 去重保序。"""
+    tokens = [cand.name, *_SPLIT.split(cand.other_name)]
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, raw in enumerate(tokens):
+        token = raw.strip()
+        if i > 0 and token.isascii():
+            continue
+        key = fold(token)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+    return out
 
 
 def _names(c: Candidate) -> list[str]:
@@ -292,6 +316,7 @@ class JavDBProvider:
     supports_discovery = False
     # 補完詳情後依日期重排，串流順序≠最終順序（BE-DATA-20）
     fallback_streaming = False
+    list_chunk = PAGE_SIZE
 
     def __init__(self, scraper=None):
         self._scraper_obj = scraper
@@ -342,9 +367,20 @@ class JavDBProvider:
         if cand is not None:
             ref = EntityRef(kind, cand.name if kind is Kind.CODE else cand.id, cand.name)
         if len(_RESOLVE_CACHE) >= _RESOLVE_CACHE_MAX:
-            _RESOLVE_CACHE.clear()
+            _clear_caches()
         _RESOLVE_CACHE[key] = ref
+        if kind is Kind.ACTOR:
+            _ALT_NAMES_CACHE[key] = () if cand is None else tuple(actor_alt_names(cand))
         return ref
+
+    def alt_names(self, kind: Kind, q: str) -> list[str]:
+        """可選方法（175d）：女優的別名候選（日文正名＋other_name 非拉丁 token）；只支援 ACTOR，其餘 → []。
+        與 resolve 共用同一次候選搜尋（不另發請求）。"""
+        if kind is not Kind.ACTOR or not fold(q):
+            return []
+        key = (kind.value, maker_key_of(q))
+        self.resolve(kind, q)  # 填滿兩份快取；例外原樣往外丟
+        return list(_ALT_NAMES_CACHE.get(key, ()))
 
     # ------------------------------------------------------------ 清單
     def list_entity(self, ref: EntityRef, w: Window) -> Page:
