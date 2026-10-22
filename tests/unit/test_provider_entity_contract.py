@@ -46,12 +46,10 @@ class SyncExecutor:
 
 @pytest.fixture(autouse=True)
 def _isolation(monkeypatch):
-    """pipeline 每部詳情後 sleep：換掉；執行緒池換成同步（完成順序＝提交順序）；maker 接力的行程內 LRU 前後都清。"""
+    """pipeline 每部詳情後 sleep：換掉；執行緒池換成同步（完成順序＝提交順序）；maker 接力已無行程內記憶（175d 起由請求帶的 token 釘住）。"""
     monkeypatch.setattr(time, "sleep", lambda s: None)
     monkeypatch.setattr(cf, "ThreadPoolExecutor", SyncExecutor)
-    relay._reset_maker_answerers()
     yield
-    relay._reset_maker_answerers()
 
 
 def _set_chain(monkeypatch, order, enabled=None):

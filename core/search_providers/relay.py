@@ -7,18 +7,20 @@
 - seed 規則（CD-175a-4 I-S3）：第一個發動的 provider 一律拿得到 callback（同今天 first_dispatched）；之後的 provider
   只有「尚未真的送出 seed（slot == -1 被轉送）且 fallback_streaming」才拿得到，否則 None（避免後備改變最終順序）。
 - relay 自己不送 status 事件（唯一例外：宣告實體能力的 provider 的實體梯子，見 _entity_ladder）、不補 `_source`、不排序。
+- 續頁（CD-175d-8）：回覆非空時把 token（cursor.py）寫進 meta['cursor']／meta['answered_by']；`offset>0` 時只讀請求帶來的
+  cursor——缺／壞／k 與 mode 不符／p 不在鏈上 ⇒ 空、零 provider 呼叫；有效 ⇒ 只問 p，k=entity 直接用 token 內的 refs 與位置取頁，
+  不 resolve、不別名展開、不換名。伺服器零答覆記憶（模組層沒有任何可變容器）。
 頂層只准 stdlib、core.logger、core.scrapers.errors、core.search_providers.*（BE-PY-08）。
 """
 
 from __future__ import annotations
 
-import threading
-from collections import OrderedDict
 from typing import NamedTuple
 
 from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked
 from core.search_providers import actor_names, registry
+from core.search_providers import cursor as cursor_codec
 from core.search_providers.pipeline import merge_windows, run_window
 from core.search_providers.types import EntityRef, Kind, MakerSearchResult, Window
 
@@ -209,29 +211,109 @@ def _entity_ladder(provider, names: _ActorNames, w: Window, cb, status_callback=
     return None
 
 
-def _ask(provider, mode, q, w, status_callback, cb, discovery_only, names=None) -> list[dict]:
-    if mode == "actress":
-        if not discovery_only:
-            hit = _entity_ladder(provider, names, w, cb, status_callback)
-            if hit is not None:
-                return hit.cards
-        kind = Kind.KEYWORD
-    else:
-        kind = _MODE_KIND[mode]
+def _run_keyword(provider, mode, q, w, status_callback, cb, discovery_only) -> list[dict]:
+    kind = Kind.KEYWORD if mode == "actress" else _MODE_KIND[mode]
     return provider.run(
         kind, q, w, status_callback=status_callback, result_callback=cb, discovery_only=discovery_only
     )
 
 
-def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, discovery_only=False) -> list[dict]:
-    """mode ∈ partial／prefix／actress；其他 ⇒ ValueError。"""
+def _ask(provider, mode, q, w, status_callback, cb, discovery_only, names=None) -> _LadderHit:
+    """一家 provider 的回答。梯子命中的 refs／positions 會原樣帶出（供寫 token）；KEYWORD／前綴／局部的 refs 為空。"""
+    if mode == "actress" and not discovery_only:
+        hit = _entity_ladder(provider, names, w, cb, status_callback)
+        if hit is not None:
+            return hit
+    cards = _run_keyword(provider, mode, q, w, status_callback, cb, discovery_only)
+    return _LadderHit(cards, provider.id, [], [])
+
+
+# ---------------------------------------------------------------- 續頁 token（CD-175d-8）
+def _token_of(hit: _LadderHit) -> str:
+    if hit.refs:
+        refs = tuple((ref.kind.value, ref.id, pos) for ref, pos in zip(hit.refs, hit.positions, strict=True))
+        return cursor_codec.encode(cursor_codec.Token(hit.provider_id, cursor_codec.KIND_ENTITY, refs))
+    return cursor_codec.encode(cursor_codec.Token(hit.provider_id, cursor_codec.KIND_KEYWORD))
+
+
+def _publish(meta, provider_id: str, cards, token: str) -> None:
+    """非空回覆才寫 meta；空回覆不寫（否則載入更多會被釘在沒回答過的那一家）。"""
+    if meta is None or not cards:
+        return
+    meta["cursor"] = token
+    meta["answered_by"] = provider_id
+
+
+def _allowed_token_kinds(mode: str) -> tuple[str, ...]:
+    """k 與呼叫 mode 不符 ⇒ 無效（Q1）：prefix／partial 只收 keyword；actress 收 entity｜keyword。"""
+    if mode == "actress":
+        return (cursor_codec.KIND_ENTITY, cursor_codec.KIND_KEYWORD)
+    return (cursor_codec.KIND_KEYWORD,)
+
+
+def _decode_pin(mode, cursor):
+    token = cursor_codec.decode(cursor)
+    return token if token is not None and token.k in _allowed_token_kinds(mode) else None
+
+
+def _continue_entity(provider, pin, w: Window, cb, status_callback) -> _LadderHit:
+    """k=entity 的續頁：refs 與位置全來自 token（不用 w.offset），不 resolve、不別名展開、不換名。"""
+    refs = [EntityRef(Kind(kind), rid, "") for kind, rid, _ in pin.refs]
+    positions = [pos for _, _, pos in pin.refs]
+    if all(pos < 0 for pos in positions):
+        return _no_cards(provider)
+    if len(refs) == 1:
+        page = provider.list_entity(refs[0], Window(positions[0], w.limit))
+        items = page.items
+        new_positions = [positions[0] + len(items) if page.has_next else -1]
+    else:
+        merged = merge_windows(provider, refs, positions, w.limit)
+        items, new_positions = merged.items, merged.new_positions
+    res = run_window(provider, items, refs[0], result_callback=cb, guard=True)
+    if not res.cards:
+        return _no_cards(provider)
+    if status_callback is not None:
+        status_callback("done", f"found:{len(res.cards)}")
+    return _LadderHit(res.cards, provider.id, refs, new_positions)
+
+
+def _continue_search(pin, mode, q, w, providers, status_callback, result_callback, discovery_only, meta) -> list[dict]:
+    """offset>0 且 token 有效：鏈過濾成 [p]；p 不在鏈上、或被釘的那一家例外 ⇒ []（沒有更多，絕不換家）。"""
+    provider = next((p for p in providers if p.id == pin.p), None)
+    if provider is None:
+        return []
+    cb = _SeedGate(result_callback).callback
+    try:
+        if pin.k == cursor_codec.KIND_ENTITY:
+            hit = _continue_entity(provider, pin, w, cb, status_callback)
+        else:
+            cards = _run_keyword(provider, mode, q, w, status_callback, cb, discovery_only)
+            hit = _LadderHit(cards, provider.id, [], [])
+    except Exception as exc:
+        logger.warning(
+            "relay: pinned %s failed on load-more (%s%s)",
+            provider.id, type(exc).__name__, "/blocked" if isinstance(exc, SourceBlocked) else "",
+        )
+        return []
+    _publish(meta, hit.provider_id, hit.cards, _token_of(hit))
+    return hit.cards
+
+
+def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, discovery_only=False,
+                     cursor=None, meta=None) -> list[dict]:
+    """mode ∈ partial／prefix／actress；其他 ⇒ ValueError。cursor／meta 見模組說明（僅 offset>0 才讀 cursor）。"""
     if mode == "actress":
         kinds = {Kind.KEYWORD, *_ENTITY_KINDS}
     elif mode in _MODE_KIND:
         kinds = {_MODE_KIND[mode]}
     else:
         raise ValueError(f"unknown search mode: {mode!r}")
+    pin = _decode_pin(mode, cursor) if w.offset > 0 else None
+    if w.offset > 0 and pin is None:
+        return []
     providers = registry.providers_for(kinds, discovery_only=discovery_only)
+    if pin is not None:
+        return _continue_search(pin, mode, q, w, providers, status_callback, result_callback, discovery_only, meta)
     chain_ids = [p.id for p in providers]
     names = _ActorNames(q, providers) if mode == "actress" else None
     gate = _SeedGate(result_callback)
@@ -241,15 +323,16 @@ def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, 
             raise TypeError(f"provider {provider_id!r} has no run()")
         cb = None if gate.seeded or (index and not _streams_as_fallback(provider)) else gate.callback
         try:
-            cards = _ask(provider, mode, q, w, status_callback, cb, discovery_only, names)
+            hit = _ask(provider, mode, q, w, status_callback, cb, discovery_only, names)
         except Exception as exc:
             logger.warning(
                 "relay: %s failed (%s%s), trying next of %s",
                 provider_id, type(exc).__name__, "/blocked" if isinstance(exc, SourceBlocked) else "", chain_ids,
             )
             continue
-        if cards:
-            return cards
+        _publish(meta, provider_id, hit.cards, _token_of(hit))
+        if hit.cards:
+            return hit.cards
     return []
 
 
@@ -262,48 +345,39 @@ def _merge_maker_codes(codes: list[str | None]) -> str:
     return "maker_not_found"
 
 
-_MAKER_ANSWERERS_MAX = 128
-_MAKER_ANSWERERS: OrderedDict = OrderedDict()  # (maker_key, limit) -> 第一頁實際回答的 provider id（LRU，只在記憶體）
-_MAKER_ANSWERERS_LOCK = threading.Lock()
+def _maker_token(provider_id: str) -> str:
+    return cursor_codec.encode(cursor_codec.Token(provider_id, cursor_codec.KIND_MAKER))
 
 
-def _reset_maker_answerers() -> None:
-    with _MAKER_ANSWERERS_LOCK:
-        _MAKER_ANSWERERS.clear()
+def _maker_pin(cursor):
+    token = cursor_codec.decode(cursor)
+    return token if token is not None and token.k == cursor_codec.KIND_MAKER else None
 
 
-def _note_maker_answerer(key, provider_id: str) -> None:
-    with _MAKER_ANSWERERS_LOCK:
-        _MAKER_ANSWERERS[key] = provider_id
-        _MAKER_ANSWERERS.move_to_end(key)
-        while len(_MAKER_ANSWERERS) > _MAKER_ANSWERERS_MAX:
-            _MAKER_ANSWERERS.popitem(last=False)
-
-
-def _recall_maker_answerer(key) -> str | None:
-    with _MAKER_ANSWERERS_LOCK:
-        pid = _MAKER_ANSWERERS.get(key)
-        if pid is not None:
-            _MAKER_ANSWERERS.move_to_end(key)
-        return pid
+def _maker_chain(offset, cursor):
+    """回 (providers 或 None, 終點結果或 None)。offset>0 ⇒ 只認有效 maker token：缺／壞／p 不在鏈上 ⇒ maker_unreachable。"""
+    providers = registry.providers_for({Kind.MAKER})
+    if offset > 0:
+        pin = _maker_pin(cursor)
+        providers = [p for p in providers if pin is not None and p.id == pin.p]
+        if not providers:
+            return None, MakerSearchResult([], False, "maker_unreachable")
+    if not providers:
+        return None, MakerSearchResult([], False, "maker_not_found")
+    return providers, None
 
 
 def search_maker(maker_key, label, spellings, offset, *, limit=None, titles, today, status_callback=None,
-                 result_callback=None, db_path=None) -> MakerSearchResult:
+                 result_callback=None, db_path=None, cursor=None, meta=None) -> MakerSearchResult:
     """片商最新作品的接力（175b-T8b）：鏈＝providers_for({MAKER})，逐家 run_maker。
 
     I-M2（同一份清單不得中途換家）：非空 ⇒ 回；maker_empty ⇒ 終點；offset>0 的 unreachable／例外 ⇒ 終點；
     其餘（not_found／no_sample／offset==0 的 unreachable／例外）記下並換下一家。
-    offset==0 非空時記下回答者（key＝(maker_key, limit)）；offset>0 命中記錄 ⇒ 只問那一家（175b-F1）。"""
-    providers = registry.providers_for({Kind.MAKER})
-    answerer_key = (maker_key, limit)
-    pinned = _recall_maker_answerer(answerer_key) if offset > 0 else None
-    if pinned is not None:  # 載入更多固定問第一頁回答的那一家；它不在鏈上 ⇒ 終點，不換家
-        providers = [p for p in providers if p.id == pinned]
-        if not providers:
-            return MakerSearchResult([], False, "maker_unreachable")
-    if not providers:
-        return MakerSearchResult([], False, "maker_not_found")
+    offset>0 只問 cursor（k=maker）裡的那一家（CD-175d-8）；cursor 缺／壞 ⇒ maker_unreachable、零呼叫。
+    非空回覆寫 meta['cursor']／meta['answered_by']。"""
+    providers, ended = _maker_chain(offset, cursor)
+    if ended is not None:
+        return ended
     chain_ids = [p.id for p in providers]
     gate = _SeedGate(result_callback)
     codes: list[str | None] = []
@@ -324,9 +398,8 @@ def search_maker(maker_key, label, spellings, offset, *, limit=None, titles, tod
                 return MakerSearchResult([], False, "maker_unreachable")
             codes.append("maker_unreachable")
             continue
+        _publish(meta, provider.id, res.results, _maker_token(provider.id))
         if res.results:
-            if offset == 0:
-                _note_maker_answerer(answerer_key, provider.id)
             return res
         if res.error_code is None:
             return res  # 認得、也列出了（詳情全缺）：同 maker_empty，終點（173 行為不變）

@@ -283,7 +283,14 @@ def test_first_click_resolves_from_library_titles(client, env):
 
 # ---------------- REST paging / has_more ----------------
 
-def test_second_page_reports_has_more_from_request_page(client, env):
+def test_second_page_reports_has_more_from_request_page(client, env, monkeypatch):
+    # 175d-T5～T6 之間的橋接：REST 還沒有 cursor 參數，路由呼叫 search_maker_latest 時補上有效 maker token（T6 換成真 query 參數後移除）
+    from core.search_providers import cursor as cursor_codec
+    from web.routers import search as search_router
+
+    token = cursor_codec.encode(cursor_codec.Token("javbus", "maker"))
+    real = search_router.search_maker_latest
+    monkeypatch.setattr(search_router, "search_maker_latest", lambda *a, **kw: real(*a, **kw, cursor=token))
     five_s1(env)
     with maker_patches(studio=studio_pages({1: nums(30), 2: nums(30, 100)})) as m:
         body = rest(client, offset=30).json()

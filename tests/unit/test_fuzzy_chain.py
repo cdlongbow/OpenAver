@@ -536,13 +536,19 @@ def _mk_detail(missing=(), dates=None):
     return fake
 
 
-def _mk_call(offset=0):
+def _mk_call(offset=0, cursor=None):
     from core.scraper import search_maker_latest
     return search_maker_latest(
         'mk', '片商', ['片商'], offset,
         titles=[], today=_MK_TODAY,
-        status_callback=None, result_callback=None, db_path=None,
+        status_callback=None, result_callback=None, db_path=None, cursor=cursor,
     )
+
+
+def _mk_token(provider_id='javbus'):
+    """載入更多帶的續頁 token（k=maker；175d）。"""
+    from core.search_providers import cursor as cursor_codec
+    return cursor_codec.encode(cursor_codec.Token(provider_id, 'maker'))
 
 
 def _run_maker(offset=0, studio_side_effect=None, detail=None, resolution=None):
@@ -551,7 +557,7 @@ def _run_maker(offset=0, studio_side_effect=None, detail=None, resolution=None):
          patch.object(JavBusScraper, 'get_ids_from_studio',
                       side_effect=studio_side_effect) as st, \
          patch('core.scraper.search_jav', side_effect=detail or _mk_detail()) as sj:
-        out = _mk_call(offset)
+        out = _mk_call(offset, cursor=_mk_token() if offset > 0 else None)
     return out, res, st, sj
 
 
@@ -593,7 +599,7 @@ class TestMakerLatestPipeline:
              patch.object(JavBusScraper, '_parse_search_ids', return_value=nums), \
              patch('core.scraper.resolve_maker_studio', return_value=_mk_found()), \
              patch('core.scraper.search_jav', side_effect=_mk_detail()):
-            out = _mk_call(30)
+            out = _mk_call(30, cursor=_mk_token())
         list_gets = [c for c in fake_session.get.call_args_list if '/studio/' in str(c.args[0])]
         assert len(list_gets) == 1
         assert list_gets[0].args[0].endswith('/studio/7q/2')

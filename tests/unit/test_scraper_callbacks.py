@@ -163,6 +163,10 @@ class TestSearchPrefixResultCallback:
     def test_search_prefix_cross_page_boundary(self, make_mock_search_jav):
         """offset=20 + limit=20 需要跨頁抓取，不能只拿 10 筆"""
         from core.scraper import search_prefix
+        from core.search_providers import cursor as cursor_codec
+
+        # offset>0 ⇒ 載入更多必須帶有效 token（175d）
+        token = cursor_codec.encode(cursor_codec.Token('javbus', 'keyword'))
 
         # 模擬兩頁：page 1 有 30 筆，page 2 有 30 筆
         page1_ids = [f'SONE-{i:03d}' for i in range(1, 31)]   # SONE-001 ~ SONE-030
@@ -177,7 +181,7 @@ class TestSearchPrefixResultCallback:
 
         with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
              patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)):
-            results = search_prefix('SONE', limit=20, offset=20)
+            results = search_prefix('SONE', limit=20, offset=20, cursor=token)
 
         # offset=20 意味著跳過前 20 筆，應該拿到 SONE-021 ~ SONE-040（20 筆）
         assert len(results) == 20, f"Expected 20 results, got {len(results)}"

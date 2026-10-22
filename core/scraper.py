@@ -486,14 +486,15 @@ def fetch_javlib_by_detail_url(detail_url: str, number: str) -> Optional[Video]:
 def search_partial(partial: str,
                    status_callback: Optional[Callable[[str, str], None]] = None,
                    result_callback: Optional[Callable[[int, Any], None]] = None,
-                   discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """局部搜尋（175a-T7：經 relay 接力；partial 不看 limit）"""
-    return search_by_intent("partial", partial, Window(0, 0), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
+                   discovery_only: bool = False,
+                   *, cursor: Optional[str] = None, meta: Optional[dict] = None) -> List[Dict[str, Any]]:
+    """局部搜尋（175a-T7：經 relay 接力；partial 不看 limit）。cursor／meta 為 175d 續頁契約，原樣轉給 relay。"""
+    return search_by_intent("partial", partial, Window(0, 0), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only, cursor=cursor, meta=meta)
 
 
-def search_prefix(prefix: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False) -> List[Dict[str, Any]]:
-    """前綴搜尋（175a-T7：經 relay 接力）"""
-    return search_by_intent("prefix", prefix, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
+def search_prefix(prefix: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, *, cursor: Optional[str] = None, meta: Optional[dict] = None) -> List[Dict[str, Any]]:
+    """前綴搜尋（175a-T7：經 relay 接力）。cursor／meta 為 175d 續頁契約，原樣轉給 relay。"""
+    return search_by_intent("prefix", prefix, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only, cursor=cursor, meta=meta)
 
 
 def _javbus_keyword_search(
@@ -526,9 +527,11 @@ def search_maker_latest(
     status_callback: Optional[Callable[[str, str], None]] = None,
     result_callback: Optional[Callable[[int, Any], None]] = None,
     db_path=None,
+    cursor: Optional[str] = None,
+    meta: Optional[dict] = None,
 ) -> MakerSearchResult:
-    """片商最新作品（經 relay 接力，限 30 部一頁；175b-T8b）。"""
-    return search_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path)
+    """片商最新作品（經 relay 接力，限 30 部一頁；175b-T8b）。cursor／meta 為 175d 續頁契約，原樣轉給 relay。"""
+    return search_maker(maker_key, label, spellings, offset, titles=titles, today=today, status_callback=status_callback, result_callback=result_callback, db_path=db_path, cursor=cursor, meta=meta)
 
 
 def search_actress(
@@ -538,9 +541,12 @@ def search_actress(
     status_callback: Optional[Callable[[str, str], None]] = None,
     result_callback: Optional[Callable[[int, Any], None]] = None,
     discovery_only: bool = False,
+    *,
+    cursor: Optional[str] = None,
+    meta: Optional[dict] = None,
 ) -> List[Dict[str, Any]]:
-    """女優搜尋（175a-T7：經 relay 接力；來源與順序由註冊表＋設定頁順序決定）"""
-    return search_by_intent("actress", name, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
+    """女優搜尋（175a-T7：經 relay 接力；來源與順序由註冊表＋設定頁順序決定）。cursor／meta 為 175d 續頁契約。"""
+    return search_by_intent("actress", name, Window(offset, limit), status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only, cursor=cursor, meta=meta)
 
 
 def search_jav321_keyword(keyword: str, limit: int = 20, status_callback: Optional[Callable[[str, str], None]] = None) -> List[Dict[str, Any]]:
@@ -607,8 +613,10 @@ def _library_title_list(db_path):
     return logical_title_firsts(repo.get_library_title_rows(), configured_dir_uris, path_mappings)
 
 
-def _search_maker_intent(query, maker_key, limit, offset, status_callback, result_callback, meta=None):
-    """smart_search 的 maker 分支：片庫樣本＋拼法交給 relay.search_maker，逐卡標 _mode（不送 mode 事件）。"""
+def _search_maker_intent(query, maker_key, limit, offset, status_callback, result_callback, meta=None, cursor=None):
+    """smart_search 的 maker 分支：片庫樣本＋拼法交給 relay.search_maker，逐卡標 _mode（不送 mode 事件）。
+
+    meta 同時交給 relay（它寫 cursor／answered_by）；這裡只加 has_more。"""
     import datetime
 
     from core.database import get_db_path
@@ -623,7 +631,7 @@ def _search_maker_intent(query, maker_key, limit, offset, status_callback, resul
     result = search_maker(
         maker_key, query, maker_spellings(query), offset, limit=limit, titles=titles,
         today=datetime.date.today(), status_callback=status_callback,
-        result_callback=result_callback, db_path=db_path,
+        result_callback=result_callback, db_path=db_path, cursor=cursor, meta=meta,
     )
     for card in result.results:
         card['_mode'] = 'maker'
@@ -632,7 +640,7 @@ def _search_maker_intent(query, maker_key, limit, offset, status_callback, resul
     return result.results
 
 
-def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False, *, meta: Optional[dict] = None) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
+def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, resolve_makers: bool = False, *, meta: Optional[dict] = None, cursor: Optional[str] = None) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
     """
     智慧搜尋：自動判斷搜尋類型並執行
 
@@ -643,6 +651,8 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         status_callback: 狀態回調函數
         uncensored_mode: 無碼模式（只搜 AVSOX / FC2）
         resolve_makers: 互動搜尋才傳 True（175b 接線）；預設不讀片庫、不辨識片商
+        meta: 呼叫端傳入的空 dict，由 relay／maker 分支寫 has_more／cursor／answered_by
+        cursor: 上一頁回傳的續頁 token（175d）；只在 offset>0 才有作用
     """
     query = query.strip()
 
@@ -710,7 +720,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
     known = known_makers() if resolve_makers else frozenset()
     intent = classify_query(query, known, resolve_makers=resolve_makers)
     if intent.mode == 'maker':
-        return _search_maker_intent(query, intent.maker_key, limit, offset, status_callback, result_callback, meta)
+        return _search_maker_intent(query, intent.maker_key, limit, offset, status_callback, result_callback, meta, cursor)
 
     # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
     if intent.mode == 'exact':
@@ -749,14 +759,18 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
     elif intent.mode == 'prefix':
         if not registry.providers_for(_PREFIX_LADDER_KINDS):
             return []
-        results = search_prefix(query, limit=limit, offset=offset, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only)
+        results = search_prefix(query, limit=limit, offset=offset, status_callback=status_callback, result_callback=result_callback, discovery_only=discovery_only, cursor=cursor, meta=meta)
         mode = 'prefix'
+
+        # 載入更多（offset>0）時清單已經存在：前綴到底就是到底，不退到女優／jav321（那是另一份清單的第一頁；CD-175d-9）
+        if not results and offset > 0:
+            return []
 
         if not results:
              # Fallback to actress（不透傳 result_callback：prefix 的 seed 已送出，
              # actress fallback 不可送第二個 seed，避免 slot index 錯位）
              if status_callback: status_callback('mode', 'actress')
-             results = search_actress(query, limit=limit, status_callback=status_callback, discovery_only=discovery_only)
+             results = search_actress(query, limit=limit, status_callback=status_callback, discovery_only=discovery_only, meta=meta)
              if results: mode = 'actress'
 
         if not results and is_source_enabled('jav321'):
@@ -781,6 +795,8 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
             status_callback=status_callback,
             result_callback=result_callback if not discovery_only else None,
             discovery_only=discovery_only,
+            cursor=cursor,
+            meta=meta,
         )
         for r in results: r['_mode'] = 'actress'
         return results

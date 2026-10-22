@@ -15,8 +15,8 @@ import pytest
 from core.database import init_db, maker_javbus_map
 from core.scrapers import javdb_api
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.search_providers import cursor, relay
 from core.search_providers import javdb as jp
-from core.search_providers import relay
 from core.search_providers.javbus import JavBusProvider
 from core.search_providers.javdb import JavDBProvider, clear_resolve_cache
 from core.search_providers.types import MakerSearchResult
@@ -55,14 +55,12 @@ class SyncExecutor:
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     clear_resolve_cache()
-    relay._reset_maker_answerers()
     monkeypatch.setattr(jp, "_sleep", lambda s: None)
     monkeypatch.setattr(time, "sleep", lambda s: None)
     monkeypatch.setattr(cf, "ThreadPoolExecutor", SyncExecutor)
     monkeypatch.setattr(JavDBProvider, "_proxies", lambda self: None)
     yield
     clear_resolve_cache()
-    relay._reset_maker_answerers()
 
 
 @pytest.fixture
@@ -93,7 +91,12 @@ def search(offset=0, **kw):
     return relay.search_maker(*ARGS, offset, **KW, **kw)
 
 
-# ------------------------------------------------------------------ 載入更多固定同一家（175b-F1）
+def tk(provider_id):
+    """載入更多帶的續頁 token（k=maker）；175d 起伺服器不再記第一頁是誰回答的。"""
+    return cursor.encode(cursor.Token(provider_id, "maker"))
+
+
+# ------------------------------------------------------------------ 載入更多固定同一家（175b-F1；175d 起由請求帶的 token 釘住）
 def _twenty(prefix):
     return R(*[f"{prefix}-{i}" for i in range(20)])
 
@@ -102,9 +105,10 @@ def test_load_more_stays_with_fallback_provider_when_first_choice_still_blocked(
     order(["javdb", "javbus"])
     dev.return_value = E("maker_unreachable")
     bus.return_value = _twenty("B")
-    assert len(search(offset=0, limit=20).results) == 20
+    meta = {}
+    assert len(search(offset=0, limit=20, meta=meta).results) == 20
     dev.reset_mock()
-    out = search(offset=20, limit=20)
+    out = search(offset=20, limit=20, cursor=meta["cursor"])
     assert dev.call_count == 0
     assert bus.call_count == 2 and len(out.results) == 20
 
@@ -113,10 +117,11 @@ def test_load_more_stays_with_fallback_provider_after_first_choice_recovers(orde
     order(["javdb", "javbus"])
     dev.return_value = E("maker_unreachable")
     bus.return_value = _twenty("B")
-    search(offset=0, limit=20)
+    meta = {}
+    search(offset=0, limit=20, meta=meta)
     dev.reset_mock()
     dev.return_value = _twenty("A")
-    out = search(offset=20, limit=20)
+    out = search(offset=20, limit=20, cursor=meta["cursor"])
     assert dev.call_count == 0
     assert out.results[0]["number"] == "B-0"
 
@@ -124,34 +129,36 @@ def test_load_more_stays_with_fallback_provider_after_first_choice_recovers(orde
 def test_load_more_ends_when_answering_provider_fails(order, bus, dev):
     order(["javdb", "javbus"])
     dev.return_value = _twenty("A")
-    search(offset=0, limit=20)
+    meta = {}
+    search(offset=0, limit=20, meta=meta)
     dev.return_value = E("maker_unreachable")
     bus.return_value = _twenty("B")
-    assert search(offset=20, limit=20) == E("maker_unreachable")
+    assert search(offset=20, limit=20, cursor=meta["cursor"]) == E("maker_unreachable")
     assert bus.call_count == 0
 
 
-def test_load_more_without_record_keeps_current_behavior(order, bus, dev):
+def test_load_more_without_token_is_unreachable_with_zero_calls(order, bus, dev):
     order(["javdb", "javbus"])
     dev.return_value = E("maker_not_found")
     bus.return_value = R("B-1")
-    out = search(offset=20, limit=20)
-    assert out.results[0]["number"] == "B-1"
-    assert dev.call_count == 1 and bus.call_count == 1
+    assert search(offset=20, limit=20) == E("maker_unreachable")
+    assert dev.call_count == 0 and bus.call_count == 0
+    assert search(offset=0, limit=20).results[0]["number"] == "B-1"  # 對照：offset=0 一定有呼叫
 
 
 def test_answering_provider_disabled_midway_ends_list(order, bus, dev):
     order(["javdb", "javbus"])
     bus.return_value = _twenty("B")
-    search(offset=0, limit=20)
+    meta = {}
+    search(offset=0, limit=20, meta=meta)
     dev.reset_mock()
     order(["javdb", "javbus"], enabled=["javdb"])
     dev.return_value = _twenty("A")
-    assert search(offset=20, limit=20) == E("maker_unreachable")
+    assert search(offset=20, limit=20, cursor=meta["cursor"]) == E("maker_unreachable")
     assert dev.call_count == 0
 
 
-def test_typed_and_capsule_lists_are_recorded_separately(order, bus, dev):
+def test_typed_and_capsule_lists_keep_separate_tokens(order, bus, dev):
     order(["javdb", "javbus"])
 
     def dev_side(self, key, label, spellings, offset, *, limit=None, **kw):
@@ -159,15 +166,16 @@ def test_typed_and_capsule_lists_are_recorded_separately(order, bus, dev):
 
     dev.side_effect = dev_side
     bus.return_value = _twenty("B")
-    search(offset=0, limit=20)  # javdb not_found -> javbus
-    search(offset=0, limit=None)  # javdb answers
+    typed_meta, capsule_meta = {}, {}
+    search(offset=0, limit=20, meta=typed_meta)  # javdb not_found -> javbus
+    search(offset=0, limit=None, meta=capsule_meta)  # javdb answers
     dev.reset_mock()
     bus.reset_mock()
-    typed = search(offset=20, limit=20)
+    typed = search(offset=20, limit=20, cursor=typed_meta["cursor"])
     assert dev.call_count == 0 and bus.call_count == 1 and typed.results[0]["number"] == "B-0"
     dev.reset_mock()
     bus.reset_mock()
-    capsule = search(offset=30, limit=None)
+    capsule = search(offset=30, limit=None, cursor=capsule_meta["cursor"])
     assert bus.call_count == 0 and dev.call_count == 1 and capsule.results[0]["number"] == "A-0"
 
 
@@ -215,7 +223,7 @@ def test_maker_empty_at_list_end_does_not_fall_through_to_next_provider(order, b
     order(["javdb", "javbus"])
     dev.return_value = E("maker_empty")
     bus.return_value = R("B-1")
-    out = search(offset=30)
+    out = search(offset=30, cursor=tk("javdb"))
     assert out == E("maker_empty")
     assert bus.call_count == 0
 
@@ -237,14 +245,14 @@ def test_maker_empty_is_terminal_at_offset_zero_too(order, bus, dev):
 def test_unreachable_result_at_offset_gt_zero_is_terminal(order, bus, dev):
     order(["javdb", "javbus"])
     dev.return_value = E("maker_unreachable")
-    assert search(offset=30) == E("maker_unreachable")
+    assert search(offset=30, cursor=tk("javdb")) == E("maker_unreachable")
     assert bus.call_count == 0
 
 
 def test_exception_at_offset_gt_zero_is_terminal_unreachable(order, bus, dev):
     order(["javdb", "javbus"])
     dev.side_effect = SourceBlocked("cf")
-    assert search(offset=30) == E("maker_unreachable")
+    assert search(offset=30, cursor=tk("javdb")) == E("maker_unreachable")
     assert bus.call_count == 0
 
 
@@ -272,7 +280,7 @@ def test_empty_chain_is_not_found_with_zero_requests(order, bus, dev):
 def test_limit_and_args_forwarded_to_provider(order, bus, dev):
     order(["javdb"])
     dev.return_value = R("A-1")
-    search(offset=20, limit=20)
+    search(offset=20, limit=20, cursor=tk("javdb"))
     kwargs = dev.call_args.kwargs
     assert kwargs["limit"] == 20 and kwargs["titles"] == [] and kwargs["today"] == "2026-10-21"
     assert dev.call_args.args[1:5] == ("mk", "片商", ["片商"], 20)
