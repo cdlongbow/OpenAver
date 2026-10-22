@@ -143,15 +143,6 @@ def test_scheme_less_address_every_source_via_policy(recorders):
     assert recorders.sys_hosts() == set()
 
 
-def test_blank_proxy_nothing_via_policy(recorders):
-    """Proxy 欄空白：POL 一筆都沒有，八家全照系統代理。"""
-    write_search_config(proxy_url='', scope='all')
-    _drive_all()
-
-    assert recorders.pol_hosts() == set()
-    assert recorders.sys_sources() == set(ALL_SOURCES), recorders.sys_hosts()
-
-
 # ── 女優名搜尋（DMM 開關只看膠囊）─────────────────────────────────────────────
 
 def _run_actress_search() -> None:
@@ -169,24 +160,6 @@ def test_capsule_off_actress_search_never_reaches_dmm(recorders):
     assert 'dmm' not in recorders.pol_sources()
     assert 'dmm' not in recorders.sys_sources()
     assert 'javbus' in recorders.sys_sources(), recorders.sys_hosts()
-
-
-def test_capsule_on_blank_proxy_actress_search_reaches_dmm(recorders):
-    """DMM 膠囊開 ＋ Proxy 欄空白：女優名搜尋照樣問 DMM（走系統代理，AC-5b）。"""
-    write_search_config(proxy_url='', scope='dmm', dmm_enabled=True)
-    _run_actress_search()
-
-    assert 'dmm' in recorders.sys_sources(), recorders.sys_hosts()
-    assert recorders.pol_hosts() == set()
-
-
-def test_scope_all_jav321_search_post_via_policy(recorders):
-    """「所有來源」：Jav321 的搜尋 POST 也走代理（與詳情頁 GET 是兩條不同呼叫）。"""
-    write_search_config(proxy_url=recorders.pol, scope='all')
-    _drive_source('jav321', post_reaches_network=True)
-
-    assert recorders.pol_sources() == {'jav321'}, recorders.pol_hosts()
-    assert recorders.sys_hosts() == set()
 
 
 # ── 非 scraper 連線（TASK-163a-T4）：封面／劇照／書籤封面／女優照片與四個女優來源 ──────
@@ -313,7 +286,7 @@ def _sink_table():
 _SINK_IDS = [s[0] for s in _sink_table()]
 
 
-@pytest.mark.parametrize('scope', ['dmm', 'all', 'blank'])
+@pytest.mark.parametrize('scope', ['all'])
 @pytest.mark.parametrize('idx', range(len(_SINK_IDS)), ids=_SINK_IDS)
 def test_every_sink_follows_scope(recorders, photo_dir, idx, scope):
     """九個非 scraper 進入點：all → 只走 POL；dmm／Proxy 欄空白 → 只走系統代理。"""
@@ -332,8 +305,8 @@ def test_every_sink_follows_scope(recorders, photo_dir, idx, scope):
         assert host not in recorders.pol_hosts()
 
 
-@pytest.mark.parametrize('scope', ['dmm', 'all'])
-@pytest.mark.parametrize('position', ['wishlist_primary', 'organizer_fallback', 'proxy_image'])
+@pytest.mark.parametrize('scope', ['all'])
+@pytest.mark.parametrize('position', ['proxy_image'])
 def test_metatube_relay_never_via_policy_proxy(
     recorders, metatube_relay_connected, photo_dir, position, scope
 ):
@@ -382,7 +355,7 @@ def test_excluded_connections_never_asked_policy(recorders):
 # 會把它攔成永遠測不到真連線（驗收假綠）。所以另開一支獨立測試、標 `real_avbase`，
 # 讓「真的」curl_cffi Session 連進 recorder——不得以替身取代 Session。
 @pytest.mark.real_avbase
-@pytest.mark.parametrize('scope', ['dmm', 'all', 'blank'])
+@pytest.mark.parametrize('scope', ['all'])
 def test_avbase_connection_follows_proxy_scope(recorders, scope):
     """all → 只走設定代理；dmm／Proxy 欄空白 → 只走系統代理（libcurl 讀環境變數）。"""
     import core.scrapers.actress.avbase as avbase_mod

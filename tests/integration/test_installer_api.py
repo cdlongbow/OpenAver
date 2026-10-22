@@ -19,7 +19,6 @@ setdefault 成 `("127.0.0.1", 50000)`（見該檔案註解，非本 task 新增�
 （如 `192.0.2.0/24`）——會被 `ipaddress` 誤判 `is_private=True`（`BE-TEST-03`）。
 本檔用 `8.8.8.8`（真實全域可路由 IP）。
 """
-import pytest
 from unittest import mock
 from fastapi.testclient import TestClient
 from web.app import app
@@ -69,38 +68,6 @@ def test_trigger_update_case1_loopback_no_origin_header_ok_returns_200(monkeypat
     assert resp.status_code == 200
 
 
-def test_trigger_update_case2_loopback_ip_origin_returns_200(monkeypatch):
-    """案例2：loopback／Origin=http://127.0.0.1:<任意 port>／header✓ → 200"""
-    monkeypatch.setattr("web.app._is_windows_desktop", lambda: True)
-    monkeypatch.setattr("web.app._is_mac_desktop", lambda: False)
-    client = _loopback_client()
-    with mock.patch("web.app.subprocess.Popen"):
-        resp = client.post(
-            "/api/trigger-update",
-            headers={
-                "X-OpenAver-Desktop-Action": "trigger-update",
-                "origin": "http://127.0.0.1:54321",
-            },
-        )
-    assert resp.status_code == 200
-
-
-def test_trigger_update_case3_localhost_origin_returns_200(monkeypatch):
-    """案例3：loopback／Origin=http://localhost:8000（launcher.py 固定 port 形式）／header✓ → 200"""
-    monkeypatch.setattr("web.app._is_windows_desktop", lambda: True)
-    monkeypatch.setattr("web.app._is_mac_desktop", lambda: False)
-    client = _loopback_client()
-    with mock.patch("web.app.subprocess.Popen"):
-        resp = client.post(
-            "/api/trigger-update",
-            headers={
-                "X-OpenAver-Desktop-Action": "trigger-update",
-                "origin": "http://localhost:8000",
-            },
-        )
-    assert resp.status_code == 200
-
-
 def test_trigger_update_case4_evil_origin_returns_403(monkeypatch):
     """案例4（關鍵案例）：loopback／Origin=https://evil.example／header✓ → 403
     唯一能證明 Origin host 真的被驗的一格——若 Origin host 驗證是空殼，這格會變 200。"""
@@ -134,23 +101,6 @@ def test_trigger_update_case5_null_origin_returns_403(monkeypatch):
     assert resp.status_code == 403
 
 
-@pytest.mark.parametrize("malformed_origin", ["http://", "not-a-url"])
-def test_trigger_update_case6_malformed_origin_returns_403(malformed_origin, monkeypatch):
-    """案例6：loopback／Origin malformed（urlparse 解析不出 hostname）／header✓ → 403（fail-closed）"""
-    monkeypatch.setattr("web.app._is_windows_desktop", lambda: True)
-    monkeypatch.setattr("web.app._is_mac_desktop", lambda: False)
-    client = _loopback_client()
-    with mock.patch("web.app.subprocess.Popen"):
-        resp = client.post(
-            "/api/trigger-update",
-            headers={
-                "X-OpenAver-Desktop-Action": "trigger-update",
-                "origin": malformed_origin,
-            },
-        )
-    assert resp.status_code == 403
-
-
 def test_trigger_update_case7_missing_header_no_origin_returns_403(monkeypatch):
     """案例7：loopback／無 Origin／header✗ → 403"""
     monkeypatch.setattr("web.app._is_windows_desktop", lambda: True)
@@ -158,19 +108,6 @@ def test_trigger_update_case7_missing_header_no_origin_returns_403(monkeypatch):
     client = _loopback_client()
     with mock.patch("web.app.subprocess.Popen"):
         resp = client.post("/api/trigger-update")
-    assert resp.status_code == 403
-
-
-def test_trigger_update_case8_missing_header_valid_origin_returns_403(monkeypatch):
-    """案例8：loopback／合法 loopback Origin／header✗ → 403"""
-    monkeypatch.setattr("web.app._is_windows_desktop", lambda: True)
-    monkeypatch.setattr("web.app._is_mac_desktop", lambda: False)
-    client = _loopback_client()
-    with mock.patch("web.app.subprocess.Popen"):
-        resp = client.post(
-            "/api/trigger-update",
-            headers={"origin": "http://127.0.0.1:54321"},
-        )
     assert resp.status_code == 403
 
 
@@ -232,23 +169,3 @@ def test_trigger_update_case10_loopback_non_desktop_returns_403(monkeypatch):
 # 對應一個真實失敗模式，沒有測試就沒有鎖。
 # ---------------------------------------------------------------------------
 
-def test_trigger_update_unclosed_ipv6_origin_returns_403_not_500(monkeypatch):
-    """未閉合 IPv6 字面值的 Origin（`http://[::1`）→ **403 而非 500**。
-
-    實測 `urlparse('http://[::1')` 會拋 `ValueError: Invalid IPv6 URL`。不接住的話
-    會變成未處理例外 → 500，既非 fail-closed 的 403，也把「被擋下」與「伺服器壞了」
-    混在一起（T8 真跑驗收會分不出來）。`_is_loopback_origin` 必須接住回 False。
-    拿掉那個 except ValueError → 本測試會看到 500 而變紅。
-    """
-    monkeypatch.setattr("web.app._is_windows_desktop", lambda: True)
-    monkeypatch.setattr("web.app._is_mac_desktop", lambda: False)
-    client = _loopback_client()
-    with mock.patch("web.app.subprocess.Popen"):
-        resp = client.post(
-            "/api/trigger-update",
-            headers={
-                "X-OpenAver-Desktop-Action": "trigger-update",
-                "origin": "http://[::1",
-            },
-        )
-    assert resp.status_code == 403

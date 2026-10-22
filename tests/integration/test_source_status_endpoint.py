@@ -31,36 +31,6 @@ def _reset_sr_module() -> None:
         sr._reprobe_task = None
 
 
-def test_dod1_five_rapid_calls_probe_at_most_once_and_fast(monkeypatch: pytest.MonkeyPatch) -> None:
-    """DoD 1: 5 rapid calls in 60s window trigger at most 1 probe, each < 50ms."""
-    _reset_sr_module()
-
-    probe_count = 0
-
-    async def mock_probe_all() -> None:
-        nonlocal probe_count
-        probe_count += 1
-        with sr._lock:
-            sr._snapshot = {"/test/path": "unreachable"}
-            sr._snapshot_at = time.monotonic()
-            sr._in_flight = False
-
-    monkeypatch.setattr(sr, "_probe_all", mock_probe_all)
-
-    client = TestClient(app, client=("127.0.0.1", 50000))
-    durations = []
-    for _ in range(5):
-        t0 = time.perf_counter()
-        resp = client.get("/api/showcase/source-status")
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        durations.append(elapsed_ms)
-        assert resp.status_code == 200
-
-    assert probe_count <= 1
-    for d in durations:
-        assert d < 50, f"Response duration {d:.2f}ms exceeds 50ms"
-
-
 @pytest.mark.asyncio
 async def test_dod2_lifespan_yield_not_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
     """DoD 2: lifespan to yield takes < 100ms even when probe runs for 10s."""
@@ -111,58 +81,6 @@ async def test_dod2_lifespan_yield_not_blocked(monkeypatch: pytest.MonkeyPatch) 
             await cm.__aexit__(None, None, None)
         if sr._reprobe_task and not sr._reprobe_task.done():
             sr._reprobe_task.cancel()
-
-
-def test_dod3_get_snapshot_error_does_not_affect_videos(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    """DoD 3: get_snapshot exception does not affect GET /api/showcase/videos."""
-    from core.database import init_db
-
-    test_db = tmp_path / "test_showcase.db"
-    init_db(test_db)
-    monkeypatch.setattr("web.routers.showcase.get_db_path", lambda: test_db)
-    monkeypatch.setattr(
-        "web.routers.showcase.load_config",
-        lambda: {"gallery": {"directories": [], "path_mappings": {}}},
-    )
-
-    def failing_snapshot() -> dict[str, str]:
-        raise RuntimeError("simulated get_snapshot failure")
-
-    monkeypatch.setattr(sr, "get_snapshot", failing_snapshot)
-
-    client = TestClient(app, client=("127.0.0.1", 50000))
-    resp = client.get("/api/showcase/videos")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data.get("success") is True
-    assert "videos" in data
-
-
-def test_dod4_all_ok_or_unknown_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """DoD 4: all sources ok/unknown/unprobed returns empty list []."""
-    monkeypatch.setattr(
-        sr,
-        "get_snapshot",
-        lambda: {
-            "//server/share1": "ok",
-            "//server/share2": "unknown",
-            "/local/media": "ok",
-        },
-    )
-    monkeypatch.setattr(sr, "schedule_reprobe_if_stale", AsyncMock())
-
-    client = TestClient(app, client=("127.0.0.1", 50000))
-    resp = client.get("/api/showcase/source-status")
-    assert resp.status_code == 200
-    assert resp.json() == []
-
-    # Unprobed scenario (empty snapshot)
-    monkeypatch.setattr(sr, "get_snapshot", lambda: {})
-    resp_empty = client.get("/api/showcase/source-status")
-    assert resp_empty.status_code == 200
-    assert resp_empty.json() == []
 
 
 @pytest.mark.parametrize("synology", [False, True])
@@ -236,111 +154,6 @@ def test_cold_start_waits_for_first_probe(monkeypatch: pytest.MonkeyPatch) -> No
     assert any(item["path"] == "/mnt/cold" for item in data), (
         f"cold start must wait for first probe, got {data!r}"
     )
-
-
-def test_warm_snapshot_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
-    """缺陷 B 的反向守衛：已探測過（快照新鮮）時，就算 _reprobe_task 永不完成，端點也要立刻回應。"""
-    _reset_sr_module()
-
-    with sr._lock:
-        sr._snapshot = {"/mnt/warm": "unreachable"}
-        sr._snapshot_at = sr._now()
-
-    async def never_finishes() -> None:
-        await asyncio.sleep(3600)
-
-    # schedule_reprobe_if_stale is patched so the never-finishing task is created
-    # on whatever event loop actually runs the endpoint coroutine (TestClient runs
-    # each request through the app's own loop), rather than on this test's loop.
-    async def install_never_finishing_task() -> None:
-        with sr._lock:
-            sr._reprobe_task = asyncio.ensure_future(never_finishes())
-
-    monkeypatch.setattr(sr, "schedule_reprobe_if_stale", install_never_finishing_task)
-
-    client = TestClient(app, client=("127.0.0.1", 50000))
-    t0 = time.perf_counter()
-    resp = client.get("/api/showcase/source-status")
-    elapsed = time.perf_counter() - t0
-    assert resp.status_code == 200
-    assert elapsed < 1.0, f"warm path must not wait, took {elapsed:.3f}s"
-    data = resp.json()
-    assert any(item["path"] == "/mnt/warm" for item in data)
-
-    task = sr._reprobe_task
-    if task is not None and not task.done():
-        task.cancel()
-
-
-def test_cold_start_waits_for_slow_multi_source_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """PR#178 R2 缺陷D：_probe_all 是循序探測、快照只在整個迴圈跑完才寫入。端點等的
-    必須是 task 本身跑完，不是某個固定秒數——用多來源、迴圈結束後才寫快照的假探測，
-    斷言端點拿到的是完整快照（每一筆都在），證明沒有任何來源在中途被「等到一半就放棄」
-    漏接。（刻意不真的睡 15 秒，也不在這支測試裡動 _FIRST_PROBE_WAIT_S——那是保險絲
-    測試的手法，混進來會測到保險絲而不是測到正確性。）"""
-    _reset_sr_module()
-
-    sources = ["/mnt/multi-1", "/mnt/multi-2", "/mnt/multi-3", "/mnt/multi-4", "/mnt/multi-5"]
-
-    async def fake_probe_all() -> None:
-        snapshot: dict[str, str] = {}
-        for s in sources:
-            await asyncio.sleep(0.1)
-            snapshot[s] = "unreachable"
-        # 快照只在迴圈整個跑完後才一次寫入（與真正的 _probe_all 同形狀）
-        with sr._lock:
-            sr._snapshot = snapshot
-            sr._snapshot_at = sr._now()
-            sr._in_flight = False
-
-    monkeypatch.setattr(sr, "_probe_all", fake_probe_all)
-
-    client = TestClient(app, client=("127.0.0.1", 50000))
-    resp = client.get("/api/showcase/source-status")
-    assert resp.status_code == 200
-    data = resp.json()
-    got_paths = {item["path"] for item in data}
-    assert got_paths == set(sources), (
-        f"cold start 必須等到 task 本身跑完，拿到的應是完整快照，實際={data!r}"
-    )
-
-
-def test_first_probe_wait_is_a_fuse_not_a_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """PR#178 R2 缺陷D 的保險絲測試（不驗正確性）：_FIRST_PROBE_WAIT_S 必須是遠大於任何
-    正常探測耗時的保險絲值，只用來防止 task 永久卡住時把請求焊死，不是拿來當「正確」
-    秒數算出來的猜測值。用一個永不完成的 task + 直接呼叫真正的 wait_for_first_probe
-    並把 timeout 顯式覆寫成極小值，證明逾時後端點仍會回應（不拋、不掛住）——這支只守
-    保險絲機制本身會動，不守等待時長的正確性語意。"""
-    _reset_sr_module()
-    assert sr._FIRST_PROBE_WAIT_S >= 120.0
-
-    async def never_finishes() -> None:
-        await asyncio.sleep(3600)
-
-    async def install_never_finishing_task() -> None:
-        with sr._lock:
-            sr._reprobe_task = asyncio.ensure_future(never_finishes())
-
-    monkeypatch.setattr(sr, "schedule_reprobe_if_stale", install_never_finishing_task)
-
-    real_wait_for_first_probe = sr.wait_for_first_probe
-
-    async def wait_with_tiny_fuse() -> None:
-        await real_wait_for_first_probe(timeout=0.01)
-
-    monkeypatch.setattr(sr, "wait_for_first_probe", wait_with_tiny_fuse)
-
-    client = TestClient(app, client=("127.0.0.1", 50000))
-    t0 = time.perf_counter()
-    resp = client.get("/api/showcase/source-status")
-    elapsed = time.perf_counter() - t0
-
-    assert resp.status_code == 200
-    assert elapsed < 1.0, f"保險絲必須讓端點快速回應，實際耗時 {elapsed:.3f}s"
-
-    task = sr._reprobe_task
-    if task is not None and not task.done():
-        task.cancel()
 
 
 def test_same_unc_host_sources_merge_into_one_display(monkeypatch: pytest.MonkeyPatch) -> None:

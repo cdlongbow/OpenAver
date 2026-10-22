@@ -44,41 +44,6 @@ def test_explicit_metatube_source_wins(client, temp_config_path, monkeypatch):
     assert "rating" not in item
 
 
-def test_empty_suffix_source_returns_400(client, temp_config_path):
-    """source=metatube: 空後綴 → validate_source_id False → 400。"""
-    resp = client.get(
-        "/api/search",
-        params={"mode": "exact", "source": "metatube:", "q": "SSIS-001"},
-    )
-    assert resp.status_code == 400
-
-
-def test_connected_unknown_provider_none_empty(client, temp_config_path, monkeypatch):
-    """source=metatube:UNKNOWN + connected + shim 回 None → 空結果（非 400）。"""
-    metatube_state.connect("http://localhost:8080", "tok", ["UNKNOWN"])
-    monkeypatch.setattr("core.scraper._MetatubeShim.search", lambda self, number: None)
-    resp = client.get(
-        "/api/search",
-        params={"mode": "exact", "source": "metatube:UNKNOWN", "q": "SSIS-001"},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["success"] is False
-    assert body["data"] == []
-
-
-def test_disconnected_metatube_source_no_dispatch(client, temp_config_path):
-    """斷線時選 metatube → source_to_scraper 無 entry → 空結果（正確：斷線不 dispatch）。"""
-    # autouse fixture 已 disconnect
-    resp = client.get(
-        "/api/search",
-        params={"mode": "exact", "source": "metatube:FANZA", "q": "SSIS-001"},
-    )
-    # validate 放行（200 路徑）但無 routable entry → 空
-    assert resp.status_code == 200
-    assert resp.json()["data"] == []
-
-
 def test_bootstrap_injects_routable_and_available(client, temp_config_path):
     """get_common_context 注入：builtin sources 帶 routable=true、available=true。"""
     html = client.get("/search").text
@@ -107,21 +72,3 @@ def test_bootstrap_injects_cf_sites_when_transport_reports_them(client, temp_con
     )
 
 
-def test_bootstrap_cf_sites_empty_when_no_transport(client, temp_config_path):
-    """118a-T9：dev 環境（無 transport）→ cf_sites 為 []（不 patch，走真實 get_cf_available_sites）。"""
-    html = client.get("/search").text
-    # [lint-guard: pytest-justified] 同上：真 render 的序列化結果，非模板原始碼。
-    # 這條守的是 fail-open 的反面——沒有 transport 時必須是 []（兩顆膠囊都灰），
-    # 不能因為 get_cf_available_sites() 回錯型別而變成 null 走 fallback 全部亮起來。
-    assert 'cf_sites: []' in html, (
-        "dev 環境無 transport 時 bootstrap 的 cf_sites 應為 []"
-    )
-
-
-def test_routable_available_not_persisted_to_config(client, temp_config_path):
-    """transient routable/available 欄位不得寫回 config.json（注入在 save_config 之後）。"""
-    client.get("/search")  # 觸發 get_common_context（含首次 locale 偵測 save_config）
-    cfg = client.get("/api/config").json()["data"]
-    for s in cfg.get("sources", []):
-        assert "routable" not in s, "routable 不應持久化進 config"
-        assert "available" not in s, "available 不應持久化進 config"

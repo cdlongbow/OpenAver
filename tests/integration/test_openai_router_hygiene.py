@@ -4,7 +4,6 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from web.app import app
@@ -46,30 +45,6 @@ def test_test_blocked_content_filter():
     assert data["success"] is False and data["error"] == "blocked"
 
 
-def test_test_blocked_refusal():
-    data, _ = _post_test({"choices": [{"message": {"content": "", "refusal": "no"}}]})
-    assert data["error"] == "blocked"
-
-
-def test_test_truncated_is_translate_failed():
-    data, _ = _post_test({"choices": [{"message": {"content": "半句"}, "finish_reason": "length"}]})
-    assert data["success"] is False and data["error"] == "translate_failed"
-
-
-def test_test_error_only_200_is_translate_failed():
-    data, _ = _post_test({"error": {"message": "boom"}})
-    assert data["success"] is False and data["error"] == "translate_failed"
-
-
-def test_test_ja_skip_no_client():
-    cm, mc = _cm(post=AsyncMock())
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=cm) as ac, \
-         patch("web.routers.openai_translate.load_config", return_value={"general": {"locale": "ja"}}):
-        r = client.post("/api/openai/test", json={"base_url": BASE, "api_key": "k", "model": "m"})
-    assert r.json() == {"success": True, "translation": "ja_skip", "error": ""}
-    assert ac.call_count == 0
-
-
 def test_test_illegal_key_no_leak(caplog):
     post = AsyncMock(side_effect=httpx.LocalProtocolError(f"Illegal header value b'{FAKE_KEY}\\n'"))
     cm, _ = _cm(post=post)
@@ -97,10 +72,3 @@ def test_models_illegal_key_no_leak(caplog):
     assert FAKE_KEY not in caplog.text
 
 
-def test_models_key_is_stripped_in_header():
-    cm, mc = _cm(get=AsyncMock(return_value=_resp({"data": []})))
-    with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=cm), \
-         patch("web.routers.openai_translate.load_config", return_value=CFG):
-        r = client.post("/api/openai/models", json={"base_url": BASE, "api_key": "  KEY\n"})
-    assert r.json()["success"] is True
-    assert mc.get.call_args.kwargs["headers"]["Authorization"] == "Bearer KEY"

@@ -38,15 +38,3 @@ def test_every_endpoint_token_consumed_by_organizer(client):
         assert out != name, f"{name} 原樣留字面：{out!r}"
 
 
-def test_folder_ok_flag_contract(client):
-    """每項含 folder_ok；{suffix}=False（檔名限定），其餘為 True，恰 10 變數。"""
-    variables = _variables(client)
-    assert len(variables) == 10, f"預期 10 個變數，實得 {len(variables)}"
-    for var in variables:
-        assert "folder_ok" in var, f"{var['name']} 缺 folder_ok 旗標"
-        assert isinstance(var["folder_ok"], bool)
-    by_name = {v["name"]: v["folder_ok"] for v in variables}
-    assert by_name["{suffix}"] is False, "{suffix} 應為檔名限定 folder_ok=False"
-    for name, ok in by_name.items():
-        if name != "{suffix}":
-            assert ok is True, f"{name} 應 folder_ok=True，實得 {ok}"

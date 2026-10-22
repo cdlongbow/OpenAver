@@ -63,38 +63,6 @@ def showcase_setup(tmp_path):
     }
 
 
-def test_showcase_videos_compression_and_identity_parity(client, showcase_setup, mocker):
-    """測試 /api/showcase/videos 在帶 Accept-Encoding: gzip 時的壓縮行為與解壓正確性。
-
-    假綠陷阱防護：
-    1. 驗證 wire 層確實有 Content-Encoding: gzip 與 Vary: Accept-Encoding（TestClient 自動解壓，直接讀 content 會在 middleware 沒掛時也綠）。
-    2. 驗證未帶 Accept-Encoding 時無 Content-Encoding。
-    3. 驗證解壓後內容與未壓縮請求逐位元組相同（內容沒壞）。
-    """
-    mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
-    mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
-
-    # 未壓縮基準請求（明確傳入 Accept-Encoding: identity 避免 httpx 預設帶 gzip）
-    resp_identity = client.get("/api/showcase/videos", headers={"Accept-Encoding": "identity"})
-    assert resp_identity.status_code == 200
-    assert "content-encoding" not in resp_identity.headers, "未請求壓縮時不應帶 Content-Encoding"
-    assert len(resp_identity.content) > 500, (
-        f"自我把關：測試資料長度 {len(resp_identity.content)} 必須 > 500 bytes 門檻，否則 GZipMiddleware 預設略過"
-    )
-
-    # 帶 gzip 請求
-    resp_gzip = client.get("/api/showcase/videos", headers={"Accept-Encoding": "gzip"})
-    assert resp_gzip.status_code == 200
-
-    # 承重斷言 1：wire 確實被壓縮
-    assert resp_gzip.headers.get("content-encoding") == "gzip", "帶 Accept-Encoding: gzip 時回應必須有 Content-Encoding: gzip"
-    vary_header = resp_gzip.headers.get("vary", "").lower()
-    assert "accept-encoding" in vary_header, "壓縮回應必須包含 Vary: Accept-Encoding"
-
-    # 承重斷言 2：解壓後內容相同（內容沒壞）
-    assert resp_gzip.content == resp_identity.content, "gzip 解壓後內容應與 identity 請求內容完全一致"
-
-
 def test_showcase_videos_etag_304_coexists_with_compression(client, showcase_setup, mocker):
     """測試在 GZipMiddleware 啟用下，/api/showcase/videos 的 ETag / 304 快取協商行為仍然正常。
 

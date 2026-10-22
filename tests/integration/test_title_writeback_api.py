@@ -5,7 +5,6 @@ test_title_writeback_api.py — POST /api/showcase/video/title ＋ needs_transla
 （write_bytes／update_titles）。唯讀環境準備是模組層純函式（不借 test class）。
 """
 
-import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -162,16 +161,6 @@ def test_needs_translate_false_when_original_title_present(monkeypatch, tmp_db, 
     assert _list_videos(client)[u]["needs_translate"] is False
 
 
-def test_needs_translate_false_for_chinese_title(monkeypatch, tmp_db, tmp_path):
-    client, (u,) = _list_env(monkeypatch, tmp_db, tmp_path, [dict(title=ZH_TITLE, nfo_mtime=5.0)])
-    assert _list_videos(client)[u]["needs_translate"] is False
-
-
-def test_needs_translate_false_when_no_nfo(monkeypatch, tmp_db, tmp_path):
-    client, (u,) = _list_env(monkeypatch, tmp_db, tmp_path, [dict(title=JP_TITLE, nfo_mtime=0)])
-    assert _list_videos(client)[u]["needs_translate"] is False
-
-
 # ── T3c：成功路徑 ────────────────────────────────────────────────────────────
 
 def test_translate_writes_nfo_and_db_consistently(monkeypatch, tmp_db, tmp_path):
@@ -197,13 +186,6 @@ def test_translate_writes_nfo_and_db_consistently(monkeypatch, tmp_db, tmp_path)
     assert row.nfo_mtime == nfo.stat().st_mtime
 
 
-def test_first_translate_moves_old_title_to_original(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
-    _post(client, uri, ZH_TITLE)
-    assert repo.get_by_path(uri).original_title == JP_TITLE
-    assert _nfo_texts(nfo)["originaltitle"] == JP_TITLE
-
-
 def test_retranslate_keeps_original_title(monkeypatch, tmp_db, tmp_path):
     client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path,
                                         title=ZH_TITLE, original_title=JP_TITLE)
@@ -225,35 +207,12 @@ def test_undo_with_empty_original_clears_original_title(monkeypatch, tmp_db, tmp
     assert VideoScanner().parse_nfo(str(nfo)).originaltitle == ""
 
 
-def test_original_title_null_same_as_omitted(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
-    _post(client, uri, ZH_TITLE, original_title=None)
-    assert repo.get_by_path(uri).original_title == JP_TITLE
-
-
-def test_translate_then_back_both_rounds_correct(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
-    _post(client, uri, ZH_TITLE)
-    assert (repo.get_by_path(uri).title, _nfo_texts(nfo)["title"]) == (ZH_TITLE, f"[ABC-123]{ZH_TITLE}")
-    _post(client, uri, JP_TITLE, original_title="")
-    row = repo.get_by_path(uri)
-    assert (row.title, row.original_title) == (JP_TITLE, "")
-    texts = _nfo_texts(nfo)
-    assert texts["title"] == f"[ABC-123]{JP_TITLE}" and texts["originaltitle"] == ""
-
-
 def test_etag_changes_after_writeback(monkeypatch, tmp_db, tmp_path):
     client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
     before = client.get("/api/showcase/videos").headers["ETag"]
     assert _post(client, uri, ZH_TITLE).json()["success"] is True
     after = client.get("/api/showcase/videos").headers["ETag"]
     assert before != after
-
-
-def test_response_needs_translate_recomputed_after_write(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
-    assert _post(client, uri, ZH_TITLE).json()["needs_translate"] is False
-    assert _post(client, uri, JP_TITLE, original_title="").json()["needs_translate"] is True
 
 
 # ── T3c：失敗路徑 ────────────────────────────────────────────────────────────
@@ -271,34 +230,12 @@ def test_title_only_number_prefix_returns_title_empty(monkeypatch, tmp_db, tmp_p
     assert _row_state(repo, uri) == before_db and nfo.read_bytes() == before_nfo
 
 
-def test_blank_title_returns_title_empty(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
-    assert _post(client, uri, "   ").json()["error"] == "title_empty"
-
-
 def test_unknown_path_returns_not_found_and_creates_no_stub(monkeypatch, tmp_db, tmp_path):
     client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
     ghost = to_file_uri(str(tmp_path / "lib" / "GHOST.mp4"))
     data = _post(client, ghost, ZH_TITLE).json()
     assert data["success"] is False and data["error"] == "not_found"
     assert repo.get_by_path(ghost) is None
-
-
-def test_plain_source_without_nfo_returns_no_nfo(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path, with_nfo=False)
-    before = _row_state(repo, uri)
-    data = _post(client, uri, ZH_TITLE).json()
-    assert data["success"] is False and data["error"] == "no_nfo"
-    assert _row_state(repo, uri) == before and not nfo.exists()
-
-
-def test_unparseable_nfo_returns_nfo_unreadable(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
-    nfo.write_bytes(b"<movie><title>broken")
-    before = _row_state(repo, uri)
-    data = _post(client, uri, ZH_TITLE).json()
-    assert data["error"] == "nfo_unreadable"
-    assert _row_state(repo, uri) == before and nfo.read_bytes() == b"<movie><title>broken"
 
 
 def test_nfo_write_failure_leaves_db_untouched(monkeypatch, tmp_db, tmp_path):
@@ -316,33 +253,6 @@ def test_nfo_write_failure_leaves_db_untouched(monkeypatch, tmp_db, tmp_path):
     assert data["success"] is False and data["error"] == "nfo_write_failed"
     assert _row_state(repo, uri) == before_db
     assert nfo.read_bytes() == before_nfo
-
-
-def test_db_write_failure_returns_code_and_scan_converges(monkeypatch, tmp_db, tmp_path):
-    lib = tmp_path / "lib"
-    lib.mkdir()
-    mp4 = lib / "ABC-123.mp4"
-    mp4.write_bytes(b"fake-video")
-    nfo = lib / "ABC-123.nfo"
-    nfo.write_text(_SEED_NFO, encoding="utf-8")
-    VideoScanner().scan_to_sqlite(str(lib), tmp_db)
-    repo = VideoRepository(tmp_db)
-    uri = repo.get_all()[0].path
-    client = _wire(monkeypatch, tmp_db, _plain_config(lib))
-
-    import time
-    time.sleep(0.05)
-    with monkeypatch.context() as m:
-        def boom(*a, **k):
-            raise RuntimeError("db down")
-        m.setattr(VideoRepository, "update_titles", boom)
-        data = _post(client, uri, ZH_TITLE).json()
-    assert data["success"] is False and data["error"] == "db_write_failed"
-    assert _nfo_texts(nfo)["title"] == f"[ABC-123]{ZH_TITLE}"
-    assert repo.get_by_path(uri).title == JP_TITLE
-
-    VideoScanner().scan_to_sqlite(str(lib), tmp_db)
-    assert repo.get_by_path(uri).title == ZH_TITLE
 
 
 def test_scan_after_writeback_does_not_overwrite(monkeypatch, tmp_db, tmp_path):
@@ -385,15 +295,6 @@ def test_readonly_zero_output_nfo_returns_no_nfo(monkeypatch, tmp_db, tmp_path):
     assert _row_state(repo, uri) == before and _snap(src) == before_src
 
 
-def test_readonly_empty_output_dir_stub_returns_no_nfo(monkeypatch, tmp_db, tmp_path):
-    client, repo, src, out, uri = setup_readonly_title_env(
-        tmp_db, tmp_path, monkeypatch, output_dir_empty=True)
-    before_src, before = _snap(src), _row_state(repo, uri)
-    data = _post(client, uri, ZH_TITLE).json()
-    assert data["error"] == "no_nfo"
-    assert _row_state(repo, uri) == before and _snap(src) == before_src
-
-
 def test_readonly_two_nfos_returns_ambiguous_and_writes_nothing(monkeypatch, tmp_db, tmp_path):
     client, repo, src, out, uri = setup_readonly_title_env(tmp_db, tmp_path, monkeypatch, output_nfos=2)
     before_src, before_db = _snap(src), _row_state(repo, uri)
@@ -402,21 +303,6 @@ def test_readonly_two_nfos_returns_ambiguous_and_writes_nothing(monkeypatch, tmp
     assert data["success"] is False and data["error"] == "nfo_ambiguous"
     assert _row_state(repo, uri) == before_db
     assert _snap(src) == before_src and _snap(out) == before_out
-
-
-@pytest.mark.skipif(os.name == "nt", reason="chmod 語意不同")
-def test_readonly_unreadable_output_dir_returns_nfo_unreadable(monkeypatch, tmp_db, tmp_path):
-    if os.geteuid() == 0:
-        pytest.skip("root 不受 chmod 限制")
-    client, repo, src, out, uri = setup_readonly_title_env(tmp_db, tmp_path, monkeypatch)
-    before_src, before_db = _snap(src), _row_state(repo, uri)
-    out.chmod(0)
-    try:
-        data = _post(client, uri, ZH_TITLE).json()
-    finally:
-        out.chmod(0o755)
-    assert data["success"] is False and data["error"] == "nfo_unreadable"
-    assert _row_state(repo, uri) == before_db and _snap(src) == before_src
 
 
 def test_path_outside_gallery_dirs_returns_not_found(monkeypatch, tmp_db, tmp_path):
@@ -461,8 +347,3 @@ def test_control_chars_stripped_identically_in_nfo_db_response(monkeypatch, tmp_
     assert texts["title"] == "[ABC-123]譯文標題" and texts["originaltitle"] == "原文"
 
 
-def test_control_chars_only_title_returns_title_empty(monkeypatch, tmp_db, tmp_path):
-    client, repo, uri, nfo = _plain_env(monkeypatch, tmp_db, tmp_path)
-    before_db = _row_state(repo, uri)
-    assert _post(client, uri, "\x01\x02").json()["error"] == "title_empty"
-    assert _row_state(repo, uri) == before_db

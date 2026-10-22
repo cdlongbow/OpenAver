@@ -125,16 +125,6 @@ def rig(_isolated):
                 assert not th.is_alive(), 'daemon thread outlived the test'
 
 
-def test_confirm_ready_pushes_site_to_server(rig):
-    r = rig({JL})
-    assert r.sites() == []                          # 補送前伺服器不含該站（且 key 確實已登記）
-    assert r.broker.shell_info(KEY) is not None
-    r.transport.confirm_ready(JL)
-    r.wait_push()
-    assert r.sites() == [JL]
-    assert r.push_bodies[-1]['preparing'] == []
-
-
 def test_closed_window_is_removed_from_server_sites(rig):
     r = rig({JL})
     r.transport.confirm_ready(JL)

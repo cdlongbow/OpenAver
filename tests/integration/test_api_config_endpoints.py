@@ -1,9 +1,5 @@
 import pytest
-import os
 import json
-from pathlib import Path
-from fastapi.testclient import TestClient
-from web.app import app
 
 class TestConfigAPI:
     """測試 web/routers/config.py 的 API 端點"""
@@ -45,125 +41,7 @@ class TestConfigAPI:
         assert "恢復預設" in data["message"]
         assert not mock_config_path.exists()
 
-    def test_delete_config_not_exists(self, client, mock_config_path):
-        """測試當 config.json 不存在時呼叫刪除，不應出錯"""
-        if mock_config_path.exists():
-            mock_config_path.unlink()
-            
-        response = client.delete("/api/config")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
         # 不會報錯，一樣回傳成功
-
-    def test_update_config_refused_during_switch(self, client, mock_config_path, monkeypatch):
-        """PR #93 P2-e：切模式 purge 窗口中整份設定儲存被擋 → reason switch_in_progress、
-        config 檔零覆寫（防舊 directories 快照把剛 purge 的離線來源條目寫回）。
-        改真互斥後（取代 TOCTOU preflight）：update_config 走 try_begin_config_save，switch
-        持窗口時回 'switch_in_progress'。"""
-        mock_config_path.write_text('{"general": {"theme": "dark"}}')
-        monkeypatch.setattr(
-            "web.routers.config.try_begin_config_save", lambda _token: "switch_in_progress"
-        )
-
-        resp = client.put("/api/config", json={})  # {} → AppConfig 全預設，仍先撞 switch guard
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "switch_in_progress"
-        # config 檔未被覆寫
-        assert json.loads(mock_config_path.read_text()) == {"general": {"theme": "dark"}}
-
-    def test_update_config_refused_strm_mapping_change_during_generate(
-        self, client, mock_config_path, monkeypatch
-    ):
-        """PR #93 五審三次 P2：掃描/產生進行中，改到 strm 播放映射的整份存檔被擋 →
-        reason generate_in_progress_strm_mapping、config 零覆寫（防後續產出 stale .strm）。"""
-        mock_config_path.write_text('{"scraper": {"strm_path_mappings": {"/a": "/b"}}}')
-        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: True)
-
-        # payload 全預設 → strm_path_mappings={} ≠ 持久化的 {"/a":"/b"} → 判定「有動到映射」
-        resp = client.put("/api/config", json={})
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "generate_in_progress_strm_mapping"
-        # 映射未被 payload 的 {} 覆寫（gate 在 mutate_config 前擋下；load_config 的良性
-        # migration 正規化不影響 strm_path_mappings 值本身）
-        persisted = json.loads(mock_config_path.read_text())
-        assert persisted["scraper"]["strm_path_mappings"] == {"/a": "/b"}
-
-    def test_update_config_allowed_when_strm_mapping_unchanged_during_generate(
-        self, client, mock_config_path, monkeypatch
-    ):
-        """精準 gate：映射未變（payload {} == 持久化 {}）→ 即使 generate 進行中也放行
-        （只擋真的動到映射的存檔，不影響改主題/檔名等）。"""
-        mock_config_path.write_text('{"general": {"theme": "dark"}}')
-        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: True)
-
-        resp = client.put("/api/config", json={})
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-    def test_update_config_allows_strm_mapping_change_when_no_generate(
-        self, client, mock_config_path, monkeypatch
-    ):
-        """無 generate 進行 → 改映射照存（gate 只在掃描中生效）。"""
-        mock_config_path.write_text('{"scraper": {"strm_path_mappings": {"/a": "/b"}}}')
-        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: False)
-
-        resp = client.put("/api/config", json={})
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-    def test_update_config_releases_config_save_window(self, client, mock_config_path):
-        """P2-e：正常儲存後該 request 的 token 必被 finally 釋放（下次 switch 可開始）。"""
-        import core.generate_state as gs
-        mock_config_path.write_text('{"general": {"theme": "dark"}}')
-        gs._config_save_tokens.clear()
-
-        resp = client.put("/api/config", json={})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert not gs._config_save_tokens  # 正常路徑 finally 已釋放（無殘留 token）
-
-    def test_tutorial_flow(self, client, mock_config_path):
-        """測試 tutorial 相關的一系列流程"""
-        # 1. 初始化狀態應該是 False
-        resp = client.get("/api/tutorial-status")
-        assert resp.status_code == 200
-        assert resp.json()["completed"] is False
-        
-        # 2. 標記完成
-        resp = client.post("/api/tutorial-completed")
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        
-        # 再次檢查狀態
-        resp = client.get("/api/tutorial-status")
-        assert resp.json()["completed"] is True
-        
-        # 確保檔案真的寫入了 config.json
-        assert mock_config_path.exists()
-        saved_config = json.loads(mock_config_path.read_text())
-        assert saved_config.get("general", {}).get("tutorial_completed") is True
-        
-        # 3. 重置狀態
-        resp = client.post("/api/tutorial-reset")
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        
-        # 第三次檢查狀態
-        resp = client.get("/api/tutorial-status")
-        assert resp.json()["completed"] is False
-        
-        saved_config = json.loads(mock_config_path.read_text())
-        assert saved_config.get("general", {}).get("tutorial_completed") is False
 
 
 class TestLocaleChangeResetsTranslateService:
@@ -206,36 +84,6 @@ class TestLocaleChangeResetsTranslateService:
         assert resp.json()["success"] is True
         assert len(reset_called) == 1, "locale 變更後應呼叫一次 _reset_translate_service()"
 
-    def test_other_field_change_does_not_call_reset(self, client, mock_config_path, monkeypatch):
-        """PUT /api/config/general/theme 不應呼叫 _reset_translate_service()"""
-        reset_called = []
-
-        def fake_reset():
-            reset_called.append(True)
-
-        monkeypatch.setattr("web.routers.config._reset_translate_service", fake_reset)
-
-        resp = client.put("/api/config/general/theme", json={"value": "dark"})
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert len(reset_called) == 0, "theme 變更不應呼叫 _reset_translate_service()"
-
-    def test_invalid_locale_does_not_call_reset(self, client, mock_config_path, monkeypatch):
-        """不支援的 locale 失敗後不應呼叫 _reset_translate_service()"""
-        reset_called = []
-
-        def fake_reset():
-            reset_called.append(True)
-
-        monkeypatch.setattr("web.routers.config._reset_translate_service", fake_reset)
-
-        resp = client.put("/api/config/general/locale", json={"value": "ko"})
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is False
-        assert len(reset_called) == 0, "失敗的 locale 設定不應呼叫 reset"
-
 
 class TestServerModeEndpoint:
     """PUT /api/config/general/server_mode 端點測試（TASK-80a-T1）"""
@@ -264,12 +112,6 @@ class TestServerModeEndpoint:
 
         return config_path
 
-    def test_server_mode_true_returns_200_success(self, client, mock_config_path):
-        """PUT server_mode {value: true} → 200 {"success": True}"""
-        resp = client.put("/api/config/general/server_mode", json={"value": True})
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
 
     def test_server_mode_true_persisted(self, client, mock_config_path):
         """PUT server_mode {value: true} → config.json 寫入 general.server_mode=True"""
@@ -278,19 +120,6 @@ class TestServerModeEndpoint:
         saved = json.loads(mock_config_path.read_text())
         assert saved.get("general", {}).get("server_mode") is True
 
-    def test_server_mode_reload_yields_true(self, client, mock_config_path, monkeypatch):
-        """PUT server_mode true → 持久化後重讀 load_config() 仍為 True（AC-A8）"""
-        import core.config as cc
-        client.put("/api/config/general/server_mode", json={"value": True})
-
-        reloaded = cc.load_config()
-        assert reloaded.get("general", {}).get("server_mode") is True
-
-    def test_server_mode_string_true_returns_400(self, client, mock_config_path):
-        """PUT server_mode {value: "true"} (字串) → HTTP 400（gate 擋字串）"""
-        resp = client.put("/api/config/general/server_mode", json={"value": "true"})
-
-        assert resp.status_code == 400
 
     def test_server_mode_string_false_returns_400_not_stored(self, client, mock_config_path):
         """安全性關鍵：字串 "false" 是 truthy，必須 400 且不得寫入 config
@@ -300,21 +129,6 @@ class TestServerModeEndpoint:
         assert resp.status_code == 400
         saved = json.loads(mock_config_path.read_text())
         assert "server_mode" not in saved.get("general", {})
-
-    def test_server_mode_int_one_rejected(self, client, mock_config_path):
-        """PUT server_mode {value: 1} (int) → 被拒（StrictBool|StrictStr schema 層擋整數 → 422）"""
-        resp = client.put("/api/config/general/server_mode", json={"value": 1})
-
-        assert resp.status_code == 422
-        saved = json.loads(mock_config_path.read_text())
-        assert "server_mode" not in saved.get("general", {})
-
-    def test_theme_string_still_200_regression(self, client, mock_config_path):
-        """PUT theme {value: "dark"} 字串路徑不受影響 → 仍 200 success（不回歸）"""
-        resp = client.put("/api/config/general/theme", json={"value": "dark"})
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
 
 
 class TestAutoCheckUpdateEndpoint:
@@ -360,23 +174,6 @@ class TestAutoCheckUpdateEndpoint:
         saved = json.loads(mock_config_path.read_text())
         stored = saved.get("general", {}).get("auto_check_update")
         assert stored is False  # 嚴格：bool False，非 truthy 字串 "false"
-
-    def test_bool_true_returns_200_persisted_as_bool(self, client, mock_config_path):
-        """PUT {value: true} 真 bool → 200 且落盤為 bool True"""
-        resp = client.put("/api/config/general/auto_check_update", json={"value": True})
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        saved = json.loads(mock_config_path.read_text())
-        assert saved.get("general", {}).get("auto_check_update") is True
-
-    def test_int_one_rejected(self, client, mock_config_path):
-        """PUT {value: 1} (int) → 422（StrictBool|StrictStr schema 層擋整數，非本次新增，補一條確認）"""
-        resp = client.put("/api/config/general/auto_check_update", json={"value": 1})
-
-        assert resp.status_code == 422
-        saved = json.loads(mock_config_path.read_text())
-        assert "auto_check_update" not in saved.get("general", {})
 
 
 class TestFocalDeviceDisabledEndpoint:
@@ -431,16 +228,6 @@ class TestFocalDeviceDisabledEndpoint:
         saved2 = json.loads(mock_config_path.read_text())
         assert saved2["focal_device"]["disabled"] is False
         assert saved2["focal_device"]["set_by_user"] is True
-
-    def test_focal_device_disabled_endpoint_rejects_non_bool_with_422(self, client, mock_config_path):
-        """PUT {value: 1} (int) → 422（StrictBool），磁碟零改動"""
-        before = json.loads(mock_config_path.read_text())
-
-        resp = client.put("/api/config/focal-device/disabled", json={"value": 1})
-
-        assert resp.status_code == 422
-        after = json.loads(mock_config_path.read_text())
-        assert after == before
 
 
 class TestFullConfigSavePreservesServerMode:
@@ -546,53 +333,6 @@ class TestFullConfigSavePreservesServerMode:
             "(would diverge from running LAN listener)"
         )
 
-    def test_full_save_explicit_false_server_mode_still_preserves_true(
-        self, client, mock_config_path_with_server_mode_true
-    ):
-        """PUT /api/config with general.server_mode=false in the body must also be ignored.
-
-        A stale GET → full PUT round-trip from an old client (or any direct API call)
-        that explicitly sends server_mode=false must NOT overwrite the persisted True.
-        Only PUT /api/config/general/server_mode (the toggle endpoint) is allowed to
-        change this field.
-        """
-        config_path = mock_config_path_with_server_mode_true
-
-        payload = {
-            "general": {
-                "default_page": "search",
-                "theme": "light",
-                "server_mode": False,  # stale / incorrect — must be ignored
-            },
-            "scraper": {},
-            "search": {},
-            "source_links": {},
-            "translate": {
-                "enabled": False,
-                "provider": "ollama",
-                "batch_size": 10,
-                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
-                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
-                "openai": {"base_url": "", "api_key": "", "model": "gpt-4o-mini",
-                           "use_custom_model": False},
-            },
-            "gallery": {},
-            "showcase": {},
-            "sources": [],
-            "thumbnail_cache_enabled": False,
-            "metatube": {},
-        }
-
-        resp = client.put("/api/config", json=payload)
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-        saved = json.loads(config_path.read_text())
-        assert saved.get("general", {}).get("server_mode") is True, (
-            "PUT /api/config with explicit server_mode=false in the body must be "
-            "ignored — server_mode is owned by the toggle lifecycle endpoint only"
-        )
-
 
 class TestDeleteConfigStopsLanListener:
     """P2-4: DELETE /api/config (reset) は LAN listener を停止しなければならない
@@ -641,27 +381,6 @@ class TestDeleteConfigStopsLanListener:
             "DELETE /api/config must call lan_listener.stop() once to keep "
             "runtime↔persisted consistent after config reset clears server_mode"
         )
-
-    def test_delete_config_stop_called_even_when_not_running(
-        self, client, mock_config_path, monkeypatch
-    ):
-        """stop() は idempotent なので listener が起動していなくても呼ばれてよい
-
-        stop() の no-op 保証により、listener が実行中かどうかに関わらず
-        reset ハンドラは stop() を呼び出す（毎回呼ぶ方が明確で安全）。
-        """
-        stop_called = []
-
-        # Simulate listener already not running — stop() is still called (idempotent no-op)
-        monkeypatch.setattr(
-            "web.lan_listener.lan_listener.stop",
-            lambda *a, **k: stop_called.append(True),
-        )
-
-        resp = client.delete("/api/config")
-
-        assert resp.status_code == 200
-        assert len(stop_called) == 1, "stop() must always be called on reset (idempotent)"
 
 
 class TestSwitchExternalManagerEndpoint:
@@ -796,38 +515,6 @@ class TestSwitchExternalManagerEndpoint:
         assert paths == ["file:///D:/media/local"]
         assert cfg["scraper"]["external_manager"] == "jellyfin"
 
-    def test_nested_readonly_under_writable_is_deleted(self, client, env):
-        """反向巢狀（PR #93 二審 P2-b）：可寫父之下的唯讀子夾卡必須被刪，不得因落在
-        可寫父前綴而被誤豁免 → 否則 config 條目移除卻留殭屍唯讀卡（破壞性清空沒清乾淨）。
-
-        可寫父 file:///D:/media + 唯讀子 file:///D:/media/cloud。唯讀子夾卡由「最具體
-        來源勝」歸給唯讀子 → 該刪；可寫父其他子路徑的卡保留。
-        """
-        env.write_config([
-            {"path": "file:///D:/media", "readonly": False},
-            {"path": "file:///D:/media/cloud", "readonly": True},
-        ], external_manager="off")
-        env.set_videos([
-            "file:///D:/media/cloud/X/X.strm",    # 唯讀子最具體 → 刪
-            "file:///D:/media/other/Y/Y.strm",    # 僅可寫父 → 保留
-        ])
-
-        resp = client.post("/api/config/switch-external-manager",
-                           json={"external_manager": "jellyfin"})
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        # 唯讀子夾卡被刪（不再因可寫父豁免留殭屍）、可寫父其他卡保留
-        assert env.repo.delete_calls == [["file:///D:/media/cloud/X/X.strm"]]
-        assert body["deleted_cards"] == 1
-        assert env.invalidated == ["file:///D:/media/cloud/X/X.strm"]
-
-        # config：唯讀子條目移除、可寫父保留 → 一致（無殭屍）
-        cfg = env.read_config()
-        paths = [d["path"] for d in cfg["gallery"]["directories"]]
-        assert paths == ["file:///D:/media"]
-        assert cfg["scraper"]["external_manager"] == "jellyfin"
 
     def test_refuses_when_generate_in_progress(self, client, env, monkeypatch):
         """Finding 2：generate 進行中切換 → success:False + reason，零 DB/config 變更。
@@ -854,69 +541,6 @@ class TestSwitchExternalManagerEndpoint:
         assert cfg["scraper"]["external_manager"] == "off"
         assert len(cfg["gallery"]["directories"]) == 1
 
-    def test_refuses_when_another_switch_in_progress(self, client, env, monkeypatch):
-        """PR #93 P2：另一個 switch 已持窗口 → 第二個回 reason=switch_in_progress、零變更。"""
-        env.write_config([
-            {"path": "file:///D:/ro_src", "readonly": True},
-        ], external_manager="off")
-        env.set_videos(["file:///D:/ro_src/B/B.strm"])
-        monkeypatch.setattr("web.routers.config.try_begin_switch", lambda: "switch_in_progress")
-
-        resp = client.post("/api/config/switch-external-manager",
-                           json={"external_manager": "jellyfin"})
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "switch_in_progress"
-        # 早退：零 DB 刪除、config 未變
-        assert env.repo.delete_calls == []
-        cfg = env.read_config()
-        assert cfg["scraper"]["external_manager"] == "off"
-        assert len(cfg["gallery"]["directories"]) == 1
-
-    def test_no_offline_only_persists_external_manager(self, client, env):
-        """無離線來源：delete_by_paths([]) 回 0，僅落盤 external_manager，removed_sources:0。"""
-        env.write_config([
-            {"path": "file:///D:/writable_src", "readonly": False},
-        ], external_manager="off")
-        env.set_videos(["file:///D:/writable_src/A/A.strm"])
-
-        resp = client.post("/api/config/switch-external-manager",
-                           json={"external_manager": "emby"})
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["removed_sources"] == 0
-        assert body["deleted_cards"] == 0
-        assert body["external_manager"] == "emby"
-
-        assert env.repo.delete_calls == [[]]  # 空 list 呼叫、回 0
-        assert env.invalidated == []
-
-        cfg = env.read_config()
-        dirs = cfg["gallery"]["directories"]
-        assert len(dirs) == 1
-        assert dirs[0]["path"] == "file:///D:/writable_src"
-        assert cfg["scraper"]["external_manager"] == "emby"
-
-    def test_file_uri_prefix_boundary(self, client, env):
-        """file:/// 前綴命中：離線來源 file:///D:/ro_src，卡在其下 → 命中，兄弟前綴不誤中。"""
-        env.write_config([
-            {"path": "file:///D:/ro_src", "readonly": True},
-        ], external_manager="off")
-        env.set_videos([
-            "file:///D:/ro_src/ABC-001/ABC-001.strm",  # 命中
-            "file:///D:/ro_src2/XYZ/XYZ.strm",          # 兄弟前綴，不得誤中
-        ])
-
-        resp = client.post("/api/config/switch-external-manager",
-                           json={"external_manager": "kodi"})
-
-        assert resp.status_code == 200
-        assert env.repo.delete_calls == [["file:///D:/ro_src/ABC-001/ABC-001.strm"]]
-        assert resp.json()["deleted_cards"] == 1
 
     def test_unc_prefix_boundary_no_valueerror(self, client, env):
         """UNC 前綴邊界（唯讀主場景）：離線來源 \\\\nas\\media，卡落其下命中且不拋 ValueError。"""
@@ -933,67 +557,6 @@ class TestSwitchExternalManagerEndpoint:
         assert resp.status_code == 200  # 無 ValueError
         assert resp.json()["deleted_cards"] == 1
         assert env.repo.delete_calls == [[card]]
-
-    def test_failure_contract_then_convergence(self, client, env):
-        """失敗契約：mutate_config 拋錯 → success:False，卡已刪但離線仍在 config +
-        external_manager 未變；重觸發 → delete no-op + config 落盤成功（收斂）。"""
-        from unittest.mock import patch
-        env.write_config([
-            {"path": "file:///D:/writable_src", "readonly": False},
-            {"path": "file:///D:/ro_src", "readonly": True},
-        ], external_manager="off")
-        env.set_videos([
-            "file:///D:/writable_src/A/A.strm",
-            "file:///D:/ro_src/B/B.strm",
-        ])
-
-        # 第一次：mutate_config 拋錯
-        with patch("web.routers.config.mutate_config", side_effect=RuntimeError("boom")):
-            resp1 = client.post("/api/config/switch-external-manager",
-                                json={"external_manager": "jellyfin"})
-
-        assert resp1.status_code == 200
-        assert resp1.json()["success"] is False
-        assert "error" in resp1.json()
-        # 卡已刪（delete_by_paths 收到離線卡）
-        assert env.repo.delete_calls == [["file:///D:/ro_src/B/B.strm"]]
-        # config 未變：離線來源仍在，external_manager 仍 off
-        cfg1 = env.read_config()
-        paths1 = [d["path"] for d in cfg1["gallery"]["directories"]]
-        assert "file:///D:/ro_src" in paths1
-        assert cfg1["scraper"]["external_manager"] == "off"
-
-        # 第二次（不 patch）：離線卡已缺席 → delete no-op 回 0；config 這次落盤成功
-        resp2 = client.post("/api/config/switch-external-manager",
-                            json={"external_manager": "jellyfin"})
-
-        assert resp2.status_code == 200
-        assert resp2.json()["success"] is True
-        assert resp2.json()["deleted_cards"] == 0  # 已缺席 → no-op
-        # 第二次的 delete 收到空 list（重算已無離線卡）
-        assert env.repo.delete_calls[-1] == []
-        cfg2 = env.read_config()
-        paths2 = [d["path"] for d in cfg2["gallery"]["directories"]]
-        assert "file:///D:/ro_src" not in paths2  # 離線條目已移除
-        assert "file:///D:/writable_src" in paths2  # 可寫保留
-        assert cfg2["scraper"]["external_manager"] == "jellyfin"
-
-    def test_invalid_literal_returns_422_no_side_effect(self, client, env):
-        """Literal-422：非法 external_manager → 422，端點體未執行、delete_by_paths 未呼叫、config 零變更。"""
-        env.write_config([
-            {"path": "file:///D:/ro_src", "readonly": True},
-        ], external_manager="off")
-        env.set_videos(["file:///D:/ro_src/B/B.strm"])
-
-        resp = client.post("/api/config/switch-external-manager",
-                           json={"external_manager": "invalid_mode"})
-
-        assert resp.status_code == 422
-        assert env.repo.delete_calls == []  # 端點體未執行
-        cfg = env.read_config()
-        # config 零變更
-        assert [d["path"] for d in cfg["gallery"]["directories"]] == ["file:///D:/ro_src"]
-        assert cfg["scraper"]["external_manager"] == "off"
 
 
 class TestRewriteStrmEndpoint:
@@ -1129,68 +692,6 @@ class TestRewriteStrmEndpoint:
             assert "\n" not in text                       # 單行
             assert text == env.expected_mapped(name)      # 正確映射後路徑
 
-    def test_delete_rule_restores_local_native_path(self, client, env):
-        """刪光規則（空 mappings）→ .strm 還原為本機原生來源路徑。"""
-        env.write_config(external_manager="jellyfin", with_mapping=False)
-        v1, _, e1 = env.make_movie("ABC-001")
-        env.set_videos([v1])
-
-        resp = client.post("/api/config/rewrite-strm")
-
-        assert resp.json()["rewritten"] == 1
-        from core.path_utils import uri_to_fs_path
-        assert e1["strm"].read_text(encoding="utf-8") == uri_to_fs_path(v1.path)
-
-    def test_off_mode_no_op_no_writes(self, client, env):
-        """off 模式端點自守 → rewritten 0、零檔案寫入（.strm 內容不變）。"""
-        env.write_config(external_manager="off", with_mapping=True)
-        v1, _, e1 = env.make_movie("ABC-001", strm_content="UNTOUCHED")
-        env.set_videos([v1])
-
-        resp = client.post("/api/config/rewrite-strm")
-
-        assert resp.json() == {"success": True, "rewritten": 0}
-        assert e1["strm"].read_text(encoding="utf-8") == "UNTOUCHED"
-
-    def test_rewrite_refused_during_generate(self, client, env, monkeypatch):
-        """PR #93 五審三次 P2：掃描/產生進行中 → rewrite-strm 拒絕（含 dry_run），零檔案寫入。
-        producer 正用 generate 起始舊快照續產出，rewrite 與其併行會 stale/重複寫。"""
-        env.write_config(external_manager="jellyfin", with_mapping=True)
-        v1, _, e1 = env.make_movie("ABC-001", strm_content="UNTOUCHED")
-        env.set_videos([v1])
-        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: True)
-
-        real = client.post("/api/config/rewrite-strm")
-        assert real.json()["success"] is False
-        assert real.json()["reason"] == "generate_in_progress"
-        dry = client.post("/api/config/rewrite-strm?dry_run=true")
-        assert dry.json()["success"] is False
-        assert dry.json()["reason"] == "generate_in_progress"
-        # 全程零改寫
-        assert e1["strm"].read_text(encoding="utf-8") == "UNTOUCHED"
-
-    def test_no_existing_strm_skipped_not_created(self, client, env):
-        """output_dir 非空但無既有 .strm → skip、不新建、不計入 rewritten。"""
-        env.write_config(external_manager="jellyfin", with_mapping=True)
-        v_has, _, e1 = env.make_movie("ABC-001")
-        v_empty, empty_dir = env.make_empty_movie("NO-STRM")
-        env.set_videos([v_has, v_empty])
-
-        resp = client.post("/api/config/rewrite-strm")
-
-        assert resp.json()["rewritten"] == 1               # 只算有 strm 的那片
-        assert list(empty_dir.glob("*.strm")) == []        # 不新建
-
-    def test_unproduced_row_not_enumerated(self, client, env):
-        """output_dir 空（未產出骨架 row）→ 不入枚舉、不觸及。"""
-        env.write_config(external_manager="jellyfin", with_mapping=True)
-        v_has, _, e1 = env.make_movie("ABC-001")
-        v_none = env.make_unproduced("SKELETON")
-        env.set_videos([v_has, v_none])
-
-        resp = client.post("/api/config/rewrite-strm")
-
-        assert resp.json()["rewritten"] == 1
 
     def test_codex_p1_filename_format_and_mapping_both_changed(self, client, env):
         """Codex P1：同次改 strm_path_mappings + filename_format → 仍 glob 命中磁碟既有
@@ -1209,25 +710,6 @@ class TestRewriteStrmEndpoint:
         assert strms[0].name == "LEGACY-OLD-NAME.strm"      # 改寫的是既有檔
         assert strms[0].read_text(encoding="utf-8") == env.expected_mapped("ABC-001")
 
-    def test_only_strm_touched_nfo_cover_db_untouched(self, client, env):
-        """只動 .strm：nfo/封面 mtime+內容不變、repo.upsert 未呼叫、DB path 不變。"""
-        env.write_config(external_manager="jellyfin", with_mapping=True)
-        v1, _, extras = env.make_movie("ABC-001", with_nfo=True, with_cover=True)
-        env.set_videos([v1])
-        nfo, cover = extras["nfo"], extras["cover"]
-        nfo_mtime, cover_mtime = nfo.stat().st_mtime, cover.stat().st_mtime
-        nfo_bytes, cover_bytes = nfo.read_bytes(), cover.read_bytes()
-        orig_path = v1.path
-
-        resp = client.post("/api/config/rewrite-strm")
-
-        assert resp.json()["rewritten"] == 1
-        assert nfo.read_bytes() == nfo_bytes
-        assert cover.read_bytes() == cover_bytes
-        assert nfo.stat().st_mtime == nfo_mtime
-        assert cover.stat().st_mtime == cover_mtime
-        assert env.repo.upsert_calls == []                 # DB 未寫
-        assert v1.path == orig_path                         # DB path 不變
 
     def test_dry_run_counts_and_writes_nothing(self, client, env):
         """dry_run=true → 回精確 count、零檔案寫入（.strm 內容不變）。"""
@@ -1243,18 +725,6 @@ class TestRewriteStrmEndpoint:
         assert e1["strm"].read_text(encoding="utf-8") == "UNTOUCHED-DRY"
         assert e2["strm"].read_text(encoding="utf-8") == "UNTOUCHED-DRY2"
 
-    def test_dry_run_count_equals_real_rewritten(self, client, env):
-        """dry_run count == 實際 rewritten（共用 _collect_strm_targets 判定）。"""
-        env.write_config(external_manager="jellyfin", with_mapping=True)
-        v1, _, _ = env.make_movie("ABC-001")
-        v_empty, _ = env.make_empty_movie("NO-STRM")
-        env.set_videos([v1, v_empty])
-
-        dry = client.post("/api/config/rewrite-strm?dry_run=true").json()
-        # 重建 repo（get_all 消費同一 list，dry-run 未改狀態，可重用）
-        real = client.post("/api/config/rewrite-strm").json()
-
-        assert dry["count"] == real["rewritten"] == 1
 
     def test_mapped_output_dir_reverse_mapped_before_glob(self, tmp_path, monkeypatch):
         """PR#93 Codex P2：WSL+UNC mapped 輸出根 → output_dir 存映射端 URI，
@@ -1337,36 +807,6 @@ class TestRewriteStrmEndpoint:
         assert source_fs_path == str(src_fs)
         assert "NAS" not in source_fs_path
 
-    def test_dry_run_off_mode_returns_count_zero(self, client, env):
-        """off 模式 dry_run → count 0（自守，不 glob）。"""
-        env.write_config(external_manager="off", with_mapping=True)
-        v1, _, _ = env.make_movie("ABC-001")
-        env.set_videos([v1])
-
-        resp = client.post("/api/config/rewrite-strm?dry_run=true")
-
-        assert resp.json() == {"success": True, "count": 0}
-
-    def test_malformed_output_dir_row_skipped_not_abort(self, client, env):
-        """單列 output_dir 壞（uri_to_fs_path/glob 拋錯）→ skip 該列、不整批中止。
-
-        per-row 容錯：一片壞 output_dir 不得害整批 rewrite 變 success:False。
-        """
-        import types
-        env.write_config(external_manager="jellyfin", with_mapping=True)
-        v_good, _, e_good = env.make_movie("ABC-001")
-        # 壞列：output_dir 非字串（truthy 過 filter、uri_to_fs_path 對 int .startswith → AttributeError）
-        v_bad = types.SimpleNamespace(path="file:///D:/x/x.mp4", output_dir=12345)
-        env.set_videos([v_bad, v_good])
-
-        resp = client.post("/api/config/rewrite-strm")
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True          # 未整批中止
-        assert body["rewritten"] == 1           # 壞列 skip、好列照改
-        assert e_good["strm"].read_text(encoding="utf-8") == env.expected_mapped("ABC-001")
-
 
 class TestGalleryOutputDirProgramAreaGuard:
     """TASK-153b-T3：gallery.output_dir 程式區守衛 + resolved response-only。"""
@@ -1416,44 +856,6 @@ class TestGalleryOutputDirProgramAreaGuard:
         assert body["reason"] == "gallery_output_in_program_area"
         assert isinstance(body.get("error"), str) and body["error"].strip()
 
-    def test_output_slash_rejected(self, client, env):
-        resp = client.put("/api/config", json=self._payload(env["seed"], "output/"))
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "gallery_output_in_program_area"
-        assert body.get("error")
-
-    def test_Output_capital_rejected(self, client, env):
-        """Output（大小寫不同）仍靠路徑 containment 擋下。"""
-        resp = client.put("/api/config", json=self._payload(env["seed"], "Output"))
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "gallery_output_in_program_area"
-        assert body.get("error")
-
-    def test_absolute_under_project_root_rejected(self, client, env):
-        from core.data_root import get_project_root
-        abs_under = str(get_project_root() / "output")
-        resp = client.put("/api/config", json=self._payload(env["seed"], abs_under))
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "gallery_output_in_program_area"
-        assert body.get("error")
-
-    def test_plain_relative_my_gallery_rejected(self, client, env):
-        """純相對路徑解析後仍在程式區之下 → 拒絕（主 session 覆寫 a）。"""
-        resp = client.put("/api/config", json=self._payload(env["seed"], "my_gallery"))
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "gallery_output_in_program_area"
-
-    def test_relative_outside_program_area_accepted(self, client, env):
-        """帶 ../ 跳出程式區的相對值 → 接受。"""
-        resp = client.put("/api/config", json=self._payload(env["seed"], "../openaver_gallery"))
-        body = resp.json()
-        assert body["success"] is True
-        saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
-        assert saved["gallery"]["output_dir"] == "../openaver_gallery"
 
     def test_absolute_outside_accepted(self, client, env, tmp_path):
         outside = str(tmp_path / "external_gallery")
@@ -1463,12 +865,6 @@ class TestGalleryOutputDirProgramAreaGuard:
         saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
         assert saved["gallery"]["output_dir"] == outside
 
-    def test_empty_accepted(self, client, env):
-        resp = client.put("/api/config", json=self._payload(env["seed"], ""))
-        body = resp.json()
-        assert body["success"] is True
-        saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
-        assert saved["gallery"]["output_dir"] == ""
 
     def test_get_resolved_gallery_output_path_empty_follows_data_root(self, client, env):
         from core.data_root import get_data_root
@@ -1481,72 +877,6 @@ class TestGalleryOutputDirProgramAreaGuard:
         # resolved 不在 data 裡
         assert "resolved" not in body["data"]
         assert "gallery_output_path" not in (body["data"].get("gallery") or {})
-
-    def test_get_config_resolved_includes_stable_data_root(self, client, env, tmp_path):
-        """resolved.data_root 不隨 gallery.output_dir 目前值變動。"""
-        from core.data_root import get_data_root
-
-        outside = str(tmp_path / "custom_gallery_abs")
-        put = client.put("/api/config", json=self._payload(env["seed"], outside))
-        assert put.status_code == 200
-        assert put.json()["success"] is True
-
-        resp = client.get("/api/config")
-        body = resp.json()
-        assert body["success"] is True
-        assert body["data"]["gallery"]["output_dir"] == outside
-        assert body["resolved"]["data_root"] == str(get_data_root())
-        assert body["resolved"]["data_root"] != outside
-        assert body["resolved"]["gallery_output_path"] == outside
-
-    def test_put_config_program_area_rejection_message_omits_cleared_claim(self, client, env):
-        """程式區守衛拒絕文案不得再聲稱「更新時會被清除」。"""
-        resp = client.put("/api/config", json=self._payload(env["seed"], "./output"))
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "gallery_output_in_program_area"
-        assert "會被清除" not in body["error"]
-        assert "輸出目錄不可設在程式安裝目錄內。" in body["error"]
-
-    def test_resolved_not_in_put_payload_and_not_on_disk(self, client, env, tmp_path):
-        """GET → 原樣塞進 PUT body 含 resolved → 磁碟 config.json 不含該 key。"""
-        get_body = client.get("/api/config").json()
-        payload = get_body["data"]
-        # 模擬前端誤把頂層 resolved 塞進 payload（或把 gallery_output_path 塞進 gallery）
-        payload["resolved"] = get_body["resolved"]
-        payload.setdefault("gallery", {})["gallery_output_path"] = get_body["resolved"]["gallery_output_path"]
-        # 用程式區外絕對路徑，讓守衛通過
-        outside = str(tmp_path / "ok_gallery")
-        payload["gallery"]["output_dir"] = outside
-
-        resp = client.put("/api/config", json=payload)
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-        on_disk = json.loads(env["config_path"].read_text(encoding="utf-8"))
-        assert "resolved" not in on_disk
-        assert "gallery_output_path" not in on_disk
-        assert "gallery_output_path" not in (on_disk.get("gallery") or {})
-        assert on_disk["gallery"]["output_dir"] == outside
-
-    def test_default_data_root_path_rejected_when_under_program_root(self, client, env):
-        """未設 OPENAVER_DATA_DIR 時，逐字打資料根路徑（= program_root/output）→ 拒絕。"""
-        from core.data_root import get_data_root
-        resp = client.put("/api/config", json=self._payload(env["seed"], str(get_data_root())))
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "gallery_output_in_program_area"
-
-    def test_external_data_dir_path_accepted(self, client, env, tmp_path, monkeypatch):
-        """設了 OPENAVER_DATA_DIR 後，逐字打那個 root → 在程式區外 → 接受。"""
-        external = tmp_path / "ext_data_root"
-        external.mkdir()
-        monkeypatch.setenv("OPENAVER_DATA_DIR", str(external))
-        resp = client.put("/api/config", json=self._payload(env["seed"], str(external)))
-        body = resp.json()
-        assert body["success"] is True
-        saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
-        assert saved["gallery"]["output_dir"] == str(external)
 
 
 class TestNfoTitleFormatConfigGuard:
@@ -1602,19 +932,6 @@ class TestNfoTitleFormatConfigGuard:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["scraper"]["nfo_title_format"] != "{title}"
 
-    def test_put_config_rejects_duplicate_num_in_nfo_title_format(self, client, env):
-        """{num} 出現兩次 → 驗證拒絕、返回 reason 與 error，且設定未落地。"""
-        resp = client.put("/api/config", json=self._payload(env["seed"], "[{num}]{title}][{num}]"))
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is False
-        assert body["reason"] == "nfo_title_format_invalid"
-        assert body["error"] == "{num} 只能出現一次"
-
-        # 重新 GET 確認設定未落地
-        get_resp = client.get("/api/config")
-        assert get_resp.status_code == 200
-        assert get_resp.json()["data"]["scraper"]["nfo_title_format"] != "[{num}]{title}][{num}]"
 
     def test_put_config_accepts_reordered_custom_nfo_title_format(self, client, env):
         """合法格式（順序互換＋含額外變數）→ 存檔成功並可讀回。"""

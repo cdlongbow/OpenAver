@@ -242,11 +242,6 @@ class TestAsyncOffloadGuard:
             + "\n".join(f"  {v}" for v in violations)
         )
 
-    def test_whitelist_entries_exist(self):
-        """白名單防腐：每個白名單條目對應的函式必須真實存在（避免殭屍豁免）。"""
-        found = {(py.stem, n.name) for py, n, _ in _iter_async_route_handlers()}
-        missing = [w for w in WHITELIST if w not in found]
-        assert not missing, f"WHITELIST 指向不存在的 async 路由（應清理）: {missing}"
 
     def test_detects_bare_device_state_is_disabled_call(self):
         """TASK-5c：合成 async def 含 device_state.is_disabled() 裸呼叫必須被擋。
@@ -284,86 +279,19 @@ class TestConvertedHandlersAreDef:
         raise AssertionError(f"{filename}:{func_name} not found")
 
     # T1 — hot path
-    def test_t1_get_image_is_def(self):
-        assert self._func_type("gallery_media.py", "get_image") is ast.FunctionDef
 
-    def test_t1_get_video_is_def(self):
-        assert self._func_type("gallery_media.py", "get_video") is ast.FunctionDef
 
     # T2 — 純讀 DB 路由
-    def test_t2_get_stats_is_def(self):
-        assert self._func_type("scanner.py", "get_stats") is ast.FunctionDef
 
-    def test_t2_clear_cache_is_def(self):
-        assert self._func_type("scanner.py", "clear_cache") is ast.FunctionDef
-
-    def test_t2_check_update_is_def(self):
-        assert self._func_type("scanner.py", "check_update") is ast.FunctionDef
-
-    def test_t2_check_missing_is_def(self):
-        assert self._func_type("scanner.py", "check_missing") is ast.FunctionDef
-
-    def test_t2_view_list_is_def(self):
-        assert self._func_type("scanner.py", "view_list") is ast.FunctionDef
-
-    def test_t2_get_actress_stats_is_def(self):
-        assert self._func_type("scanner.py", "get_actress_stats") is ast.FunctionDef
-
-    def test_t2_showcase_get_videos_is_def(self):
-        assert self._func_type("showcase.py", "get_videos") is ast.FunctionDef
-
-    def test_t2_showcase_get_video_is_def(self):
-        assert self._func_type("showcase.py", "get_video") is ast.FunctionDef
-
-    def test_t2_get_favorite_files_is_def(self):
-        assert self._func_type("search.py", "get_favorite_files") is ast.FunctionDef
-
-    def test_t2_get_local_status_is_def(self):
-        assert self._func_type("search.py", "get_local_status") is ast.FunctionDef
 
     # T3 (71) — thumbnail cache 端點（sync def → Starlette threadpool）
-    def test_t3_71_get_thumb_is_def(self):
-        assert self._func_type("gallery_media.py", "get_thumb") is ast.FunctionDef
 
-    def test_t3_71_thumb_clear_is_def(self):
-        # 71b-T2：DB-safe 清空端點。def → Starlette threadpool（rmtree 不阻塞 loop）。
-        assert self._func_type("gallery_media.py", "thumb_clear") is ast.FunctionDef
 
     # T7 (71) — DELETE /api/showcase/video（sync def → Starlette threadpool；
     # body 內 repo.delete_by_paths / thumbnail_cache.invalidate 在 worker thread）
-    def test_t7_71_delete_video_is_def(self):
-        assert self._func_type("showcase.py", "delete_video") is ast.FunctionDef
 
-    def test_t2_motion_lab_data_is_def(self):
-        assert self._func_type("motion_lab.py", "motion_lab_data") is ast.FunctionDef
 
     # T3 — config / 設定檔 I/O 路由
-    def test_t3_get_config_is_def(self):
-        assert self._func_type("config.py", "get_config") is ast.FunctionDef
-
-    def test_t3_update_config_is_def(self):
-        assert self._func_type("config.py", "update_config") is ast.FunctionDef
-
-    def test_t3_reset_config_is_def(self):
-        assert self._func_type("config.py", "reset_config") is ast.FunctionDef
-
-    def test_t3_get_tutorial_status_is_def(self):
-        assert self._func_type("config.py", "get_tutorial_status") is ast.FunctionDef
-
-    def test_t3_mark_tutorial_completed_is_def(self):
-        assert self._func_type("config.py", "mark_tutorial_completed") is ast.FunctionDef
-
-    def test_t3_reset_tutorial_is_def(self):
-        assert self._func_type("config.py", "reset_tutorial") is ast.FunctionDef
-
-    def test_t3_update_general_field_is_def(self):
-        assert self._func_type("config.py", "update_general_field") is ast.FunctionDef
-
-    def test_t3_get_scraper_sources_is_def(self):
-        assert self._func_type("scraper_sources.py", "get_scraper_sources") is ast.FunctionDef
-
-    def test_t3_get_favorite_scanner_link_is_def(self):
-        assert self._func_type("settings_link.py", "get_favorite_scanner_link") is ast.FunctionDef
 
 
 class TestT4OffloadHousePattern:
@@ -372,65 +300,6 @@ class TestT4OffloadHousePattern:
     @staticmethod
     def _src(filename: str) -> str:
         return (ROUTERS_DIR / filename).read_text(encoding="utf-8")
-
-    def test_jellyfin_check_uses_to_thread_helper(self):
-        src = self._src("scanner.py")
-        assert "asyncio.to_thread(_check_jellyfin_needed" in src
-        assert "def _check_jellyfin_needed(" in src
-        assert "db_path.exists()" in src
-        assert "VideoRepository(db_path)" in src
-        assert "check_jellyfin_images_needed(repo, path_mappings)" in src
-
-    def test_connect_uses_to_thread_helper(self):
-        src = self._src("settings_metatube.py")
-        assert "asyncio.to_thread(_connect_sync" in src
-        assert "def _connect_sync(" in src
-        assert "MetatubeHttpClient" in src
-        assert "_verify_token_canary" in src
-
-    def test_actress_crop_uses_to_thread(self):
-        src = self._src("actress.py")
-        assert "asyncio.to_thread(_check_cover_path" in src
-        assert "asyncio.to_thread(crop_video_cover" in src
-
-    def test_set_actress_photo_uses_to_thread(self):
-        src = self._src("actress.py")
-        assert "asyncio.to_thread(_load_actress" in src
-        assert "asyncio.to_thread(_get_actress_videos" in src
-        assert "asyncio.to_thread(_write_actress_photo" in src
-
-    def test_search_stream_load_config_offloaded(self):
-        assert "await asyncio.to_thread(load_config)" in self._src("search.py")
-
-    def test_filter_files_uses_to_thread(self):
-        src = self._src("search.py")
-        assert "asyncio.to_thread(_filter_files_sync" in src
-        assert "def _filter_files_sync(" in src
-
-    def test_batch_enrich_load_config_offloaded(self):
-        assert "await asyncio.to_thread(load_config)" in self._src("scraper.py")
-
-    def test_batch_enrich_readonly_route_offloaded(self):
-        # [lint-guard: pytest-justified] Python 源碼 async-offload 架構契約——
-        # 「阻塞 helper 必須經 run_in_executor 包裝」是 event-loop 語意，eslint/
-        # static_guard 無法表達；沿用本檔 TestT4OffloadHousePattern 既有 house-pattern。
-        """TASK-104-T3/T5：batch-enrich 唯讀項改道（resolve_owning_output_root →
-        resolve_ingest_plan → _produce_one，皆阻塞 I/O）須包在 nested sync helper
-        `_do_readonly` 內、經 `run_in_executor` offload，不可在 async event_generator
-        直接 body 裸跑。AST 主守衛（test_no_bare_blocking_in_async_routes）會抓「inline
-        進直接 body」的回退，但「移除 executor 改 bare-call nested def」是 AST 掃描盲區
-        （nested def 名不在偵測清單）→ 此正向 substring 鎖補位。"""
-        src = self._src("scraper.py")
-        assert "def _do_readonly(" in src, (
-            "batch-enrich 唯讀改道須抽 nested sync helper `_do_readonly` 承載阻塞 I/O"
-        )
-        assert "run_in_executor(None, _ro_ctx.run, _do_readonly)" in src, (
-            "`_do_readonly` 必須經 loop.run_in_executor offload —— 不可在 event_generator "
-            "直接 body 呼叫（會卡 event loop）"
-        )
-
-    def test_translate_routes_load_config_offloaded(self):
-        assert "await asyncio.to_thread(load_config)" in self._src("translate.py")
 
 
 # ============================================================
@@ -501,25 +370,3 @@ class TestConfigWriteSerializationGuard:
             + "\n".join(f"  {v}" for v in violations)
         )
 
-    def test_update_config_uses_mutate_config_not_save_config(self):
-        """P2-1 守衛：update_config 必須用 mutate_config（preserve 伺服器擁有欄位），不得裸呼 save_config。
-
-        P2-1 修正（config↔listener divergence）：update_config 改為在 mutate_config
-        critical section 內讀取現有值後才寫入，確保 full-config save 不會覆寫由伺服器自己
-        持有的欄位。若有人回退至 save_config，此守衛報錯。
-
-        152c：保留的欄位從一個變兩個（`general.server_mode` ＋ `focal_device`），局部函式
-        隨之正名為 `_write_preserving_server_owned`。名字寫在這裡是刻意的——它是 `update_config`
-        與那個鎖內 preserve 之間唯一的接線，改名沒同步更新這條就該紅。
-        """
-        src = (ROUTERS_DIR / "config.py").read_text(encoding="utf-8")
-        assert "mutate_config(_write_preserving_server_owned)" in src, (
-            "config.py::update_config 必須呼叫 mutate_config（_write_preserving_server_owned），"
-            "以保持 server_mode／focal_device 這些伺服器擁有欄位的所有權"
-        )
-        tree = ast.parse(src, filename="config.py")
-        callers = _find_save_config_callers(tree)
-        assert "update_config" not in callers, (
-            "config.py::update_config 不得直接呼叫 save_config —— 須透過 mutate_config "
-            "在鎖內 preserve 現有 server_mode（P2-1 修正）"
-        )

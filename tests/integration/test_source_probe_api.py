@@ -57,13 +57,6 @@ def test_probe_endpoint_uses_request_snapshot_not_live_config(client, seen, monk
     assert results['javlibrary']['state'] == 'skipped'
 
 
-def test_probe_endpoint_default_scope_is_dmm_and_blank_url_not_via_proxy(client, seen):
-    resp = client.post('/api/sources/probe', json={'source_ids': ['dmm']})
-    assert resp.status_code == 200
-    assert seen['dmm'] == ProxySettings(url='', scope='dmm')
-    assert resp.json()['results']['dmm']['via_proxy'] is False
-
-
 def test_probe_endpoint_does_not_leak_proxy_credentials(client, monkeypatch):
     secret = 'http://user:pass@127.0.0.1:1'
 

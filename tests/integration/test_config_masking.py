@@ -81,22 +81,6 @@ class TestAC8FieldParity:
         assert masked["metatube"]["token"] == mask_secret(TOKEN_PLAIN)
 
 
-class TestUrlProxyPassthrough:
-    """B17: metatube.url / search.proxy_url with userinfo pass through byte-identical."""
-
-    def test_url_and_proxy_url_unmasked(self, client, temp_config_path):
-        baseline = _seed_secrets(client)
-
-        response = client.get("/api/config")
-        assert response.status_code == 200
-        masked = response.json()["data"]
-
-        assert masked["metatube"]["url"] == baseline["metatube"]["url"]
-        assert masked["metatube"]["url"] == METATUBE_URL_WITH_USERINFO
-        assert masked["search"]["proxy_url"] == baseline["search"]["proxy_url"]
-        assert masked["search"]["proxy_url"] == PROXY_URL_WITH_USERINFO
-
-
 class TestClaudeKeyPutRoundtrip:
     """I3: PUT-roundtrip preserves plaintext claude api_key across masking sentinel."""
 

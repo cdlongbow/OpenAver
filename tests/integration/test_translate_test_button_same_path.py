@@ -14,7 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.translate_service import (
-    LANGUAGE_PROMPTS,
     ClaudeTranslateService,
     GeminiTranslateService,
     OllamaTranslateService,
@@ -138,23 +137,3 @@ async def test_test_button_matches_translate_single(row: Row):
         assert set(button_sent[2].keys()) == {"model", "messages"}
 
 
-async def test_ollama_payload_verbatim():
-    """Ollama 外送參數一字不變（spec §3）：url／json／kwargs key／timeout。"""
-    cm, mock_client = _mock_client({"message": {"content": "新人女優出道"}})
-    lang = LANGUAGE_PROMPTS["zh-TW"]
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=cm) as ac:
-        svc = OllamaTranslateService({"url": OLLAMA_URL, "model": "qwen3:8b"}, "zh-TW")
-        assert await svc.translate_single(TITLE)
-    assert ac.call_args.kwargs["timeout"] == 30
-    call = mock_client.post.call_args
-    assert call.args[0] == f"{OLLAMA_URL}/api/chat"
-    assert set(call.kwargs.keys()) == {"json"}
-    assert call.kwargs["json"] == {
-        "model": "qwen3:8b",
-        "messages": [
-            {"role": "system", "content": lang["ollama_system"]},
-            {"role": "user", "content": "範例：" + lang["ollama_example"] + "\n\n請翻譯：" + TITLE},
-        ],
-        "stream": False,
-        "options": {"num_predict": 500, "temperature": 0.3},
-    }

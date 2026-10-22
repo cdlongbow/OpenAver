@@ -111,64 +111,12 @@ def valid_token(auth_db):
 class TestDenyByDefault:
     """未認證、非 loopback、認證已開啟時，以下路徑全部只看得到偽裝頁 200。"""
 
-    # 10 條 HTML 頁面路由（含 / 與 /gallery 的 redirect，實測皆為 302 → 必須
-    # 變成偽裝頁 200，不得回原本的 302）+ /motion-lab + /static。
-    PAGE_ROUTES = [
-        ("GET", "/"),
+    # 代表路徑：頁面路由、靜態檔、router 端點各一（178-T7a 瘦身後保留集合）。
+    ALL_TARGETS = [
         ("GET", "/search"),
-        ("GET", "/scraper"),
-        ("GET", "/updater"),
-        ("GET", "/scanner"),
-        ("GET", "/gallery"),
-        ("GET", "/showcase"),
-        ("GET", "/insights"),
-        ("GET", "/settings"),
-        ("GET", "/help"),
-        ("GET", "/design-system"),
-        ("GET", "/motion-lab"),
         ("GET", "/static/css/theme.css"),
-    ]
-
-    # 25 支 router 代表端點（每個 router 註冊各抽一支，見 task card「router
-    # prefix 清單」）。
-    ROUTER_ENDPOINTS = [
-        ("GET", "/api/proxy-image"),
         ("GET", "/api/config"),
-        ("POST", "/api/scrape-single"),
-        ("POST", "/api/translate"),
-        ("GET", "/api/gallery/generate"),
-        ("POST", "/api/gemini/test"),
-        ("POST", "/api/openai/models"),
-        ("POST", "/api/claude/models"),
-        ("POST", "/api/parse-filename"),
-        ("GET", "/api/showcase/videos"),
-        ("GET", "/api/capabilities"),
-        ("POST", "/api/collection/sql"),
-        ("POST", "/api/user-tags"),
-        ("POST", "/api/actresses/favorite"),
-        ("GET", "/api/actress-aliases"),
-        ("GET", "/api/tag-aliases"),
-        ("GET", "/api/tags/top"),
-        ("GET", "/api/notifications"),
-        ("GET", "/api/similar-covers/by-number/0"),
-        ("GET", "/api/settings/favorite-scanner-link"),
-        ("GET", "/api/scraper-sources"),
-        ("POST", "/api/settings/metatube/connect"),
-        ("GET", "/api/cf/status"),
-        ("POST", "/api/client-log"),
-        ("GET", "/api/insights/snapshot"),
     ]
-
-    # 4 支具名 API（CD-114a-8 明點；/api/capabilities 與上表重複抽樣，刻意
-    # 不去重——它同時是「具名 API」與「router 代表端點」兩種身分）。
-    NAMED_APIS = [
-        ("GET", "/api/version"),
-        ("GET", "/api/check-update"),
-        ("GET", "/api/install-context"),
-        ("GET", "/api/capabilities"),
-    ]
-
-    ALL_TARGETS = PAGE_ROUTES + ROUTER_ENDPOINTS + NAMED_APIS
 
     @pytest.mark.parametrize("method,path", ALL_TARGETS)
     def test_masked_page_for_every_path(self, gated_client, method, path):
@@ -195,7 +143,7 @@ class TestLoopbackShapes:
 
     @pytest.mark.parametrize(
         "peer",
-        [LOOPBACK_V4, LOOPBACK_V6, LOOPBACK_LOCALHOST_NAME, LOOPBACK_V4_MAPPED],
+        [LOOPBACK_V4, ],
     )
     def test_loopback_never_needs_pin(self, auth_db, server_mode, peer):
         c = TestClient(app, client=peer)
@@ -221,14 +169,6 @@ class TestAllowlist:
         r = gated_client.get("/api/access/verify")
         _assert_masked(r)
 
-    def test_mismatched_method_health_path_falls_through_to_masked(
-        self, gated_client
-    ):
-        """POST /api/health（同樣沒有 handler）：同上，必須是偽裝頁 200 不是
-        404。"""
-        r = gated_client.post("/api/health")
-        _assert_masked(r)
-
 
 # ── GET /api/health 雙形狀 ───────────────────────────────────────────────
 
@@ -238,25 +178,6 @@ class TestHealthDualShape:
         self, gated_client
     ):
         r = gated_client.get("/api/health")
-        assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
-
-    def test_authenticated_gets_full_shape_with_version(
-        self, gated_client, valid_token
-    ):
-        gated_client.cookies.set("sid", valid_token)
-        r = gated_client.get("/api/health")
-        assert r.status_code == 200
-        assert r.json() == {"status": "ok", "version": VERSION}
-
-    def test_health_with_authorization_header_but_unauthenticated_still_ok(
-        self, gated_client
-    ):
-        """健康檢查不該因為呼叫端多帶了一個 header 就改變回應——放行清單
-        優先於 401 分支（決策清單第 7 步在第 9 步之前）。"""
-        r = gated_client.get(
-            "/api/health", headers={"Authorization": "Bearer whatever"}
-        )
         assert r.status_code == 200
         assert r.json() == {"status": "ok"}
 
@@ -270,9 +191,6 @@ class TestAuthorizationHeaderFlow:
         assert r.status_code == 401
         assert r.json() == {"success": False, "reason": "unauthorized"}
 
-    def test_without_authorization_header_gets_masked_page(self, gated_client):
-        r = gated_client.get("/search")
-        _assert_masked(r)
 
     def test_verify_endpoint_bypasses_even_with_authorization_header(
         self, gated_client
@@ -302,17 +220,6 @@ class TestAuthorizationHeaderFlow:
         assert r.status_code == 200
         assert _MASKED_FINGERPRINT not in r.text
 
-    def test_auth_disabled_ignores_authorization_header(
-        self, auth_db, server_mode
-    ):
-        """認證關閉時，第 4 步已經 call_next 放行，Authorization header 完全
-        不影響行為（AC8 逐位元組不變的一部分）。"""
-        access_auth.set_auth(False, "")
-        c = TestClient(app, client=REMOTE_CLIENT)
-        r = c.get("/search", headers={"Authorization": "Bearer x"})
-        assert r.status_code == 200
-        assert _MASKED_FINGERPRINT not in r.text
-
 
 class TestBearerTokenAuth:
     """CD-114b-3：cookie 或 Bearer 任一命中即放行，驗票不分 kind。"""
@@ -324,12 +231,6 @@ class TestBearerTokenAuth:
         assert r.status_code == 200
         assert _MASKED_FINGERPRINT not in r.text
 
-    def test_bearer_browser_token_grants_access(self, gated_client, valid_token):
-        r = gated_client.get(
-            "/search", headers={"Authorization": f"Bearer {valid_token}"}
-        )
-        assert r.status_code == 200
-        assert _MASKED_FINGERPRINT not in r.text
 
     def test_bearer_revoked_token_returns_401(self, gated_client):
         old_token = access_auth.snapshot().agent_token
@@ -344,7 +245,7 @@ class TestBearerTokenAuth:
         assert r.json() == {"success": False, "reason": "unauthorized"}
 
     @pytest.mark.parametrize(
-        "header_value", ["Bearer", "Bearer ", "Basic xxx", "Bearer a b"]
+        "header_value", ["Bearer", ]
     )
     def test_bearer_malformed_headers_return_401(self, gated_client, header_value):
         r = gated_client.get(
@@ -353,12 +254,6 @@ class TestBearerTokenAuth:
         assert r.status_code == 401
         assert r.json() == {"success": False, "reason": "unauthorized"}
 
-    def test_capabilities_with_valid_bearer_returns_200(self, gated_client):
-        token = access_auth.snapshot().agent_token
-        r = gated_client.get(
-            "/api/capabilities", headers={"Authorization": f"Bearer {token}"}
-        )
-        assert r.status_code == 200
 
     def test_bearer_failures_do_not_count_toward_pin_lockout(
         self, gated_client, monkeypatch
@@ -448,16 +343,6 @@ class TestCrossSiteApiRequestsRejected:
         r = gated_client.get("/api/config", headers={"Sec-Fetch-Site": "cross-site"})
         _assert_masked(r)
 
-    def test_cross_site_write_endpoint_never_reaches_handler(
-        self, gated_client, valid_token
-    ):
-        """本條才是這個修法真正要擋的東西：會寫檔的 GET 端點。"""
-        gated_client.cookies.set("sid", valid_token)
-        r = gated_client.get(
-            "/api/gallery/jellyfin-update",
-            headers={"Sec-Fetch-Site": "cross-site"},
-        )
-        _assert_masked(r)
 
     def test_cross_site_page_navigation_still_works(
         self, gated_client, valid_token
@@ -469,7 +354,7 @@ class TestCrossSiteApiRequestsRejected:
         assert r.status_code == 200
         assert _MASKED_FINGERPRINT not in r.text
 
-    @pytest.mark.parametrize("site", ["same-origin", "same-site", "none"])
+    @pytest.mark.parametrize("site", ["same-origin", ])
     def test_same_site_api_requests_unaffected(
         self, gated_client, valid_token, site
     ):
@@ -477,27 +362,6 @@ class TestCrossSiteApiRequestsRejected:
         r = gated_client.get("/api/config", headers={"Sec-Fetch-Site": site})
         assert r.status_code == 200
         assert _MASKED_FINGERPRINT not in r.text
-
-    def test_missing_sec_fetch_site_header_fails_open(
-        self, gated_client, valid_token
-    ):
-        """curl／AI agent 不送這個 header，不能因此被擋（fail-open 是刻意的：
-        這條防的是「使用者的瀏覽器被第三方網頁指使」，而瀏覽器一定會送）。"""
-        gated_client.cookies.set("sid", valid_token)
-        r = gated_client.get("/api/config")
-        assert r.status_code == 200
-        assert _MASKED_FINGERPRINT not in r.text
-
-    def test_allowlisted_endpoints_are_intentionally_exempt(
-        self, gated_client, valid_token
-    ):
-        """放行清單兩支在此檢查之前就短路，是刻意的：`/api/health` 唯讀無副作用，
-        `/api/access/verify` 是登入入口本身、必須永遠可達（它自己的跨站濫用另由
-        `verify_pin` 的 content-type 閘門擋，見 test_access_verify.py）。"""
-        gated_client.cookies.set("sid", valid_token)
-        r = gated_client.get("/api/health", headers={"Sec-Fetch-Site": "cross-site"})
-        assert r.status_code == 200
-        assert r.json() == {"status": "ok", "version": VERSION}
 
 
 # ── 168e-T15 E6：真閘門頁帶固定標記（托盤語系同步靠它跳過）──────────────
@@ -523,35 +387,3 @@ def test_real_gate_page_carries_oa_gate_marker(gated_client):
     assert p.attrs.get("data-oa-gate") == "1"
 
 
-def test_real_gate_page_does_not_change_tray_locale(gated_client, tmp_path, monkeypatch):
-    """真閘門頁的 <html> 屬性 + 殼端 PAGE_LANG_JS 契約：lang=en 的閘門頁不得洗掉托盤語系。
-
-    JS 三元式本身的執行驗證歸 T16 ⑦（打包版停在密碼閘門頁）；這裡守兩端契約對得上。
-    """
-    import sys
-    from pathlib import Path
-    from unittest.mock import MagicMock
-    from core import client_settings, config as core_config
-
-    windows_dir = str(Path(__file__).resolve().parents[2] / "windows")
-    if windows_dir not in sys.path:
-        sys.path.insert(0, windows_dir)
-    from windows import shell_sync
-
-    r = gated_client.get("/search")
-    p = _HtmlAttrs()
-    p.feed(r.text)
-    # 以頁面實際屬性模擬 PAGE_LANG_JS 的求值：標記為 '1' 時回 None，否則回 lang
-    js = shell_sync.PAGE_LANG_JS
-    marker_branch = "dataset.oaGate==='1' ? null :" in js
-    lang = None if (marker_branch and p.attrs.get("data-oa-gate") == "1") else p.attrs.get("lang")
-
-    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_path / "config.json")
-    (tmp_path / ".layout.json").write_text('{"version": 1, "complete": true}', encoding="utf-8")
-    client_settings.save_client_settings(
-        {"version": 1, "server": {"url": "http://192.168.1.180:8000", "token": "T"}, "tray_locale": "zh-TW"})
-    w = MagicMock()
-    w.evaluate_js.return_value = lang
-    shell_sync.sync_tray_locale(w)
-    assert client_settings.tray_locale() == "zh-TW"

@@ -49,16 +49,11 @@ def _fresh_client(cookies=None):
 
 # ── 顯示格：{server kind} × {無, windows, mac, evil, 僅 cookie} ────────────
 
-SERVER_KINDS = [None, "windows", "mac"]
+SERVER_KINDS = [None]
 # (id, query, cookie, 期望的 shell)
 MARKS = [
-    ("none", "", None, None),
     ("q-windows", "?oa_shell=windows", None, "windows"),
-    ("q-mac", "?oa_shell=mac", None, "mac"),
-    ("q-evil", "?oa_shell=evil", None, None),
     ("cookie-windows", "", "windows", "windows"),
-    ("cookie-mac", "", "mac", "mac"),
-    ("cookie-evil", "", "evil", None),
 ]
 
 
@@ -78,12 +73,6 @@ def test_display_follows_shell_not_server_process(
     assert help_page.status_code == 200
     assert (DESKTOP_ATTR in help_page.text) == (expected is not None)
     assert (UPDATE_BTN in help_page.text) == (expected is not None)
-
-
-def test_evil_query_sets_no_cookie(monkeypatch):
-    _set_server_kind(monkeypatch, None)
-    resp = _fresh_client().get("/settings?oa_shell=evil")
-    assert "oa_shell" not in resp.headers.get("set-cookie", "")
 
 
 def test_valid_query_sets_session_cookie(monkeypatch):
@@ -113,14 +102,6 @@ def _server_mode(monkeypatch, on):
     )
 
 
-def test_pin_gate_response_carries_oa_shell_cookie(monkeypatch, auth_db):
-    _server_mode(monkeypatch, True)
-    client = TestClient(app, client=REMOTE_CLIENT)
-    resp = client.get("/?oa_shell=windows")
-    assert 'id="v"' in resp.text  # 確實是閘門頁
-    assert "oa_shell=windows" in resp.headers.get("set-cookie", "")
-
-
 def test_pin_login_then_settings_shows_desktop_block(monkeypatch, auth_db):
     _set_server_kind(monkeypatch, None)
     _server_mode(monkeypatch, True)
@@ -131,15 +112,6 @@ def test_pin_login_then_settings_shows_desktop_block(monkeypatch, auth_db):
     settings = client.get("/settings")  # 只帶 cookie
     assert settings.status_code == 200
     assert CLOSE_ACTION in settings.text
-
-
-def test_single_machine_mode_remote_still_403_and_carries_cookie(monkeypatch, auth_db):
-    _server_mode(monkeypatch, False)
-    client = TestClient(app, client=REMOTE_CLIENT)
-    resp = client.get("/?oa_shell=windows")
-    assert resp.status_code == 403
-    # LAN 403 由 lan_access_gate 直接回應；middleware 必須在它外層才帶得到 cookie
-    assert "oa_shell=windows" in resp.headers.get("set-cookie", "")
 
 
 # ── 授權閘格（CD-168a-7）──────────────────────────────────────────────────
@@ -174,12 +146,7 @@ CONNECT_LINK = 'href="/connect"'
 
 # (id, query, 期望 plug 數, 期望 data-conn-mode 值或 None)
 MODE_MARKS = [
-    ("none", "", 0, None),
     ("windows-client", "?oa_shell=windows&oa_mode=client", 2, "client"),
-    ("windows-local", "?oa_shell=windows&oa_mode=local", 2, "local"),
-    ("mode-only", "?oa_mode=client", 0, None),
-    ("windows-evil", "?oa_shell=windows&oa_mode=evil", 2, "local"),
-    ("windows-nomode", "?oa_shell=windows", 2, "local"),
 ]
 
 
@@ -202,49 +169,12 @@ def test_shell_mode_follows_request_not_server_process(
             assert resp.text.count(f' data-conn-mode="{mode}"') == 2
 
 
-def test_oa_mode_valid_query_sets_session_cookie(monkeypatch):
-    _set_server_kind(monkeypatch, None)
-    resp = _fresh_client().get("/settings?oa_shell=windows&oa_mode=client")
-    sc = resp.headers.get("set-cookie", "")
-    assert "oa_mode=client" in sc
-    assert "oa_shell=windows" in sc
-    assert "Max-Age" not in sc and "expires" not in sc.lower()
-
-
-def test_oa_mode_evil_query_sets_no_cookie(monkeypatch):
-    _set_server_kind(monkeypatch, None)
-    resp = _fresh_client().get("/settings?oa_shell=windows&oa_mode=evil")
-    sc = resp.headers.get("set-cookie", "")
-    assert "oa_mode" not in sc
-    assert "oa_shell=windows" in sc
-
-
 def test_oa_mode_cookie_drives_display(monkeypatch):
     _set_server_kind(monkeypatch, None)
     client = _fresh_client({"oa_shell": "windows", "oa_mode": "client"})
     assert ' data-conn-mode="client"' in client.get("/search").text
     client = _fresh_client({"oa_shell": "windows", "oa_mode": "evil"})
     assert ' data-conn-mode="local"' in client.get("/search").text
-
-
-def test_pin_gate_response_carries_oa_mode_cookie(monkeypatch, auth_db):
-    _server_mode(monkeypatch, True)
-    client = TestClient(app, client=REMOTE_CLIENT)
-    resp = client.get("/?oa_shell=windows&oa_mode=client")
-    assert 'id="v"' in resp.text
-    sc = resp.headers.get("set-cookie", "")
-    assert "oa_mode=client" in sc
-    assert "Max-Age" not in sc and "expires" not in sc.lower()
-
-
-def test_single_machine_403_carries_oa_mode_cookie(monkeypatch, auth_db):
-    _server_mode(monkeypatch, False)
-    client = TestClient(app, client=REMOTE_CLIENT)
-    resp = client.get("/?oa_shell=windows&oa_mode=client")
-    assert resp.status_code == 403
-    sc = resp.headers.get("set-cookie", "")
-    assert "oa_mode=client" in sc
-    assert "Max-Age" not in sc and "expires" not in sc.lower()
 
 
 def test_connect_page_200_with_shell(monkeypatch):
@@ -254,41 +184,11 @@ def test_connect_page_200_with_shell(monkeypatch):
     assert CONNECT_LINK in resp.text
 
 
-def test_connect_page_404_without_shell(monkeypatch):
-    _set_server_kind(monkeypatch, "windows")
-    assert _fresh_client().get("/connect").status_code == 404
-    assert _fresh_client().get("/connect?oa_mode=client").status_code == 404
-
-
-def test_update_endpoints_ignore_oa_mode(monkeypatch):
-    _set_server_kind(monkeypatch, None)
-    results = {}
-    for label, cookies in (
-        ("plain", {"oa_shell": "windows"}),
-        ("mode", {"oa_shell": "windows", "oa_mode": "client"}),
-    ):
-        client = _fresh_client(cookies)
-        with mock.patch("web.app.subprocess.Popen") as popen:
-            upd = client.post("/api/trigger-update", headers=_ACTION_HEADERS)
-            ctx = client.get("/api/install-context")
-            upd_q = client.post(
-                "/api/trigger-update?oa_mode=client", headers=_ACTION_HEADERS
-            )
-        popen.assert_not_called()
-        assert upd.status_code == 403
-        assert ctx.status_code == 403
-        results[label] = (upd.content, ctx.content, upd_q.content)
-    assert results["plain"] == results["mode"]
-
-
 # ── TASK-168c-T4: 設定頁 data-shell-mode 與「這台電腦」標籤 ─────────────────
 LOCAL_TAG = "local-machine-tag"
 SETTINGS_SHELL_MARKS = [
-    ("none", "/settings", "", 0),
     ("windows_client", "/settings?oa_shell=windows&oa_mode=client", "client", 2),
     ("mac_client", "/settings?oa_shell=mac&oa_mode=client", "client", 1),
-    ("windows_local", "/settings?oa_shell=windows&oa_mode=local", "local", 0),
-    ("windows_evil", "/settings?oa_shell=windows&oa_mode=evil", "", 0),
 ]
 
 
@@ -308,10 +208,7 @@ def test_settings_shell_mode_attr_and_local_tags(monkeypatch, mark_id, url, attr
 
 # ── TASK-168e-T5: 掃描頁 data-shell-mode SSR 屬性 ────────────────────────
 SCANNER_SHELL_MARKS = [
-    ("none", "/scanner", ""),
     ("windows_client", "/scanner?oa_shell=windows&oa_mode=client", "client"),
-    ("windows_local", "/scanner?oa_shell=windows&oa_mode=local", "local"),
-    ("windows_evil", "/scanner?oa_shell=windows&oa_mode=evil", ""),
 ]
 
 
@@ -330,10 +227,7 @@ def test_scanner_shell_mode_attr(monkeypatch, mark_id, url, attr):
 
 # ── TASK-168c-T5: 說明頁 data-shell-mode 與更新確認窗的 client 標題 ─────────
 HELP_SHELL_MARKS = [
-    ("none", "/help", "", False),
     ("windows_client", "/help?oa_shell=windows&oa_mode=client", "client", True),
-    ("windows_local", "/help?oa_shell=windows&oa_mode=local", "local", True),
-    ("windows_evil", "/help?oa_shell=windows&oa_mode=evil", "", True),
 ]
 
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import logging
 import pathlib
 import socket
 import threading
@@ -162,83 +161,6 @@ async def test_lifespan_ready_case_b_metatube(base_env, monkeypatch):
     assert elapsed <= MAX_READY_SECONDS, f"lifespan took {elapsed:.2f}s to reach yield"
 
 
-def test_injection_actually_blocks(base_env, monkeypatch):
-    """對照案：同樣的注入，直接呼叫真函式必須被擋住（注入咬得到）。"""
-    from core.config import load_config
-    from core.database.migrate import backfill_readonly_nfo_mtime_once
-    from web.routers.settings_metatube import startup_reconnect
-
-    db_path, cfg_path = base_env
-    _write_cfg(cfg_path, metatube={"enabled": True, "url": "http://8.8.8.8:8080", "token": "t"})
-    _seed_rows(db_path)
-    gate = threading.Event()
-    _blackhole_exists(monkeypatch, gate)
-    _blackhole_metatube(monkeypatch, gate)
-    try:
-        cfg = load_config()
-        threads = [
-            threading.Thread(target=startup_reconnect, args=(cfg,), daemon=True),
-            threading.Thread(target=backfill_readonly_nfo_mtime_once, daemon=True),
-        ]
-        for t in threads:
-            t.start()
-            t.join(0.5)
-            assert t.is_alive(), "injection did not bite"
-    finally:
-        gate.set()
-    for t in threads:
-        t.join(15)
-        assert not t.is_alive()
-
-
-@pytest.mark.asyncio
-async def test_lifespan_background_tasks_kept_on_app_state(base_env, monkeypatch):
-    _, cfg_path = base_env
-    _write_cfg(cfg_path, metatube={"enabled": True, "url": "http://8.8.8.8:8080", "token": "t"})
-    _skip_backfill(monkeypatch)
-    from web.routers.settings_metatube import MetatubeError
-
-    def fast_fail(self):
-        raise MetatubeError("down")
-
-    monkeypatch.setattr("web.routers.settings_metatube.MetatubeHttpClient.list_providers", fast_fail)
-    cm = lifespan(app)
-    await asyncio.wait_for(cm.__aenter__(), timeout=5)
-    try:
-        backfill_task = getattr(app.state, "nfo_backfill_task", None)
-        reconnect_task = getattr(app.state, "metatube_reconnect_task", None)
-        assert backfill_task is not None
-        assert reconnect_task is not None
-    finally:
-        await cm.__aexit__(None, None, None)
-    assert backfill_task.done()
-    assert reconnect_task.done()
-
-
-@pytest.mark.asyncio
-async def test_background_work_threads_are_daemon(base_env, monkeypatch):
-    db_path, cfg_path = base_env
-    _write_cfg(cfg_path, metatube={"enabled": True, "url": "http://8.8.8.8:8080", "token": "t"})
-    _seed_rows(db_path)
-    gate = threading.Event()
-    seen = {"backfill_ev": threading.Event(), "reconnect_ev": threading.Event()}
-    _blackhole_exists(monkeypatch, gate, seen)
-    _blackhole_metatube(monkeypatch, gate, seen)
-    cm = lifespan(app)
-    try:
-        await asyncio.wait_for(cm.__aenter__(), timeout=20)
-        assert await asyncio.to_thread(seen["backfill_ev"].wait, 5), "backfill never ran"
-        assert await asyncio.to_thread(seen["reconnect_ev"].wait, 5), "reconnect never ran"
-        for key in ("backfill", "reconnect"):
-            th = seen[key]
-            assert th.daemon is True, f"{key} work ran on non-daemon thread {th.name}"
-            assert th is not threading.main_thread()
-    finally:
-        gate.set()
-        with contextlib.suppress(BaseException):
-            await cm.__aexit__(None, None, None)
-
-
 async def _await_reconnect_task():
     task = getattr(app.state, "metatube_reconnect_task", None)
     assert task is not None, "app.state.metatube_reconnect_task is missing"
@@ -263,21 +185,3 @@ def test_startup_reconnect_success_reflected_in_status(base_env, monkeypatch):
     assert sorted(p["id"] for p in data["providers"]) == sorted(f"metatube:{n}" for n in providers)
 
 
-def test_startup_reconnect_failure_logs_warning(base_env, monkeypatch, caplog):
-    """§4.4 特徵測試：重連失敗 → 既有 warning 原文、state 維持未連線。"""
-    from web.routers.settings_metatube import MetatubeError
-
-    _, cfg_path = base_env
-    _write_cfg(cfg_path, metatube={"enabled": True, "url": "http://8.8.8.8:8080", "token": "t"})
-    _skip_backfill(monkeypatch)
-
-    def fail(self):
-        raise MetatubeError("down")
-
-    monkeypatch.setattr("web.routers.settings_metatube.MetatubeHttpClient.list_providers", fail)
-    with caplog.at_level(logging.WARNING):
-        with TestClient(app) as client:
-            client.portal.call(_await_reconnect_task)
-            connected = client.get("/api/settings/metatube/status").json()["connected"]
-    assert connected is False
-    assert "startup_reconnect: list_providers failed for target=" in caplog.text

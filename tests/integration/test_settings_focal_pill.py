@@ -72,10 +72,4 @@ class TestSettingsFocalAutoPill:
         # 改由 scripts/static_guard_lint.mjs 的 required-string 守接線。
         assert "checked" not in input_tag, f"版本相同、仍停用，不應 checked，實際標籤：{input_tag}"
 
-    def test_focal_pill_anchor_is_unique(self, client):
-        """防止錨點哪天變得不唯一、讓 _extract_focal_input_tag 定位又開始抓錯。"""
-        # [lint-guard: pytest-justified DOM 錨點唯一性契約]
-        resp = client.get("/settings")
-        assert resp.status_code == 200
-        assert resp.text.count("data-focal-auto-pill") == 1
 

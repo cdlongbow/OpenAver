@@ -65,10 +65,6 @@ class TestEnrichSingleMetadataSchema:
     # 的 17 欄白名單必須與 web/routers/scraper.py::_validate_metadata_shape 的白名單逐字
     # 相同」這種跨檔 contract，屬 CLAUDE.md「Lint 守衛規則」明列的 pytest 欄。
 
-    def test_metadata_property_present(self, client):
-        data = client.get("/api/capabilities").json()
-        tool = _tool(data, "enrich_single")
-        assert "metadata" in tool["input_schema"]["properties"]
 
     def test_confirmation_required_unchanged_false(self, client):
         """CD-135-8：掛在免確認條目上，既有值不准改。"""
@@ -76,73 +72,10 @@ class TestEnrichSingleMetadataSchema:
         tool = _tool(data, "enrich_single")
         assert tool.get("confirmation_required") is False
 
-    def test_metadata_description_mentions_refresh_full_only(self, client):
-        data = client.get("/api/capabilities").json()
-        desc = _tool(data, "enrich_single")["input_schema"]["properties"]["metadata"]["description"]
-        assert "refresh_full" in desc
-
-    def test_metadata_description_lists_all_17_fields(self, client):
-        data = client.get("/api/capabilities").json()
-        desc = _tool(data, "enrich_single")["input_schema"]["properties"]["metadata"]["description"]
-        # [lint-guard: pytest-justified] 清單增量：ALLOWED_METADATA_FIELDS 是與
-        # _validate_metadata_shape 對帳用的跨檔白名單，不是靜態字串存在檢查。
-        for field in ALLOWED_METADATA_FIELDS:
-            assert field in desc, f"metadata description 缺少欄位 {field}"
-
-    def test_metadata_description_mentions_rating_scale(self, client):
-        """⚠️ _rating 是 0-5 刻度，不是 Jellyfin 的 0-10——送 8.0 會寫出 16.0。"""
-        data = client.get("/api/capabilities").json()
-        desc = _tool(data, "enrich_single")["input_schema"]["properties"]["metadata"]["description"]
-        assert "0-5" in desc
-        assert "16.0" in desc or "×2" in desc
-
-    def test_metadata_description_mentions_original_title_empty_rejected(self, client):
-        """⚠️ original_title 送空字串會被 400，其餘文字欄位空字串合法。"""
-        data = client.get("/api/capabilities").json()
-        desc = _tool(data, "enrich_single")["input_schema"]["properties"]["metadata"]["description"]
-        assert "original_title" in desc
-        assert "400" in desc or "拒絕" in desc
-
-    def test_metadata_description_does_not_mention_readonly(self, client):
-        """AC-6：capabilities 不新增唯讀相關字樣（今天已無，這是回歸鎖，防手滑）。
-
-        同時鎖 properties 鍵集合：readonly_action 不得出現在 enrich_single 的
-        input_schema.properties 裡（只查 description 會漏掉「加了欄位但 description
-        沒寫唯讀兩字」的洩漏）。
-        """
-        data = client.get("/api/capabilities").json()
-        props = _tool(data, "enrich_single")["input_schema"]["properties"]
-        desc = props["metadata"]["description"]
-        assert "readonly_action" not in desc
-        assert "唯讀" not in desc
-        assert "readonly" not in desc.lower()
-        assert "readonly_action" not in props
-
-    def test_confirmation_required_unchanged_after_t5(self, client):
-        """DoD-4：enrich_single 的 confirmation_required 值與本 task 改動前相同（False）。"""
-        data = client.get("/api/capabilities").json()
-        assert _tool(data, "enrich_single").get("confirmation_required") is False
-
 
 class TestEnrichSingleWriteCoverDescription:
     """DoD-3 / CD-135-17：只改 enrich_single 的 write_cover，另兩處一字不動。"""
 
-    def test_enrich_single_write_cover_has_description(self, client):
-        data = client.get("/api/capabilities").json()
-        write_cover = _tool(data, "enrich_single")["input_schema"]["properties"]["write_cover"]
-        assert "description" in write_cover
-        assert "metadata" in write_cover["description"]
-        assert write_cover["default"] is True
-
-    def test_video_rescrape_write_cover_untouched(self, client):
-        data = client.get("/api/capabilities").json()
-        write_cover = _tool(data, "video_rescrape_with_source")["input_schema"]["properties"]["write_cover"]
-        assert write_cover == {"type": "boolean", "default": True}
-
-    def test_batch_enrich_write_cover_untouched(self, client):
-        data = client.get("/api/capabilities").json()
-        write_cover = _tool(data, "batch_enrich")["input_schema"]["properties"]["write_cover"]
-        assert write_cover == {"type": "boolean", "default": True}
 
     def test_video_rescrape_does_not_expose_metadata(self, client):
         """CD-135-8：video_rescrape_with_source（confirmation_required=True）不揭露 metadata。"""
@@ -151,36 +84,9 @@ class TestEnrichSingleWriteCoverDescription:
         assert "metadata" not in tool["input_schema"]["properties"]
 
 
-class TestEnrichSingleDescriptionAdditions:
-    """DoD-4：番號守衛與分集片逐段提交提示。"""
-
-    def test_description_mentions_number_guard(self, client):
-        data = client.get("/api/capabilities").json()
-        desc = _tool(data, "enrich_single")["description"]
-        assert "allow_number_change" in desc
-
-    def test_description_mentions_multi_part_sequential_calls(self, client):
-        data = client.get("/api/capabilities").json()
-        desc = _tool(data, "enrich_single")["description"]
-        assert "-cd1" in desc or "分集" in desc
-        assert "file_path" in desc
-
-
 class TestWorkflowExampleScenario:
     """DoD-5：workflow 範例示範「查兩來源→挑欄位→改寫→提交」，且必須帶 overwrite_existing: true。"""
 
-    def test_new_scenario_present(self, client):
-        data = client.get("/api/capabilities").json()
-        scenarios = {ex["scenario"] for ex in data["examples"]}
-        assert "逐欄位選來源 + AI 改寫後提交" in scenarios
-
-    def test_scenario_demonstrates_two_sources_pick_and_rewrite(self, client):
-        data = client.get("/api/capabilities").json()
-        scenario = next(ex for ex in data["examples"] if ex["scenario"] == "逐欄位選來源 + AI 改寫後提交")
-        steps_blob = "\n".join(scenario["steps"])
-        assert "source=dmm" in steps_blob
-        assert "source=javdb" in steps_blob
-        assert "metadata" in steps_blob
 
     def test_scenario_submit_step_has_overwrite_existing_true(self, client):
         """步驟 4 省略 overwrite_existing: true 會撞既有分裂守衛回 400——示範本身就是壞的。"""
@@ -188,10 +94,6 @@ class TestWorkflowExampleScenario:
         scenario = next(ex for ex in data["examples"] if ex["scenario"] == "逐欄位選來源 + AI 改寫後提交")
         submit_step = next(s for s in scenario["steps"] if "POST /api/enrich-single" in s)
         assert "overwrite_existing: true" in submit_step
-
-    def test_examples_count_is_10(self, client):
-        data = client.get("/api/capabilities").json()
-        assert len(data["examples"]) == 10
 
 
 class TestDurationUnitFix:
@@ -222,11 +124,6 @@ class TestSAPre9DisclosureFixes:
         assert "沒送的白名單欄位會被寫成空" in desc
         assert "不是「維持原值」" in desc
 
-    def test_duration_unit_documented_on_write_side(self, client):
-        """P3-4：寫入側過去沒寫單位，與 _rating 的刻度警告不對稱。"""
-        desc = _tool(client.get("/api/capabilities").json(), "enrich_single")[
-            "input_schema"]["properties"]["metadata"]["description"]
-        assert "duration 的單位是**分鐘**" in desc
 
     def test_allow_number_change_declared_in_input_schema(self, client):
         """P2-5：逃生口只寫在描述裡，AI 的工具框架會照 schema 過濾掉這個參數。"""

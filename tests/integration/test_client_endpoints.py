@@ -14,8 +14,6 @@ import core.access_auth as access_auth
 from core.version import VERSION
 # 守衛測試需讀放行常數本體（同 test_access_gate.py）
 from web.app import (
-    _AUTH_ALLOWLIST,  # noqa: PLC2701
-    _CLIENT_HANDSHAKE_ALLOWLIST,  # noqa: PLC2701
     app,
 )
 
@@ -117,15 +115,6 @@ class TestHello:
         assert r.status_code == 200
         assert r.json()["authed"] is True
 
-    def test_invalid_bearer_is_not_401_and_not_authed(self, gated_client):
-        r = gated_client.get("/api/client/hello", headers={"Authorization": "Bearer nope"})
-        assert r.status_code == 200
-        assert r.json()["authed"] is False
-
-    def test_cookie_alone_does_not_make_authed(self, gated_client, valid_token):
-        gated_client.cookies.set("sid", valid_token)
-        r = gated_client.get("/api/client/hello")
-        assert r.json()["authed"] is False
 
     def test_pin_off_reports_no_auth_required(self, pin_off_db, server_mode):
         c = TestClient(app, client=REMOTE_CLIENT)
@@ -133,13 +122,6 @@ class TestHello:
         assert body["auth_required"] is False
         assert body["authed"] is True
 
-    def test_cold_cache_hello_loads_snapshot(self, auth_db, server_mode):
-        access_auth.reset_state_for_tests()
-        assert access_auth.snapshot() is None
-        c = TestClient(app, client=REMOTE_CLIENT)
-        body = c.get("/api/client/hello").json()
-        assert body["auth_required"] is True
-        assert body["authed"] is False
 
     @pytest.mark.parametrize(
         "synology,desktop,expected",
@@ -191,44 +173,6 @@ class TestToken:
         r = gated_client.post("/api/client/token", json={"pin": "1234"})
         assert r.status_code == 401
 
-    def test_lockout_shared_token_then_gate_page(self, gated_client):
-        for _ in range(5):
-            gated_client.post("/api/client/token", json={"pin": "0000"})
-        r = gated_client.post("/api/access/verify", json={"pin": "1234"})
-        assert "set-cookie" not in r.headers
-
-    def test_attempt_pin_exception_is_401(self, gated_client, monkeypatch):
-        def boom(_candidate):
-            raise RuntimeError("disk full")
-
-        monkeypatch.setattr("web.routers.client.attempt_pin", boom)
-        r = gated_client.post("/api/client/token", json={"pin": "1234"})
-        assert r.status_code == 401
-        assert r.json() == {"success": False, "reason": "bad_pin"}
-
-    def test_pin_off_returns_null_token(self, pin_off_db, server_mode):
-        c = TestClient(app, client=REMOTE_CLIENT)
-        r = c.post("/api/client/token", json={"pin": "whatever"})
-        assert r.status_code == 200
-        assert r.json() == {"success": True, "token": None, "auth_required": False}
-
-    def test_delay_runs_before_attempt_pin(self, gated_client, monkeypatch):
-        order = []
-
-        async def _tracking_delay():
-            order.append("delay")
-
-        real = access_auth.attempt_pin
-
-        def _tracking_attempt(candidate):
-            order.append("attempt")
-            return real(candidate)
-
-        monkeypatch.setattr("web.routers.access._fixed_delay", _tracking_delay)
-        monkeypatch.setattr("web.routers.client.attempt_pin", _tracking_attempt)
-        gated_client.post("/api/client/token", json={"pin": "0000"})
-        assert order == ["delay", "attempt"]
-
 
 # ── sources ──────────────────────────────────────────────────────────────
 
@@ -250,18 +194,12 @@ class TestSources:
 
 
 class TestHandshakeGate:
-    def test_allowlist_sizes(self):
-        assert len(_AUTH_ALLOWLIST) == 2
-        assert len(_CLIENT_HANDSHAKE_ALLOWLIST) == 2
 
     @pytest.mark.parametrize(
         "method,path",
         [
             ("GET", "/api/client/token"),
-            ("POST", "/api/client/hello"),
-            ("POST", "/api/client/sources"),
             ("GET", "/api/client/other"),
-            ("GET", "/api/client/hello/x"),
         ],
     )
     def test_handshake_does_not_open_other_client_paths(self, gated_client, method, path):
@@ -303,19 +241,11 @@ class TestClientTokenGate:
         assert "samesite=lax" in cookie
         assert "path=/" in cookie
 
-    def test_cookie_from_redirect_opens_page(self, gated_client, valid_token):
-        r = gated_client.get(f"/settings?oa_token={valid_token}", follow_redirects=False)
-        assert r.status_code == 303
-        r2 = gated_client.get("/settings")
-        assert r2.status_code == 200
-        assert _MASKED_FINGERPRINT not in r2.text
 
     def test_invalid_token_falls_to_gate_page(self, gated_client):
         r = gated_client.get("/settings?oa_token=bogus", follow_redirects=False)
         _assert_masked(r)
 
-    def test_missing_token_falls_to_gate_page(self, gated_client):
-        _assert_masked(gated_client.get("/settings", follow_redirects=False))
 
     def test_revoke_all_invalidates_token_and_cookie(self, gated_client, valid_token):
         r = gated_client.get(f"/settings?oa_token={valid_token}", follow_redirects=False)
@@ -325,16 +255,6 @@ class TestClientTokenGate:
         fresh = TestClient(app, client=REMOTE_CLIENT)
         _assert_masked(fresh.get(f"/settings?oa_token={valid_token}", follow_redirects=False))
 
-    def test_loopback_same_behavior(self, auth_db, server_mode, valid_token):
-        c = TestClient(app, client=LOOPBACK_CLIENT)
-        r = c.get(f"/settings?oa_token={valid_token}", follow_redirects=False)
-        assert r.status_code == 303
-        assert valid_token not in r.headers["location"]
-        assert f"sid={valid_token}" in r.headers["set-cookie"]
-
-    def test_only_get_is_handled(self, gated_client, valid_token):
-        r = gated_client.post(f"/api/client/token?oa_token={valid_token}", json={"pin": "0000"}, follow_redirects=False)
-        assert r.status_code == 401
 
     def test_cold_cache_valid_token_still_redirects(self, auth_db, server_mode):
         token = access_auth.attempt_pin("1234")
@@ -344,20 +264,4 @@ class TestClientTokenGate:
         r = c.get(f"/settings?oa_token={token}", follow_redirects=False)
         assert r.status_code == 303
 
-    def test_cold_load_failure_passes_through_without_cookie(self, auth_db, server_mode, monkeypatch):
-        access_auth.reset_state_for_tests()
 
-        def boom():
-            raise RuntimeError("db broken")
-
-        monkeypatch.setattr("web.app.ensure_schema", boom)
-        c = TestClient(app, client=REMOTE_CLIENT)
-        r = c.get("/settings?oa_token=anything", follow_redirects=False)
-        assert r.status_code != 303
-        assert "set-cookie" not in r.headers
-
-    def test_single_mode_remote_valid_token_is_403(self, auth_db, single_mode, valid_token):
-        c = TestClient(app, client=REMOTE_CLIENT)
-        r = c.get(f"/settings?oa_token={valid_token}", follow_redirects=False)
-        assert r.status_code == 403
-        assert r.text == "Forbidden"

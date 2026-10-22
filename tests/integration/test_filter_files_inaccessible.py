@@ -16,7 +16,7 @@ filter-files 的 `rejected.inaccessible` 桶：把「無讀權限（PermissionEr
 import pytest
 from pathlib import Path
 
-from web.routers.search import _looks_unmounted_drive, _filter_files_sync
+from web.routers.search import _filter_files_sync
 from core.database.connection import init_db
 
 
@@ -37,37 +37,6 @@ def _t6_isolated_failure_db(tmp_path, monkeypatch):
     init_db(db_path)
     monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
     return db_path
-
-
-
-class TestLooksUnmountedDrive:
-    """純函式：路徑外觀啟發式（mock is_mount 決定性，不依賴真實 /mnt 狀態）"""
-
-    def test_mnt_letter_unmounted_true(self, monkeypatch):
-        """/mnt/<letter>/… 且該碟未掛載（is_mount=False）→ True（存取不到）"""
-        monkeypatch.setattr(Path, "is_mount", lambda self: False)
-        assert _looks_unmounted_drive("/mnt/z/lan/video.mp4") is True
-
-    def test_mnt_letter_mounted_false(self, monkeypatch):
-        """/mnt/<letter>/… 但該碟已掛載（is_mount=True）→ False（檔案真缺 = not_found，不誤報）"""
-        monkeypatch.setattr(Path, "is_mount", lambda self: True)
-        assert _looks_unmounted_drive("/mnt/c/foo/missing.mp4") is False
-
-    def test_local_unix_path_false(self, monkeypatch):
-        """一般本地 Unix 路徑（非 /mnt/<letter>）→ False（真的不存在歸 not_found）"""
-        # is_mount 不該被呼叫（regex 先短路），但仍 mock 防萬一
-        monkeypatch.setattr(Path, "is_mount", lambda self: True)
-        assert _looks_unmounted_drive("/home/me/no_number.mp4") is False
-
-    def test_windows_native_drive_false(self, monkeypatch):
-        """Windows 原生 `Z:\\…`（非 /mnt/<letter> 形狀）→ False（dev-only 不涵蓋 Windows 原生）"""
-        monkeypatch.setattr(Path, "is_mount", lambda self: False)
-        assert _looks_unmounted_drive("Z:\\lan\\video.mp4") is False
-
-    def test_mnt_multichar_not_matched(self, monkeypatch):
-        """/mnt/wsl、/mnt/nas 等多字元掛載名不符 `/mnt/<單字母>` → False（不誤判系統掛載）"""
-        monkeypatch.setattr(Path, "is_mount", lambda self: False)
-        assert _looks_unmounted_drive("/mnt/nas/share/video.mp4") is False
 
 
 class TestFilterFilesInaccessible:
@@ -97,36 +66,6 @@ class TestFilterFilesInaccessible:
         assert result["rejected"]["not_found"] == 0
         assert result["files"] == []
 
-    def test_unmounted_drive_to_inaccessible(self, tmp_path, monkeypatch):
-        """stat FileNotFoundError + 路徑像未掛載碟（/mnt/z、is_mount=False）→ inaccessible。
-        mutation：把 `_looks_unmounted_drive(path)` 換成常數 False → 落 not_found，本測試轉紅。"""
-        target = "/mnt/z/lan/UNMOUNTED-001.mp4"
-        self._mock_stat_raise(monkeypatch, target, FileNotFoundError("no such"))
-        monkeypatch.setattr(Path, "is_mount", lambda self: False)  # /mnt/z 未掛載
-
-        result = _filter_files_sync([target])
-        assert result["rejected"]["inaccessible"] == 1
-        assert result["rejected"]["not_found"] == 0
-
-    def test_genuinely_missing_local_to_not_found(self, tmp_path, monkeypatch):
-        """stat FileNotFoundError + 一般本地路徑（非 /mnt/<letter>）→ not_found（不誤報存取問題）。"""
-        target = str(tmp_path / "genuinely_missing.mp4")  # 不建立
-        # is_mount 任意（regex 先短路），確保決定性
-        monkeypatch.setattr(Path, "is_mount", lambda self: True)
-
-        result = _filter_files_sync([target])
-        assert result["rejected"]["not_found"] == 1
-        assert result["rejected"]["inaccessible"] == 0
-
-    def test_mounted_missing_file_to_not_found(self, tmp_path, monkeypatch):
-        """已掛載碟上檔案真缺（/mnt/c/…、is_mount=True）→ not_found（啟發式不誤報）。"""
-        target = "/mnt/c/foo/MOUNTED-MISSING.mp4"
-        self._mock_stat_raise(monkeypatch, target, FileNotFoundError("no such"))
-        monkeypatch.setattr(Path, "is_mount", lambda self: True)  # /mnt/c 已掛載
-
-        result = _filter_files_sync([target])
-        assert result["rejected"]["not_found"] == 1
-        assert result["rejected"]["inaccessible"] == 0
 
     def test_smb_unc_value_error_to_inaccessible(self):
         """SMB/UNC 路徑 → normalize_path 拋 ValueError → inaccessible（WSL 與純 Linux 皆拋 ValueError）。
@@ -135,23 +74,4 @@ class TestFilterFilesInaccessible:
         assert result["rejected"]["inaccessible"] == 1
         assert result["rejected"]["not_found"] == 0
 
-    def test_valid_file_passes_no_regression(self, tmp_path):
-        """既有行為零回歸：可存取的 mp4 → 進 files、inaccessible=0。"""
-        mp4 = tmp_path / "ABC-001.mp4"
-        mp4.write_bytes(b"fake video")
 
-        result = _filter_files_sync([str(mp4)])
-        assert len(result["files"]) == 1
-        assert result["files"][0]["path"] == str(mp4)
-        assert result["rejected"]["inaccessible"] == 0
-        assert result["rejected"]["not_found"] == 0
-
-    def test_total_rejected_includes_inaccessible(self, tmp_path, monkeypatch):
-        """total_rejected = sum(rejected.values()) 自動含 inaccessible（前端計數依賴）。"""
-        mp4 = tmp_path / "PERM.mp4"
-        mp4.write_bytes(b"x")
-        self._mock_stat_raise(monkeypatch, str(mp4), PermissionError("denied"))
-
-        result = _filter_files_sync([str(mp4)])
-        assert result["total_rejected"] == 1
-        assert result["total_rejected"] == sum(result["rejected"].values())

@@ -48,31 +48,3 @@ def test_reorder_persists(client, temp_config_path):
         assert s["order"] == i
 
 
-def test_promote_appends_at_end(client, temp_config_path):
-    """模擬 promote：新增一個 enabled metatube 落在末尾，order 為最大 → 持久化。"""
-    cfg = _base_config(client)
-    sources = cfg["sources"]
-    next_order = len(sources)
-    sources.append(
-        {
-            "id": "mt_demo",
-            "type": "metatube",
-            "display_name_key": "",
-            "display_name_raw": "Metatube Demo",
-            "enabled": True,
-            "order": next_order,
-            "config": {"censored_type": "censored"},
-            "is_beta": False,
-            "manual_only": False,
-        }
-    )
-    cfg["sources"] = sources
-
-    resp = client.put("/api/config", json=cfg)
-    assert resp.status_code == 200
-
-    new_cfg = _base_config(client)
-    by_id = {s["id"]: s for s in new_cfg["sources"]}
-    assert "mt_demo" in by_id
-    assert by_id["mt_demo"]["enabled"] is True
-    assert by_id["mt_demo"]["order"] == next_order

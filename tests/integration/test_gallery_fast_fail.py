@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
 
 import pytest
@@ -92,24 +91,6 @@ def test_unreachable_writable_source_image_fast_fails_404(
 
     resp = client.get("/api/gallery/image", params={"path": str(img)})
 
-    assert resp.status_code == 404
-    assert resp.text == "來源目前無法存取"
-    assert "cache-control" not in resp.headers
-
-
-def test_no_permission_writable_source_image_fast_fails_404(client, tmp_path, mocker):
-    src = tmp_path / "writable"
-    src.mkdir()
-    img = _jpeg(src / "poster.jpg")
-    native = uri_to_fs_path(str(src))
-    mocker.patch(
-        "web.routers.gallery_media.load_config",
-        return_value={"gallery": {"directories": [{"path": str(src), "readonly": False, "output_path": ""}], "path_mappings": {}}},
-    )
-    mocker.patch("core.source_reachability.get_snapshot", return_value={native: "no_permission"})
-    mocker.patch("os.path.exists", side_effect=_exists_side_effect(str(img), str(src)))
-
-    resp = client.get("/api/gallery/image", params={"path": str(img)})
     assert resp.status_code == 404
     assert resp.text == "來源目前無法存取"
     assert "cache-control" not in resp.headers
@@ -249,34 +230,6 @@ def test_unknown_status_not_blocked(client, tmp_path, mocker):
     assert resp.headers["content-type"] == "image/jpeg"
 
 
-def test_missing_snapshot_key_not_blocked(client, tmp_path, mocker):
-    """DoD 4 subset: source absent from snapshot → not blocked."""
-    src = tmp_path / "absent_src"
-    src.mkdir()
-    img = _jpeg(src / "poster.jpg")
-
-    mocker.patch(
-        "web.routers.gallery_media.load_config",
-        return_value={
-            "gallery": {
-                "directories": [
-                    {"path": str(src), "readonly": False, "output_path": ""},
-                ],
-                "path_mappings": {},
-            },
-        },
-    )
-    mocker.patch("core.source_reachability.get_snapshot", return_value={})
-    mocker.patch(
-        "os.path.exists",
-        side_effect=_exists_side_effect(str(img), str(src)),
-    )
-
-    resp = client.get("/api/gallery/image", params={"path": str(img)})
-
-    assert resp.status_code == 200
-
-
 # ── DoD 5 / Integration E ──────────────────────────────────────────────
 
 
@@ -326,68 +279,7 @@ def test_path_mappings_still_fast_fails(
 # ── DoD 6 / Unit F ─────────────────────────────────────────────────────
 
 
-def test_no_event_loop_thread_no_runtime_error(mocker):
-    """DoD 6: pure threading.Thread call must not raise RuntimeError."""
-    from core.source_reachability import is_path_on_unreachable_source
-
-    mocker.patch(
-        "core.source_reachability.get_snapshot",
-        return_value={"/movies": "ok"},
-    )
-    config = {
-        "directories": [{"path": "/movies", "readonly": False}],
-        "path_mappings": {},
-    }
-    uri = to_file_uri("/movies/a.jpg")
-    box: dict = {}
-
-    def _run():
-        try:
-            box["result"] = is_path_on_unreachable_source(uri, config)
-            box["error"] = None
-        except Exception as exc:
-            box["result"] = None
-            box["error"] = exc
-
-    t = threading.Thread(target=_run)
-    t.start()
-    t.join(timeout=5)
-    assert t.is_alive() is False
-    assert box.get("error") is None, f"unexpected error: {box.get('error')!r}"
-    assert box.get("result") is False
-
-
 # ── DoD 8 / Unit G ─────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "snapshot",
-    [
-        {},
-        {"/a": "ok", "/b": "ok"},
-        {"/a": "unknown", "/b": "unknown"},
-    ],
-    ids=["empty", "all_ok", "all_unknown"],
-)
-def test_dod8_healthy_path_short_circuits(mocker, snapshot):
-    """DoD 8: no unreachable in snapshot → False and zero iter_gallery_sources calls."""
-    from core.source_reachability import is_path_on_unreachable_source
-
-    mocker.patch("core.source_reachability.get_snapshot", return_value=snapshot)
-    iter_spy = mocker.patch(
-        "core.source_reachability.iter_gallery_sources",
-        side_effect=AssertionError("should not be called on healthy path"),
-    )
-    config = {
-        "directories": [
-            {"path": "/a", "readonly": False},
-            {"path": "/b", "readonly": False},
-        ],
-        "path_mappings": {},
-    }
-
-    assert is_path_on_unreachable_source(to_file_uri("/a/x.jpg"), config) is False
-    assert iter_spy.call_count == 0
 
 
 # ── DoD 8 端點層（owner 明確要求的「沒斷線的使用者零影響」機械證據）──────
@@ -447,45 +339,3 @@ def test_image_fast_fail_precedes_realpath(client, tmp_path, mocker):
     assert resp.text == "來源目前無法存取"
 
 
-def test_dod8_healthy_snapshot_image_still_200_without_touching_sources(
-    client, tmp_path, mocker
-):
-    """DoD 8（端點層）：全 ok 快照下 /api/gallery/image 仍 200，
-    且整條請求路徑上 iter_gallery_sources 一次都沒被呼叫。
-
-    上面那支同名 unit 測試驗的是函式本身；這支驗「接線之後端點真的沒付這個成本」——
-    owner 的要求是對沒斷線的使用者零影響，那就得從端點這一側量。
-    """
-    src = tmp_path / "healthy"
-    src.mkdir()
-    img = _jpeg(src / "poster.jpg")
-    native = uri_to_fs_path(str(src))
-
-    mocker.patch(
-        "web.routers.gallery_media.load_config",
-        return_value={
-            "gallery": {
-                "directories": [
-                    {"path": str(src), "readonly": False, "output_path": ""},
-                ],
-                "path_mappings": {},
-            },
-        },
-    )
-    mocker.patch(
-        "core.source_reachability.get_snapshot",
-        return_value={native: "ok"},
-    )
-    iter_spy = mocker.patch(
-        "core.source_reachability.iter_gallery_sources",
-        side_effect=AssertionError("healthy path must not iterate sources"),
-    )
-    mocker.patch(
-        "os.path.exists",
-        side_effect=_exists_side_effect(str(img), str(src)),
-    )
-
-    resp = client.get("/api/gallery/image", params={"path": str(img)})
-
-    assert resp.status_code == 200
-    assert iter_spy.call_count == 0

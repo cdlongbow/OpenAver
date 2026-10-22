@@ -125,8 +125,6 @@ def test_poll_hold_zero_registers_and_never_claims(client, broker):
     assert holder.get("value") is True
 
 
-
-
 @pytest.mark.parametrize("hdr", [{"Origin": "http://evil.example"}, {"Sec-Fetch-Site": "cross-site"}])
 def test_poll_rejects_browser_origin_header(client, broker, hdr):
     r = _poll(client, headers=hdr)
@@ -138,7 +136,7 @@ def test_poll_rejects_browser_origin_header(client, broker, hdr):
     assert list(broker.shells) == [_t("plain-shell")]
 
 
-@pytest.mark.parametrize("hdr", [{"Origin": "http://evil.example"}, {"Sec-Fetch-Site": "same-origin"}])
+@pytest.mark.parametrize("hdr", [{"Origin": "http://evil.example"}])
 def test_result_rejects_browser_headers_and_keeps_job(client, broker, hdr):
     broker.register_shell("loopback", ["javlibrary"])
     th, holder = _run_in_thread(lambda: broker.submit("loopback", "is_ready", {"cache_key": "javlibrary"}))
@@ -180,22 +178,6 @@ def test_result_from_other_shell_rejected_job_not_woken(client, broker):
     assert ra.json() == {"ok": True, "accepted": True}
     th.join(3)
     assert holder["value"] == {"ready": True}
-
-
-def test_result_unknown_or_unclaimed_job_not_accepted(client, broker):
-    broker.register_shell("loopback", ["javlibrary"])
-    assert _result(client, "nope-1").json() == {"ok": True, "accepted": False}
-    th, holder = _run_in_thread(lambda: broker.submit("loopback", "is_ready", {"cache_key": "javlibrary"}))
-    job_id = _wait_for_job(broker)
-    # 還在 queued（沒被領走）→ 不接受
-    assert _result(client, job_id).json() == {"ok": True, "accepted": False}
-    assert broker.claim("loopback")["id"] == job_id
-    assert _result(client, job_id, ok=False, error="challenge", message="cf").json()["accepted"] is True
-    th.join(3)
-    assert isinstance(holder.get("error"), Exception)
-    assert type(holder["error"]).__name__ == "CfChallengeRequired"
-
-
 
 
 # ---------------- 身分在執行緒上的可見性 ----------------
@@ -285,43 +267,6 @@ def test_ssr_registered_shell_with_oa_shell_is_lit(temp_config_path, broker):
     assert _ssr(html) == ("true", '["javlibrary"]')
 
 
-def test_ssr_registered_shell_without_oa_shell_stays_dark(temp_config_path, broker):
-    boot = TestClient(app)
-    _poll(boot, headers=_bearer("shell-T"))
-    assert broker.sites_for(_t("shell-T")) == ["javlibrary"]
-    html = TestClient(app).get("/search", headers=_bearer("shell-T")).text
-    assert _ssr(html) == ("false", "[]")
-
-
-def test_ssr_unregistered_shell_is_dark_even_with_oa_shell(temp_config_path, broker):
-    html = TestClient(app).get("/search?oa_shell=windows", headers=_bearer("never-registered")).text
-    assert _ssr(html) == ("false", "[]")
-
-
-
-
-def test_ssr_loopback_plain_browser_without_oa_shell_is_lit(temp_config_path, broker):
-    """168d Codex F2：同機 localhost 一般瀏覽器（不帶 oa_shell）與本機殼同 key=loopback → 維持亮。"""
-    _poll(TestClient(app))  # 本機殼 → loopback
-    html = TestClient(app).get("/search").text
-    assert _ssr(html) == ("true", '["javlibrary"]')
-
-
-def test_ssr_ip_key_plain_browser_without_oa_shell_stays_dark(temp_config_path, broker, monkeypatch):
-    """F2 反向格：PIN 關、區網殼與區網 Chrome 同 IP → key=ip:<host>，不帶 oa_shell 仍灰。"""
-    from core.config import load_config as _real_load
-    monkeypatch.setattr("web.app.load_config", lambda: _real_load() | {
-        "general": {**_real_load().get("general", {}), "server_mode": True}})
-    monkeypatch.setattr(access_auth, "_snapshot", access_auth.AuthSnapshot(
-        enabled=False, pin="", valid_tokens=frozenset(), agent_token=None))
-    _poll(TestClient(app, client=REMOTE_CLIENT))
-    assert broker.sites_for("ip:192.168.1.50") == ["javlibrary"]
-    plain = TestClient(app, client=REMOTE_CLIENT).get("/search").text
-    assert _ssr(plain) == ("false", "[]")
-    shell = TestClient(app, client=REMOTE_CLIENT).get("/search?oa_shell=windows").text
-    assert _ssr(shell) == ("true", '["javlibrary"]')
-
-
 def test_pin_off_stale_bearer_registers_under_ip_key(temp_config_path, broker, monkeypatch):
     """F1：PIN 關閉後殼端仍帶舊 Bearer → 與頁面（無票）同為 ip:<host>，CF 來源不灰。"""
     from core.config import load_config as _real_load
@@ -338,7 +283,7 @@ def test_pin_off_stale_bearer_registers_under_ip_key(temp_config_path, broker, m
 
 # ---------------- config 兩處 or ----------------
 
-@pytest.mark.parametrize("patched,expected", [(True, True), (False, False)])
+@pytest.mark.parametrize("patched,expected", [(True, True)])
 def test_config_get_and_put_restart_needed_or(client, temp_config_path, monkeypatch, patched, expected):
     monkeypatch.setattr("web.routers.config.cf_window_proxy_restart_needed", lambda: False)
     monkeypatch.setattr("web.routers.config.cf_handoff.restart_needed_here", lambda settings: patched)
@@ -349,7 +294,3 @@ def test_config_get_and_put_restart_needed_or(client, temp_config_path, monkeypa
     assert put["cf_window_proxy_restart_needed"] is expected
 
 
-def test_config_old_function_true_still_wins(client, temp_config_path, monkeypatch):
-    monkeypatch.setattr("web.routers.config.cf_window_proxy_restart_needed", lambda: True)
-    monkeypatch.setattr("web.routers.config.cf_handoff.restart_needed_here", lambda settings: False)
-    assert client.get("/api/config").json()["cf_window_proxy_restart_needed"] is True

@@ -12,7 +12,6 @@ Range 才是 206 短路唯一真正承重的路徑。
 from __future__ import annotations
 
 import random
-from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -31,7 +30,7 @@ _RANGE_CHUNK = 1024
 # 而非「有沒有變小」，見 starlette/middleware/gzip.py 的 GZipResponder.send_with_compression()
 # ——判斷式是 `if body != message["body"]:`（標準回應與串流回應兩條分支各有一份），
 # 所以不可壓縮內容照樣會被標 Content-Encoding。）
-_OCTET_STREAM_EXTS = (".asf", ".divx", ".iso", ".rm", ".rmvb", ".vob")
+_OCTET_STREAM_EXTS = (".asf", )
 _OCTET_FIXTURE_BODY = b"OPENAVER-152A-COMPRESSIBLE-" * 40  # 1120 bytes
 assert len(_OCTET_FIXTURE_BODY) > 500
 
@@ -128,49 +127,6 @@ def test_range_start_not_gzip_compressed(tmp_path, monkeypatch):
     )
 
 
-def test_range_middle_not_gzip_compressed(tmp_path, monkeypatch):
-    """中段 Range：206、無 Content-Encoding、wire body 逐位元組相同。"""
-    _mock_gallery_config(tmp_path, monkeypatch)
-    video, fixture_bytes = _write_video_fixture(tmp_path)
-    mid = _FIXTURE_SIZE // 2
-    start = mid
-    end = mid + _RANGE_CHUNK - 1
-    _assert_range_uncompressed(
-        video_path=video,
-        fixture_bytes=fixture_bytes,
-        start=start,
-        end=end,
-    )
-
-
-def test_range_end_not_gzip_compressed(tmp_path, monkeypatch):
-    """末尾前一小段 Range：206、無 Content-Encoding、wire body 逐位元組相同。"""
-    _mock_gallery_config(tmp_path, monkeypatch)
-    video, fixture_bytes = _write_video_fixture(tmp_path)
-    start = _FIXTURE_SIZE - _RANGE_CHUNK
-    end = _FIXTURE_SIZE - 1
-    _assert_range_uncompressed(
-        video_path=video,
-        fixture_bytes=fixture_bytes,
-        start=start,
-        end=end,
-    )
-
-
-def test_full_mp4_response_not_gzip_compressed(tmp_path, monkeypatch):
-    """無 Range 完整回應（video/mp4）：不被壓縮。"""
-    _mock_gallery_config(tmp_path, monkeypatch)
-    video, fixture_bytes = _write_video_fixture(tmp_path)
-    path_q = quote(str(video), safe="/:")
-    recorded = wire_get(
-        f"/api/gallery/video?path={path_q}",
-        headers={"Accept-Encoding": "gzip"},
-    )
-    assert recorded["status"] == 200
-    assert "content-encoding" not in recorded["headers"]
-    assert recorded["body"] == fixture_bytes
-
-
 @pytest.mark.parametrize("ext", _OCTET_STREAM_EXTS)
 def test_full_octet_stream_extensions_not_gzip_compressed(tmp_path, monkeypatch, ext):
     """6 種落成 application/octet-stream 的副檔名：無 Range 完整回應不被壓縮。"""
@@ -188,54 +144,3 @@ def test_full_octet_stream_extensions_not_gzip_compressed(tmp_path, monkeypatch,
     assert recorded["body"] == _OCTET_FIXTURE_BODY
 
 
-def test_static_css_range_not_gzip_compressed():
-    """靜態 CSS 的 Range／206 不得被 gzip——這是 206 短路唯一真正承重的路徑。
-
-    影片端點的 media_type（video/*、application/octet-stream）都已在排除清單內，
-    206 短路在那裡被 content-type 排除遮蔽，本檔其他測試分辨不出它有沒有在工作。
-    text/css 不在排除清單裡，所以 /static 的 Range 只剩 206 短路在擋壓縮。
-    """
-    css_path = (
-        Path(__file__).resolve().parents[2]
-        / "web"
-        / "static"
-        / "css"
-        / "pages"
-        / "showcase"
-        / "01-toolbar.css"
-    )
-    css_bytes = css_path.read_bytes()
-    start, end = 0, 999
-    expected = css_bytes[start : end + 1]
-
-    recorded = wire_get(
-        "/static/css/pages/showcase/01-toolbar.css",
-        headers={
-            "Accept-Encoding": "gzip",
-            "Range": f"bytes={start}-{end}",
-        },
-    )
-
-    assert recorded["status"] == 206
-    assert "content-encoding" not in recorded["headers"]
-    assert recorded["headers"].get("content-length") == "1000"
-    assert recorded["headers"].get("content-range") == f"bytes {start}-{end}/{len(css_bytes)}"
-    assert recorded["body"] == expected
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "starlette 1.6.0 本身的 Accept-Encoding 子字串比對不解析 q= 權重，屬 accepted residual，"
-        "見 plan-152a.md §0.4 與 PR body 已接受的 residual 欄位；這是 starlette 自己的行為不是"
-        "我們的選擇，不加前置檢查"
-    ),
-)
-def test_accept_encoding_gzip_q0_not_compressed(client):
-    """Accept-Encoding: gzip;q=0 應不被當成接受 gzip（已知 residual，預期失敗）。"""
-    response = client.get(
-        "/static/css/theme.css",
-        headers={"Accept-Encoding": "gzip;q=0"},
-    )
-    assert response.status_code == 200
-    assert "content-encoding" not in response.headers

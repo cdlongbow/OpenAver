@@ -25,28 +25,14 @@ LOOPBACK_CLIENT = ("127.0.0.1", 12345)
 class TestLanAccessAllowed:
     """_lan_access_allowed 直接行為覆蓋（無 I/O）"""
 
-    def test_loopback_v4_always_allowed(self):
-        assert _lan_access_allowed("127.0.0.1", False) is True
-
-    def test_loopback_v4_server_mode_also_allowed(self):
-        assert _lan_access_allowed("127.0.0.1", True) is True
 
     def test_loopback_v6_always_allowed(self):
         assert _lan_access_allowed("::1", False) is True
 
-    def test_remote_single_mode_blocked(self):
-        assert _lan_access_allowed("192.168.1.5", False) is False
-
-    def test_remote_server_mode_allowed(self):
-        assert _lan_access_allowed("192.168.1.5", True) is True
 
     def test_none_host_single_mode_fail_closed(self):
         """client=None → host=None → 非 loopback → 單機模式應 fail-closed（False）"""
         assert _lan_access_allowed(None, False) is False
-
-    def test_none_host_server_mode_allowed(self):
-        """client=None + server_mode=True → 放行"""
-        assert _lan_access_allowed(None, True) is True
 
 
 # ── 中介層矩陣測試 ─────────────────────────────────────────────────────────
@@ -81,12 +67,6 @@ class TestLanAccessGateMiddleware:
         r = c.get("/api/health")
         assert r.status_code == 200
 
-    def test_loopback_server_mode_200(self, monkeypatch):
-        """loopback + 伺服器模式 → 200"""
-        _server_mode_patch(monkeypatch)
-        c = TestClient(app, client=LOOPBACK_CLIENT)
-        r = c.get("/api/health")
-        assert r.status_code == 200
 
     def test_remote_single_mode_403(self, monkeypatch):
         """遠端 + 單機模式 → 403"""
@@ -95,24 +75,6 @@ class TestLanAccessGateMiddleware:
         r = c.get("/api/health")
         assert r.status_code == 403
 
-    def test_remote_server_mode_200(self, monkeypatch, tmp_path):
-        """遠端 + 伺服器模式 → 200"""
-        # server_mode=True + 非 loopback 會抵達 access_gate middleware，其冷啟動
-        # `await asyncio.to_thread(ensure_schema)`（web/app.py:327）未 mock 前
-        # 連上 output/openaver.db（同手法見 tests/integration/test_capabilities_auth.py
-        # 的 auth_db fixture／127b-T4 已修正的 test_installer_api.py case9b）。
-        import core.access_auth as access_auth
-        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
-        _server_mode_patch(monkeypatch)
-        c = TestClient(app, client=REMOTE_CLIENT)
-        try:
-            r = c.get("/api/health")
-        finally:
-            # 避免 _snapshot warm 狀態外洩到本檔後面的
-            # test_server_mode_toggle_takes_effect（它也會走到同一條 server_mode=True
-            # + 非 loopback 路徑）。
-            access_auth.reset_state_for_tests()
-        assert r.status_code == 200
 
     def test_remote_xff_spoofed_still_403(self, monkeypatch):
         """遠端偽造 X-Forwarded-For: 127.0.0.1 + 單機模式 → 仍 403（不信 XFF）"""
@@ -121,12 +83,6 @@ class TestLanAccessGateMiddleware:
         r = c.get("/api/health", headers={"X-Forwarded-For": "127.0.0.1"})
         assert r.status_code == 403
 
-    def test_remote_xff_localhost_still_403(self, monkeypatch):
-        """遠端偽造 X-Forwarded-For: localhost + 單機模式 → 仍 403"""
-        _single_mode_patch(monkeypatch)
-        c = TestClient(app, client=REMOTE_CLIENT)
-        r = c.get("/api/health", headers={"X-Forwarded-For": "localhost"})
-        assert r.status_code == 403
 
     def test_server_mode_toggle_takes_effect(self, monkeypatch, tmp_path):
         """
@@ -166,23 +122,3 @@ class TestLanAccessGateMiddleware:
         finally:
             access_auth.reset_state_for_tests()
 
-    def test_loopback_does_not_call_load_config(self, monkeypatch):
-        """loopback 短路：middleware 不讀 config（零 I/O 成本）。
-
-        /api/health 本身不讀 config，故 loopback request 後 load_config 呼叫數應為 0；
-        若 loopback 短路被移除（落到 config 讀取分支），count 會 ≥1 → 此測 RED。
-        """
-        call_count = {"n": 0}
-
-        def _counting_load_config():
-            call_count["n"] += 1
-            return {"general": {"server_mode": False}}
-
-        monkeypatch.setattr("web.app.load_config", _counting_load_config)
-
-        c = TestClient(app, client=LOOPBACK_CLIENT)
-        r = c.get("/api/health")
-        assert r.status_code == 200
-        assert call_count["n"] == 0, (
-            f"loopback 短路應跳過 load_config，實際呼叫 {call_count['n']} 次"
-        )

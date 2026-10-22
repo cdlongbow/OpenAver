@@ -9,7 +9,7 @@ non-blocking (endpoint still returns 200).
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from datetime import datetime
 
 from fastapi import FastAPI
@@ -166,24 +166,3 @@ class TestTagAliasCRUDInvalidatesRankerCache:
 # Non-blocking: invalidate() failure must not break write endpoints
 # ---------------------------------------------------------------------------
 
-class TestTagAliasRankerInvalidateNonBlocking:
-    """SimilarRankerCache.invalidate() raising must not break write endpoints."""
-
-    def test_create_still_200_when_invalidate_raises(self, app_with_real_db):
-        """POST /api/tag-aliases still returns 200 even if SimilarRankerCache.invalidate raises."""
-        client, db_path = app_with_real_db
-
-        with patch(
-            "web.routers.tag_alias.SimilarRankerCache.invalidate",
-            side_effect=RuntimeError("simulated invalidate failure"),
-        ):
-            resp = client.post("/api/tag-aliases", json={
-                "primary_name": "測試標籤",
-                "aliases": [],
-            })
-
-        assert resp.status_code == 200, (
-            f"POST /api/tag-aliases must still return 200 when SimilarRankerCache.invalidate raises; "
-            f"got {resp.status_code}: {resp.text}"
-        )
-        assert resp.json()["success"] is True

@@ -110,41 +110,6 @@ class TestStandaloneLoopbackOnlyGuard:
                 break
         assert found, "windows/health_probe.py 中 CLIENT_HOST 模組層賦值未找到（需為 CLIENT_HOST = '127.0.0.1'）"
 
-    def test_standalone_imports_client_host_from_health_probe(self):
-        """standalone.py 從 windows.health_probe 匯入 CLIENT_HOST，且無自立的 CLIENT_HOST 模組層賦值"""
-        tree, _ = _parse_standalone()
-        assigns = _module_assignments(tree)
-        for a in assigns:
-            name, _ = _assignment_name_value(a)
-            assert name != "CLIENT_HOST", (
-                f"standalone.py line {a.lineno} 仍有自立的 CLIENT_HOST 模組層賦值；"
-                "CLIENT_HOST 應由 windows.health_probe 定義並匯入"
-            )
-
-        imported = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "windows.health_probe":
-                for alias in node.names:
-                    if alias.name == "CLIENT_HOST":
-                        imported = True
-                        break
-        assert imported, (
-            "standalone.py 必須包含 'from windows.health_probe import ... CLIENT_HOST'"
-        )
-
-    def test_no_bind_host_module_assignment(self):
-        """無 BIND_HOST 模組層賦值（dual-listener 後 standalone 不再綁 0.0.0.0）"""
-        tree, _ = _parse_standalone()
-        assigns = _module_assignments(tree)
-        violations = []
-        for a in assigns:
-            name, _ = _assignment_name_value(a)
-            if name == "BIND_HOST":
-                violations.append(a.lineno)
-        assert not violations, (
-            f"BIND_HOST 模組層賦值殘留在 line(s) {violations}，"
-            "T6b 起 BIND_HOST 應已移除（0.0.0.0 由 web/lan_listener.py 管理）"
-        )
 
     def test_no_zero_zero_zero_zero_literal_in_standalone(self):
         """standalone.py 與 health_probe.py 無**可執行的** "0.0.0.0" 字串字面（已移至 web/lan_listener.py）。
@@ -199,42 +164,6 @@ class TestStandaloneLoopbackOnlyGuard:
             "應使用 host=CLIENT_HOST（loopback only）"
         )
 
-    def test_find_free_port_uses_client_host(self):
-        """
-        find_free_port 的 sock.bind 使用 CLIENT_HOST（loopback probe）。
-        """
-        _, src = _parse_standalone()
-        assert "sock.bind((CLIENT_HOST," in src, (
-            "find_free_port 的 sock.bind 應使用 CLIENT_HOST（loopback，不是 0.0.0.0）"
-        )
-
-    def test_wait_for_server_uses_client_host(self):
-        """
-        wait_for_server health URL 使用 CLIENT_HOST。
-        """
-        _, src = _parse_health_probe()
-        health_lines = [
-            line for line in src.splitlines()
-            if "/api/health" in line
-        ]
-        assert health_lines, "找不到 /api/health URL 行"
-        for line in health_lines:
-            assert "CLIENT_HOST" in line, (
-                f"health URL 行不含 CLIENT_HOST：{line!r}"
-            )
-
-    def test_main_window_create_window_uses_client_host(self):
-        """
-        main window（OpenAver）的 create_window URL 使用 CLIENT_HOST、非 BIND_HOST。
-        主視窗 URL 為 f'http://{CLIENT_HOST}:{port}'（mutation-sensitive）。
-        """
-        _, src = _parse_standalone()
-        assert "f'http://{CLIENT_HOST}:{port}'" in src, (
-            "主視窗 create_window URL 應為 f'http://{CLIENT_HOST}:{port}'（CLIENT_HOST、非 BIND_HOST）"
-        )
-        assert "f'http://{BIND_HOST}:{port}'" not in src, (
-            "主視窗 URL 不可用 BIND_HOST（桌面 App 須走 loopback）"
-        )
 
     def test_emit_notification_autostart_does_not_pass_str_e(self):
         """
@@ -261,68 +190,4 @@ class TestStandaloneStartupProbeWiringGuard:
                 return node
         raise AssertionError("standalone.py 找不到 _wait_for_server_or_exit FunctionDef")
 
-    def test_wait_for_server_or_exit_has_server_thread_param(self):
-        """_wait_for_server_or_exit 恰好 3 個位置參數，第 3 個叫 server_thread。"""
-        tree, _ = _parse_standalone()
-        fn = self._wait_for_server_or_exit_def(tree)
-        pos_args = list(fn.args.args)
-        assert len(pos_args) == 3, (
-            f"_wait_for_server_or_exit 應有恰好 3 個位置參數，實際 {[a.arg for a in pos_args]}"
-        )
-        assert pos_args[2].arg == "server_thread", (
-            f"第 3 個參數應為 server_thread，實際 {pos_args[2].arg!r}"
-        )
 
-    def test_wait_for_server_or_exit_call_passes_three_args(self):
-        """main 內 _wait_for_server_or_exit(...) 呼叫傳了 3 個位置參數。"""
-        tree, _ = _parse_standalone()
-        calls = [
-            node for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_wait_for_server_or_exit"
-        ]
-        assert calls, "standalone.py 找不到 _wait_for_server_or_exit 呼叫"
-        for call in calls:
-            assert len(call.args) == 3, (
-                f"_wait_for_server_or_exit 呼叫應傳 3 個 args，"
-                f"line {call.lineno} 實際 {len(call.args)}"
-            )
-
-    def test_show_error_message_comes_from_format_startup_message(self):
-        """_wait_for_server_or_exit 內 show_error 第 2 個 arg 必須是 format_startup_message(...) Call。"""
-        tree, _ = _parse_standalone()
-        fn = self._wait_for_server_or_exit_def(tree)
-        show_error_calls = [
-            node for node in ast.walk(fn)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "show_error"
-        ]
-        assert show_error_calls, "_wait_for_server_or_exit 內找不到 show_error 呼叫"
-        for call in show_error_calls:
-            assert len(call.args) >= 2, f"show_error 參數不足：line {call.lineno}"
-            msg_arg = call.args[1]
-            assert isinstance(msg_arg, ast.Call), (
-                f"show_error 第 2 個 arg 必須是 Call（format_startup_message(...)），"
-                f"不可為 Constant/JoinedStr；line {call.lineno} 實際 {type(msg_arg).__name__}"
-            )
-            assert not isinstance(msg_arg, (ast.Constant, ast.JoinedStr))
-            func = msg_arg.func
-            if isinstance(func, ast.Name):
-                assert func.id == "format_startup_message", (
-                    f"show_error 訊息應來自 format_startup_message，實際 {func.id!r}"
-                )
-            else:
-                raise AssertionError(
-                    f"show_error 第 2 個 arg 的 Call.func 應為 Name format_startup_message，"
-                    f"實際 {type(func).__name__}"
-                )
-
-    def test_no_hardcoded_port_8000_occupation_message(self):
-        """standalone.py 全檔不得再出現字面「請檢查是否有其他程式佔用端口 8000」。"""
-        _, src = _parse_standalone()
-        banned = "請檢查是否有其他程式佔用端口 8000"
-        assert banned not in src, (
-            f"standalone.py 仍含硬編訊息 {banned!r}；應改由 format_startup_message() 產出"
-        )

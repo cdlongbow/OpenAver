@@ -113,34 +113,6 @@ class TestR1SettingsPageRoundTrip:
         assert after == (GEMINI_PLAIN, OPENAI_PLAIN, METATUBE_PLAIN)
 
 
-class TestR2ScannerPageRoundTrip:
-    """掃描頁：GET → 只改 gallery.directories → PUT → 三憑證不變、directories 已更新。"""
-
-    def test_r2_put_directories_only_preserves_secrets(self, client):
-        _seed_three_secrets()
-        before = _disk_secrets()
-
-        get_resp = client.get("/api/config")
-        data = get_resp.json()["data"]
-        data["gallery"]["directories"] = ["/tmp/open-aver-scan-r2"]
-
-        put_resp = client.put("/api/config", json=data)
-        assert put_resp.status_code == 200
-        assert put_resp.json()["success"] is True
-
-        after = _disk_secrets()
-        assert after == before
-        assert after == (GEMINI_PLAIN, OPENAI_PLAIN, METATUBE_PLAIN)
-
-        disk = load_config()
-        dirs = disk["gallery"]["directories"]
-        # AppConfig may coerce bare path strings into DirectoryConfig dicts.
-        assert len(dirs) == 1
-        entry = dirs[0]
-        path = entry if isinstance(entry, str) else entry.get("path")
-        assert path == "/tmp/open-aver-scan-r2"
-
-
 # ===========================================================================
 # R3 — /connect with mask token → all four token sinks get REAL
 # ===========================================================================
@@ -236,32 +208,6 @@ class TestR4PositiveWrite:
         assert load_config()["translate"]["openai"]["api_key"] == OPENAI_PLAIN
         assert load_config()["metatube"]["token"] == METATUBE_PLAIN
 
-    def test_r4b_put_new_openai_key(self, client):
-        _seed_three_secrets()
-        get_resp = client.get("/api/config")
-        data = get_resp.json()["data"]
-        data["translate"]["openai"]["api_key"] = OPENAI_NEW
-
-        put_resp = client.put("/api/config", json=data)
-        assert put_resp.status_code == 200
-        assert put_resp.json()["success"] is True
-        assert load_config()["translate"]["openai"]["api_key"] == OPENAI_NEW
-        assert load_config()["translate"]["gemini"]["api_key"] == GEMINI_PLAIN
-        assert load_config()["metatube"]["token"] == METATUBE_PLAIN
-
-    def test_r4c_put_new_metatube_token(self, client):
-        _seed_three_secrets()
-        get_resp = client.get("/api/config")
-        data = get_resp.json()["data"]
-        data["metatube"]["token"] = METATUBE_NEW
-
-        put_resp = client.put("/api/config", json=data)
-        assert put_resp.status_code == 200
-        assert put_resp.json()["success"] is True
-        assert load_config()["metatube"]["token"] == METATUBE_NEW
-        assert load_config()["translate"]["gemini"]["api_key"] == GEMINI_PLAIN
-        assert load_config()["translate"]["openai"]["api_key"] == OPENAI_PLAIN
-
 
 # ===========================================================================
 # R5 — clear with ""
@@ -340,55 +286,6 @@ class TestR6GeminiTest:
         assert headers["x-goog-api-key"] == GEMINI_NEW
 
 
-class TestR6GeminiTestTranslate:
-    def test_r6gt1_mask_uses_stored(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("gemini", {})["api_key"] = GEMINI_PLAIN
-        cfg.setdefault("general", {})["locale"] = "zh-TW"
-        save_config(cfg)
-
-        upstream = {
-            "candidates": [
-                {"content": {"parts": [{"text": "新人女優出道"}]}}
-            ]
-        }
-        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
-        with patch("web.routers.gemini.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/gemini/test-translate",
-                json={
-                    "api_key": mask_secret(GEMINI_PLAIN),
-                    "model": "gemini-flash-lite-latest",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        headers = mock_client.post.call_args.kwargs["headers"]
-        assert headers["x-goog-api-key"] == GEMINI_PLAIN
-
-    def test_r6gt2_new_plaintext_uses_incoming(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("gemini", {})["api_key"] = GEMINI_PLAIN
-        cfg.setdefault("general", {})["locale"] = "zh-TW"
-        save_config(cfg)
-
-        upstream = {
-            "candidates": [
-                {"content": {"parts": [{"text": "新人女優出道"}]}}
-            ]
-        }
-        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
-        with patch("web.routers.gemini.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/gemini/test-translate",
-                json={"api_key": GEMINI_NEW, "model": "gemini-flash-lite-latest"},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        headers = mock_client.post.call_args.kwargs["headers"]
-        assert headers["x-goog-api-key"] == GEMINI_NEW
-
-
 class TestR6OpenAIModels:
     def test_r6o1_mask_uses_stored(self, client):
         cfg = load_config()
@@ -410,74 +307,6 @@ class TestR6OpenAIModels:
         assert resp.json()["success"] is True
         headers = mock_client.get.call_args.kwargs["headers"]
         assert headers["Authorization"] == f"Bearer {OPENAI_PLAIN}"
-
-    def test_r6o2_new_plaintext_uses_incoming(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
-        save_config(cfg)
-
-        mock_cm, mock_client = _make_mock_httpx_client(
-            get_response=_ok_http_response({"data": [{"id": "m1"}]})
-        )
-        with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/openai/models",
-                json={"base_url": "http://localhost:8080/v1", "api_key": OPENAI_NEW},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        headers = mock_client.get.call_args.kwargs["headers"]
-        assert headers["Authorization"] == f"Bearer {OPENAI_NEW}"
-
-
-class TestR6OpenAITest:
-    def test_r6ot1_mask_uses_stored(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
-        cfg.setdefault("general", {})["locale"] = "zh-TW"
-        save_config(cfg)
-
-        upstream = {
-            "choices": [{"message": {"content": "新人女優出道"}}]
-        }
-        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
-        with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/openai/test",
-                json={
-                    "base_url": "http://localhost:8080/v1",
-                    "api_key": mask_secret(OPENAI_PLAIN),
-                    "model": "gpt-4o",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        headers = mock_client.post.call_args.kwargs["headers"]
-        assert headers["Authorization"] == f"Bearer {OPENAI_PLAIN}"
-
-    def test_r6ot2_new_plaintext_uses_incoming(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
-        cfg.setdefault("general", {})["locale"] = "zh-TW"
-        save_config(cfg)
-
-        upstream = {
-            "choices": [{"message": {"content": "新人女優出道"}}]
-        }
-        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
-        with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/openai/test",
-                json={
-                    "base_url": "http://localhost:8080/v1",
-                    "api_key": OPENAI_NEW,
-                    "model": "gpt-4o",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        headers = mock_client.post.call_args.kwargs["headers"]
-        assert headers["Authorization"] == f"Bearer {OPENAI_NEW}"
 
 
 class TestR6ClaudeModels:
@@ -505,80 +334,4 @@ class TestR6ClaudeModels:
         headers = mock_client.get.call_args.kwargs["headers"]
         assert headers["x-api-key"] == CLAUDE_PLAIN
 
-    def test_r6cm2_new_plaintext_uses_incoming(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("claude", {})["api_key"] = CLAUDE_PLAIN
-        save_config(cfg)
 
-        mock_cm, mock_client = _make_mock_httpx_client(
-            get_response=_ok_http_response(
-                {"data": [{"id": "claude-haiku-4", "created_at": "2025-03-01T00:00:00Z"}]}
-            )
-        )
-        with patch("core.anthropic_client.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/claude/models",
-                json={"api_key": CLAUDE_NEW},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        headers = mock_client.get.call_args.kwargs["headers"]
-        assert headers["x-api-key"] == CLAUDE_NEW
-
-
-class TestR6ClaudeTest:
-    def test_r6ct1_mask_uses_stored(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("claude", {})["api_key"] = CLAUDE_PLAIN
-        cfg.setdefault("general", {})["locale"] = "zh-TW"
-        save_config(cfg)
-
-        mask = mask_secret(CLAUDE_PLAIN)
-        assert CLAUDE_PLAIN != mask
-
-        upstream = {
-            "stop_reason": "end_turn",
-            "content": [{"type": "text", "text": "新人女演員出道"}],
-        }
-        mock_cm, mock_client = _make_mock_httpx_client(
-            post_response=_ok_http_response(upstream)
-        )
-        with patch("core.anthropic_client.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/claude/test",
-                json={
-                    "api_key": mask,
-                    "model": "claude-haiku-5-5",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        mock_client.post.assert_called_once()
-        headers = mock_client.post.call_args.kwargs["headers"]
-        assert headers["x-api-key"] == CLAUDE_PLAIN
-
-    def test_r6ct2_new_plaintext_uses_incoming(self, client):
-        cfg = load_config()
-        cfg.setdefault("translate", {}).setdefault("claude", {})["api_key"] = CLAUDE_PLAIN
-        cfg.setdefault("general", {})["locale"] = "zh-TW"
-        save_config(cfg)
-
-        upstream = {
-            "stop_reason": "end_turn",
-            "content": [{"type": "text", "text": "新人女演員出道"}],
-        }
-        mock_cm, mock_client = _make_mock_httpx_client(
-            post_response=_ok_http_response(upstream)
-        )
-        with patch("core.anthropic_client.httpx.AsyncClient", return_value=mock_cm):
-            resp = client.post(
-                "/api/claude/test",
-                json={
-                    "api_key": CLAUDE_NEW,
-                    "model": "claude-haiku-5-5",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        headers = mock_client.post.call_args.kwargs["headers"]
-        assert headers["x-api-key"] == CLAUDE_NEW

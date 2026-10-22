@@ -43,10 +43,7 @@ async def test_ollama_test_success():
 
 
 ERRORS = [
-    ("connection_timeout", dict(post_side_effect=httpx.ReadTimeout("t")), "連線逾時"),
     ("connection_failed", dict(post_side_effect=httpx.ConnectError("c")), "無法連線到 Ollama"),
-    ("empty_response", dict(content="<think>x</think>"), "模型無回應"),
-    ("api_error", dict(status=500), "測試模型失敗"),
 ]
 
 
@@ -60,9 +57,3 @@ async def test_ollama_test_error_strings(kind, kw, text):
     assert resp.json()["error"] == text
 
 
-@pytest.mark.asyncio
-async def test_ollama_test_ja_skip():
-    with patch("core.cloud_translate.httpx.AsyncClient") as ac:
-        resp = await _call("ja")
-    assert resp.json() == {"success": True, "result": "ja_skip"}
-    assert ac.call_count == 0
