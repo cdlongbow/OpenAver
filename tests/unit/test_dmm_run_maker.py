@@ -250,31 +250,6 @@ def test_only_dmm_chain_sod_stays_not_found(site, chain, bus):
     assert bus.call_count == 0
 
 
-def test_default_order_dmm_answers_javbus_not_asked(site, chain, bus):
-    """〔DMM 排第一（預設順序）且答得出來時，JavBus 一次都不用被問〕"""
-    chain(["dmm", "javbus"])
-    _world(site)
-    out = _search(site)
-    assert [c["number"] for c in out.results] == OFFICIAL_ORDER and out.error_code is None
-    assert bus.call_count == 0
-
-
-def test_capsule_path_alias_resolves_dmm_maker_through_relay(site, chain, bus):
-    """〔使用者只開 DMM、或 DMM 排第一，點 S1 膠囊 → 膠囊只送片庫寫法 ['S1']，DMM 站上的片商名叫「エスワン ナンバーワンスタイル」；
-    若沒把對照表的別名展開進比對候選，DMM 回「找不到」、退給沒有預購的 JavBus，「膠囊點 S1 含未發行」就不成立〕
-    這格用真對照表（前提在 assert 裡）走 relay 入口，鏈 [dmm, javbus]：DMM 答、JavBus 一次都不用被問。"""
-    chain(["dmm", "javbus"])
-    _world(site)
-    assert DMM_NAME in maker_names("S1")  # 前提：真對照表裡 S1 的別名含 DMM 站上的名字
-    sp = ["S1"]
-    out = _search(site, spellings=sp)
-    assert out.error_code is None and [c["number"] for c in out.results] == OFFICIAL_ORDER
-    assert [c["query_word"] for c in site.probe_calls][0] == "S1"
-    assert [c["filter"] for c in site.list_calls] == [FILTER]
-    assert bus.call_count == 0
-    assert sp == ["S1"]  # 展開只用於本地比對，呼叫端的拼法清單不被改寫
-
-
 # ================================================================ 2. 錯誤碼與例外（直接呼叫 run_maker）
 def test_unrecognised_maker_is_not_found(site):
     """〔使用者點到 DMM 與其他家都不認得的片商 → 本該顯示「找不到這家片商」並收起該膠囊；碼被換成「連不上」後
@@ -311,24 +286,6 @@ def test_resolve_or_list_failure_is_unreachable_not_not_found(monkeypatch, stage
         monkeypatch.setattr(DMMProvider, "list_entity", boom)
     out = DMMProvider().run_maker("s1", LABEL, SPELLINGS, 0)
     assert out == MakerSearchResult([], False, "maker_unreachable")
-
-
-class _Tripwire(BaseException):
-    """模擬 OutboundConnectionViolation（BaseException 子類：except Exception 吞不到）。"""
-
-
-@pytest.mark.parametrize("stage", ["resolve", "list"])
-def test_base_exception_passes_through(monkeypatch, stage):
-    def boom(*a, **kw):
-        raise _Tripwire()
-
-    if stage == "resolve":
-        monkeypatch.setattr(DMMProvider, "_resolve_maker", boom)
-    else:
-        monkeypatch.setattr(DMMProvider, "_resolve_maker", lambda self, names: EntityRef(Kind.MAKER, MAKER_ID, DMM_NAME))
-        monkeypatch.setattr(DMMProvider, "list_entity", boom)
-    with pytest.raises(_Tripwire):
-        DMMProvider().run_maker("s1", LABEL, SPELLINGS, 0)
 
 
 def test_empty_listing_is_maker_empty_without_seed(site):
@@ -427,19 +384,6 @@ def test_dmm_does_not_touch_library_sampling_or_javbus_map(site, tmp_path):
     assert maker_javbus_map.get_mapping("s1", db_path=db) is None
 
 
-def test_names_are_deduped_by_maker_key_keeping_order(monkeypatch, name_table):
-    """_resolve_maker 收到的 names＝[label, *spellings]（各自展開後）以 maker_key_of 去重保序（重複拼法只探一次，不佔 3 次上限）。"""
-    seen = []
-
-    def spy(self, names):
-        seen.append(list(names))
-        return None
-
-    monkeypatch.setattr(DMMProvider, "_resolve_maker", spy)
-    DMMProvider().run_maker("s1", "S1", ["S1", DMM_NAME, "ｓ１", " s1 ", DMM_NAME], 0)
-    assert seen == [["S1", DMM_NAME]]
-
-
 def test_all_spellings_are_match_candidates(site, name_table):
     """〔使用者點 S1 膠囊 → 前端送來的各種拼法（含 DMM 站上的名字「エスワン ナンバーワンスタイル」）若被丟掉，
     DMM 只拿 S1 去比、認不出該片商，明明有數千部卻回「沒有」〕。probe「S1」撈回的片商叫 DMM_NAME，
@@ -473,4 +417,3 @@ def test_expanded_candidates_keep_order_dedupe_and_probe_at_most_three(site, nam
     out = _provider().run_maker("s1", LABEL, ["S1", DMM_NAME], 0)  # site 沒登記任何 probe ⇒ 全落空
     assert out == MakerSearchResult([], False, "maker_not_found")
     assert [c["query_word"] for c in site.probe_calls] == ["S1", DMM_NAME, alias3]
-

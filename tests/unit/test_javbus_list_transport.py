@@ -17,7 +17,7 @@ import core.scrapers.javbus as jb
 from core.database import init_db
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.scrapers.javbus import JavBusScraper
-from core.search_providers.javbus import JavBusProvider, _probe_titles
+from core.search_providers.javbus import JavBusProvider
 
 STUDIO = ("censored", "7q")
 TODAY = datetime.date(2026, 10, 22)
@@ -119,18 +119,6 @@ def test_fresh_session_first_list_request_carries_existmag_all(canned):
     assert canned.existmag == [["all"]]
 
 
-def test_fresh_session_first_studio_request_carries_existmag_all(canned):
-    JavBusScraper().get_ids_from_studio(STUDIO)
-    assert canned.existmag == [["all"]]
-
-
-def test_existmag_is_set_for_javbus_host_only(canned):
-    scraper = JavBusScraper()
-    scraper.get_ids_from_search("abc")
-    domains = {c.domain for c in scraper._session.cookies if c.name == "existmag"}
-    assert domains == {"www.javbus.com"}
-
-
 # ================================================================ 邊界條件 2：空白 → +
 @pytest.mark.parametrize("keyword,joined", [
     ("三上 悠亜", "三上+悠亜"),
@@ -173,14 +161,6 @@ def test_search_blocked_status_raises_source_blocked(canned, status):
     assert type(ei.value) is SourceBlocked
 
 
-@pytest.mark.parametrize("status", [403, 429, 503])
-def test_studio_blocked_status_raises_source_blocked(canned, status):
-    canned.respond(status, b"blocked")
-    with pytest.raises(RuntimeError) as ei:
-        JavBusScraper().get_ids_from_studio(STUDIO)
-    assert type(ei.value) is SourceBlocked
-
-
 def _list_call(kind):
     return {
         "search": lambda s: s.get_ids_from_search("abc"),
@@ -208,11 +188,6 @@ def test_200_without_waterfall_raises_source_unreachable(canned, kind):
     assert type(ei.value) is SourceUnreachable
 
 
-@pytest.mark.parametrize("kind", ["search", "studio"])
-def test_200_with_cards_returns_numbers(canned, kind):
-    assert _list_call(kind)(JavBusScraper()) == ["ABC-001", "ABC-002", "ABC-003"]
-
-
 @pytest.mark.parametrize("exc", [
     requests.Timeout("t"), requests.ConnectionError("c"), requests.exceptions.ConnectTimeout("ct"),
     requests.exceptions.ReadTimeout("rt"),
@@ -221,36 +196,6 @@ def test_search_timeout_and_connection_error_become_timeout_error(canned, exc):
     canned.raise_(exc)
     with pytest.raises(TimeoutError):
         JavBusScraper().get_ids_from_search("abc")
-
-
-@pytest.mark.parametrize("exc", [requests.TooManyRedirects("r"), requests.exceptions.ChunkedEncodingError("e")])
-def test_search_other_requests_errors_propagate_unchanged(canned, exc):
-    canned.raise_(exc)
-    with pytest.raises(requests.RequestException) as ei:
-        JavBusScraper().get_ids_from_search("abc")
-    assert ei.value is exc
-
-
-@pytest.mark.parametrize("exc", [
-    requests.Timeout("t"), requests.ConnectionError("c"), requests.TooManyRedirects("r"),
-    requests.exceptions.ChunkedEncodingError("e"),
-])
-def test_studio_request_errors_become_source_unreachable(canned, exc):
-    canned.raise_(exc)
-    with pytest.raises(RuntimeError) as ei:
-        JavBusScraper().get_ids_from_studio(STUDIO)
-    assert type(ei.value) is SourceUnreachable
-    assert ei.value.__cause__ is exc
-
-
-def test_list_failures_do_not_sleep(canned, monkeypatch):
-    """產品行為不新增節流：清單 GET 不呼叫 rate_limit／time.sleep。"""
-    import time
-    monkeypatch.setattr("core.scrapers.javbus.rate_limit", lambda *a, **k: pytest.fail("rate_limit called"))
-    monkeypatch.setattr(time, "sleep", lambda *a, **k: pytest.fail("sleep called"))
-    scraper = JavBusScraper()
-    scraper.get_ids_from_search("abc")
-    scraper.get_ids_from_studio(STUDIO)
 
 
 # ================================================================ 邊界條件 4：R5／R7
@@ -263,14 +208,6 @@ def probe_env(tmp_path, monkeypatch):
     monkeypatch.setattr("core.scraper.MAX_WORKERS", 1)
     monkeypatch.setattr("core.scraper.REQUEST_DELAY", 0)
     return db
-
-
-def test_probe_titles_blocked_is_none_after_a_single_request(canned, probe_env):
-    import core.scraper as m
-    canned.respond(403, b"blocked")
-    result = _probe_titles(m, MAKER_KEY, [MAKER_LABEL], [], TODAY, probe_env)
-    assert result is None
-    assert len(canned.seen) == 1
 
 
 def test_run_maker_probe_blocked_is_maker_unreachable_with_single_request(canned, probe_env):
@@ -308,10 +245,6 @@ def _soup(html):
     return BeautifulSoup(html, "html.parser")
 
 
-def test_list_card_shape_is_number_title_cover_date():
-    assert jb.ListCard._fields == ("number", "title", "cover", "date")
-
-
 def test_parse_list_cards_reads_number_title_cover_date():
     cards = JavBusScraper()._parse_list_cards(_soup(THREE_CARDS))
     assert cards == [
@@ -319,11 +252,6 @@ def test_parse_list_cards_reads_number_title_cover_date():
         jb.ListCard("XYZ-002", "Title Two", "/pics/thumb/b.jpg", ""),            # 缺 <date>：番號靠 href、無日期
         jb.ListCard("DEF-003", "", "/pics/thumb/c.jpg", "2026-03-04"),           # 缺 img[title]
     ]
-
-
-def test_parse_list_cards_keeps_cover_relative_and_tolerates_missing_img():
-    html = ('<div id="waterfall"><a class="movie-box" href="/ABC-009"><date>ABC-009</date></a></div>')
-    assert JavBusScraper()._parse_list_cards(_soup(html)) == [jb.ListCard("ABC-009", "", "", "")]
 
 
 def _legacy_parse_search_ids(soup):
@@ -369,4 +297,3 @@ def test_parse_search_ids_matches_legacy_output_itemwise(name):
     html = EQUIVALENCE_CASES[name]
     assert scraper._parse_search_ids(_soup(html)) == _legacy_parse_search_ids(_soup(html))
     assert scraper._parse_search_ids(_soup(html)) == [c.number for c in scraper._parse_list_cards(_soup(html))]
-

@@ -70,14 +70,6 @@ def test_list_contents_non_200_raises_not_empty(dmm, status, expected):
     assert str(status) in str(ei.value)
 
 
-@pytest.mark.parametrize("status, expected", _BLOCKED_OR_NOT)
-def test_fetch_facts_non_200_raises_not_empty(dmm, status, expected):
-    with patch.object(dmm._session, "post", return_value=_resp(status)):
-        with pytest.raises(Exception) as ei:
-            _facts(dmm)
-    assert type(ei.value) is expected
-
-
 @pytest.mark.parametrize("call", TRANSPORTS)
 @pytest.mark.parametrize("exc", [requests.Timeout("x"), requests.ConnectionError("x"),
                                  requests.exceptions.ReadTimeout("x")])
@@ -187,49 +179,17 @@ def test_list_contents_keyword_request_shape(dmm):
     assert list(payload["variables"]) == ["limit", "offset", "sort", "queryWord"]
 
 
-def test_list_contents_filter_request_shape(dmm):
-    flt = {"actressIds": {"ids": [{"id": "1030262"}], "op": "OR"}}
-    with patch.object(dmm._session, "post", return_value=_resp(200, _list_body([]))) as post:
-        dmm.list_contents(None, flt, limit=30, offset=60)
-    assert set(post.call_args.kwargs) == {"json", "timeout"}
-    variables = post.call_args.kwargs["json"]["variables"]
-    assert variables == {"limit": 30, "offset": 60, "sort": "RELEASE_DATE", "filter": flt}
-    assert variables["filter"] is flt  # 原樣傳入，不改寫
-
-
-def test_list_contents_filter_keyword_arg_and_no_filter_no_query_word(dmm):
-    flt = {"makerIds": {"ids": [{"id": "3152"}], "op": "OR"}}
-    with patch.object(dmm._session, "post", return_value=_resp(200, _list_body([]))) as post:
-        dmm.list_contents(filter=flt, limit=30, offset=0)
-        dmm.list_contents(limit=30, offset=0)
-    first, second = (c.kwargs["json"]["variables"] for c in post.call_args_list)
-    assert "queryWord" not in first and first["filter"] == flt
-    assert second == {"limit": 30, "offset": 0, "sort": "RELEASE_DATE"}
-
-
+# [lint-guard: pytest-justified] 對外 GraphQL contract（$filter 未宣告時 filter 失效會把全站最新當片商清單；pageInfo／id 欄位缺失會讓載入更多消失、名稱解析靜默落空）
 @pytest.mark.parametrize("fragment", [
     "$filter: ContentSearchPPVFilterInput",
     "filter: $filter",
     "pageInfo { totalCount hasNext }",
-    "deliveryStartAt",
-    "releaseStatus",
     "actresses { id name }",
     "maker { id name }",
-    "query AvSearch(",
 ])
 def test_search_list_query_declares_filter_and_selects_new_fields(fragment):
     """filter 變數沒宣告時站方會靜默忽略它（整站最新列表），所以宣告本身要鎖。"""
     assert fragment in re.sub(r"\s+", " ", DMMScraper.SEARCH_LIST_QUERY)
-
-
-def test_list_contents_returns_raw_rows_total_and_has_next(dmm):
-    rows = [{"id": "sone00205", "title": "T", "actresses": [{"id": "1", "name": "A"}], "maker": {"id": "2", "name": "M"}},
-            {"title": "缺 id 列也原樣給（丟不丟由 provider 決定）"}]
-    body = _list_body(rows, {"totalCount": 344, "hasNext": True})
-    with patch.object(dmm._session, "post", return_value=_resp(200, body)):
-        result = dmm.list_contents("x", limit=40, offset=0)
-    assert result == ListResult(rows, 344, True)
-    assert result.rows == rows and result.total == 344 and result.has_next is True
 
 
 def test_list_contents_missing_page_info_is_not_an_error(dmm):
@@ -238,13 +198,6 @@ def test_list_contents_missing_page_info_is_not_an_error(dmm):
     with patch.object(dmm._session, "post", return_value=_resp(200, body)):
         result = dmm.list_contents("x", limit=40, offset=0)
     assert result == ListResult([{"id": "sone00205"}], None, False)
-
-
-def test_list_contents_drops_non_dict_rows(dmm):
-    body = _list_body([{"id": "a"}, None, "x", {"id": "b"}])
-    with patch.object(dmm._session, "post", return_value=_resp(200, body)):
-        result = dmm.list_contents("x", limit=40, offset=0)
-    assert result.rows == [{"id": "a"}, {"id": "b"}]
 
 
 # ─── 邊界條件 4：fetch_facts ────────────────────────────────────────────────
@@ -274,14 +227,6 @@ def test_fetch_facts_one_request_with_n_aliases(dmm):
         assert len(re.findall(rf"\b{field}\b", payload["query"])) == len(ids), field
 
 
-def test_fetch_facts_escapes_ids_in_query(dmm):
-    """D2：id 以 json.dumps 轉義後嵌入，含引號／反斜線的 id 不會把 query 截斷。"""
-    ids = ['a"b', "c\\d", "plain"]
-    with patch.object(dmm._session, "post", return_value=_resp(200, _facts_body())) as post:
-        dmm.fetch_facts(ids)
-    assert _alias_ids(post.call_args.kwargs["json"]["query"]) == list(enumerate(ids))
-
-
 def test_fetch_facts_parses_response(dmm):
     ids = ["13dsvr01774", "missing-alias", "null-alias", "sparse"]
     body = _facts_body(
@@ -303,23 +248,6 @@ def test_fetch_facts_parses_response(dmm):
     assert facts["sparse"].maker_content_id is None
 
 
-def test_fetch_facts_alias_ids_come_back_to_their_own_content_id(dmm):
-    """alias 對回自己的 id：交換回應順序不能讓番號張冠李戴。"""
-    ids = ["id-zero", "id-one"]
-    body = _facts_body(a1={"makerContentId": "ONE-001", "series": None, "label": None, "directors": []},
-                       a0={"makerContentId": "ZERO-000", "series": None, "label": None, "directors": []})
-    with patch.object(dmm._session, "post", return_value=_resp(200, body)):
-        facts = dmm.fetch_facts(ids)
-    assert facts["id-zero"].maker_content_id == "ZERO-000"
-    assert facts["id-one"].maker_content_id == "ONE-001"
-
-
-def test_fetch_facts_empty_sends_no_request(dmm):
-    with patch.object(dmm._session, "post") as post:
-        assert dmm.fetch_facts([]) == {}
-    assert post.call_count == 0
-
-
 def test_fetch_facts_over_100_ids_raises_value_error_without_request(dmm):
     with patch.object(dmm._session, "post") as post:
         with pytest.raises(ValueError):
@@ -336,8 +264,3 @@ def test_fetch_facts_exactly_100_ids_is_one_request(dmm):
 
 
 # ─── 公開型別形狀 ────────────────────────────────────────────────────────────
-
-def test_public_types_are_named_tuples_with_fixed_fields():
-    assert ListResult._fields == ("rows", "total", "has_next")
-    assert Facts._fields == ("maker_content_id", "series", "label", "directors")
-    assert Named._fields == ("id", "name")

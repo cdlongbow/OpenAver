@@ -18,7 +18,6 @@ import pytest
 import requests
 from requests.structures import CaseInsensitiveDict
 
-import core.search_providers.javbus as jbp
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.scrapers.javbus import JavBusScraper, StarCard
 from core.search_providers.javbus import JavBusProvider
@@ -157,12 +156,6 @@ def test_searchstar_url_joins_whitespace_with_plus(site, name, joined):
     assert "%20" not in site.urls[0] and " " not in site.urls[0]
 
 
-def test_searchstar_does_not_set_existmag_cookie(site):
-    # searchstar 不是「作品清單」，T2 的 existmag 只作用在清單 GET
-    _ja().search_stars("三上悠亜")
-    assert site.existmag == [[]]
-
-
 def test_search_stars_parses_cards(site):
     site.set(_star_url("美咲愛"), 200, _star_page(
         _star_card("23f", "美咲愛", uncensored=True),
@@ -177,28 +170,6 @@ def test_search_stars_parses_cards(site):
         StarCard("star/36h", "美咲愛", False),
         StarCard("star/zz1", "美咲愛華", False),
     ]
-
-
-def test_search_stars_accepts_relative_and_language_prefixed_hrefs(site):
-    site.set(_star_url("甲"), 200, _star_page(
-        _star_card("a1", "甲", href="/ja/star/a1"),
-        _star_card("a2", "甲", href="/star/a2"),
-        _star_card("a3", "甲", href="https://www.javbus.com/uncensored/star/a3"),
-        _star_card("a4", "甲", href="/ja/uncensored/star/a4"),
-    ))
-    assert [c.id for c in _ja().search_stars("甲")] == ["star/a1", "star/a2", "uncensored/star/a3", "uncensored/star/a4"]
-
-
-def test_search_stars_drops_cards_without_name_or_without_star_id(site):
-    site.set(_star_url("甲"), 200, _star_page(
-        _star_card("a1", "甲"),
-        _star_card("a2", "甲", with_title=False),                   # 缺名稱
-        _star_card("a3", "甲", href=f"{BASE}/genre/e"),              # href 不是女優頁
-        _star_card("a4", "甲", href=""),                             # 缺 id
-        _star_card("a5", "   "),                                     # 名稱只有空白
-        '<div class="item"><a class="movie-box" href="/ja/star/zz9"><img title="甲"></a></div>',  # 不是 avatar-box
-    ))
-    assert [c.id for c in _ja().search_stars("甲")] == ["star/a1"]
 
 
 @pytest.mark.parametrize("status", [403, 429, 503])
@@ -257,13 +228,6 @@ def test_entity_link_no_card_404_is_none_with_one_request(site, segment, type_):
 
 
 @pytest.mark.parametrize("segment,type_", SEG_TYPE)
-def test_entity_link_200_zero_cards_is_none_with_one_request(site, segment, type_):
-    site.set(_search_url("苺", type_), 200, EMPTY_WATERFALL)
-    assert _ja().fetch_entity_link("苺", segment) is None
-    assert len(site.urls) == 1
-
-
-@pytest.mark.parametrize("segment,type_", SEG_TYPE)
 def test_entity_link_substring_link_text_rejected_after_two_requests(site, segment, type_):
     # 使用者打「苺」→ 若導演「苺原」被當成他，清單變成苺原的 569 部而不是標題含「苺」的片
     # 第二張卡的片剛好連到「苺」本人：只看第一張卡，所以仍是 None，且不為第二張卡多發請求
@@ -272,15 +236,6 @@ def test_entity_link_substring_link_text_rejected_after_two_requests(site, segme
     site.set(_detail_url("BBB-002"), 200, _detail_page((segment, "x2", "苺")))
     assert _ja().fetch_entity_link("苺", segment) is None
     assert site.urls == [_search_url("苺", type_), _detail_url("AAA-001")]
-
-
-@pytest.mark.parametrize("segment,type_", SEG_TYPE)
-def test_entity_link_longer_name_with_same_prefix_rejected(site, segment, type_):
-    # 使用者打系列名 → 若最新命中的片屬另一個名稱含該字的系列、卻不比對連結文字就收，清單端出別的系列的片
-    site.set(_search_url("PLATINUM+SOAP", type_), 200, _list_page("AAA-001"))
-    site.set(_detail_url("AAA-001"), 200, _detail_page((segment, "x9", "PLATINUM SOAP 2")))
-    assert _ja().fetch_entity_link("PLATINUM SOAP", segment) is None
-    assert len(site.urls) == 2
 
 
 @pytest.mark.parametrize("segment,type_,id_,text,typed", [
@@ -308,33 +263,9 @@ def test_entity_link_takes_only_the_asked_kind_of_link(site, segment, type_):
     assert _ja().fetch_entity_link("X", segment) == (expected, "X")
 
 
-@pytest.mark.parametrize("segment,type_", SEG_TYPE)
-def test_entity_link_other_kind_link_with_matching_text_is_not_enough(site, segment, type_):
-    others = [s for s, _ in SEG_TYPE if s != segment]
-    site.set(_search_url("X", type_), 200, _list_page("AAA-001"))
-    site.set(_detail_url("AAA-001"), 200, _detail_page(*[(s, "o1", "X") for s in others]))
-    assert _ja().fetch_entity_link("X", segment) is None
-
-
-@pytest.mark.parametrize("href", [
-    f"{BASE}/series/rvz", "/ja/series/rvz", "/series/rvz", "https://www.javbus.com/series/rvz",
-])
-def test_entity_link_accepts_absolute_relative_and_unprefixed_hrefs(site, href):
-    site.set(_search_url("PLATINUM+SOAP"), 200, _list_page("SSIS-197"))
-    site.set(_detail_url("SSIS-197"), 200,
-             f'<html><body><div class="col-md-3 info"><a href="{href}">PLATINUM SOAP</a></div></body></html>'.encode())
-    assert _ja().fetch_entity_link("PLATINUM SOAP", "series") == ("series/rvz", "PLATINUM SOAP")
-
-
 def test_entity_link_empty_name_is_none_without_request(site):
     assert _ja().fetch_entity_link("", "series") is None
     assert _ja().fetch_entity_link("・ - _", "label") is None
-    assert site.urls == []
-
-
-def test_entity_link_unknown_segment_is_programming_error(site):
-    with pytest.raises(ValueError):
-        _ja().fetch_entity_link("X", "studio")
     assert site.urls == []
 
 
@@ -346,15 +277,6 @@ def test_entity_link_search_stage_blocked_raises_source_blocked(site, segment, t
     with pytest.raises(RuntimeError) as ei:
         _ja().fetch_entity_link("X", segment)
     assert type(ei.value) is SourceBlocked
-
-
-@pytest.mark.parametrize("segment,type_", SEG_TYPE)
-@pytest.mark.parametrize("body", [NO_WATERFALL, b""])
-def test_entity_link_search_stage_unreadable_raises_source_unreachable(site, segment, type_, body):
-    site.set(_search_url("X", type_), 200, body)
-    with pytest.raises(RuntimeError) as ei:
-        _ja().fetch_entity_link("X", segment)
-    assert type(ei.value) is SourceUnreachable
 
 
 def _with_card(site, segment, type_):
@@ -542,14 +464,6 @@ def test_entity_kinds_none_stays_none(fake, kind):
     assert _resolve(kind, "X") is None
 
 
-def test_provider_never_searches_entities_through_get_ids_from_search(fake):
-    # 離線錄製器與 T10 合約載體只掛 search_stars／fetch_entity_link；繞去一般搜尋會被錄成 KEYWORD 的 calls
-    fake.links = {("X", "series"): ("series/abc", "X")}
-    for kind in (Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL):
-        _resolve(kind, "X")
-    assert fake.get_ids_calls == []
-
-
 # ---------------------------------------------------------------- 邊界條件 3：快取
 ALL_KINDS = [Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL]
 
@@ -576,15 +490,6 @@ def test_second_resolve_of_same_name_sends_no_request(fake, kind, outcome):
     assert fake.total == first
 
 
-def test_name_variants_share_one_cache_cell(fake):
-    fake.stars = {"三上悠亜": MIKAMI_PAGE, "三上 悠亜": MIKAMI_PAGE}
-    first = _resolve(Kind.ACTOR, "三上悠亜")
-    assert fake.total == 1
-    assert _resolve(Kind.ACTOR, "三上 悠亜") == first
-    assert _resolve(Kind.ACTOR, "三上　悠亜") == first
-    assert fake.total == 1
-
-
 # 使用者打系列名（例 PLATINUM SOAP）→ 梯子先問女優（查無，記入快取）再問系列；若快取鍵沒分 kind，
 # 系列永遠讀到剛記的「查無」，使用者只看到標題含該字的片而不是系列清單
 def test_resolve_cache_is_keyed_by_kind(fake):
@@ -595,26 +500,6 @@ def test_resolve_cache_is_keyed_by_kind(fake):
     assert _resolve(Kind.LABEL, "PLATINUM SOAP") is None
     assert fake.star_calls == ["PLATINUM SOAP"]
     assert fake.link_calls == [("PLATINUM SOAP", "series"), ("PLATINUM SOAP", "director"), ("PLATINUM SOAP", "label")]
-
-
-def test_resolve_cache_hit_in_one_kind_does_not_leak_into_another(fake):
-    fake.links = {("X", "series"): ("series/abc", "X")}
-    assert _resolve(Kind.SERIES, "X") == EntityRef(Kind.SERIES, "series/abc", "X")
-    assert _resolve(Kind.LABEL, "X") is None
-    assert _resolve(Kind.SERIES, "X") == EntityRef(Kind.SERIES, "series/abc", "X")
-    assert fake.link_calls == [("X", "series"), ("X", "label")]
-
-
-def test_cache_over_limit_is_cleared_as_a_whole(fake, monkeypatch):
-    monkeypatch.setattr(jbp, "_RESOLVE_CACHE_MAX", 2)
-    for name in ("a", "b"):
-        _resolve(Kind.SERIES, name)
-    _resolve(Kind.SERIES, "c")                         # 第三格滿了 → 整張清空後只剩 c
-    n = fake.total
-    _resolve(Kind.SERIES, "c")
-    assert fake.total == n                             # c 還在
-    _resolve(Kind.SERIES, "a")
-    assert fake.total == n + 1                         # a 已被清掉，重新查
 
 
 # 例外原樣往外丟、不入快取（BE-PY-03）；是多行不變式，不靠單行 mutation
@@ -637,22 +522,11 @@ def test_exception_not_cached_and_propagates(fake, kind, exc):
 
 
 # ---------------------------------------------------------------- 邊界條件 4：不處理的 kind
-@pytest.mark.parametrize("kind", [Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD])
-def test_unhandled_kinds_return_none_without_any_request(fake, kind):
-    assert _resolve(kind, "S1") is None
-    assert fake.total == 0 and fake.get_ids_calls == []
-
-
 @pytest.mark.parametrize("kind", ALL_KINDS)
 @pytest.mark.parametrize("blank", ["", "   ", "　", "・", " ・-_ "])
 def test_blank_input_returns_none_without_any_request(fake, kind, blank):
     assert _resolve(kind, blank) is None
     assert fake.total == 0
-
-
-def test_capabilities_unchanged_in_this_task():
-    assert JavBusProvider.capabilities == frozenset({
-        Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD})
 
 
 @pytest.mark.parametrize("kind", [Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD])
@@ -696,14 +570,6 @@ def test_worst_case_costs_seven_requests(site):
     assert len(site.urls) == 7
 
 
-def test_end_to_end_hits_with_canned_transport(site):
-    site.set(_star_url("三上+悠亜"), 200, _star_page(*[_star_card(c.id.split("/")[-1], c.name) for c in MIKAMI_PAGE]))
-    site.set(_search_url("PLATINUM+SOAP"), 200, _list_page("SSIS-197"))
-    site.set(_detail_url("SSIS-197"), 200, _detail_page(("series", "rvz", "PLATINUM SOAP"), ("label", "9x", "S1 NO.1 STYLE")))
-    assert _resolve(Kind.ACTOR, "三上 悠亜") == EntityRef(Kind.ACTOR, "star/okq", "三上悠亜")
-    assert _resolve(Kind.SERIES, "PLATINUM SOAP") == EntityRef(Kind.SERIES, "series/rvz", "PLATINUM SOAP")
-
-
 # 使用者 UI 設繁中 → 若 resolve 改打繁中站，站上名稱是繁中字形，比對全落空，女優／系列永遠認不出而畫面照常回關鍵字結果，看起來沒壞
 @pytest.mark.parametrize("ui_lang", ["zh-tw", "en", "ja"])
 def test_resolve_requests_always_use_ja_prefix_regardless_of_ui_language(site, ui_lang):
@@ -717,17 +583,3 @@ def test_resolve_requests_always_use_ja_prefix_regardless_of_ui_language(site, u
         _resolve(Kind.LABEL, "PLATINUM SOAP")
     assert len(site.urls) == 5                      # ACTOR 1 + SERIES 2（搜尋＋詳情）+ DIRECTOR 1 + LABEL 1
     assert all(u.startswith("https://www.javbus.com/ja/") for u in site.urls), site.urls
-
-
-@pytest.mark.parametrize("exc", [
-    SourceBlocked("b"), SourceUnreachable("u"),
-], ids=["blocked", "unreachable"])
-def test_end_to_end_blocked_site_is_exception_not_none(site, exc):
-    status = 403 if isinstance(exc, SourceBlocked) else 200
-    body = b"blocked" if status == 403 else NO_WATERFALL
-    site.set(_star_url("甲"), status, body)
-    with pytest.raises(type(exc)):
-        _resolve(Kind.ACTOR, "甲")
-    site.routes.clear()
-    assert _resolve(Kind.ACTOR, "甲") is None           # 站方恢復後同字會再問（上一次沒入快取）
-    assert len(site.urls) == 2

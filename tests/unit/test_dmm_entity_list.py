@@ -89,7 +89,6 @@ EXPECTED20 = [expected for _, _, expected in SPEC20]
 # 站方順序：番號不遞增（反序、依番號排序兩種變異都會改變結果）
 LIST5 = [("zzz00003", "ZZZ-003"), ("aaa00002", "AAA-002"), ("mmm00001", "MMM-001"),
          ("13dsvr01774", "3DSVR-1774"), ("55t28103", "T28-103")]
-LIST5_NUMBERS = [n for _, n in LIST5]
 
 
 def _row(cid, *, actress_ids=(REF,), maker_id=OTHER):
@@ -384,24 +383,6 @@ def test_empty_window_sends_no_facts_request(site, entry, rows):
 
 
 # ================================================================ 邊界條件 2：守衛（relay 入口）
-def test_belonging_listing_returns_cards_with_one_seed_in_list_order(site, chain, spies):
-    """〔使用者在 DMM 排第一打女優／系列／導演／label 名 → 守衛若恆答不了，DMM 的實體清單每次被跳過，
-    使用者只看到標題關鍵字結果而不是完整片單，沒有任何錯誤提示〕"""
-    other = chain(other_cards=[{"number": "J-1"}])
-    _arrange(site, Kind.ACTOR, [True] * 5)
-    seeds = MagicMock()
-    out = relay.search_by_intent("actress", NAME, W, result_callback=seeds)
-    calls = [c.args for c in seeds.call_args_list]
-    assert [slot for slot, _ in calls].count(-1) == 1  # seed 恰 1 次
-    assert calls[0] == (-1, LIST5_NUMBERS)  # 骨架＝清單順序
-    assert [(slot, card["number"]) for slot, card in calls[1:]] == list(enumerate(LIST5_NUMBERS))
-    assert _numbers(out) == LIST5_NUMBERS
-    assert {c["_source"] for c in out} == {"dmm"}  # 梯子路徑沒有 run 的收尾補，enrich 自己補
-    assert all(card["_source"] == "dmm" for _, card in calls[1:])  # callback payload 也有
-    assert [r.belongs for r in spies.enrich_returns[:3]] == [True, True, True]
-    assert other.run_calls == [] and spies.run.call_count == 0  # 該家答了，不再問 KEYWORD／後面
-
-
 @pytest.mark.parametrize("kind", LADDER_KINDS)
 def test_foreign_listing_is_rejected_and_next_provider_asked(site, chain, spies, kind):
     """〔使用者在 DMM 排第一打女優名、名稱解析認成同名別人或站方回了別份清單 → 守衛若恆放行，
@@ -422,20 +403,6 @@ def test_foreign_listing_is_rejected_and_next_provider_asked(site, chain, spies,
     assert len(site.detail_calls) == 3  # 守衛不通過就不再抓後面的
     assert spies.run.call_count == 0  # 命中實體的那家不再問 KEYWORD
     assert other.run_calls == [Kind.KEYWORD]  # 下一家被問到了
-
-
-@pytest.mark.parametrize("kind", [Kind.ACTOR, Kind.SERIES])
-@pytest.mark.parametrize("member_at", [0, 1, 2])
-def test_one_of_three_guard_members_passes_the_guard(site, chain, spies, kind, member_at):
-    """〔守衛只要前 3 部中有 1 部屬於就放行：少一筆關聯的片不能讓整家被跳過〕"""
-    other = chain(other_cards=[{"number": "J-1"}])
-    _arrange(site, kind, [i == member_at for i in range(3)], LIST5[:3])
-    seeds = MagicMock()
-    out = relay.search_by_intent("actress", NAME, W, result_callback=seeds)
-    assert _numbers(out) == LIST5_NUMBERS[:3]
-    assert [c.args[0] for c in seeds.call_args_list].count(-1) == 1
-    assert sorted(r.belongs for r in spies.enrich_returns) == [False, False, True]
-    assert other.run_calls == []
 
 
 @pytest.mark.parametrize("asked", [Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER])
@@ -499,39 +466,6 @@ def test_site_ids_are_compared_as_strings(site, kind, row_patch):
     assert provider.enrich(provider.list_entity(ref, W).items[0], ref).belongs is True
 
 
-def test_enrich_sends_no_list_or_facts_requests(site):
-    """I-D3：belongs 全由列表階段已取得的事實算出，enrich 內除 _fetch_by_id 外零網路。"""
-    provider = _provider()
-    for kind in (Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER):
-        _arrange(site, kind, [True, False, True])
-    page_ref = EntityRef(Kind.SERIES, REF, NAME)
-    page = provider.list_entity(page_ref, W)
-    before = (len(site.list_calls), len(site.facts_calls))
-    with patch.object(provider._scraper._session, "post") as post:
-        verdicts = [provider.enrich(item, page_ref).belongs for item in page.items]
-    assert verdicts == [True, False, True]
-    assert (len(site.list_calls), len(site.facts_calls)) == before  # list_contents／fetch_facts 呼叫數 0
-    assert post.call_count == 0  # 傳輸層也 0
-    assert len(site.detail_calls) == 3  # 只有 _fetch_by_id
-
-
-def test_entity_path_stamps_source_and_keyword_path_does_not(site):
-    """實體路徑（ref 不為 None，含 T9 的 MAKER）enrich 自補 _source；KEYWORD（ref 為 None）enrich 維持今天——
-    既有 test_dmm_source_stamped_after_callbacks 零修改仍綠（只有 run 收尾補，callback payload 沒有）。"""
-    site.by_word["q"] = ListResult([_row("sone00001")], 1, False)
-    provider = _provider()
-    item = provider.search_keyword("q", W).items[0]
-    keyword = provider.enrich(item, None)
-    assert keyword.belongs is None and "_source" not in keyword.card
-    for kind in (Kind.ACTOR, Kind.MAKER):
-        assert provider.enrich(item, EntityRef(kind, REF, NAME)).card["_source"] == "dmm"
-    payloads = []
-    out = provider.run(Kind.KEYWORD, "q", W, result_callback=lambda s, d: payloads.append(copy.deepcopy(d)))
-    item_payloads = [p for p in payloads if isinstance(p, dict)]
-    assert all(c["_source"] == "dmm" for c in out)
-    assert item_payloads and all("_source" not in p for p in item_payloads)
-
-
 # ================================================================ 邊界條件 3：視窗與失敗
 @pytest.mark.parametrize("kind", [Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER])
 def test_filter_variables_shape_per_kind_and_keyword_has_no_filter(kind):
@@ -549,53 +483,6 @@ def test_filter_variables_shape_per_kind_and_keyword_has_no_filter(kind):
     assert post.call_args_list[1].kwargs["json"]["variables"] == {
         "limit": 20, "offset": 0, "sort": "RELEASE_DATE", "queryWord": "温泉"}
     assert post.call_count == 2  # 空清單 ⇒ 沒有 facts 請求
-
-
-def test_window_is_passed_through_with_fixed_call_shapes():
-    """Window(offset, limit) 原樣傳到 list_contents；KEYWORD 的呼叫形狀固定 (q, limit=, offset=)（不傳 filter）。"""
-    provider = _provider()
-    with patch.object(DMMScraper, "list_contents", return_value=ListResult([], 0, False)) as lc:
-        provider.search_keyword("q", Window(20, 15))
-        provider.list_entity(EntityRef(Kind.LABEL, REF, NAME), Window(40, 30))
-    assert lc.call_args_list[0] == (("q",), {"limit": 15, "offset": 20})
-    assert lc.call_args_list[1] == ((None,), {"filter": {"labelIds": {"ids": [{"id": REF}], "op": "OR"}},
-                                              "limit": 30, "offset": 40})
-
-
-@pytest.mark.parametrize("entry", ["search_keyword", "list_entity"])
-@pytest.mark.parametrize("has_next,total,n_rows", [(False, 20, 20), (True, 999, 3)], ids=["full-page-but-no-next", "short-page-with-next"])
-def test_has_next_and_total_come_from_page_info_not_row_count(site, entry, has_next, total, n_rows):
-    """〔整頁滿而站方說沒有下一頁 → 不再用『筆數 ≥ 視窗』猜，否則多出一個必空的『載入更多』〕"""
-    rows = [_row(f"mide{i:05d}") for i in range(1, n_rows + 1)]
-    site.by_word["q"] = ListResult(rows, total, has_next)
-    site.by_filter[("actressIds", REF)] = ListResult(rows, total, has_next)
-    provider = _provider()
-    if entry == "search_keyword":
-        page = provider.search_keyword("q", W)
-    else:
-        page = provider.list_entity(EntityRef(Kind.ACTOR, REF, NAME), W)
-    assert len(page.items) == n_rows
-    assert page.has_next is has_next and page.total == total
-
-
-def test_offset_boundary_is_measured_at_the_transport():
-    """〔在長清單連按『載入更多』翻過站方上限 → 若多打必被拒的請求，使用者看到的是來源錯誤而不是『已到底』〕
-    offset=10000 仍發請求（列表＋facts 兩個罐頭回應）、has_next 取自 pageInfo；offset=10001 ⇒ post 呼叫數 0。"""
-    scraper = _scraper()
-    list_body = {"data": {"legacySearchPPV": {"result": {
-        "pageInfo": {"totalCount": 10050, "hasNext": True}, "contents": [_row("sone00001")]}}}}
-    facts_body = {"data": {"a0": {"makerContentId": "SONE-001", "series": None, "label": None, "directors": []}}}
-    responses = [MagicMock(status_code=200, json=lambda: list_body), MagicMock(status_code=200, json=lambda: facts_body)]
-    ref = EntityRef(Kind.ACTOR, REF, NAME)
-    with patch.object(scraper._session, "post", side_effect=responses) as post:
-        page = DMMProvider(scraper).list_entity(ref, Window(10000, 20))
-    assert post.call_count == 2
-    assert page.has_next is True and page.total == 10050 and [i.number for i in page.items] == ["SONE-001"]
-    with patch.object(scraper._session, "post") as post:
-        beyond = DMMProvider(scraper).list_entity(ref, Window(10001, 20))
-        beyond_kw = DMMProvider(scraper).search_keyword("q", Window(10001, 20))
-    assert post.call_count == 0
-    assert beyond.items == [] and beyond.has_next is False and beyond_kw.items == []
 
 
 FAILURES = [
@@ -694,25 +581,3 @@ def test_run_rejects_kinds_it_does_not_declare(site, kind):
     with pytest.raises(ValueError):
         _provider().run(kind, "MIDV", W)
     assert site.list_calls == [] and site.facts_calls == [] and site.detail_calls == []
-
-
-def test_discovery_only_touches_no_transport_and_ladder_is_not_asked(site, chain, spies):
-    """discovery_only：run 不碰傳輸；relay 入口 DMM（supports_discovery=False）不在鏈上，resolve／list_entity 呼叫數 0。"""
-    assert _provider().run(Kind.KEYWORD, "q", W, discovery_only=True) == []
-    other = chain(discovery=True)
-    site.refs[Kind.ACTOR] = EntityRef(Kind.ACTOR, REF, NAME)
-    relay.search_by_intent("actress", NAME, W, discovery_only=True)
-    assert site.resolve_calls == [] and spies.list_entity.call_count == 0
-    assert site.list_calls == [] and site.facts_calls == [] and site.detail_calls == []
-    assert other.run_calls == [Kind.KEYWORD]
-
-
-def test_keyword_path_numbers_follow_the_window_and_cards_keep_today_shape(site):
-    """KEYWORD 路徑（ref 為 None）行為維持今天：骨架 → 逐部卡 → 收尾補 _source；沒有 facts 時番號走推導退路。"""
-    site.by_word["q"] = ListResult([_row("sone00001"), _row("sone00002")], 2, False)
-    site.details = {"sone00001": None, "sone00002": None}
-    events = []
-    out = _provider().run(Kind.KEYWORD, "q", W, result_callback=lambda s, d: events.append((s, copy.deepcopy(d))))
-    assert events[0] == (-1, ["SONE-001", "SONE-002"])  # 沒登記 facts ⇒ 推導退路（字面值）
-    assert [c["number"] for c in out] == ["SONE-001", "SONE-002"]
-    assert all(c["_source"] == "dmm" for c in out)

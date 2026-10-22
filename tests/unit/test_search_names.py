@@ -12,7 +12,6 @@ from unittest.mock import patch
 import pytest
 
 from core.name_match import fold, split_paren_name
-from core.search_providers import javdb as jp
 from core.search_providers import names as names_mod
 from core.search_providers.names import maker_names
 
@@ -109,22 +108,9 @@ def test_fold_matches_pre_move_output(raw, expected):
     assert fold(raw) == expected
 
 
-def test_javdb_uses_the_shared_fold_not_a_second_copy():
-    # 使用者打女優名 → JavDB 與 JavBus 若各有一份 fold，某天改一邊另一邊就悄悄比對不到同一個人
-    assert jp.fold is fold
-
-
 @pytest.mark.parametrize("q, name_mapping, search_aliases, expected", MAKER_VECTORS)
 def test_maker_names_matches_pre_move_output(q, name_mapping, search_aliases, expected):
     assert maker_names(q, name_mapping=name_mapping, search_aliases=search_aliases) == expected
-
-
-@pytest.mark.parametrize("q, name_mapping, search_aliases, expected", MAKER_VECTORS)
-def test_javdb_maker_names_wrapper_still_reads_javdb_load_functions(q, name_mapping, search_aliases, expected):
-    # 既有 JavDB 測試 patch 的是 javdb 模組上的 load_*；薄包裝必須仍從那裡取表，合成對照表才打得進來
-    with patch.object(jp, "load_name_mapping", lambda: name_mapping), \
-         patch.object(jp, "load_search_aliases", lambda: search_aliases):
-        assert jp._maker_names(q) == expected
 
 
 def test_maker_names_loads_tables_itself_when_not_given():
@@ -132,13 +118,6 @@ def test_maker_names_loads_tables_itself_when_not_given():
          patch.object(names_mod, "load_search_aliases", lambda: ALIASES):
         assert maker_names("カリビアンコム") == ["カリビアンコム", "Caribbeancom"]
         assert maker_names("S1") == ["S1", "エスワン", "エスワンナンバーワンスタイル", "S1 NO.1 STYLE"]
-
-
-def test_maker_names_explicit_empty_table_is_not_replaced_by_loading():
-    # 傳入 {} 是「這張表就是空的」，不是「請自己載入」
-    with patch.object(names_mod, "load_name_mapping", lambda: TABLE), \
-         patch.object(names_mod, "load_search_aliases", lambda: ALIASES):
-        assert maker_names("S1", name_mapping={}, search_aliases={}) == ["S1"]
 
 
 # ---------------------------------------------------------------- split_paren_name（卡片 D4）

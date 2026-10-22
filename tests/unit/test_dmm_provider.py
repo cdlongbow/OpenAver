@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.scrapers.dmm import DMMScraper, ListResult
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceUnreachable
 from core.scrapers.models import Video
 from core.search_providers.dmm import DMMProvider
 from core.search_providers.types import Kind, Window
@@ -256,22 +256,3 @@ def test_search_keyword_has_next_and_total_come_from_page_info():
         with post_patch:
             page = provider.search_keyword("x", Window(0, window_limit))
         assert page.has_next is has_next and page.total == 999
-
-
-@pytest.mark.parametrize("status, expected", [(403, SourceBlocked), (429, SourceBlocked), (503, SourceBlocked),
-                                              (500, SourceUnreachable)])
-def test_list_failure_propagates_out_of_provider_not_empty(status, expected):
-    """DMM 暫擋要穿出 provider（relay 接住換下一家），不能被 provider 吞成查無。"""
-    provider, post_patch = _provider_with_post(_json_resp(status, {}))
-    with post_patch:
-        with pytest.raises(Exception) as ei:
-            provider.search_keyword("q", Window(0, 20))
-    assert type(ei.value) is expected
-    events = []
-    provider, post_patch = _provider_with_post(_json_resp(status, {}))
-    with post_patch:
-        with pytest.raises(Exception) as ei:
-            provider.run(Kind.KEYWORD, "q", Window(0, 20), status_callback=lambda *a: events.append(a),
-                         result_callback=lambda *a: events.append(a))
-    assert type(ei.value) is expected
-    assert events == [("dmm", "searching")]

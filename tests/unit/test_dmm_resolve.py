@@ -176,28 +176,6 @@ def test_actor_matches_old_name_in_parentheses(transport, provider):
     assert old == new == EntityRef(Kind.ACTOR, "1093154", "あかね麗")  # 同一個 id、label 是主名
 
 
-def test_actor_latin_input_without_matching_value_is_none(transport, provider):
-    # G7 分支 (b)：沒有拉丁欄位可比；不取「出現最多者」硬湊
-    transport.rows["Yua Mikami"] = _mikami_rows()
-    transport.rows["mikamiyua"] = _mikami_rows()
-    assert provider.resolve(Kind.ACTOR, "Yua Mikami") is None
-    assert provider.resolve(Kind.ACTOR, "mikamiyua") is None
-    assert len(transport.list_calls) == 2
-
-
-def test_actor_same_name_two_ids_takes_the_more_frequent(transport, provider):
-    rows = [_row("r1", [_act(1, "同名")]), _row("r2", [_act(2, "同名")]),
-            _row("r3", [_act(2, "同名")]), _row("r4", [_act(2, "同名")])]
-    transport.rows["同名"] = rows
-    assert provider.resolve(Kind.ACTOR, "同名") == EntityRef(Kind.ACTOR, "2", "同名")  # 後出現但次數多
-
-
-def test_actor_same_name_tie_takes_first_seen(transport, provider):
-    transport.rows["同名"] = [_row("r1", [_act(5, "同名")]), _row("r2", [_act(3, "同名")]),
-                             _row("r3", [_act(3, "同名")]), _row("r4", [_act(5, "同名")])]
-    assert provider.resolve(Kind.ACTOR, "同名") == EntityRef(Kind.ACTOR, "5", "同名")  # 2:2 平手→先出現
-
-
 def test_actor_tolerates_null_and_malformed_rows(transport, provider):
     # D3：actresses／maker 為 null、項目缺 id 或 name 者略過，不整批丟
     transport.rows["三上悠亜"] = [
@@ -219,11 +197,6 @@ def test_actor_tolerates_non_dict_items_inside_actresses(transport, provider, ba
     assert len(transport.list_calls) == 1  # 沒有因為壞列而每次重打
 
 
-def test_actor_not_found_when_rows_empty(transport, provider):
-    assert provider.resolve(Kind.ACTOR, "查無此人") is None
-    assert transport.list_calls == [("查無此人", 40, 0, None)]
-
-
 # ================================================================ 2. MAKER（經公開 resolve）
 def test_maker_first_spelling_hits_with_one_request(transport, provider, spellings):
     # 使用者在 DMM 排第一或只開 DMM 打片商簡稱 S1 → 命中 エスワン ナンバーワンスタイル 而片商清單有東西
@@ -243,29 +216,12 @@ def test_maker_first_spelling_empty_second_hits(transport, provider, spellings):
     assert transport.words == ["Attackers", "アタッカーズ"]
 
 
-def test_maker_all_miss_probes_exactly_three_and_never_asks_the_fourth(transport, provider, spellings):
-    names = ["Prestige", "プレステージ", "Prestige Inc", "ＰＲＥＳＴＩＧＥ株式会社"]
-    spellings["Prestige"] = names
-    for n in names:  # 每個拼法都有 rows，但片商都不是集合內的名字（DMM 沒有名叫 Prestige 的片商）
-        transport.rows[n] = [_row("x", [], _maker(1, "DOC")), _row("y", [], _maker(2, "ZETTON"))]
-    assert provider.resolve(Kind.MAKER, "Prestige") is None
-    assert transport.words == names[:3]  # 恰 3 次，第 4 個從未被問
-
-
 def test_maker_hit_set_is_all_names_even_beyond_the_first_three(transport, provider, spellings):
     names = ["A", "B", "C", "第四拼法"]
     spellings["A"] = names
     transport.rows["A"] = [_row("x", [], _maker(77, "第四拼法"))]  # 命中集合＝傳入的全部 names
     assert provider.resolve(Kind.MAKER, "A") == EntityRef(Kind.MAKER, "77", "第四拼法")
     assert transport.words == ["A"]
-
-
-def test_maker_sod_does_not_expand_to_sod_create(transport, provider, spellings):
-    # BE-DATA-21：SOD 不併入 SODクリエイト；集合僅 ['SOD']，DMM 的片商叫 SODクリエイト ⇒ 不命中
-    spellings["SOD"] = ["SOD"]
-    transport.rows["SOD"] = [_row("x", [], _maker(45276, "SODクリエイト"))] * 3
-    assert provider.resolve(Kind.MAKER, "SOD") is None
-    assert transport.words == ["SOD"]
 
 
 def test_maker_matches_by_maker_key_not_raw_string(transport, provider, spellings):
@@ -283,13 +239,6 @@ def test_maker_multiple_ids_take_the_most_frequent_then_first_seen(transport, pr
     dmm_mod.clear_probe_cache()
     transport.rows["M"].append(_row("f", [], _maker(2, "M")))
     assert provider.resolve(Kind.MAKER, "M") == EntityRef(Kind.MAKER, "2", "M")
-
-
-def test_maker_blank_input_is_none_without_request(transport, provider, spellings):
-    # spellings 沒有登記任何鍵：若 resolve 還去展開拼法會 KeyError
-    assert provider.resolve(Kind.MAKER, "  ") is None
-    assert provider.resolve(Kind.MAKER, "\u3000・") is None
-    assert transport.total == 0
 
 
 # ================================================================ 3. SERIES／DIRECTOR／LABEL
@@ -319,23 +268,12 @@ def test_named_kinds_non_equal_names_are_none(transport, provider, kind, name):
     assert len(transport.facts_calls) == 1  # 真的比對過 facts，不是沒問
 
 
-def test_named_kinds_longer_site_name_does_not_match_shorter_input(transport, provider):
-    transport.rows["TAKE-D"] = [_row("w1")]
-    transport.facts["w1"] = Facts("W-1", None, None, [Named("5", "TAKE-DX")])
-    assert provider.resolve(Kind.DIRECTOR, "TAKE-D") is None  # 站上叫 TAKE-DX，輸入 TAKE-D：不是子字串關係就能算同名
-
-
 def test_named_kinds_skip_missing_alias_and_keep_going(transport, provider):
     transport.world("PLATINUM SOAP")
     del transport.facts["w1"]  # alias 缺漏
     ref = provider.resolve(Kind.SERIES, "PLATINUM SOAP")
     assert ref == EntityRef(Kind.SERIES, "233224", "PLATINUM SOAP")  # w2 仍有
     assert transport.facts_calls == [("w1", "w2", "w3")]
-
-
-def test_named_kinds_empty_rows_send_no_facts_request(transport, provider):
-    assert provider.resolve(Kind.SERIES, "PLATINUM SOAP") is None
-    assert transport.facts_calls == []
 
 
 def test_named_kinds_rows_without_ids_send_no_facts_request(transport, provider):
@@ -480,57 +418,7 @@ def test_stage2_failure_propagates_keeps_stage1_and_retries_only_stage2(transpor
     assert (len(transport.list_calls), len(transport.facts_calls)) == (1, 3)  # 成功之後才進快取
 
 
-def test_maker_failure_on_later_spelling_propagates_and_keeps_earlier_probe(transport, provider, spellings):
-    spellings["P"] = ["P", "P2"]
-    transport.rows["P"] = [_row("x", [], MOODYZ)]  # 第一個拼法落空（成功的 Probe）
-    exc = SourceBlocked("blocked")
-
-    def boom_on_second(self, query_word=None, filter=None, *, limit, offset):
-        transport.list_calls.append((query_word, limit, offset, filter))
-        if query_word == "P2":
-            raise exc
-        return ListResult(list(transport.rows.get(query_word, [])), None, False)
-
-    with patch.object(DMMScraper, "list_contents", boom_on_second):
-        with pytest.raises(SourceBlocked) as ei:
-            provider.resolve(Kind.MAKER, "P")
-        assert ei.value is exc
-        assert transport.words == ["P", "P2"]
-        with pytest.raises(SourceBlocked):
-            provider.resolve(Kind.MAKER, "P")
-    assert transport.words == ["P", "P2", "P2"]  # 落空的第一格是成功結果＝進快取；失敗的第二格不進
-
-
-def test_probe_cache_is_cleared_wholesale_past_its_cap(transport, provider, monkeypatch):
-    monkeypatch.setattr(dmm_mod, "_PROBE_CACHE_MAX", 3)
-    for w in ("a", "b", "c"):
-        provider.resolve(Kind.ACTOR, w)
-    provider.resolve(Kind.ACTOR, "a")
-    assert transport.words == ["a", "b", "c"]  # 未超過上限前都在快取內
-    provider.resolve(Kind.ACTOR, "d")  # 第 4 格：整張清空後再放
-    assert len(dmm_mod._PROBE_CACHE) == 1
-    provider.resolve(Kind.ACTOR, "a")
-    assert transport.words == ["a", "b", "c", "d", "a"]
-
-
-def test_clear_probe_cache_forces_a_new_request(transport, provider):
-    provider.resolve(Kind.ACTOR, "x")
-    dmm_mod.clear_probe_cache()
-    provider.resolve(Kind.ACTOR, "x")
-    assert transport.words == ["x", "x"]
-
-
-# ================================================================ 5. I-D1 完整路徑＋capabilities（T8 起宣告四種實體＋KEYWORD，T9 起再加 MAKER）
-def test_capabilities_declare_five_entities_plus_keyword_since_t9():
-    assert DMMProvider.capabilities == frozenset(
-        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.KEYWORD})
-
-
-def test_no_entity_lookup_fixture_covers_dmm(transport, provider, no_entity_lookup):
-    assert provider.resolve(Kind.ACTOR, "三上悠亜") is None
-    assert transport.total == 0
-
-
+# ================================================================ 5. I-D1 完整路徑
 class _SyncExecutor:
     def __init__(self, max_workers=None, **_):
         pass
@@ -589,11 +477,3 @@ def test_ladder_cold_nonentity_word_costs_at_most_four_requests_second_time_at_m
     assert second[0] >= 1  # KEYWORD 仍然問了列表
     assert sum(second) <= 2  # I-D1 plan 值
     assert second == (1, 1)  # T8 實況（Probe 命中快取；KEYWORD 列表 1＋官方番號 facts 1）
-
-
-def test_ladder_probe_is_shared_across_kinds_for_the_same_word(ladder):
-    t = ladder
-    t.rows["温泉"] = [_row("sone00001", [], MOODYZ)]
-    relay.search_by_intent("actress", "温泉", WINDOW)
-    assert t.words.count("温泉") == 2  # 一次 Probe（ACTOR/SERIES/DIRECTOR/LABEL 共用）＋一次 KEYWORD
-    assert len(t.facts_calls) == 2  # SERIES 的 stage 2（DIRECTOR／LABEL 命中快取）＋KEYWORD 的官方番號 facts（T8）

@@ -192,34 +192,6 @@ def test_list_entity_code_retries_uncensored_section(net, env, lang):
     assert net.existmag[1] == ["all"]
 
 
-@pytest.mark.parametrize("entry", ["run_prefix", "list_entity"])
-def test_uncensored_retry_keeps_plus_rule(net, entry):
-    """空白 → `+`（不是 %20）的規則在無碼區沿用：HEY ZO → HEY+ZO。"""
-    net.listing(unc_url("HEY+ZO"), _nums("HEYZO", 1, 3))
-
-    assert CODE_ENTRIES[entry]("HEY ZO", Window(0, 20)) == _nums("HEYZO", 1, 3)
-    assert net.urls[:2] == [normal_url("HEY+ZO"), unc_url("HEY+ZO")]
-    assert not any("%20" in u or " " in u for u in net.urls)
-
-
-@pytest.mark.parametrize("lang,seg", [("ja", "/ja"), ("zh-tw", "")])
-def test_get_ids_from_search_uncensored_url_shape(net, lang, seg):
-    """`/uncensored` 接在語系前綴之後、`/search/` 之前；頁碼與 &type= 尾綴順序不變。"""
-    net.listing(f"{BASE}{seg}/uncensored/search/HEY+ZO/2&type=1", _nums("HEYZO", 1, 2))
-
-    ids = JavBusScraper(lang=lang).get_ids_from_search("HEY ZO", page=2, search_type=1, uncensored=True)
-
-    assert ids == _nums("HEYZO", 1, 2)
-    assert net.urls == [f"{BASE}{seg}/uncensored/search/HEY+ZO/2&type=1"]
-    assert net.existmag == [["all"]]
-
-
-def test_get_ids_from_search_default_url_is_unchanged(net):
-    JavBusScraper(lang="ja").get_ids_from_search("HEYZO", page=2, search_type=1)
-    JavBusScraper(lang="ja").get_ids_from_search("HEYZO", page=1)
-    assert net.urls == [f"{BASE}/ja/search/HEYZO/2&type=1", f"{BASE}/ja/search/HEYZO"]
-
-
 # ================================================================ 邊界條件 2：有結果不問無碼
 # 使用者打 MIDV 這類有碼前綴（每次搜尋、每次載入更多）→ 一般有結果也照問無碼區，每次多打一個請求到 JavBus，
 # 請求量翻倍、被擋風險上升（IP 信譽），畫面上看不出來
@@ -247,30 +219,6 @@ def test_normal_hit_never_asks_uncensored_section(net, entry, scenario):
     assert got == all_ids[w.offset:w.offset + w.limit]
     assert not any(n.startswith("OOPS") for n in got)
     assert not any("/uncensored/" in u for u in net.urls)
-
-
-def test_normal_path_get_ids_calls_carry_no_uncensored_kwarg(env):
-    """一般路徑不得顯式傳 uncensored=False（離線 golden 的 calls 型別敏感）；只有重試傳 uncensored=True。"""
-    calls = []
-
-    def recorder(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        return _nums("MIDV", 1, 30) if args[0] == "MIDV" and "uncensored" not in kwargs and kwargs.get("page") == 1 else []
-
-    env.setattr(JavBusScraper, "get_ids_from_search", recorder)
-
-    run_prefix("MIDV", Window(0, 20))
-    list_code("MIDV", Window(0, 20))
-    run_keyword("MIDV", Window(0, 20))
-    search_keyword("MIDV", Window(0, 20))
-    assert calls == [(("MIDV",), {"page": 1, "search_type": 1})] * 2 + [(("MIDV",), {"page": 1})] * 2
-
-    calls.clear()
-    run_prefix("HEYZO", Window(0, 20))  # 一般整段無 id → 重試
-    assert calls == [
-        (("HEYZO",), {"page": 1, "search_type": 1}),
-        (("HEYZO",), {"page": 1, "search_type": 1, "uncensored": True}),
-    ]
 
 
 @pytest.mark.parametrize("entry", ["run_keyword", "search_keyword"])

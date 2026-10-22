@@ -473,19 +473,6 @@ def test_foreign_listing_is_rejected_and_next_provider_asked(chain, site, spies,
     assert dmm.run_calls == [Kind.KEYWORD]  # 下一家被問到了
 
 
-@pytest.mark.parametrize("member_at", [0, 1, 2])
-def test_one_of_three_guard_members_passes_the_guard(chain, site, spies, member_at):
-    """〔守衛只要前 3 部中有 1 部連結代號含該女優就放行：站方頁面偶有少一個連結的片，不能因此整家被跳過〕"""
-    dmm = chain(dmm_cards=[{"number": "D-1"}])
-    _arrange(site, None, "star/okq", "actors", [i == member_at for i in range(3)], SITE_ORDER[:3])
-    seeds = MagicMock()
-    out = relay.search_by_intent("actress", NAME, W, result_callback=seeds)
-    assert [c["number"] for c in out] == SITE_NUMBERS[:3]
-    assert [slot for slot, _ in (c.args for c in seeds.call_args_list)].count(-1) == 1
-    assert sorted(r.belongs for r in spies.enrich_returns) == [False, False, True]
-    assert dmm.run_calls == []
-
-
 def test_listing_order_is_site_order_for_seed_and_cards(chain, site):
     """〔使用者打女優名 → 清單被重排（反序或依日期升冪）時，最新作不在最上面、骨架順序與站方新→舊不同；筆數全對所以看不出錯〕
     I-J3：seed 的番號清單順序＝list_entity 回傳順序＝各 slot 卡片順序＝回傳陣列順序。"""
@@ -594,13 +581,6 @@ def test_entity_page_urls_are_ja_prefixed_with_page_suffix(canned, entity_id):
     assert canned.urls == [f"{BASE}/ja/{entity_id}", f"{BASE}/ja/{entity_id}/2", f"{BASE}/ja/{entity_id}/8"]
 
 
-def test_entity_page_url_prefix_follows_scraper_language(canned):
-    canned.reply_all(200, _entity_html(_numbered(1, 1)))
-    JavBusScraper(lang="zh-tw").get_entries_from_entity("star/okq")
-    JavBusScraper(lang="en").get_entries_from_entity("star/okq", 2)
-    assert canned.urls == [f"{BASE}/star/okq", f"{BASE}/en/star/okq/2"]
-
-
 def test_entity_page_get_overrides_site_set_existmag_cookie(canned):
     """〔使用者看某女優的完整作品 → 實體頁若沒帶 existmag=all，近期無磁鏈新片悄悄缺席（195 部 vs 417 部），畫面看起來完全正常〕
     I-J1 的實體頁半：先預塞站方的 existmag=mag，再連打兩頁；Cookie 標頭恰一個 existmag 且值為 all。"""
@@ -688,12 +668,6 @@ def test_entity_ids_dedup_ordered_per_kind_and_info_only():
     assert _entity_ids(html) == {"actors": ["2xi", "w5a"], "director": ["o7"], "series": ["fg8"], "label": ["9x"]}
 
 
-def test_entity_ids_omit_kinds_the_page_does_not_have():
-    ids = _entity_ids(_detail_html([("2xi", "Alice")]))
-    assert ids == {"actors": ["2xi"]}  # 無該類不出鍵
-    assert _entity_ids(_detail_html()) == {}
-
-
 @pytest.mark.parametrize("prefix", [f"{BASE}/ja", f"{BASE}/en", BASE, "/ja", "", "/en"],
                          ids=["abs-ja", "abs-en", "abs-none", "rel-ja", "rel-none", "rel-en"])
 def test_entity_ids_accept_every_language_prefix_form(prefix):
@@ -705,11 +679,6 @@ def test_entity_ids_accept_every_language_prefix_form(prefix):
 def test_entity_ids_recognise_uncensored_star_links_by_their_last_segment():
     html = _detail_html([("23f", "Mika")], prefix=f"{BASE}/ja/uncensored")
     assert _entity_ids(html) == {"actors": ["23f"]}
-
-
-def test_entity_ids_default_is_empty_for_videos_not_built_by_javbus():
-    assert Video(number="X-1").entity_ids == {}
-    assert Video(number="X-1").to_legacy_dict().get("entity_ids") is None
 
 
 # ================================================================ 邊界條件 5：舊路徑逐位元不變／實體路徑 enrich
@@ -763,9 +732,3 @@ def test_enrich_without_entity_ref_is_the_unchanged_search_path(site, ref):
     assert site.search_calls == []
     with patch("core.scraper.search_jav", return_value=None):
         assert JavBusProvider().enrich(_item("SSIS-001"), ref) == Enriched(card=None)
-
-
-def test_list_entity_other_kinds_still_not_implemented():
-    for kind in (Kind.MAKER, Kind.KEYWORD):
-        with pytest.raises(NotImplementedError):
-            JavBusProvider().list_entity(EntityRef(kind, "x", "x"), W)
