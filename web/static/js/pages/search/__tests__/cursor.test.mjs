@@ -309,7 +309,7 @@ test('cursor-first-page-stream-result: 無 seed 的關鍵字路徑 result ⇒ �
     });
 });
 
-test('cursor-first-page-stream-result: seed→result-complete→result ⇒ result-complete 先寫，result 以自己的 cursor 覆寫', async () => {
+test('cursor-first-page-stream-result: seed→result-complete→result ⇒ 以 result 的 cursor 為準（result-complete 不寫）', async () => {
     await withEnv(async ({ page }) => {
         page.currentCursor = 'stale';
         await page.doSearch('x');
@@ -317,34 +317,9 @@ test('cursor-first-page-stream-result: seed→result-complete→result ⇒ resul
         const es = lastES();
         send(es, { type: 'seed', slots: ['A-1', 'A-2'] });
         send(es, { type: 'result-complete', has_more: true, cursor: 'tokC' });
-        // branch review P2 後主 session 改裁：result-complete 設 hasMoreResults 的同一處也寫 cursor
-        assert.equal(page.currentCursor, 'tokC');
+        assert.equal(page.currentCursor, null, 'result-complete 不寫 currentCursor（主 session 裁：只在 result 開頭寫）');
         send(es, { type: 'result', success: true, data: [{ number: 'A-1' }], has_more: true, cursor: 'tokR', mode: 'actress' });
-        assert.equal(page.currentCursor, 'tokR', 'result 開頭仍無條件覆寫');
-    });
-});
-
-test('cursor-result-complete-gap: result-complete 之後、result 之前按載入更多 ⇒ 送出帶 token，且晚到回應不把按鈕關掉', async () => {
-    // why: 「載入更多」在 result-complete 後已可見可點；token 若要到 result 才寫，這段空檔點下去送無 token 請求 →
-    //      後端回空 → 回應晚於 result 時 hasMoreResults 被永久改 false → 按鈕消失、必須重搜
-    await withEnv(async ({ page, fetchFake }) => {
-        await page.doSearch('x');
-        const es = lastES();
-        send(es, { type: 'seed', slots: ['A-1'] });
-        send(es, { type: 'result-complete', has_more: true, cursor: 'tokC' });
-        assert.equal(page.hasMoreResults, true, '前提：按鈕此刻可見可點');
-        const p = page.loadMore();
-        await tick();
-        assert.equal(fetchFake.calls.length, 1, '前提：請求真的送出');
-        const url = fetchFake.calls[0].url;
-        assert.equal(new URL(url, 'http://x').searchParams.get('cursor'), 'tokC');
-        send(es, { type: 'result', success: true, data: [{ number: 'A-1' }], has_more: true, cursor: 'tokC', mode: 'actress' });
-        // 後端行為：有 token 才給下一頁，沒有 token 的 offset>0 回空
-        fetchFake.pending.shift().resolve(url.includes('cursor=')
-            ? body(1, { cursor: 'tokN' })
-            : { ok: true, json: async () => ({ success: false, data: [] }) });
-        await p;
-        assert.equal(page.hasMoreResults, true);
+        assert.equal(page.currentCursor, 'tokR');
     });
 });
 
