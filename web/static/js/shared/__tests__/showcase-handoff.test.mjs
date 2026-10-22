@@ -79,3 +79,19 @@ test('handoff: 無條件時 pills 為空陣列並仍清舊條件', () => {
         assert.equal(r.showFavoriteActresses, false);
     }
 });
+
+test('handoff: extra pill 接在 sel 條件之後且不取代', () => {
+    const sel = { period: YEAR, actress: '石川澪', maker: 'Moodyz' };
+    const base = [
+        { dim: 'actress', value: '石川澪' },
+        { dim: 'maker', value: 'Moodyz' },
+        { dim: 'release', op: '=', value: '2023' },
+    ];
+    for (const dim of ['tag', 'director', 'series']) {
+        const extra = { dim, value: 'ＡＢＣ Def' };
+        assert.deepStrictEqual(buildHandoffPills(sel, extra), [...base, { dim, value: 'ＡＢＣ Def' }]);
+        assert.deepStrictEqual(buildHandoffPills(null, extra), [{ dim, value: 'ＡＢＣ Def' }]);
+    }
+    const r = JSON.parse(applyHandoff(null, sel, { dim: 'tag', value: 'T' }));
+    assert.deepStrictEqual(r.pills, [...base, { dim: 'tag', value: 'T' }]);
+});

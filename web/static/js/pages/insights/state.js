@@ -67,7 +67,18 @@ import {
     emptyKeyForCard,
 } from './charts.js';
 import { applyCellFocal } from '../../shared/focal-cell.js';
-import { applyHandoff } from '../../shared/showcase-handoff.js';
+import { applyHandoff, normalizeExtraPill } from '../../shared/showcase-handoff.js';
+
+// goBrowse／goBrowseWith 共用：寫入 showcase_state 成功才同步導向瀏覽頁；失敗＝不導航。
+function writeHandoffAndNavigate(sel, extra) {
+    try {
+        localStorage.setItem('showcase_state', applyHandoff(localStorage.getItem('showcase_state'), sel, extra));
+    } catch (e) {
+        console.warn('goBrowse: 無法寫入 showcase_state，不導航', e);
+        return;
+    }
+    window.location.assign('/showcase');
+}
 
 let _pageshowBound = false;
 let _pageAlive = false;
@@ -281,13 +292,15 @@ export function libraryInsightsState() {
          */
         goBrowse() {
             if (!this.canGoBrowse) return;
-            try {
-                localStorage.setItem('showcase_state', applyHandoff(localStorage.getItem('showcase_state'), this.sel));
-            } catch (e) {
-                console.warn('goBrowse: 無法寫入 showcase_state，不導航', e);
-                return;
-            }
-            window.location.assign('/showcase');
+            writeHandoffAndNavigate(this.sel);
+        },
+
+        /** 帶一枚一次性 extra pill（tag／director／series）跳瀏覽頁；extra 無效＝不寫入不導航。 */
+        goBrowseWith(extra) {
+            const pill = normalizeExtraPill(extra);
+            if (pill === null) return;
+            if (!this.canGoBrowse) return;
+            writeHandoffAndNavigate(this.sel, pill);
         },
 
         /**

@@ -2,8 +2,19 @@
 // sel 只讀 period/actress/maker 三個業務鍵（FE-ALPINE-14：呼叫端傳進來的是 reactive Proxy）。
 import { serializePills } from './pill-filter.js';
 
-export function buildHandoffPills(sel) {
+var EXTRA_DIMS = ['tag', 'director', 'series'];
+
+// 一次性 extra pill：dim 限 tag/director/series、value 去空白後非空；value 保留原字面。
+export function normalizeExtraPill(extra) {
+    if (!extra || typeof extra !== 'object') return null;
+    if (EXTRA_DIMS.indexOf(extra.dim) === -1) return null;
+    if (typeof extra.value !== 'string' || extra.value.trim() === '') return null;
+    return { dim: extra.dim, value: extra.value };
+}
+
+export function buildHandoffPills(sel, extra) {
     var pills = [];
+    var extraPill = normalizeExtraPill(extra);
     if (sel) {
         var period = sel.period;
         var actress = sel.actress;
@@ -16,6 +27,7 @@ export function buildHandoffPills(sel) {
             pills.push({ dim: 'release', op: 'range', value: String(period.from), value2: String(period.to) });
         }
     }
+    if (extraPill) pills.push(extraPill);
     return serializePills(pills);
 }
 
@@ -29,11 +41,11 @@ function parseOld(rawJson) {
     }
 }
 
-export function applyHandoff(rawJson, sel) {
+export function applyHandoff(rawJson, sel, extra) {
     var old = parseOld(rawJson);
     return JSON.stringify({
         ...old,
-        pills: buildHandoffPills(sel),
+        pills: buildHandoffPills(sel, extra),
         search: '',
         page: 1,
         showFavoriteActresses: false,

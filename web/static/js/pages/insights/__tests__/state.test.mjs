@@ -499,3 +499,52 @@ test('goBrowse: 先寫入 showcase_state 再導向 /showcase，保留既有排�
         stub2.restore();
     }
 });
+
+test('goBrowseWith: 無效 extra 不寫入也不導航', () => {
+    const stub = installBrowseStubs();
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 5;
+        for (const bad of [{ dim: 'tag', value: '' }, { dim: 'tag', value: '   ' },
+            { dim: 'actress', value: 'X' }, undefined, 'tag']) {
+            assert.doesNotThrow(() => state.goBrowseWith(bad));
+        }
+        assert.equal(stub.calls.filter((c) => c[0] === 'setItem' || c[0] === 'assign').length, 0);
+        state.goBrowseWith({ dim: 'tag', value: 'T' });
+        assert.equal(stub.calls.filter((c) => c[0] === 'assign').length, 1);
+    } finally {
+        stub.restore();
+    }
+});
+
+test('goBrowseWith: 寫入 sel 條件加 extra 於最後且不改動 sel', () => {
+    const old = JSON.stringify({ sort: 'x', cardShape: 'poster', search: 'abc', pills: [] });
+    for (const dim of ['tag', 'director', 'series']) {
+        const stub = installBrowseStubs({ stored: old });
+        try {
+            const state = libraryInsightsState();
+            state.snapshotError = null;
+            state.scopedCount = 12;
+            state.sel = { period: { type: 'year', year: 2023 }, actress: 'A', maker: 'M' };
+            const before = structuredClone(state.sel);
+            state.goBrowseWith({ dim, value: 'X' });
+            assert.deepEqual(state.sel, before);
+            const w = stub.calls.filter((c) => c[0] === 'setItem' || c[0] === 'assign');
+            assert.deepEqual(w.map((c) => c[0]), ['setItem', 'assign']);
+            assert.deepEqual(w[1], ['assign', '/showcase']);
+            const saved = JSON.parse(w[0][2]);
+            assert.deepEqual(saved.pills, [
+                { dim: 'actress', value: 'A' }, { dim: 'maker', value: 'M' },
+                { dim: 'release', op: '=', value: '2023' }, { dim, value: 'X' },
+            ]);
+            assert.equal(saved.search, '');
+            assert.equal(saved.page, 1);
+            assert.equal(saved.showFavoriteActresses, false);
+            assert.equal(saved.sort, 'x');
+            assert.equal(saved.cardShape, 'poster');
+        } finally {
+            stub.restore();
+        }
+    }
+});
