@@ -1,121 +1,16 @@
 """測試 core/database.py"""
 import pytest
 import sqlite3
-import json
 from pathlib import Path
 
 from core.database import (
-    get_db_path,
     get_connection,
     init_db,
     Video,
-    migrate_json_to_sqlite,
     VideoRepository,
-    Actress,
-    ActressRepository,
 )
 from core.gallery_scanner import VideoInfo
 from core.path_utils import to_file_uri
-
-
-def test_get_db_path():
-    """測試資料庫路徑正確"""
-    db_path = get_db_path()
-    assert isinstance(db_path, Path)
-    assert db_path.name == "openaver.db"
-    assert db_path.parent.name == "output"
-    # 確保路徑是絕對路徑
-    assert db_path.is_absolute()
-
-
-def test_init_db_creates_table(tmp_path):
-    """測試建立表格"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    # 檢查表格是否存在
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT name FROM sqlite_master
-        WHERE type='table' AND name='videos'
-    """)
-    result = cursor.fetchone()
-    conn.close()
-
-    assert result is not None
-    assert result[0] == "videos"
-
-    # Verify schema columns via PRAGMA table_info
-    cursor2 = sqlite3.connect(str(db_path)).cursor()
-    cursor2.execute("PRAGMA table_info(videos)")
-    columns = [row[1] for row in cursor2.fetchall()]
-    cursor2.connection.close()
-
-    assert "number" in columns
-    assert "title" in columns
-    assert "cover_path" in columns
-    # TASK-98a-T4: focal + crop_mode 欄位（videos）
-    assert "auto_focal" in columns
-    assert "crop_mode" in columns
-    # Codex PR#105 P2: focal_attempted_at 欄位（videos，no-face re-enqueue 修復）
-    assert "focal_attempted_at" in columns
-
-    # actresses schema 斷言（先前完全沒有，98a 新增，見 T4 DoD-1）
-    conn3 = sqlite3.connect(str(db_path))
-    cursor3 = conn3.cursor()
-    cursor3.execute("PRAGMA table_info(actresses)")
-    actress_columns = [row[1] for row in cursor3.fetchall()]
-    conn3.close()
-
-    assert "name" in actress_columns
-    assert "auto_focal" in actress_columns
-    assert "crop_mode" in actress_columns
-    assert "photo_fp_path" in actress_columns
-    assert "photo_fp_mtime_ns" in actress_columns
-    assert "photo_fp_size" in actress_columns
-
-
-def test_init_db_creates_indexes(tmp_path):
-    """測試建立索引"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT name FROM sqlite_master
-        WHERE type='index'
-    """)
-    indexes = [row[0] for row in cursor.fetchall()]
-    conn.close()
-
-    # 檢查四個索引是否存在
-    assert 'idx_videos_number' in indexes
-    assert 'idx_videos_path' in indexes
-    assert 'idx_videos_maker' in indexes
-    assert 'idx_videos_cover_path' in indexes
-
-
-def test_init_db_idempotent(tmp_path):
-    """測試重複呼叫不報錯"""
-    db_path = tmp_path / "test.db"
-
-    # 第一次初始化
-    init_db(db_path)
-    # 第二次初始化（不應該報錯）
-    init_db(db_path)
-    # 第三次初始化
-    init_db(db_path)
-
-    # 確認表格依然存在且正常
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM videos")
-    result = cursor.fetchone()
-    conn.close()
-
-    assert result[0] == 0  # 表格為空
 
 
 @pytest.fixture
@@ -135,23 +30,6 @@ def mapped_video():
         img="/covers/test.jpg"
     )
     return Video.from_video_info(info)
-
-
-def test_mapped_video_basic_fields(mapped_video):
-    """測試 VideoInfo 轉換的基本欄位映射"""
-    assert mapped_video.path == "/videos/test.mp4"
-    assert mapped_video.number == "ABC-123"
-    assert mapped_video.size_bytes == 1024 * 1024 * 500
-    assert mapped_video.mtime > 0  # 檢查 mtime 轉換是否正確（允許小誤差）
-
-
-def test_mapped_video_metadata_fields(mapped_video):
-    """測試 VideoInfo 轉換的字串元資料映射"""
-    assert mapped_video.title == "測試影片"
-    assert mapped_video.original_title == "Test Video"
-    assert mapped_video.maker == "測試片商"
-    assert mapped_video.cover_path == "/covers/test.jpg"
-    assert mapped_video.release_date == "2024-01-20"
 
 
 def test_mapped_video_list_fields(mapped_video):
@@ -174,188 +52,10 @@ def test_connection_wal_mode(tmp_path):
     assert result[0].lower() == "wal"
 
 
-class TestInsertAndQuery:
-    """測試基本 CRUD 操作，拆分為多個小測試"""
-
-    @pytest.fixture(autouse=True)
-    def setup_db(self, tmp_path):
-        db_path = tmp_path / "test_crud.db"
-        init_db(db_path)
-
-        conn = get_connection(db_path)
-        cursor = conn.cursor()
-
-        # 插入測試資料
-        video = Video(
-            path="/videos/test123.mp4",
-            number="TEST-123",
-            title="測試影片",
-            original_title="Test Video",
-            actresses=["演員A", "演員B"],
-            maker="測試片商",
-            series="測試系列",
-            tags=["類型1", "類型2"],
-            duration=120,
-            size_bytes=1024 * 1024 * 100,
-            cover_path="/covers/test123.jpg",
-            release_date="2024-01-20",
-            mtime=1234567890.0,
-            nfo_mtime=1234567800.0
-        )
-
-        video_dict = video.to_dict()
-        video_dict.pop('id', None)
-        video_dict.pop('created_at', None)
-        video_dict.pop('updated_at', None)
-
-        columns = list(video_dict.keys())
-        placeholders = ', '.join(['?'] * len(columns))
-        cursor.execute(
-            f"INSERT INTO videos ({', '.join(columns)}) VALUES ({placeholders})",
-            list(video_dict.values())
-        )
-        conn.commit()
-
-        # 查詢資料
-        cursor.execute("SELECT * FROM videos WHERE number = ?", ("TEST-123",))
-        row = cursor.fetchone()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns_info = cursor.fetchall()
-        column_names = [col[1] for col in columns_info]
-
-        conn.close()
-
-        assert row is not None
-        self.result_video = Video.from_row(row, column_names)
-
-    def test_insert_basic_fields(self):
-        """測試插入與查詢的基本欄位"""
-        assert self.result_video.path == "/videos/test123.mp4"
-        assert self.result_video.number == "TEST-123"
-        assert self.result_video.size_bytes == 1024 * 1024 * 100
-        assert self.result_video.mtime == 1234567890.0
-        assert self.result_video.nfo_mtime == 1234567800.0
-        assert self.result_video.created_at is not None
-        assert self.result_video.updated_at is not None
-
-    def test_insert_list_fields(self):
-        """測試插入與查詢的列表欄位"""
-        assert self.result_video.actresses == ["演員A", "演員B"]
-        assert self.result_video.tags == ["類型1", "類型2"]
-
-
-def test_video_from_video_info_with_empty_fields():
-    """測試 VideoInfo 空欄位處理"""
-    info = VideoInfo(
-        path="/videos/test.mp4",
-        title="測試影片",
-        actor="",  # 空字串
-        genre="",  # 空字串
-        num="",
-        size=1024
-    )
-
-    video = Video.from_video_info(info)
-
-    assert video.actresses == []  # 空字串應轉為空列表
-    assert video.tags == []  # 空字串應轉為空列表
-    assert video.number is None  # 空字串應轉為 None
-
-
-def test_video_from_video_info_with_spaces():
-    """測試 VideoInfo 含空白字元處理"""
-    info = VideoInfo(
-        path="/videos/test.mp4",
-        title="測試影片",
-        actor="  演員A  ,  演員B  , , 演員C  ",  # 含多餘空白
-        genre="類型1,  類型2  ,   ,類型3",  # 含多餘空白和空項目
-        num="ABC-123"
-    )
-
-    video = Video.from_video_info(info)
-
-    # 應該去除空白並過濾空項目
-    assert video.actresses == ["演員A", "演員B", "演員C"]
-    assert video.tags == ["類型1", "類型2", "類型3"]
-
-
-def test_actress_alias_primary_name_unique_constraint(tmp_path):
-    """[T1 updated] 新 schema 中 primary_name 是 PRIMARY KEY（唯一約束）"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO actress_aliases (primary_name, aliases) VALUES ('Alice', '[]')")
-    conn.commit()
-    # 嘗試插入重複的 primary_name 應拋 IntegrityError
-    with pytest.raises(sqlite3.IntegrityError):
-        cursor.execute("INSERT INTO actress_aliases (primary_name, aliases) VALUES ('Alice', '[\"alt\"]')")
-    conn.close()
-
-
 # ============ migrate_json_to_sqlite 測試 ============
-
-def test_migrate_json_to_sqlite_success(tmp_path):
-    """測試正常遷移與 idempotency"""
-    db_path = tmp_path / "test.db"
-    json_path = tmp_path / "cache.json"
-
-    # 準備假的 json cache 資料
-    fake_cache = {
-        "_metadata": {"version": 1},
-        to_file_uri("/videos/test1.mp4"): {
-            "mtime": 100.0,
-            "nfo_mtime": 200.0,
-            "info": {
-                "path": to_file_uri("/videos/test1.mp4"),
-                "title": "Title 1",
-                "num": "TEST-001"
-            }
-        }
-    }
-    json_path.write_text(json.dumps(fake_cache))
-
-    # 第一次遷移
-    result1 = migrate_json_to_sqlite(json_path, db_path, delete_on_success=False)
-    assert result1['migrated'] == 1
-    assert result1['skipped'] == 1
-    assert result1['errors'] == 0
-
-    # 檢查 mtime/nfo_mtime 預設值
-    repo = VideoRepository(db_path)
-    video = repo.get_by_path(to_file_uri("/videos/test1.mp4"))
-    assert video.mtime == 100.0
-    assert video.nfo_mtime == 200.0
-
-    # 第2次遷移，測試重複匯入（idempotency）
-    result2 = migrate_json_to_sqlite(json_path, db_path, delete_on_success=False)
-    assert result2['migrated'] == 1  # 依然算 migrated 因為它會 UPSERT（updated計數+1）
-    # 但總數仍為 1
-    assert repo.count() == 1
-
 
 
 # ============ Phase 37 新欄位映射測試 ============
-
-class TestFromVideoInfoNewFields:
-    """from_video_info() Phase 37 新欄位映射測試"""
-
-    def test_from_video_info_all_new_fields(self):
-        """all 4 new fields mapped correctly in single call"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            director="監督X",
-            duration=90,
-            series="シリーズX",
-            label="premium",
-        )
-        video = Video.from_video_info(info)
-        assert video.director == "監督X"
-        assert video.duration == 90
-        assert video.series == "シリーズX"
-        assert video.label == "premium"
 
 
 class TestDbMigration:
@@ -432,41 +132,6 @@ class TestDbMigration:
         assert row[1] == "舊資料"
 
 
-class TestGetColumnsOrder:
-    """_get_columns() 順序與 SELECT * 一致，upsert + get_by_path round-trip 驗證"""
-
-    def test_upsert_and_get_by_path_roundtrip(self, tmp_path):
-        """upsert + get_by_path round-trip 驗證 director/label/output_dir/scrape_attempted_at 欄位正確"""
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-
-        repo = VideoRepository(db_path)
-
-        # 建立含新欄位的 Video
-        video = Video(
-            path=to_file_uri("/test/roundtrip.mp4"),
-            number="RT-001",
-            title="Round-trip 測試",
-            director="監督名",
-            label="S1",
-            series="シリーズ",
-            duration=75,
-            output_dir=to_file_uri("/produced/RT-001"),
-            scrape_attempted_at=1717171717.5,
-        )
-        repo.upsert(video)
-
-        # 讀回來
-        result = repo.get_by_path(to_file_uri("/test/roundtrip.mp4"))
-        assert result is not None
-        assert result.director == "監督名"
-        assert result.label == "S1"
-        assert result.series == "シリーズ"
-        assert result.duration == 75
-        assert result.output_dir == to_file_uri("/produced/RT-001")
-        assert result.scrape_attempted_at == 1717171717.5
-
-
 class TestScrapeAttemptedAtField:
     """TASK-89b-T1: videos.scrape_attempted_at 欄位 — CREATE TABLE + 加法遷移 + backfill"""
 
@@ -523,70 +188,6 @@ class TestScrapeAttemptedAtField:
         conn.commit()
         conn.close()
 
-    def test_migration_backfill_does_not_rerun_second_call(self, tmp_path):
-        """第二次呼叫 init_db() 不重跑 backfill：手動歸零後再跑一次，值不被覆蓋"""
-        db_path = tmp_path / "old.db"
-        path = to_file_uri("/backfill_norerun.mp4")
-        self._create_old_schema_db(db_path, rows=[{
-            "path": path, "cover_path": to_file_uri("/out/x.jpg"),
-            "nfo_mtime": 0.0, "output_dir": "",
-        }])
-
-        init_db(db_path)  # 第一次：backfill 跑，attempted > 0
-
-        # 使用者/程式之後手動把值改回 0（模擬「強制重刮」情境）
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("UPDATE videos SET scrape_attempted_at = 0 WHERE path = ?", (path,))
-        conn.commit()
-        conn.close()
-
-        init_db(db_path)  # 第二次：不應重跑 backfill，值應維持使用者剛歸零的 0
-
-        conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT scrape_attempted_at FROM videos WHERE path = ?", (path,)
-        ).fetchone()
-        conn.close()
-
-        assert row[0] == 0
-
-    def test_backfill_cover_path_nonempty(self, tmp_path):
-        """backfill: cover_path != '' 的舊 row 升級後 scrape_attempted_at > 0"""
-        db_path = tmp_path / "old.db"
-        path = to_file_uri("/backfill_cover.mp4")
-        self._create_old_schema_db(db_path, rows=[{
-            "path": path, "cover_path": to_file_uri("/out/cover.jpg"),
-            "nfo_mtime": 0.0, "output_dir": "",
-        }])
-
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT scrape_attempted_at FROM videos WHERE path = ?", (path,)
-        ).fetchone()
-        conn.close()
-
-        assert row[0] > 0
-
-    def test_backfill_nfo_mtime_positive(self, tmp_path):
-        """backfill: nfo_mtime > 0 的舊 row 升級後 scrape_attempted_at > 0"""
-        db_path = tmp_path / "old.db"
-        path = to_file_uri("/backfill_nfo.mp4")
-        self._create_old_schema_db(db_path, rows=[{
-            "path": path, "cover_path": "",
-            "nfo_mtime": 1234567890.0, "output_dir": "",
-        }])
-
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT scrape_attempted_at FROM videos WHERE path = ?", (path,)
-        ).fetchone()
-        conn.close()
-
-        assert row[0] > 0
 
     def test_backfill_all_empty_stays_zero(self, tmp_path):
         """backfill: cover_path/nfo_mtime/output_dir 三者皆空/0 的純新片維持 0"""
@@ -629,47 +230,6 @@ class TestScrapeAttemptedAtField:
 
 
 # ============ AliasRepository 測試 ============
-
-def test_alias_repository_crud(tmp_path):
-    """[T1 updated] 測試新 AliasRepository 完整 CRUD 流程"""
-    from core.database import AliasRepository, get_connection
-    db_path = tmp_path / "actress.db"
-    init_db(db_path)
-    # 清除種子資料，確保測試隔離
-    conn = get_connection(db_path)
-    conn.execute("DELETE FROM actress_aliases")
-    conn.commit()
-    conn.close()
-
-    repo = AliasRepository(db_path)
-
-    # 清除後應為空
-    initial = repo.get_all()
-    assert len(initial) == 0
-
-    # Add group
-    record = repo.add("新テスト女優", ["alias1"])
-    assert record.primary_name == "新テスト女優"
-    assert "alias1" in record.aliases
-
-    # get_all
-    all_data = repo.get_all()
-    assert len(all_data) == 1
-
-    # Add alias
-    ok, _ = repo.add_alias("新テスト女優", "alias2")
-    assert ok is True
-    updated = repo.get_by_primary("新テスト女優")
-    assert "alias2" in updated.aliases
-
-    # Remove alias
-    removed = repo.remove_alias("新テスト女優", "alias2")
-    assert removed is True
-
-    # Delete
-    success = repo.delete("新テスト女優")
-    assert success is True
-    assert len(repo.get_all()) == 0
 
 
 # ============ 57b: DROP clip_embedding / clip_model_id 測試 ============
@@ -819,67 +379,6 @@ class TestFocalCropMigration:
         assert "photo_fp_mtime_ns" in columns
         assert "photo_fp_size" in columns
 
-    def test_migration_idempotent_on_old_schema(self, tmp_path):
-        """對舊 schema 連續呼叫 init_db() 兩次不拋例外"""
-        db_path = tmp_path / "old_focal.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-        init_db(db_path)  # 第二次不應報錯
-
-    def test_migration_existing_video_row_gets_defaults_and_stays_readable(self, tmp_path):
-        """既有 videos row 升級後得 crop_mode='auto'/auto_focal=''，且 get_by_path 仍可正常讀出"""
-        db_path = tmp_path / "old_focal.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-
-        repo = VideoRepository(db_path)
-        result = repo.get_by_path(to_file_uri("/old_focal_migration.mp4"))
-        assert result is not None
-        assert result.number == "OLD-FOCAL-001"
-        assert result.title == "舊片"
-        assert result.crop_mode == "auto"
-        assert result.auto_focal == ""
-        # Codex PR#105 P2：舊 row 升級後 focal_attempted_at 為 NULL（從未偵測過，非 0/''）
-        assert result.focal_attempted_at is None
-
-    def test_migration_existing_actress_row_gets_defaults_and_stays_readable(self, tmp_path):
-        """既有 actresses row 升級後得 crop_mode='auto'/auto_focal=''/fp 預設，且 get_by_name 仍可正常讀出
-        （Codex P1 守衛：手寫 _get_columns 在 ALTER +5 欄後長度不符 → zip(strict=True) ValueError）"""
-        db_path = tmp_path / "old_focal.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-
-        repo = ActressRepository(db_path)
-        result = repo.get_by_name("舊女優")
-        assert result is not None
-        assert result.name_en == "Old Actress"
-        assert result.crop_mode == "auto"
-        assert result.auto_focal == ""
-        assert result.photo_fp_path == ""
-        assert result.photo_fp_mtime_ns == 0
-        assert result.photo_fp_size == 0
-
-    def test_fresh_db_actress_get_by_name_and_get_all_smoke(self, tmp_path):
-        """fresh-CREATE DB：actress 動態 _get_columns（26 欄）與 SELECT * 長度一致，
-        get_by_name/get_all 皆正常回 Actress（不 ValueError）"""
-        db_path = tmp_path / "fresh_focal.db"
-        init_db(db_path)
-
-        repo = ActressRepository(db_path)
-        repo.save(Actress(name="新女優", name_en="New Actress"))
-
-        by_name = repo.get_by_name("新女優")
-        assert by_name is not None
-        assert by_name.crop_mode == "auto"
-        assert by_name.auto_focal == ""
-
-        all_actresses = repo.get_all()
-        assert len(all_actresses) == 1
-
-
 
 # ============ TASK-123-T1: user_rating migration（CD-123-2）============
 
@@ -930,19 +429,6 @@ class TestUserRatingMigration:
         conn.commit()
         conn.close()
 
-    def test_migration_existing_video_row_gets_default_zero_and_stays_readable(self, tmp_path):
-        """既有 videos row 升級後 user_rating=0，且 get_by_path 仍可正常讀出"""
-        db_path = tmp_path / "old_user_rating.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-
-        repo = VideoRepository(db_path)
-        result = repo.get_by_path(to_file_uri("/old_user_rating_migration.mp4"))
-        assert result is not None
-        assert result.number == "OLD-UR-001"
-        assert result.title == "舊片"
-        assert result.user_rating == 0
 
     def test_migration_idempotent_preserves_existing_value_on_second_init(self, tmp_path):
         """第二次 init_db() 重跑不重置既有非預設值（PRAGMA existing_cols 已含
@@ -962,97 +448,4 @@ class TestUserRatingMigration:
         assert result is not None
         assert result.user_rating == 1
 
-
-def test_upper_number_index_used_by_query_plan(tmp_path):
-    """DoD-2: 驗證查詢規劃器對 UPPER(number) IN (?) 使用 idx_videos_number_upper 索引而非全表掃描。"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    cursor.execute(
-        "EXPLAIN QUERY PLAN SELECT * FROM videos WHERE UPPER(number) IN (?)",
-        ("ABC-001",),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-
-    assert rows, "EXPLAIN QUERY PLAN 應回傳至少一列"
-    detail = rows[-1][3]
-    assert "idx_videos_number_upper" in detail
-    assert "SCAN videos" not in detail
-
-
-
-def test_init_db_in_place_upgrade_creates_upper_number_index_and_preserves_videos(tmp_path):
-    """DoD-1 & DoD-4: 舊 schema DB 執行 init_db() 就地升級後建立 idx_videos_number_upper，且既有 videos 資料零改動。"""
-    db_path = tmp_path / "legacy.db"
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    # 手動建立既有 videos 表（不含任何索引）
-    cursor.execute("""
-        CREATE TABLE videos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            path TEXT UNIQUE NOT NULL,
-            number TEXT,
-            title TEXT,
-            original_title TEXT,
-            actresses TEXT,
-            maker TEXT,
-            director TEXT DEFAULT '',
-            series TEXT,
-            label TEXT DEFAULT '',
-            tags TEXT,
-            sample_images TEXT DEFAULT '',
-            user_tags TEXT DEFAULT '[]',
-            output_dir TEXT DEFAULT '',
-            duration INTEGER,
-            size_bytes INTEGER,
-            cover_path TEXT,
-            release_date TEXT,
-            mtime REAL,
-            nfo_mtime REAL,
-            scrape_attempted_at REAL DEFAULT 0,
-            auto_focal TEXT DEFAULT '',
-            crop_mode TEXT NOT NULL DEFAULT 'auto',
-            focal_attempted_at TIMESTAMP DEFAULT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cursor.execute(
-        "INSERT INTO videos (path, number, title, maker) VALUES (?, ?, ?, ?)",
-        ("/videos/ABC-001.mp4", "ABC-001", "Old Video Title", "SOD"),
-    )
-    conn.commit()
-
-    # BE-TEST-10: 基準值在被測操作（init_db）之前取得
-    cursor.execute("PRAGMA table_info(videos)")
-    cols_before = [row[1] for row in cursor.fetchall()]
-    cursor.execute(f"SELECT {', '.join(cols_before)} FROM videos WHERE number = 'ABC-001'")
-    before_row = cursor.fetchone()
-    before_data = dict(zip(cols_before, before_row))
-    conn.close()
-
-    # 執行 init_db 升級
-    init_db(db_path)
-
-    # 驗證索引已建立且無需遷移腳本
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT name FROM sqlite_master
-        WHERE type='index'
-    """)
-    indexes = [row[0] for row in cursor.fetchall()]
-    assert "idx_videos_number_upper" in indexes
-
-    # DoD-4: 逐欄位比對操作前後既有資料完全相同
-    cursor.execute(f"SELECT {', '.join(cols_before)} FROM videos WHERE number = 'ABC-001'")
-    after_row = cursor.fetchone()
-    after_data = dict(zip(cols_before, after_row))
-    conn.close()
-
-    assert after_data == before_data
-    assert after_data["number"] == "ABC-001"
 

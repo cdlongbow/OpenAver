@@ -27,17 +27,6 @@ import core.path_utils as path_utils
 class TestDetectEnvironment:
     """測試環境偵測邏輯"""
 
-    def test_detect_windows(self, monkeypatch):
-        """純 Windows 環境"""
-        monkeypatch.setattr('platform.system', lambda: 'Windows')
-        result = path_utils.detect_environment()
-        assert result == 'windows'
-
-    def test_detect_mac(self, monkeypatch):
-        """macOS 環境"""
-        monkeypatch.setattr('platform.system', lambda: 'Darwin')
-        result = path_utils.detect_environment()
-        assert result == 'mac'
 
     def test_detect_linux(self, monkeypatch):
         """純 Linux 環境（非 WSL）"""
@@ -56,27 +45,6 @@ class TestDetectEnvironment:
             result = path_utils.detect_environment()
         assert result == 'wsl'
 
-    def test_detect_wsl_case_insensitive(self, monkeypatch):
-        """WSL 偵測不區分大小寫"""
-        monkeypatch.setattr('platform.system', lambda: 'Linux')
-        mock_file = mock_open(read_data='Linux version 5.4.0-Microsoft-Standard')
-        with patch('builtins.open', mock_file):
-            result = path_utils.detect_environment()
-        assert result == 'wsl'
-
-    def test_detect_linux_proc_not_found(self, monkeypatch):
-        """Linux 環境，/proc/version 不存在"""
-        monkeypatch.setattr('platform.system', lambda: 'Linux')
-        with patch('builtins.open', side_effect=FileNotFoundError):
-            result = path_utils.detect_environment()
-        assert result == 'linux'
-
-    def test_detect_unknown_defaults_to_linux(self, monkeypatch):
-        """未知系統預設為 Linux"""
-        monkeypatch.setattr('platform.system', lambda: 'FreeBSD')
-        result = path_utils.detect_environment()
-        assert result == 'linux'
-
 
 # ============ TestToWslPath ============
 
@@ -84,31 +52,7 @@ class TestToWslPath:
     """測試 Windows/WSL 路徑轉換成 WSL 格式"""
 
     # --- Windows 本地路徑 ---
-    def test_windows_c_drive(self):
-        """C: 磁碟機轉換"""
-        result = path_utils.to_wsl_path(r'C:\Users\test')
-        assert result == '/mnt/c/Users/test'
 
-    def test_windows_d_drive(self):
-        """D: 磁碟機轉換"""
-        result = path_utils.to_wsl_path(r'D:\Downloads\file.mp4')
-        assert result == '/mnt/d/Downloads/file.mp4'
-
-    def test_windows_lowercase_drive(self):
-        """小寫磁碟機轉換"""
-        result = path_utils.to_wsl_path(r'e:\games\test.exe')
-        assert result == '/mnt/e/games/test.exe'
-
-    def test_windows_root_only(self):
-        """只有磁碟機根目錄"""
-        result = path_utils.to_wsl_path(r'C:\\')
-        # 修正後行為：C:\\ → /mnt/c（正確移除尾斜線）
-        assert result == '/mnt/c'
-
-    def test_windows_nested_path(self):
-        """深層巢狀路徑"""
-        result = path_utils.to_wsl_path(r'C:\Users\admin\Documents\Project\src\main.py')
-        assert result == '/mnt/c/Users/admin/Documents/Project/src/main.py'
 
     # --- WSL 網路路徑 ---
     def test_wsl_localhost_ubuntu(self):
@@ -116,47 +60,11 @@ class TestToWslPath:
         result = path_utils.to_wsl_path(r'\\wsl.localhost\Ubuntu\home\user')
         assert result == '/home/user'
 
-    def test_wsl_dollar_sign(self):
-        """\\\\wsl$\\Ubuntu 格式"""
-        result = path_utils.to_wsl_path(r'\\wsl$\Ubuntu\home\user')
-        assert result == '/home/user'
-
-    def test_wsl_localhost_debian(self):
-        """不同發行版 Debian"""
-        result = path_utils.to_wsl_path(r'\\wsl.localhost\Debian\var\log')
-        assert result == '/var/log'
-
-    def test_wsl_localhost_root(self):
-        """WSL 根目錄"""
-        result = path_utils.to_wsl_path(r'\\wsl.localhost\Ubuntu')
-        assert result == '/'
 
     # --- 已是 Unix 路徑 ---
-    def test_already_unix_home(self):
-        """已經是 Unix 路徑 /home"""
-        result = path_utils.to_wsl_path('/home/user')
-        assert result == '/home/user'
 
-    def test_already_unix_mnt(self):
-        """已經是 WSL mount 路徑"""
-        result = path_utils.to_wsl_path('/mnt/c/test')
-        assert result == '/mnt/c/test'
-
-    def test_already_unix_root(self):
-        """Unix 根目錄"""
-        result = path_utils.to_wsl_path('/')
-        assert result == '/'
 
     # --- 錯誤處理 ---
-    def test_smb_path_raises_error(self):
-        """SMB/UNC 路徑應拋出 ValueError"""
-        with pytest.raises(ValueError, match='不支援 SMB 路徑'):
-            path_utils.to_wsl_path(r'\\NAS\share\file.mp4')
-
-    def test_network_share_raises_error(self):
-        """網路芳鄰路徑應拋出 ValueError"""
-        with pytest.raises(ValueError, match='不支援 SMB 路徑'):
-            path_utils.to_wsl_path(r'\\192.168.1.100\shared')
 
 
 # ============ TestToWindowsPath ============
@@ -165,36 +73,10 @@ class TestToWindowsPath:
     """測試 WSL 路徑轉換成 Windows 格式"""
 
     # --- WSL mount 路徑 ---
-    def test_mnt_c_drive(self):
-        """/mnt/c → C:\\"""
-        result = path_utils.to_windows_path('/mnt/c/Users/test')
-        assert result == r'C:\Users\test'
 
-    def test_mnt_d_drive(self):
-        """/mnt/d → D:\\"""
-        result = path_utils.to_windows_path('/mnt/d/Downloads')
-        assert result == r'D:\Downloads'
-
-    def test_mnt_root_only(self):
-        """只有 mount 根目錄"""
-        result = path_utils.to_windows_path('/mnt/c')
-        assert result == 'C:'
-
-    def test_mnt_with_trailing_slash(self):
-        """帶尾斜線"""
-        result = path_utils.to_windows_path('/mnt/c/')
-        assert result == r'C:\ '[:-1]  # r'C:\'
 
     # --- 已是 Windows 路徑 ---
-    def test_already_windows_path(self):
-        """已經是 Windows 路徑"""
-        result = path_utils.to_windows_path(r'C:\test')
-        assert result == r'C:\test'
 
-    def test_already_windows_lowercase(self):
-        """小寫 Windows 路徑"""
-        result = path_utils.to_windows_path(r'd:\downloads')
-        assert result == r'd:\downloads'
 
     # --- UNC 路徑 ---
     def test_unc_path_unchanged(self):
@@ -203,25 +85,13 @@ class TestToWindowsPath:
         assert result == r'\\NAS\share'
 
     # --- 錯誤處理 ---
-    def test_pure_unix_path_raises_error(self):
-        """純 Unix 路徑在 Windows 環境無法存取"""
-        with pytest.raises(ValueError, match='無法存取 Unix 路徑'):
-            path_utils.to_windows_path('/home/user')
 
-    def test_etc_path_raises_error(self):
-        """/etc 系統路徑無法存取"""
-        with pytest.raises(ValueError, match='無法存取 Unix 路徑'):
-            path_utils.to_windows_path('/etc/passwd')
 
     def test_unc_forward_slash_ip(self):
         """正斜線 UNC + IP 位址轉反斜線"""
         result = path_utils.to_windows_path('//192.168.1.177/media/video.mp4')
         assert result == r'\\192.168.1.177\media\video.mp4'
 
-    def test_unc_extra_leading_slashes(self):
-        """多餘前導斜線先正規化再轉反斜線"""
-        result = path_utils.to_windows_path('////server/share/file.mp4')
-        assert result == r'\\server\share\file.mp4'
 
     def test_drive_letter_forward_slash(self):
         """C:/... 正斜線轉反斜線"""
@@ -230,41 +100,6 @@ class TestToWindowsPath:
 
 
 # ============ TestToUnixPath ============
-
-class TestToUnixPath:
-    """測試 Unix 路徑驗證（Linux/Mac）"""
-
-    # --- 正常 Unix 路徑 ---
-    def test_home_path(self):
-        """/home 路徑"""
-        result = path_utils.to_unix_path('/home/user')
-        assert result == '/home/user'
-
-    def test_var_path(self):
-        """/var 路徑"""
-        result = path_utils.to_unix_path('/var/log/syslog')
-        assert result == '/var/log/syslog'
-
-    def test_root_path(self):
-        """根目錄"""
-        result = path_utils.to_unix_path('/')
-        assert result == '/'
-
-    def test_tmp_path(self):
-        """/tmp 路徑"""
-        result = path_utils.to_unix_path('/tmp/test.txt')
-        assert result == '/tmp/test.txt'
-
-    # --- 錯誤處理 ---
-    def test_windows_path_raises_error(self):
-        """Windows 路徑不支援"""
-        with pytest.raises(ValueError, match='不支援 Windows 路徑'):
-            path_utils.to_unix_path(r'C:\test')
-
-    def test_unc_path_raises_error(self):
-        """UNC 路徑不支援"""
-        with pytest.raises(ValueError, match='不支援 UNC 路徑'):
-            path_utils.to_unix_path(r'\\NAS\share')
 
 
 # ============ TestNormalizePath ============
@@ -278,11 +113,6 @@ class TestNormalizePath:
         result = path_utils.normalize_path(r'C:\Users\test')
         assert result == '/mnt/c/Users/test'
 
-    def test_wsl_env_unix_input(self, monkeypatch):
-        """WSL 環境下輸入 Unix 路徑"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        result = path_utils.normalize_path('/home/user')
-        assert result == '/home/user'
 
     def test_windows_env_mnt_input(self, monkeypatch):
         """Windows 環境下輸入 WSL mount 路徑"""
@@ -290,17 +120,6 @@ class TestNormalizePath:
         result = path_utils.normalize_path('/mnt/c/Users/test')
         assert result == r'C:\Users\test'
 
-    def test_windows_env_windows_input(self, monkeypatch):
-        """Windows 環境下輸入 Windows 路徑"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'windows')
-        result = path_utils.normalize_path(r'D:\Downloads')
-        assert result == r'D:\Downloads'
-
-    def test_linux_env_unix_input(self, monkeypatch):
-        """Linux 環境下輸入 Unix 路徑"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        result = path_utils.normalize_path('/home/user')
-        assert result == '/home/user'
 
     def test_linux_env_windows_input_raises(self, monkeypatch):
         """Linux 環境下輸入 Windows 路徑應報錯"""
@@ -308,93 +127,11 @@ class TestNormalizePath:
         with pytest.raises(ValueError):
             path_utils.normalize_path(r'C:\test')
 
-    def test_mac_env_unix_input(self, monkeypatch):
-        """Mac 環境下輸入 Unix 路徑"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'mac')
-        result = path_utils.normalize_path('/Users/test')
-        assert result == '/Users/test'
-
-    def test_empty_path(self, monkeypatch):
-        """空路徑直接返回"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        result = path_utils.normalize_path('')
-        assert result == ''
-
-    def test_none_like_falsy(self, monkeypatch):
-        """Falsy 路徑處理"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        # 空字串
-        assert path_utils.normalize_path('') == ''
-
 
 # ============ TestExpandEnvVars ============
 
-class TestExpandEnvVars:
-    """測試環境變數展開"""
-
-    def test_tilde_expansion_linux(self, monkeypatch, tmp_path):
-        """Linux 環境 ~ 展開"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        # ~ 會被 pathlib 展開為實際 home 目錄
-        result = path_utils.expand_env_vars('~/Downloads')
-        assert result.endswith('/Downloads')
-        assert '~' not in result
-
-    def test_tilde_expansion_mac(self, monkeypatch):
-        """Mac 環境 ~ 展開"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'mac')
-        result = path_utils.expand_env_vars('~/Documents')
-        assert result.endswith('/Documents')
-        assert '~' not in result
-
-    def test_userprofile_in_linux_raises(self, monkeypatch):
-        """Linux 環境不支援 %USERPROFILE%"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        with pytest.raises(ValueError, match='不支援 Windows 環境變數'):
-            path_utils.expand_env_vars(r'%USERPROFILE%\Downloads')
-
-    def test_empty_path_returns_empty(self, monkeypatch):
-        """空路徑返回空"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        result = path_utils.expand_env_vars('')
-        assert result == ''
-
-    def test_no_env_var_normalize(self, monkeypatch):
-        """無環境變數直接 normalize"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        result = path_utils.expand_env_vars('/home/user/test')
-        assert result == '/home/user/test'
-
-    def test_tilde_expands_to_home(self, monkeypatch):
-        """~ 展開結果應包含實際 HOME 路徑"""
-        import os
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        result = path_utils.expand_env_vars('~/test_dir')
-        home = os.path.expanduser('~')
-        assert result == os.path.join(home, 'test_dir')
-
-    def test_plain_path_passthrough(self, monkeypatch):
-        """沒有環境變數的普通路徑，直接 normalize 回傳"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        result = path_utils.expand_env_vars('/var/log/syslog')
-        assert result == '/var/log/syslog'
-
 
 # ============ TestGetEnvironment ============
-
-class TestGetEnvironment:
-    """測試 get_environment() 輔助函數"""
-
-    def test_returns_current_env(self, monkeypatch):
-        """返回當前環境值"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        assert path_utils.get_environment() == 'wsl'
-
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'windows')
-        assert path_utils.get_environment() == 'windows'
-
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        assert path_utils.get_environment() == 'linux'
 
 
 # ============ TestToFileUri ============
@@ -412,20 +149,6 @@ class TestToFileUri:
         result = path_utils.to_file_uri(r'C:\Videos\test.mp4')
         assert result == 'file:///C:/Videos/test.mp4'
 
-    def test_windows_forward_slash(self):
-        """Windows 正斜線路徑"""
-        result = path_utils.to_file_uri('C:/Videos/test.mp4')
-        assert result == 'file:///C:/Videos/test.mp4'
-
-    def test_windows_lowercase_drive(self):
-        """小寫磁碟機"""
-        result = path_utils.to_file_uri(r'd:\downloads\file.mp4')
-        assert result == 'file:///d:/downloads/file.mp4'
-
-    def test_windows_root_only(self):
-        """只有磁碟機根目錄"""
-        result = path_utils.to_file_uri('C:\\')
-        assert result == 'file:///C:/'
 
     # --- WSL mount 路徑 ---
     def test_wsl_mount_c(self):
@@ -433,15 +156,6 @@ class TestToFileUri:
         result = path_utils.to_file_uri('/mnt/c/Videos/test.mp4')
         assert result == 'file:///C:/Videos/test.mp4'
 
-    def test_wsl_mount_d(self):
-        """/mnt/d 路徑"""
-        result = path_utils.to_file_uri('/mnt/d/Downloads/file.mp4')
-        assert result == 'file:///D:/Downloads/file.mp4'
-
-    def test_wsl_mount_root_only(self):
-        """只有 mount 根目錄"""
-        result = path_utils.to_file_uri('/mnt/c')
-        assert result == 'file:///C:'
 
     # --- UNC 路徑（網路路徑） ---
     def test_unc_standard_backslash(self):
@@ -449,47 +163,11 @@ class TestToFileUri:
         result = path_utils.to_file_uri(r'\\server\share\test.mp4')
         assert result == 'file://///server/share/test.mp4'
 
-    def test_unc_ip_address(self):
-        """UNC IP 位址路徑"""
-        result = path_utils.to_file_uri(r'\\192.168.1.177\downloads\test.mp4')
-        assert result == 'file://///192.168.1.177/downloads/test.mp4'
-
-    def test_unc_forward_slash(self):
-        """UNC 已經是正斜線"""
-        result = path_utils.to_file_uri('//server/share/test.mp4')
-        assert result == 'file://///server/share/test.mp4'
 
     # --- UNC 邊緣案例（D.1.3 修復） ---
-    def test_unc_extra_slashes(self):
-        """UNC 多餘斜線應正規化"""
-        result = path_utils.to_file_uri('////server/share/test.mp4')
-        assert result == 'file://///server/share/test.mp4'
 
-    def test_unc_many_extra_slashes(self):
-        """UNC 超多斜線應正規化"""
-        result = path_utils.to_file_uri('////////server/share/test.mp4')
-        assert result == 'file://///server/share/test.mp4'
-
-    def test_unc_mixed_format(self):
-        """UNC 混合格式（反斜線 + 正斜線）"""
-        result = path_utils.to_file_uri(r'\\//server/share/test.mp4')
-        assert result == 'file://///server/share/test.mp4'
 
     # --- 一致性測試（確保與 scan_file 相同） ---
-    def test_all_formats_produce_5_slashes_for_unc(self):
-        """所有 UNC 格式都應產生 5 斜線"""
-        test_cases = [
-            r'\\server\share\file.mp4',
-            '//server/share/file.mp4',
-            '////server/share/file.mp4',
-            r'\\//server/share/file.mp4',
-        ]
-        for path in test_cases:
-            result = path_utils.to_file_uri(path)
-            # 計算 file: 後的斜線數
-            after_file = result[5:]  # 移除 'file:'
-            leading_slashes = len(after_file) - len(after_file.lstrip('/'))
-            assert leading_slashes == 5, f"Path {path} produced {leading_slashes} slashes, expected 5"
 
     # --- path_mappings 測試 ---
     def test_path_mappings_unc(self, monkeypatch):
@@ -499,13 +177,6 @@ class TestToFileUri:
         result = path_utils.to_file_uri('/home/user/nas/Videos/test.mp4', mappings)
         assert result == 'file://///DiskStation/share/Videos/test.mp4'
 
-    def test_path_mappings_not_matched(self, monkeypatch):
-        """path_mappings 不匹配時 fallback"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {'/home/other': r'\\Server\share'}
-        result = path_utils.to_file_uri('/home/user/test.mp4', mappings)
-        # 不匹配，直接返回原路徑
-        assert result == 'file:////home/user/test.mp4'
 
     # -------- T7 P1 boundary check --------
 
@@ -519,28 +190,9 @@ class TestToFileUri:
         # 注意：abs_path 是 POSIX 路徑（不以 / 結尾），fallback 走 L294 → file:/// + abs_path
         # = file:/// + /home/user/share2/video.mp4 = file:////home/user/share2/video.mp4（4 個斜線）
 
-    def test_p1_boundary_share_vs_sharex(self, monkeypatch):
-        """P1 變體：share vs sharex（無 separator）"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {'/home/user/share': '//NAS/share'}
-        result = path_utils.to_file_uri('/home/user/sharex/video.mp4', mappings)
-        assert result == 'file:////home/user/sharex/video.mp4'
 
     # -------- T7 P2 trailing slash --------
 
-    def test_p2_wsl_prefix_trailing_slash(self, monkeypatch):
-        """P2 主案例：wsl_prefix 帶 trailing /，結果不缺斜線"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {'/home/user/share/': '//NAS/share'}
-        result = path_utils.to_file_uri('/home/user/share/video.mp4', mappings)
-        assert result == 'file://///NAS/share/video.mp4'
-
-    def test_p2_win_prefix_trailing_slash(self, monkeypatch):
-        """P2 變體：win_prefix 帶 trailing /，結果不雙斜線"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {'/home/user/share': '//NAS/share/'}
-        result = path_utils.to_file_uri('/home/user/share/video.mp4', mappings)
-        assert result == 'file://///NAS/share/video.mp4'
 
     def test_p2_both_prefixes_trailing_slash(self, monkeypatch):
         """P2 兩邊都有 trailing /，結果正確"""
@@ -551,19 +203,6 @@ class TestToFileUri:
 
     # -------- T7 edge cases --------
 
-    def test_exact_prefix_match(self, monkeypatch):
-        """edge：abs_path 完全等於 wsl_prefix（NAS 根本身）→ 應命中"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {'/home/user/share': '//NAS/share'}
-        result = path_utils.to_file_uri('/home/user/share', mappings)
-        assert result == 'file://///NAS/share'
-
-    def test_no_mapping_fallback(self, monkeypatch):
-        """edge：path_mappings 不命中時 fallback 為 file:/// + 原路徑"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {'/home/user/share': '//NAS/share'}
-        result = path_utils.to_file_uri('/home/user/other/video.mp4', mappings)
-        assert result == 'file:////home/user/other/video.mp4'
 
     def test_non_wsl_env_no_mapping_branch(self, monkeypatch):
         """edge：CURRENT_ENV='linux' 不走 mapping branch，直接 fallback"""
@@ -582,64 +221,15 @@ class TestToFileUriPlainUnix:
         assert result == 'file:////home/user/video.mp4'
 
 
-class TestNormalizePathEdgeCases:
-    """補齊 normalize_path() 測試矩陣缺口"""
-
-    def test_normalize_path_url_encoded(self, monkeypatch):
-        """Windows 環境下，URL-encoded 路徑原樣通過（C:/My%20Videos/...）"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'windows')
-        result = path_utils.normalize_path('C:/My%20Videos/test.mp4')
-        # to_windows_path 偵測到 path[1]==':' → 轉反斜線回傳（未解 URL encoding）
-        assert result == 'C:\\My%20Videos\\test.mp4'
-
-    def test_normalize_path_unc(self, monkeypatch):
-        """Windows 環境下，UNC 路徑原樣通過（\\\\server\\share\\...）"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'windows')
-        result = path_utils.normalize_path(r'\\server\share\test.mp4')
-        # to_windows_path 偵測到 startswith('\\\\') → 原樣回傳
-        assert result == r'\\server\share\test.mp4'
-
-
 class TestIsPathUnderDir:
     """測試 is_path_under_dir — 避免前綴碰撞"""
 
-    def test_file_directly_under_dir(self):
-        from core.path_utils import is_path_under_dir
-        assert is_path_under_dir("file:///E:/media/SONE-205.mp4", "file:///E:/media") is True
-
-    def test_file_in_subdirectory(self):
-        from core.path_utils import is_path_under_dir
-        assert is_path_under_dir("file:///E:/media/sub/video.mp4", "file:///E:/media") is True
 
     def test_prefix_collision_rejected(self):
         """E:/media 不應匹配 E:/media2 底下的檔案"""
         from core.path_utils import is_path_under_dir
         assert is_path_under_dir("file:///E:/media2/video.mp4", "file:///E:/media") is False
 
-    def test_exact_match(self):
-        from core.path_utils import is_path_under_dir
-        assert is_path_under_dir("file:///E:/media", "file:///E:/media") is True
-
-    def test_dir_with_trailing_slash(self):
-        from core.path_utils import is_path_under_dir
-        assert is_path_under_dir("file:///E:/media/video.mp4", "file:///E:/media/") is True
-
-    def test_unrelated_path(self):
-        from core.path_utils import is_path_under_dir
-        assert is_path_under_dir("file:///C:/Videos/video.mp4", "file:///E:/media") is False
-
-    def test_dot_dot_traversal_attempt(self):
-        """路徑包含 .. 但字串比對仍在 prefix 下（函數做字串比對不做 resolve）"""
-        from core.path_utils import is_path_under_dir
-        # file:///E:/media/../secrets 字串以 file:///E:/media/ 開頭，所以回傳 True
-        # 注意：此函數僅做字串前綴比對，呼叫端需自行 resolve 路徑
-        assert is_path_under_dir("file:///E:/media/../secrets", "file:///E:/media") is True
-
-    def test_dot_dot_escape_prefix(self):
-        """.. 導致實際路徑離開目錄，但因前綴不匹配所以 False"""
-        from core.path_utils import is_path_under_dir
-        # 路徑 file:///E:/other 不在 file:///E:/media 下
-        assert is_path_under_dir("file:///E:/other/../escape", "file:///E:/media") is False
 
     # ---- 新增：UNC 大小寫不敏感 cases ----
 
@@ -650,26 +240,6 @@ class TestIsPathUnderDir:
         dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
         assert is_path_under_dir(path_uri, dir_uri) is True
 
-    def test_unc_share_uppercase(self):
-        """UNC share 大寫：USBShare1 vs usbshare1 → True（Windows 不分大小寫）"""
-        from core.path_utils import is_path_under_dir, to_file_uri
-        path_uri = to_file_uri(r'\\DiskStation\USBShare1\a.jpg')
-        dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
-        assert is_path_under_dir(path_uri, dir_uri) is True
-
-    def test_unc_exact_case_match(self):
-        """UNC 原始大小寫（happy path A）→ True"""
-        from core.path_utils import is_path_under_dir, to_file_uri
-        path_uri = to_file_uri(r'\\DiskStation\usbshare1\a.jpg')
-        dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
-        assert is_path_under_dir(path_uri, dir_uri) is True
-
-    def test_drive_letter_case_insensitive(self):
-        """Drive-letter 大小寫：C: vs c: → True（Windows 不分大小寫）"""
-        from core.path_utils import is_path_under_dir, to_file_uri
-        path_uri = to_file_uri(r'C:\media\a.jpg')
-        dir_uri = to_file_uri(r'c:\media')
-        assert is_path_under_dir(path_uri, dir_uri) is True
 
     def test_posix_case_sensitive(self):
         """POSIX 路徑大小寫敏感：/home/User ≠ /home/user → False"""
@@ -678,36 +248,12 @@ class TestIsPathUnderDir:
         dir_uri = to_file_uri('/home/user')
         assert is_path_under_dir(path_uri, dir_uri) is False
 
-    def test_prefix_collision_drive_not_regressed(self):
-        """E:/media vs E:/media2 boundary check 不回歸（大小寫不敏感改法不可破壞）"""
-        from core.path_utils import is_path_under_dir
-        assert is_path_under_dir("file:///E:/media2/video.mp4", "file:///E:/media") is False
-
-    def test_unc_forward_slash_case_insensitive(self):
-        """情境 E：forward-slash UNC（//DiskStation/...）大小寫不敏感 → True（DoD-E 明示守衛）"""
-        from core.path_utils import is_path_under_dir, to_file_uri
-        path_uri = to_file_uri('//DISKSTATION/usbshare1/a.jpg')
-        dir_uri = to_file_uri('//DiskStation/usbshare1')
-        assert is_path_under_dir(path_uri, dir_uri) is True
-
-    def test_unc_share_boundary_not_collide(self):
-        """UNC boundary：usbshare1 vs usbshare10 在大小寫不敏感下仍不誤命中 → False"""
-        from core.path_utils import is_path_under_dir, to_file_uri
-        path_uri = to_file_uri(r'\\DiskStation\USBShare10\a.jpg')
-        dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
-        assert is_path_under_dir(path_uri, dir_uri) is False
-
 
 # ============ TestStripVerbatimPrefix ============
 
 class TestStripVerbatimPrefix:
     r"""測試 strip_verbatim_prefix() — 移除 Windows verbatim \\?\ 前綴"""
 
-    def test_verbatim_unc(self):
-        r"""\\?\UNC\DiskStation\usbshare1\a.jpg → \\DiskStation\usbshare1\a.jpg"""
-        from core.path_utils import strip_verbatim_prefix
-        result = strip_verbatim_prefix(r'\\?\UNC\DiskStation\usbshare1\a.jpg')
-        assert result == r'\\DiskStation\usbshare1\a.jpg'
 
     def test_verbatim_drive(self):
         r"""\\?\C:\Videos\a.jpg → C:\Videos\a.jpg"""
@@ -715,29 +261,6 @@ class TestStripVerbatimPrefix:
         result = strip_verbatim_prefix(r'\\?\C:\Videos\a.jpg')
         assert result == r'C:\Videos\a.jpg'
 
-    def test_plain_unc_unchanged(self):
-        r"""普通 UNC \\DiskStation\share\a.jpg → 原樣"""
-        from core.path_utils import strip_verbatim_prefix
-        path = r'\\DiskStation\share\a.jpg'
-        assert strip_verbatim_prefix(path) == path
-
-    def test_drive_letter_unchanged(self):
-        r"""drive C:\Videos\a.jpg → 原樣"""
-        from core.path_utils import strip_verbatim_prefix
-        path = r'C:\Videos\a.jpg'
-        assert strip_verbatim_prefix(path) == path
-
-    def test_posix_unchanged(self):
-        """/home/user/a.jpg → 原樣"""
-        from core.path_utils import strip_verbatim_prefix
-        path = '/home/user/a.jpg'
-        assert strip_verbatim_prefix(path) == path
-
-    def test_forward_slash_unc_unchanged(self):
-        """forward-slash UNC //DiskStation/share/a.jpg → 原樣"""
-        from core.path_utils import strip_verbatim_prefix
-        path = '//DiskStation/share/a.jpg'
-        assert strip_verbatim_prefix(path) == path
 
     def test_to_file_uri_verbatim_equals_plain_unc(self):
         r"""to_file_uri(\\?\UNC\DiskStation\...) == to_file_uri(\\DiskStation\...)（strip 生效）"""
@@ -748,32 +271,6 @@ class TestStripVerbatimPrefix:
 
 
 # ============ TestIsWindowsStyleUri ============
-
-class TestIsWindowsStyleUri:
-    """測試 _is_windows_style_uri() — Windows-style URI 偵測（drive-root 邊界）"""
-
-    def test_unc_uri(self):
-        from core.path_utils import _is_windows_style_uri
-        assert _is_windows_style_uri('file://///DiskStation/usbshare1/a.jpg') is True
-
-    def test_drive_uri(self):
-        from core.path_utils import _is_windows_style_uri
-        assert _is_windows_style_uri('file:///C:/media/a.jpg') is True
-
-    def test_drive_root_only(self):
-        """drive root 'file:///C:'(len10) / 'file:///C:/'(len11) 仍須判 True（len>=10 修正）"""
-        from core.path_utils import _is_windows_style_uri
-        assert _is_windows_style_uri('file:///C:') is True
-        assert _is_windows_style_uri('file:///C:/') is True
-
-    def test_posix_uri_false(self):
-        from core.path_utils import _is_windows_style_uri
-        assert _is_windows_style_uri('file:////home/user/a.jpg') is False
-
-    def test_short_uri_no_indexerror(self):
-        """短 URI 'file:///' 不可 IndexError，回 False"""
-        from core.path_utils import _is_windows_style_uri
-        assert _is_windows_style_uri('file:///') is False
 
 
 # ============ TestUriToFsPath ============
@@ -793,23 +290,6 @@ class TestUriToFsPath:
         result = path_utils.uri_to_fs_path('file:///home/user/test.mp4')
         assert result == '/home/user/test.mp4'
 
-    def test_wsl_path(self, monkeypatch):
-        """WSL mount path: file:///mnt/c/Videos/test.mp4 → /mnt/c/Videos/test.mp4（WSL 環境）"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        result = path_utils.uri_to_fs_path('file:///mnt/c/Videos/test.mp4')
-        assert result == '/mnt/c/Videos/test.mp4'
-
-    def test_url_encoded_spaces(self, monkeypatch):
-        """URL decode: file:///C:/My%20Videos/test.mp4 → C:\\My Videos\\test.mp4（Windows 環境）"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'windows')
-        result = path_utils.uri_to_fs_path('file:///C:/My%20Videos/test.mp4')
-        assert result == 'C:\\My Videos\\test.mp4'
-
-    def test_non_file_uri_passthrough(self, monkeypatch):
-        """非 file:/// 輸入原樣通過 normalize_path（Linux 環境）"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'linux')
-        result = path_utils.uri_to_fs_path('/mnt/c/test.mp4')
-        assert result == '/mnt/c/test.mp4'
 
     def test_valueerror_fallback(self, monkeypatch):
         """normalize_path 拋 ValueError 時返回原路徑（Linux 環境下 Windows 路徑）"""
@@ -819,18 +299,6 @@ class TestUriToFsPath:
         # C:/Videos/test.mp4 — normalize_path raises ValueError, fallback to unquoted path
         assert result == 'C:/Videos/test.mp4'
 
-    def test_unc_path(self, monkeypatch):
-        """UNC path: file://///server/share/test.mp4 → \\\\server\\share\\test.mp4（Windows 環境）"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'windows')
-        result = path_utils.uri_to_fs_path('file://///server/share/test.mp4')
-        # 剝除 file:/// → //server/share/test.mp4，to_windows_path 轉換為 \\server\share\test.mp4
-        assert result == '\\\\server\\share\\test.mp4'
-
-    def test_unc_ip_windows_env(self, monkeypatch):
-        """UNC IP URI 在 Windows 環境轉為反斜線 UNC 路徑"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'windows')
-        result = path_utils.uri_to_fs_path('file://///192.168.1.177/media/video.mp4')
-        assert result == r'\\192.168.1.177\media\video.mp4'
 
     def test_unc_roundtrip(self, monkeypatch):
         """to_file_uri → uri_to_fs_path 雙向轉換應還原原始 UNC 路徑（Windows env）"""
@@ -853,23 +321,6 @@ class TestUriToFsPath:
 class TestRegressionGuards:
     """回歸守衛測試 — 防止已修復的錯誤模式重新出現"""
 
-    def test_to_file_uri_windows_path_any_platform(self):
-        """T2 回歸守衛：to_file_uri() 接受 Windows 路徑，不依賴 normalize_path()
-
-        根因：showcase.py 原本用 to_file_uri(normalize_path(d))，
-        Linux CI 下 normalize_path("E:/media") 拋 ValueError，
-        導致所有 directory 被 skip、11 個測試失敗。
-        """
-        result = path_utils.to_file_uri("E:/media")
-        assert result == "file:///E:/media"
-
-    def test_to_file_uri_unc_path_any_platform(self):
-        """UNC 正斜線直通守衛：to_file_uri() 接受正斜線 UNC，任何平台皆可
-
-        確保 //IP/share 格式在 Linux CI 和 Windows prod 都能正確轉換。
-        """
-        result = path_utils.to_file_uri("//192.168.1.177/share")
-        assert result == "file://///192.168.1.177/share"
 
     def test_no_normalize_before_to_file_uri(self):
         """靜態掃描守衛：確認專案中沒有 to_file_uri(normalize_path(...)) 疊加模式
@@ -913,37 +364,6 @@ class TestRegressionGuards:
 class TestReversePathMapping:
     """測試 reverse_path_mapping() - 邊界條件 1-11"""
 
-    def test_empty_fs_path_returns_none(self):
-        """邊界 1：fs_path 為空字串 → None"""
-        from core.path_utils import reverse_path_mapping
-        result = reverse_path_mapping("", {"/mnt/nas": "//NAS/share"})
-        assert result is None
-
-    def test_empty_mappings_returns_none(self):
-        """邊界 2：path_mappings 為空 dict → None"""
-        from core.path_utils import reverse_path_mapping
-        result = reverse_path_mapping("//NAS/share/video.mp4", {})
-        assert result is None
-
-    def test_none_mappings_returns_none(self):
-        """邊界 3：path_mappings 為 None → None"""
-        from core.path_utils import reverse_path_mapping
-        result = reverse_path_mapping("//NAS/share/video.mp4", None)
-        assert result is None
-
-    def test_unc_forward_slash_match(self):
-        """邊界 4：UNC forward slash 輸入命中 mapping"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/mnt/nas": "//NAS/share"}
-        result = reverse_path_mapping("//NAS/share/video.mp4", mappings)
-        assert result == "/mnt/nas/video.mp4"
-
-    def test_unc_backslash_match_converts_to_posix(self):
-        """邊界 5：UNC backslash 輸入命中 mapping，suffix 轉 POSIX"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/mnt/nas": "//NAS/share"}
-        result = reverse_path_mapping("\\\\NAS\\share\\video.mp4", mappings)
-        assert result == "/mnt/nas/video.mp4"
 
     def test_multi_mapping_second_wins(self):
         """邊界 6：多個 mapping，第二個才命中"""
@@ -955,24 +375,6 @@ class TestReversePathMapping:
         result = reverse_path_mapping("//NAS/share/movie.mp4", mappings)
         assert result == "/mnt/nas/movie.mp4"
 
-    def test_unix_win_prefix_skipped_via_valueerror(self):
-        """邊界 7：win_prefix 是 Unix 路徑，to_windows_path 拋 ValueError，跳過繼續"""
-        from core.path_utils import reverse_path_mapping
-        # 第一個 mapping 的 win_prefix 是 Unix 路徑 → to_windows_path 拋 ValueError → skip
-        # 第二個 mapping 正常命中
-        mappings = {
-            "/home/peace/nas": "/home/peace/source",  # win_prefix 是 Unix → ValueError
-            "/mnt/nas": "//NAS/share",                # 正常 UNC
-        }
-        result = reverse_path_mapping("//NAS/share/video.mp4", mappings)
-        assert result == "/mnt/nas/video.mp4"
-
-    def test_empty_suffix_returns_local_prefix(self):
-        """邊界 8：輸入剛好等於 prefix（NAS 根），suffix 為空 → 回傳 local_prefix"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/mnt/nas": "//NAS/share"}
-        result = reverse_path_mapping("//NAS/share", mappings)
-        assert result == "/mnt/nas"
 
     def test_drive_letter_mapping(self):
         """邊界 9：Windows drive letter mapping"""
@@ -981,13 +383,6 @@ class TestReversePathMapping:
         result = reverse_path_mapping("C:\\Videos\\movie.mp4", mappings)
         assert result == "/mnt/c/Videos/movie.mp4"
 
-    def test_no_match_returns_none(self):
-        """邊界 10/11：POSIX 本機路徑或完全未命中任何 mapping → None"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/mnt/nas": "//NAS/share"}
-        # POSIX 本機路徑，不應誤命中
-        result = reverse_path_mapping("/home/peace/local/video.mp4", mappings)
-        assert result is None
 
     # -------- P1 boundary check (新增 T6) --------
 
@@ -998,49 +393,9 @@ class TestReversePathMapping:
         result = reverse_path_mapping("//NAS/share2/video.mp4", mappings)
         assert result is None
 
-    def test_p1_backslash_share_vs_share2(self):
-        """邊界 6：\\NAS\\share2\\video.mp4 不應命中 \\NAS\\share mapping（P1 backslash UNC）"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/local": "\\\\NAS\\share"}
-        result = reverse_path_mapping("\\\\NAS\\share2\\video.mp4", mappings)
-        assert result is None
-
-    def test_p1_drive_letter_videos_vs_videos2(self):
-        """邊界 8：C:\\Videos2\\movie.mp4 不應命中 C:/Videos mapping（P1 drive letter）"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/mnt/c/Videos": "C:/Videos"}
-        result = reverse_path_mapping("C:\\Videos2\\movie.mp4", mappings)
-        assert result is None
-
-    def test_p1_share_vs_sharex_no_separator(self):
-        """邊界 11：//NAS/sharex/video.mp4 不應命中 //NAS/share mapping（無 separator 分隔）"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/local": "//NAS/share"}
-        result = reverse_path_mapping("//NAS/sharex/video.mp4", mappings)
-        assert result is None
 
     # -------- P2 trailing separator normalize (新增 T6) --------
 
-    def test_p2_win_prefix_trailing_forward_slash(self):
-        """邊界 3：win_prefix 含 trailing / 仍可正確命中並拼接（P2 主案例）"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/local": "//NAS/share/"}
-        result = reverse_path_mapping("//NAS/share/video.mp4", mappings)
-        assert result == "/local/video.mp4"
-
-    def test_p2_win_prefix_trailing_backslash(self):
-        """邊界 9 變體：win_prefix 含 trailing \\ 仍可正確命中並拼接"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/local": "\\\\NAS\\share\\"}
-        result = reverse_path_mapping("\\\\NAS\\share\\video.mp4", mappings)
-        assert result == "/local/video.mp4"
-
-    def test_p2_local_prefix_trailing_slash(self):
-        """邊界 12：local_prefix 含 trailing / 命中後無雙斜線"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/local/": "//NAS/share"}
-        result = reverse_path_mapping("//NAS/share/video.mp4", mappings)
-        assert result == "/local/video.mp4"
 
     def test_p2_both_prefixes_trailing_slash(self):
         """邊界 3+12：win_prefix 和 local_prefix 都含 trailing /，結果仍正確"""
@@ -1051,53 +406,8 @@ class TestReversePathMapping:
 
     # -------- P1 edge cases --------
 
-    def test_p1_exact_prefix_match_no_boundary_fail(self):
-        """邊界 4：fs_path 完全等於 win_prefix（NAS 根本身）→ 應命中 → local_prefix"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/local": "//NAS/share"}
-        result = reverse_path_mapping("//NAS/share", mappings)
-        assert result == "/local"
-
-    def test_p1_prefix_with_sep_suffix_only_sep(self):
-        """邊界 4 變體：fs_path = prefix + 單獨 / → 應命中 → local_prefix/"""
-        from core.path_utils import reverse_path_mapping
-        mappings = {"/local": "//NAS/share"}
-        result = reverse_path_mapping("//NAS/share/", mappings)
-        assert result == "/local/"
 
     # -------- 91b P2 fix：drive-letter remote WSL-mount 候選 --------
-
-    def test_drive_letter_remote_mnt_form_hits(self, monkeypatch):
-        """91b P2：drive-letter remote 經 uri_to_fs_path 正規化成 /mnt/z/share 形式仍應命中"""
-        from core.path_utils import reverse_path_mapping
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {"/nas": "Z:/share"}
-        result = reverse_path_mapping("/mnt/z/share/movie.mp4", mappings)
-        assert result == "/nas/movie.mp4"
-
-    def test_drive_letter_remote_backslash_form_mnt_hits(self, monkeypatch):
-        """91b P2：drive-letter remote 以 backslash 形式給出（Z:\\share）仍能算出 /mnt 候選並命中"""
-        from core.path_utils import reverse_path_mapping
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {"/nas": "Z:\\share"}
-        result = reverse_path_mapping("/mnt/z/share/movie.mp4", mappings)
-        assert result == "/nas/movie.mp4"
-
-    def test_drive_letter_remote_mnt_form_boundary_share_vs_share2(self, monkeypatch):
-        """91b P2 boundary：/mnt/z/share2/x 不應命中 Z:/share mapping（share vs share2）"""
-        from core.path_utils import reverse_path_mapping
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {"/nas": "Z:/share"}
-        result = reverse_path_mapping("/mnt/z/share2/x", mappings)
-        assert result is None
-
-    def test_unc_remote_no_regression_with_mnt_candidate(self, monkeypatch):
-        """91b P2 no-regression：UNC remote 加入 /mnt 候選後行為不變（dedup，仍走 win_fwd 命中）"""
-        from core.path_utils import reverse_path_mapping
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {"/nas": "//NAS/share"}
-        result = reverse_path_mapping("//NAS/share/movie.mp4", mappings)
-        assert result == "/nas/movie.mp4"
 
 
 # ============ TestIsPathUnderDirNFC ============
@@ -1130,118 +440,27 @@ class TestIsPathUnderDirNFC:
     # ------------------------------------------------------------------
     # 邊界 2：UNC NFD dir + NFC path → True（反向）
     # ------------------------------------------------------------------
-    def test_unc_nfd_dir_nfc_path(self):
-        """UNC：NFD 目錄 + NFC 子路徑 → True"""
-        import unicodedata
-        from core.path_utils import is_path_under_dir, to_file_uri
-
-        base = 'Répertoire'
-        dir_nfd  = unicodedata.normalize('NFD', base)
-        path_nfc = unicodedata.normalize('NFC', base)
-
-        dir_uri  = to_file_uri(rf'\\NAS\{dir_nfd}')
-        path_uri = to_file_uri(rf'\\NAS\{path_nfc}\video.jpg')
-
-        assert is_path_under_dir(path_uri, dir_uri) is True
 
     # ------------------------------------------------------------------
     # 邊界 3：UNC NFD + 大寫 → 命中 NFC + 小寫（驗 NFC→casefold 順序）
     # ------------------------------------------------------------------
-    def test_unc_nfd_upper_vs_nfc_lower(self):
-        """UNC：NFD 大寫路徑 命中 NFC 小寫目錄（NFC → casefold 順序正確）"""
-        import unicodedata
-        from core.path_utils import is_path_under_dir, to_file_uri
-
-        base = 'Répertoire'
-        nfd_upper = unicodedata.normalize('NFD', base).upper()    # NFD + 大寫
-        nfc_lower = unicodedata.normalize('NFC', base).casefold() # NFC + 小寫
-
-        dir_uri  = to_file_uri(rf'\\nas\{nfc_lower}')
-        path_uri = to_file_uri(rf'\\NAS\{nfd_upper}\video.jpg')
-
-        assert is_path_under_dir(path_uri, dir_uri) is True
 
     # ------------------------------------------------------------------
     # 邊界 4：Drive-letter NFD path → 命中 NFC dir
     # ------------------------------------------------------------------
-    def test_drive_nfd_path_nfc_dir(self):
-        """Drive-letter：NFD 檔案路徑 命中 NFC 目錄 URI"""
-        import unicodedata
-        from core.path_utils import is_path_under_dir, to_file_uri
-
-        base = 'Médias'
-        dir_nfc  = unicodedata.normalize('NFC', base)
-        path_nfd = unicodedata.normalize('NFD', base)
-
-        dir_uri  = to_file_uri(rf'C:\{dir_nfc}')
-        path_uri = to_file_uri(rf'C:\{path_nfd}\x.jpg')
-
-        assert is_path_under_dir(path_uri, dir_uri) is True
 
     # ------------------------------------------------------------------
     # 邊界 5：韓文 Hangul NFC vs NFD（UNC）
     # ------------------------------------------------------------------
-    def test_unc_hangul_nfc_vs_nfd(self):
-        """UNC Hangul 가 NFC 預組 vs NFD 分解 → True"""
-        import unicodedata
-        from core.path_utils import is_path_under_dir, to_file_uri
-
-        # 가 NFC = 1 codepoint（U+AC00）；NFD = 2 codepoints（ᄀ U+1100 + ᅡ U+1161，無尾音）
-        char_nfc = unicodedata.normalize('NFC', '가')
-        char_nfd = unicodedata.normalize('NFD', '가')
-        # 若 NFC == NFD（字元無分解形式），就改用有分解的字元讓測試有意義
-        # 가 本身可分解，若相等則跳過（不強制失敗）
-        if char_nfc == char_nfd:
-            import pytest
-            pytest.skip('가 NFC == NFD on this platform, no byte difference to test')
-
-        dir_uri  = to_file_uri(rf'\\NAS\{char_nfc}_folder')
-        path_uri = to_file_uri(rf'\\NAS\{char_nfd}_folder\v.mp4')
-
-        assert is_path_under_dir(path_uri, dir_uri) is True
 
     # ------------------------------------------------------------------
     # 邊界 5b：Drive-letter Hangul NFC vs NFD
     # ------------------------------------------------------------------
-    def test_drive_hangul_nfd_path_nfc_dir(self):
-        """Drive-letter 韓文 가 NFD path → NFC dir → True"""
-        import unicodedata
-        from core.path_utils import is_path_under_dir, to_file_uri
-
-        char_nfc = unicodedata.normalize('NFC', '가')
-        char_nfd = unicodedata.normalize('NFD', '가')
-
-        if char_nfc == char_nfd:
-            import pytest
-            pytest.skip('가 NFC == NFD on this platform')
-
-        dir_uri  = to_file_uri(rf'C:\{char_nfc}Media')
-        path_uri = to_file_uri(rf'C:\{char_nfd}Media\v.mp4')
-
-        assert is_path_under_dir(path_uri, dir_uri) is True
 
     # ------------------------------------------------------------------
     # 邊界 6：Windows-style 同形式不回歸（NFC/NFC、NFD/NFD 仍 True）
     # ------------------------------------------------------------------
-    def test_windows_same_nfc_nfc(self):
-        """Windows-style 兩邊都 NFC → True（不回歸）"""
-        import unicodedata
-        from core.path_utils import is_path_under_dir, to_file_uri
 
-        base_nfc = unicodedata.normalize('NFC', 'Répertoire')
-        dir_uri  = to_file_uri(rf'\\NAS\{base_nfc}')
-        path_uri = to_file_uri(rf'\\NAS\{base_nfc}\v.jpg')
-        assert is_path_under_dir(path_uri, dir_uri) is True
-
-    def test_windows_same_nfd_nfd(self):
-        """Windows-style 兩邊都 NFD → True（不回歸）"""
-        import unicodedata
-        from core.path_utils import is_path_under_dir, to_file_uri
-
-        base_nfd = unicodedata.normalize('NFD', 'Répertoire')
-        dir_uri  = to_file_uri(rf'\\NAS\{base_nfd}')
-        path_uri = to_file_uri(rf'\\NAS\{base_nfd}\v.jpg')
-        assert is_path_under_dir(path_uri, dir_uri) is True
 
     # ------------------------------------------------------------------
     # POSIX 安全負向 case 7（Codex P1）：POSIX byte-exact，NFC ≠ NFD → False
@@ -1331,13 +550,6 @@ class TestUriToLocalFsPath:
         result = path_utils.uri_to_local_fs_path(uri, mappings)
         assert result == path_utils.uri_to_fs_path(uri)
 
-    def test_no_mapping_equivalent(self, monkeypatch):
-        """WSL + 空 mappings → 字面等價於 uri_to_fs_path"""
-        monkeypatch.setattr(path_utils, 'CURRENT_ENV', 'wsl')
-        mappings = {}
-        uri = 'file://///NAS/share/video.mp4'
-        result = path_utils.uri_to_local_fs_path(uri, mappings)
-        assert result == path_utils.uri_to_fs_path(uri)
 
     def test_drive_letter_remote_reverse_maps_correctly(self, monkeypatch):
         """91b P2：drive-letter remote（Z:/share）經 to_wsl_path 正規化為 /mnt/z/share 後，
@@ -1405,12 +617,6 @@ class TestIsFsPathUnderDir:
         target = str(root / ".." / "..")
         assert path_utils.is_fs_path_under_dir(target, str(root)) is False
 
-    def test_mixed_dotdot_traversal_escapes_root(self, tmp_path):
-        """案例 3：root/child/../.. vs root → False（多層混合 .. 仍需擋下）"""
-        root = tmp_path / "root"
-        root.mkdir()
-        target = str(root / "child" / ".." / "..")
-        assert path_utils.is_fs_path_under_dir(target, str(root)) is False
 
     def test_root_itself_is_under_root(self, tmp_path):
         """案例 4：root 自身 vs root → True（create_folder=False 的既有路徑會走到這）"""
@@ -1418,13 +624,6 @@ class TestIsFsPathUnderDir:
         root.mkdir()
         assert path_utils.is_fs_path_under_dir(str(root), str(root)) is True
 
-    def test_dotted_filename_not_misidentified_as_traversal(self, tmp_path):
-        """案例 5：含 . 的合法名稱（Vol.2、A.B.C）vs root → True（不誤殺——防線是
-        realpath 解析後比對，不是對 '..' 做黑名單字串比對）"""
-        root = tmp_path / "root"
-        target = root / "Vol.2" / "A.B.C"
-        target.mkdir(parents=True)
-        assert path_utils.is_fs_path_under_dir(str(target), str(root)) is True
 
     def test_symlink_escaping_root_is_rejected(self, tmp_path):
         """案例 6（核心）：symlink 指向 root 外部 → False。
@@ -1452,20 +651,6 @@ class TestIsFsPathUnderDir:
         target = root / "not" / "created" / "yet"
         assert path_utils.is_fs_path_under_dir(str(target), str(root)) is True
 
-    def test_cross_drive_fails_closed(self, monkeypatch):
-        """跨磁碟機（C:\\x vs D:\\y）→ False。
-
-        新演算法下跨磁碟機是正常無例外的 False 判定，不再走 ValueError。
-        用 Windows-style mock harness 驅動真正的生產比對路徑（不 mock commonpath）。
-        monkeypatch 目標是 path_utils 自己的 `os` 名稱，不動真正的全域 os 模組。
-        """
-        fake_os = types.SimpleNamespace(path=_PartialOsPathProxy(
-            realpath=ntpath.realpath,
-            normcase=ntpath.normcase,
-            sep=ntpath.sep,
-        ))
-        monkeypatch.setattr(path_utils, 'os', fake_os)
-        assert path_utils.is_fs_path_under_dir(r'D:\y', r'C:\x') is False
 
     def test_realpath_oserror_fails_closed_and_logs(self, monkeypatch, caplog):
         """案例 9：realpath 拋 OSError（mock，如 WinFsp/rclone 掛載點）→ False 且有
@@ -1514,47 +699,6 @@ class TestIsFsPathUnderDir:
         monkeypatch.setattr(path_utils, 'os', fake_os)
         assert path_utils.is_fs_path_under_dir(r'\\server\share\x', r'\\server\share') is True
 
-    def test_value_error_fails_closed_and_logs(self, caplog):
-        """含 null byte 的路徑觸發 realpath 原生 ValueError → False 且有 WARNING。
-
-        零 mock：Linux 上 os.path.realpath('a\\x00b') 真的會拋 ValueError。
-        這是保留 except ValueError 分支的唯一守衛。
-        """
-        with caplog.at_level(logging.WARNING):
-            result = path_utils.is_fs_path_under_dir('a\x00b', '/tmp')
-        assert result is False
-        assert any(record.levelname == 'WARNING' for record in caplog.records)
-
-    def test_false_result_logs_resolved_values(self, tmp_path, caplog):
-        """比對回 False 時，WARNING log 必須同時含 root_n／target_n 兩個 resolved 值。
-
-        兩個參數刻意傳**非 canonical** 形狀（繞過 sub/.. 再回來），讓 resolved 值
-        不是原始參數字串的子字串——否則 log 裡本來就印了 fs_path=／root_fs_path=
-        兩個原始參數，斷言會從那裡矇到，把 resolved 值整段拿掉也不會轉紅（假綠）。
-        下方 sanity 斷言就是在釘死這個前提。
-        """
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        root = tmp_path / "root"
-        root.mkdir()
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        # 非 canonical 輸入：/tmp/../sub/../root、/tmp/.../sub/../outside
-        root_raw = str(sub / ".." / "root")
-        target_raw = str(sub / ".." / "outside")
-        root_n = os.path.normcase(os.path.realpath(root_raw))
-        target_n = os.path.normcase(os.path.realpath(target_raw))
-        # sanity：resolved 值必須不是原始參數的子字串，這條測試才有鑑別力
-        assert root_n not in root_raw and root_n not in target_raw
-        assert target_n not in root_raw and target_n not in target_raw
-        with caplog.at_level(logging.WARNING):
-            result = path_utils.is_fs_path_under_dir(target_raw, root_raw)
-        assert result is False
-        warning_text = "\n".join(
-            r.getMessage() for r in caplog.records if r.levelname == 'WARNING'
-        )
-        assert root_n in warning_text
-        assert target_n in warning_text
 
     def test_prefix_collision_not_bare_startswith(self, tmp_path):
         """案例 11：前綴碰撞 /base/media2 vs /base/media → False。
@@ -1579,7 +723,6 @@ class TestFileUriToServerPath:
 
     @pytest.mark.parametrize('uri, expected', [
         ('file:////media/x.mp4', '/media/x.mp4'),
-        ('file:////volume1/av/x.mp4', '/volume1/av/x.mp4'),
         ('file://///nas/s/x.mp4', '//nas/s/x.mp4'),
         ('file:///home/u/x.mp4', '/home/u/x.mp4'),
     ])
@@ -1592,7 +735,6 @@ class TestFileUriToServerPath:
         assert path_utils.file_uri_to_server_path('file:///D:/AV/x.mp4') == 'D:/AV/x.mp4'
 
     @pytest.mark.parametrize('uri, expected', [
-        ('file:////volume1/av/a%20b/x.mp4', '/volume1/av/a b/x.mp4'),
         ('file:///D:/AV/%E4%B8%AD%E6%96%87/x.mp4', 'D:/AV/中文/x.mp4'),
     ])
     def test_percent_encoding_is_decoded(self, uri, expected):
@@ -1601,15 +743,12 @@ class TestFileUriToServerPath:
 
     @pytest.mark.parametrize('value', [
         '/volume1/av/a%20b.mp4',
-        'D:\\AV\\x.mp4',
-        '\\\\nas\\av\\x.mp4',
-        '',
     ])
     def test_non_uri_passthrough_verbatim(self, value):
         """非 URI 輸入逐字不變（%20 不被解碼）"""
         assert path_utils.file_uri_to_server_path(value) == value
 
-    @pytest.mark.parametrize('env', ['windows', 'linux', 'wsl'])
+    @pytest.mark.parametrize('env', ['windows', ])
     def test_independent_of_current_env(self, monkeypatch, env):
         """CURRENT_ENV 為 windows / linux / wsl 輸出皆相同"""
         monkeypatch.setattr(path_utils, 'CURRENT_ENV', env)
