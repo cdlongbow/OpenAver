@@ -754,3 +754,58 @@ test('addFocusedFavorite: 200 有圖／200 無圖／409 都落地成已收藏，
         setRecords([]);
     }
 });
+
+// 測試行數大於產品碼：plan I-5 定死四格 oracle（各自隔離一道閘／一個復活點）
+test('addFocusedFavorite: 頁面已死或快照為空時晚到回應不寫入不提示，bfcache 還原後恢復運作（I-5）', async () => {
+    const okBody = actressBody('Alice', { photo_url: '/p.jpg' });
+    // ① snapshot=null、不 cleanup：只隔離 snapshot 閘
+    await withFavFetch({}, async ({ state, router, spies }) => {
+        state.addFocusedFavorite();
+        await tick();
+        state.snapshot = null;
+        router.flush(200, okBody);
+        await tick(); await tick();
+        assert.equal(state.favoriteBusyFor('Alice'), false);
+        assert.equal(spies.toasts.length, 0);
+        assert.equal(spies.redraws, 0);
+    });
+    // ② cleanup、保留非空 snapshot：只隔離 _pageAlive 閘
+    await withFavFetch({}, async ({ state, router, spies, cleanup }) => {
+        const before = state.snapshot.actressFavorites;
+        state.addFocusedFavorite();
+        await tick();
+        cleanup();
+        router.flush(200, okBody);
+        await tick(); await tick();
+        assert.equal(state.favoriteBusyFor('Alice'), false, '離頁後仍清 busy');
+        assert.equal(state.snapshot.actressFavorites, before);
+        assert.equal(spies.toasts.length, 0);
+        assert.equal(spies.redraws, 0);
+    });
+    // ③ cleanup 後 bfcache 還原（persisted:true）再收藏：恢復運作
+    await withFavFetch({}, async ({ state, router, spies, cleanup }) => {
+        cleanup();
+        state._onPageShow({ persisted: true });
+        state.addFocusedFavorite();
+        await tick();
+        router.flush(200, okBody);
+        await tick(); await tick();
+        assert.equal(state.isFavoriteActress('Alice'), true);
+        assert.equal(spies.redraws, 1);
+        assert.equal(spies.toasts.length, 1);
+        assert.deepEqual(spies.toasts[0], ['showcase.actress.addSuccess', 'success']);
+    });
+    // ④ persisted:false 不復活：回應在其後抵達仍零寫入
+    await withFavFetch({}, async ({ state, router, spies, cleanup }) => {
+        const before = state.snapshot.actressFavorites;
+        state.addFocusedFavorite();
+        await tick();
+        cleanup();
+        state._onPageShow({ persisted: false });
+        router.flush(200, okBody);
+        await tick(); await tick();
+        assert.equal(state.snapshot.actressFavorites, before);
+        assert.equal(spies.toasts.length, 0);
+        assert.equal(spies.redraws, 0);
+    });
+});

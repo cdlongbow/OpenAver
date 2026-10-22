@@ -311,6 +311,8 @@ export function libraryInsightsState() {
             } finally {
                 delete this.favoriteBusy[name];
             }
+            if (!_pageAlive) return;
+            if (!this.snapshot) return;
             if (kind === 'added' || kind === 'already') {
                 this.snapshot.actressFavorites = mergeFavorite(this.snapshot.actressFavorites, name, buildFavoriteEntry(data.actress));
                 this.photoFailed[name] = false;
@@ -1670,6 +1672,7 @@ export function libraryInsightsState() {
 
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
+            _pageAlive = true; // bfcache 還原後復活（I-5③）
             // 側欄離頁已 cleanup；bfcache 不重跑 init，還原監聽及下次離頁的 hooks。
             if (this._bindPodiumResize()) this._registerInsightsCleanup();
             const size = podiumSizeForViewport(window.innerWidth);
