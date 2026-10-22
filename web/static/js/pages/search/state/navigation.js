@@ -199,7 +199,7 @@ export function searchStateNavigation() {
         const loadMoreSignal = this._getAbortSignal('loadMore');
 
         try {
-            const url = buildSearchUrl({ query: this.currentQuery, maker, offset: newOffset, limit: maker ? undefined : this.PAGE_SIZE });
+            const url = buildSearchUrl({ query: this.currentQuery, maker, offset: newOffset, limit: maker ? undefined : this.PAGE_SIZE, cursor: this.currentCursor });
             const response = await fetch(url, { signal: loadMoreSignal });
             const data = await response.json();
 
@@ -211,6 +211,7 @@ export function searchStateNavigation() {
                 this.searchResults = this.searchResults.concat(data.data);
                 this.currentOffset = newOffset;
                 this.hasMoreResults = data.has_more;
+                this.currentCursor = data.cursor ?? null;  // 175d：token 每頁更新；成功但沒給 ⇒ null（I-F1）。在 rid 守衛之後，晚到回應不得覆寫
                 this._resetCoverState();
 
                 this.preloadImages(oldLength + 1, 5);
