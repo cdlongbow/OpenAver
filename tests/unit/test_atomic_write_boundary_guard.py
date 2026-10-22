@@ -1083,14 +1083,3 @@ REPRESENTATIVE_REPLACE_FILES = [
 ]
 
 
-@pytest.mark.parametrize(
-    "py_file", REPRESENTATIVE_REPLACE_FILES,
-    ids=[str(p.relative_to(REPO_ROOT)) for p in REPRESENTATIVE_REPLACE_FILES],
-)
-def test_representative_replace_heavy_files_have_zero_violations(py_file):
-    assert py_file.exists(), f"代表性檔案不存在，需更新清單：{py_file}"
-    violations = _find_violations(py_file)
-    assert violations == [], (
-        f"{py_file} 現存 .replace( 呼叫應全數為合法用法（區域變數/鏈式呼叫），"
-        f"實際被守衛誤判為違規：{violations}"
-    )

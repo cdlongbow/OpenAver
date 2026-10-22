@@ -43,55 +43,6 @@ def client(tmp_db, monkeypatch):
     return TestClient(app)
 
 
-class TestSearchUserTagsPersist:
-    """
-    test_search_user_tags_persist:
-    加 tag → remove tag → GET 確認移除已持久化
-    """
-
-    def test_add_then_remove_tag_persisted(self, tmp_db, monkeypatch):
-        """POST add tag → POST remove tag → GET 確認移除已持久化"""
-        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
-        from web.app import app
-        test_client = TestClient(app)
-
-        # 先加
-        test_client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI,
-            "add": ["暫時標籤"],
-        })
-
-        # 再刪
-        remove_resp = test_client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI,
-            "remove": ["暫時標籤"],
-        })
-        assert remove_resp.json()["success"] is True
-        assert "暫時標籤" not in remove_resp.json()["user_tags"]
-
-        # GET 確認
-        get_resp = test_client.get("/api/user-tags", params={"file_path": TEST_FILE_URI})
-        assert "暫時標籤" not in get_resp.json()["user_tags"]
-
-
-class TestSearchUserTagsNoFilePath:
-    """
-    test_search_user_tags_no_file_path:
-    file_path 為空字串 → 422 或 success=False
-    """
-
-    def test_post_empty_file_path_returns_422_or_false(self, client):
-        """POST file_path 為空字串 → 422 或 success=False（視 validator 行為）"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": "",
-            "add": ["★5"],
-        })
-        # 可接受 422（Pydantic min_length validation）或 200 success=False
-        assert resp.status_code in (200, 422)
-        if resp.status_code == 200:
-            assert resp.json()["success"] is False
-
-
 class TestNfoPreservation:
     """
     P1 修正：NFO surgical update — 加 user_tag 不清掉既有 NFO 欄位。

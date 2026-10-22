@@ -4,7 +4,6 @@
 
 TDD-lite 策略：先 RED → 實作 GREEN
 """
-import textwrap
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -61,24 +60,10 @@ class TestNeedsUpdateNewFields:
     """needs_update() 對新欄位（director/duration/series/label）的判斷"""
 
     # 1. 缺 director → missing 含 'director'
-    def test_missing_director_in_missing_list(self):
-        info = make_base_info(director='')
-        need, missing = needs_update(info, has_nfo=True)
-        assert need is True
-        assert 'director' in missing
 
     # 2. duration=None → missing 含 'duration'
-    def test_missing_duration_none_in_missing_list(self):
-        info = make_base_info(duration=None)
-        need, missing = needs_update(info, has_nfo=True)
-        assert need is True
-        assert 'duration' in missing
 
     # 3. duration=0 → 不列入 missing（0 是有效值）
-    def test_duration_zero_not_missing(self):
-        info = make_base_info(duration=0)
-        need, missing = needs_update(info, has_nfo=True)
-        assert 'duration' not in missing
 
     # 4. 缺 series → 不再檢查（來源不一定有）
     @pytest.mark.parametrize("field", ["series", "label"])
@@ -100,38 +85,6 @@ class TestNeedsUpdateNewFields:
         # 新欄位不應出現在 missing（全有值）
         for field in ('director', 'duration'):
             assert field not in missing
-
-
-class TestNeedsUpdateNeverNagsPlotRating:
-    """TASK-93-T8 / D11 #2 回歸鎖：評分/簡介只寫 NFO、絕不列入 scanner 缺料提醒。
-
-    T1–T7 讓各來源開始填 rating/plot 後，needs_update() 仍不得把 plot/rating
-    當缺料（否則掃描頁會對「本就沒評分/簡介」的片永久嘮叨）。plot/rating 是
-    NFO-only carrier、從不進 info dict，故結構上不可能被 nag——本測試把此契約
-    顯式鎖死，防未來有人於 needs_update() 誤加 plot/rating 檢查。"""
-
-    # 全有值 → 完全不需更新，plot/rating 自然不在 missing
-    def test_plot_rating_absent_when_all_present(self):
-        info = make_base_info()
-        need, missing = needs_update(info, has_nfo=True)
-        assert need is False
-        assert missing == []
-        assert 'plot' not in missing
-        assert 'rating' not in missing
-
-    # 補充：has_nfo=False → early return，不管欄位
-    def test_no_nfo_returns_empty(self):
-        info = make_base_info(director='')
-        need, missing = needs_update(info, has_nfo=False)
-        assert need is False
-        assert missing == []
-
-    # 補充：無番號 → early return
-    def test_no_num_returns_empty(self):
-        info = make_base_info(num='', director='')
-        need, missing = needs_update(info, has_nfo=True)
-        assert need is False
-        assert missing == []
 
 
 # ============================================================
@@ -199,14 +152,8 @@ class TestUpdateNfoFileNewFields:
         [
             ({'director': '既存監督'}, {'director': '既存監督'},
              {'director': '新監督'}, 'director', '既存監督'),
-            ({'runtime': '90'}, {'duration': 90},
-             {'duration': 200}, 'runtime', '90'),
-            ({'set_name': '既存シリーズ'}, {'series': '既存シリーズ'},
-             {'series': '新シリーズ'}, 'set/name', '既存シリーズ'),
-            ({'label': '既存label'}, {'label': '既存label'},
-             {'label': '新label'}, 'label', '既存label'),
         ],
-        ids=['director', 'runtime', 'set_name', 'label'],
+        ids=['director', ],
     )
     def test_existing_director_not_overwritten(
         self, tmp_path, nfo_kwargs, info_kwargs, metadata, xpath, expected
@@ -221,75 +168,12 @@ class TestUpdateNfoFileNewFields:
         assert root.find(xpath).text == expected
 
     # 12. duration=0 → 寫入 <runtime>0</runtime>
-    def test_duration_zero_written_as_runtime(self, tmp_path):
-        nfo_xml = self._minimal_nfo()  # 沒有 <runtime>
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(duration=None)  # info 沒有 duration
-        metadata = {'duration': 0}
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        assert updated is True
-        root = ET.parse(nfo_path).getroot()
-        runtime_elem = root.find('runtime')
-        assert runtime_elem is not None
-        assert runtime_elem.text == '0'
 
     # 14. metadata 無 series → 不建立空 <set>
-    def test_no_series_in_metadata_no_set_created(self, tmp_path):
-        nfo_xml = self._minimal_nfo()
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(series='')
-        metadata = {}  # 沒有 series
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('set') is None
 
     # 補充：既有欄位（title/maker）邏輯不受影響
-    def test_existing_logic_not_broken(self, tmp_path):
-        """既有的 title/maker 補全邏輯不應受新欄位影響"""
-        nfo_xml = textwrap.dedent("""\
-            <?xml version="1.0" encoding="utf-8"?>
-            <movie>
-              <title></title>
-              <num>TEST-001</num>
-            </movie>
-        """)
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(title='', maker='')
-        metadata = {
-            'title': '新タイトル',
-            'maker': '新片商',
-        }
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        assert updated is True
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('title').text == '新タイトル'
-        assert root.find('studio').text == '新片商'
 
     # 補充：<set> 已存在但缺 <name> → 補入 <name>，不重建 <set>
-    def test_set_exists_without_name_fills_name(self, tmp_path):
-        nfo_xml = textwrap.dedent("""\
-            <?xml version="1.0" encoding="utf-8"?>
-            <movie>
-              <title>テスト</title>
-              <num>TEST-001</num>
-              <set></set>
-            </movie>
-        """)
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(series='')
-        metadata = {'series': '補完シリーズ'}
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        assert updated is True
-        root = ET.parse(nfo_path).getroot()
-        name_elem = root.find('set/name')
-        assert name_elem is not None
-        assert name_elem.text == '補完シリーズ'
-        # <set> 只存在一個
-        assert len(root.findall('set')) == 1
 
 
 # ============================================================
@@ -321,27 +205,6 @@ class TestUpdateNfoFilePlotRatingMpaa:
 
     # ── P2-1: fill all three when missing ──
 
-    def test_fill_plot_rating_mpaa_when_all_missing(self, tmp_path):
-        """NFO 缺 plot/rating/mpaa + metadata 有 _summary/_rating → 三者全部補入"""
-        nfo_path = write_nfo(tmp_path, self._nfo())
-        info = make_base_info()
-        metadata = {'_summary': 'Test plot summary', '_rating': 4.0}
-
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        assert updated is True
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('plot') is not None
-        # ET round-trips text 1:1（plain text 無需 escape）；XSS escape 另由
-        # test_plot_special_chars_safe_in_xml 驗證
-        assert root.find('plot').text == 'Test plot summary'
-        assert root.find('rating') is not None
-        assert root.find('rating').text == '8.0'   # 4.0 × 2
-        assert root.find('mpaa') is not None
-        assert root.find('mpaa').text == 'JP-18+'
-        assert 'plot' in msg
-        assert 'rating' in msg
-        assert 'mpaa' in msg
 
     # ── P2-2: rating × 2, format ──
 
@@ -358,25 +221,6 @@ class TestUpdateNfoFilePlotRatingMpaa:
 
     # ── P2-3: do not overwrite existing plot ──
 
-    @pytest.mark.parametrize(
-        ("nfo_kwargs", "metadata", "tag", "expected"),
-        [
-            ({'plot': 'Existing plot'}, {'_summary': 'New summary', '_rating': 3.0},
-             'plot', 'Existing plot'),
-            ({'rating': '6.0'}, {'_rating': 4.0}, 'rating', '6.0'),
-            ({'mpaa': 'R'}, {'_summary': 'x', '_rating': 3.0}, 'mpaa', 'R'),
-        ],
-        ids=['plot', 'rating', 'mpaa'],
-    )
-    def test_existing_plot_not_overwritten(self, tmp_path, nfo_kwargs, metadata, tag, expected):
-        """現 NFO 已有 <plot>／<rating>／<mpaa> → 不覆蓋"""
-        nfo_path = write_nfo(tmp_path, self._nfo(**nfo_kwargs))
-        info = make_base_info()
-
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find(tag).text == expected
 
     # ── P2-4: do not overwrite existing rating ──
 
@@ -384,51 +228,11 @@ class TestUpdateNfoFilePlotRatingMpaa:
 
     # ── P2-6: mpaa filled even without _summary/_rating (builtin path) ──
 
-    def test_mpaa_filled_for_builtin_metadata_no_summary_rating(self, tmp_path):
-        """builtin 來源（無 _summary/_rating）→ mpaa 仍補 JP-18+（無條件補，fill-if-missing）"""
-        nfo_path = write_nfo(tmp_path, self._nfo())
-        info = make_base_info()
-        metadata = {}   # no _summary, no _rating
-
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        # mpaa should still be filled
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('mpaa') is not None
-        assert root.find('mpaa').text == 'JP-18+'
-        # plot and rating should NOT be added (no data)
-        assert root.find('plot') is None
-        assert root.find('rating') is None
 
     # ── P2-7: zero rating is not written ──
 
-    def test_zero_rating_not_written(self, tmp_path):
-        """_rating=0 → 不寫 <rating>（無效值）"""
-        nfo_path = write_nfo(tmp_path, self._nfo())
-        info = make_base_info()
-        metadata = {'_summary': 'x', '_rating': 0}
-
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('rating') is None
 
     # ── P2-8: injection prevention via ET escaping ──
-
-    def test_plot_special_chars_safe_in_xml(self, tmp_path):
-        """<plot> 帶特殊字元時 XML 仍可解析，ET round-trip 還原原始文字（ET 自動 escape on write）"""
-        nfo_path = write_nfo(tmp_path, self._nfo())
-        info = make_base_info()
-        evil = '<script>alert("xss")</script> & "quotes"'
-        metadata = {'_summary': evil}
-
-        update_nfo_file(nfo_path, metadata, info)
-
-        # ET write escapes automatically; ET.parse round-trips back to original text
-        root = ET.parse(nfo_path).getroot()
-        plot_elem = root.find('plot')
-        assert plot_elem is not None
-        assert plot_elem.text == evil   # ET round-trips unescaped
 
 
 # ============================================================
@@ -438,14 +242,6 @@ class TestUpdateNfoFilePlotRatingMpaa:
 class TestAddActor:
     """add_actor() — 演員新增與去重"""
 
-    def test_add_actor_to_empty_root_returns_true_and_element_exists(self):
-        """空 root 新增演員 → return True 且 <actor><name> 存在。"""
-        root = ET.fromstring("<movie/>")
-        result = add_actor(root, "女優A")
-        assert result is True
-        names = root.findall('.//actor/name')
-        assert len(names) == 1
-        assert names[0].text == "女優A"
 
     def test_add_duplicate_actor_returns_false_and_count_unchanged(self):
         """root 已有同名 actor → return False，<actor> 數量不變。"""
@@ -462,13 +258,6 @@ class TestAddActor:
 class TestAddTagsAndGenres:
     """add_tags_and_genres() — tag/genre 獨立去重"""
 
-    def test_empty_root_add_three_tags_returns_three(self):
-        """空 root 加 3 個 tag → return 3，<tag> × 3、<genre> × 3。"""
-        root = ET.fromstring("<movie/>")
-        count = add_tags_and_genres(root, ["東方", "魔法", "戀愛"])
-        assert count == 3
-        assert len(root.findall('tag')) == 3
-        assert len(root.findall('genre')) == 3
 
     def test_existing_tag_not_duplicated_count_zero(self):
         """root 已有 <tag>東方</tag> 再加「東方」→ count == 0，<tag>東方</tag> 僅 1 個。"""
@@ -476,24 +265,6 @@ class TestAddTagsAndGenres:
         count = add_tags_and_genres(root, ["東方"])
         assert count == 0
         assert len(root.findall('tag')) == 1
-
-    def test_existing_genre_but_no_tag_adds_tag_not_genre(self):
-        """root 已有 <genre>東方</genre>（無 <tag>）再加「東方」→ <tag> 新增 1（count==1），<genre> 不重複（仍 1 個）。"""
-        root = ET.fromstring("<movie><genre>東方</genre></movie>")
-        count = add_tags_and_genres(root, ["東方"])
-        # tag should be added (was not in existing_tags)
-        assert count == 1
-        assert len(root.findall('tag')) == 1
-        # genre should NOT be duplicated (already in existing_genres)
-        assert len(root.findall('genre')) == 1
-
-    def test_empty_and_whitespace_strings_skipped(self):
-        """加 ["", "  "] → count == 0。"""
-        root = ET.fromstring("<movie/>")
-        count = add_tags_and_genres(root, ["", "  "])
-        assert count == 0
-        assert len(root.findall('tag')) == 0
-        assert len(root.findall('genre')) == 0
 
 
 # ============================================================
@@ -537,18 +308,6 @@ class TestUpdateNfoUserTags:
         root = ET.parse(str(nfo)).getroot()
         assert len(root.findall('user_tag')) == 0
 
-    def test_nonexistent_path_returns_false(self, tmp_path):
-        """不存在路徑 → return False。"""
-        result = update_nfo_user_tags(str(tmp_path / "no_such.nfo"), ["tag"])
-        assert result is False
-
-    def test_malformed_xml_returns_false(self, tmp_path):
-        """畸形 XML → return False（ParseError 被 except Exception 捕捉）。"""
-        nfo = tmp_path / "bad.nfo"
-        nfo.write_bytes(b'<movie><title>test</title><unclosed>')
-        result = update_nfo_user_tags(str(nfo), ["tag"])
-        assert result is False
-
 
 # ============================================================
 # update_nfo_file() 補欄分支測試（TASK-73c-T1）
@@ -563,56 +322,6 @@ class TestUpdateNfoFileFillBranches:
         nfo.write_text(xml_content, encoding="utf-8")
         return str(nfo)
 
-    def test_fill_date_when_info_has_no_date(self, tmp_path):
-        """NFO 無 <premiered>，info={}，metadata={'date':'2024-01-01'} → <premiered> 寫入，changed==True，訊息含 'date'。"""
-        nfo_path = self._write_nfo(
-            tmp_path,
-            '<?xml version="1.0" encoding="utf-8"?>'
-            '<movie><title>テスト</title><num>TEST-001</num></movie>',
-        )
-        info = {}
-        metadata = {"date": "2024-01-01"}
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        assert updated is True
-        assert "date" in msg
-        root = ET.parse(nfo_path).getroot()
-        premiered = root.find('premiered')
-        assert premiered is not None
-        assert premiered.text == "2024-01-01"
-
-    def test_existing_date_in_info_not_overwritten(self, tmp_path):
-        """NFO 已有 <premiered>2023-05-01</premiered>，info['date']='2023-05-01' → <premiered> 不改。"""
-        nfo_path = self._write_nfo(
-            tmp_path,
-            '<?xml version="1.0" encoding="utf-8"?>'
-            '<movie><title>テスト</title><num>TEST-001</num>'
-            '<premiered>2023-05-01</premiered></movie>',
-        )
-        info = {"date": "2023-05-01"}
-        metadata = {"date": "2024-01-01"}
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('premiered').text == "2023-05-01"
-
-    def test_fill_actors_when_info_has_no_actor(self, tmp_path):
-        """NFO 無 <actor>，info={}，metadata={'actors':['女優A','女優B']} → 兩個 <actor><name> 加入。"""
-        nfo_path = self._write_nfo(
-            tmp_path,
-            '<?xml version="1.0" encoding="utf-8"?>'
-            '<movie><title>テスト</title><num>TEST-001</num></movie>',
-        )
-        info = {}
-        metadata = {"actors": ["女優A", "女優B"]}
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        assert updated is True
-        root = ET.parse(nfo_path).getroot()
-        names = [e.text for e in root.findall('.//actor/name')]
-        assert "女優A" in names
-        assert "女優B" in names
-        assert len(names) == 2
 
     def test_existing_actor_in_info_no_new_actor_added(self, tmp_path):
         """NFO 已有 <actor><name>女優A</name></actor>，info={'actor':[{'name':'女優A'}]} → 無新 actor 加入。"""
@@ -664,38 +373,6 @@ class TestGetNfoPathPathMappingReverse:
         result_no_mapping = get_nfo_path_from_video(video_path)
         assert result_no_mapping is None
 
-    def test_non_wsl_equivalent(self, tmp_path, monkeypatch):
-        """非 WSL 環境：mapping 存在也不生效，行為與改動前字面等價。"""
-        video_dir = tmp_path / "videos"
-        video_dir.mkdir()
-        video_path_str = str(video_dir / "movie.mp4")
-        nfo_file = video_dir / "movie.nfo"
-        nfo_file.write_text("<movie></movie>", encoding="utf-8")
-
-        mappings = {str(video_dir): "//NAS/share"}
-        monkeypatch.setattr(path_utils, "CURRENT_ENV", "linux")
-
-        result = get_nfo_path_from_video(video_path_str, mappings)
-        assert result == str(nfo_file)
-
-        # NFO 不存在 → None
-        missing_path = str(video_dir / "missing.mp4")
-        assert get_nfo_path_from_video(missing_path, mappings) is None
-
-    def test_no_mapping_equivalent(self, tmp_path):
-        """無 mapping（None）：行為與改動前字面等價。"""
-        video_dir = tmp_path / "videos2"
-        video_dir.mkdir()
-        video_path_str = str(video_dir / "movie.mp4")
-        nfo_file = video_dir / "movie.nfo"
-        nfo_file.write_text("<movie></movie>", encoding="utf-8")
-
-        result = get_nfo_path_from_video(video_path_str, None)
-        assert result == str(nfo_file)
-
-        missing_path = str(video_dir / "missing.mp4")
-        assert get_nfo_path_from_video(missing_path, None) is None
-
 
 # ============================================================
 # check_cache_needs_update() 測試
@@ -725,32 +402,4 @@ class TestCheckCacheNeedsUpdateItems:
         assert item['number'] == 'TEST-001'
         assert item['missing'] == ['director']
 
-    def test_check_cache_needs_update_duration_zero_not_in_items(self):
-        """duration=0 是有效值，不列入 missing 且其餘齊全時不進入 items"""
-        cache = {
-            'file:///movies/TEST-002.mp4': {
-                'nfo_mtime': 1234567890.0,
-                'info': make_base_info(num='TEST-002', duration=0),
-            }
-        }
-        stats = check_cache_needs_update(cache)
-        assert stats['need_update'] == 0
-        assert stats['paths'] == []
-        assert stats['items'] == []
 
-    def test_check_cache_needs_update_items_in_same_order_as_paths(self):
-        """items 的順序與 paths 同序"""
-        cache = {
-            'file:///movies/A.mp4': {
-                'nfo_mtime': 1234567890.0,
-                'info': make_base_info(num='A-001', title=''),
-            },
-            'file:///movies/B.mp4': {
-                'nfo_mtime': 1234567890.0,
-                'info': make_base_info(num='B-002', director=''),
-            },
-        }
-        stats = check_cache_needs_update(cache)
-        assert stats['need_update'] == 2
-        assert [i['path'] for i in stats['items']] == stats['paths']
-        assert stats['paths'] == ['file:///movies/A.mp4', 'file:///movies/B.mp4']

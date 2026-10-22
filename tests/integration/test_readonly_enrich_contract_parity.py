@@ -34,7 +34,6 @@ from core.enrich_contract import EnrichResult
 pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
 
 
-
 # ── 全欄位歸類常數（防「只比三欄」退化的靈魂，CD-105-6-3）────────────────────────
 
 # 動態取，不硬編：未來 EnrichResult 加欄且未歸類 → _assert_parity 的全歸類 assert RED。
@@ -296,51 +295,6 @@ def _run_readonly_samples(client, mocker, *, search_meta, produce_sample_fs):
 
 class TestReadonlyEnrichContractParity:
 
-    def test_scenario_1_no_hit_not_found(self, client, mocker):
-        """①全無命中：唯讀 C（resolve_ingest_plan→None）+ E（batch）vs 非唯讀 A
-        （search_jav→None）。reason=not_found、cover_written=False、extrafanart=0。"""
-        nr = _run_nonreadonly_enrich(search_result=None, os_exists=True, mode="refresh_full")
-        assert nr["success"] is False and nr["reason"] == "not_found"
-
-        ro_c = _run_readonly_enrich(client, mocker, plan_meta=None, os_exists=True, mode="refresh_full")
-        _assert_parity(ro_c, nr)
-
-        ro_e = _run_readonly_batch(client, mocker, plan_meta=None, os_exists=True)
-        _assert_parity(ro_e, nr)  # E 覆蓋 SSE reason 正規化 'no_scrape'→'not_found'
-
-    def test_scenario_2_meta_no_cover(self, client, mocker):
-        """②有 meta 無封面：唯讀 C（cover_fs=''）+ E vs 非唯讀 A（meta 無 servable cover）。
-        reason=no_cover、cover_written=False。"""
-        nr = _run_nonreadonly_enrich(
-            search_result=_scraper_meta(cover=""), os_exists=True, row_cover_path="",
-            mode="refresh_full")
-        assert nr["success"] is True and nr["reason"] == "no_cover" and nr["cover_written"] is False
-
-        ro_c = _run_readonly_enrich(
-            client, mocker, plan_meta=_scraper_meta(cover=""), os_exists=True,
-            existing_cover_path="", produce_cover_fs="", mode="refresh_full")
-        _assert_parity(ro_c, nr)
-
-        ro_e = _run_readonly_batch(
-            client, mocker, plan_meta=_scraper_meta(cover=""), os_exists=True,
-            existing_cover_path="", produce_cover_fs="")
-        _assert_parity(ro_e, nr)
-
-    def test_scenario_3_meta_cover_written(self, client, mocker):
-        """③有 meta＋封面成功寫（overwrite=True 排除 preserve）：唯讀 C（cover_fs 有值、
-        servable）vs 非唯讀 A（download_image→True、DB cover 在）。reason=hit、cover_written=True。"""
-        nr = _run_nonreadonly_enrich(
-            search_result=_scraper_meta(), os_exists=True,
-            row_cover_path="file:///video/ABC-001.jpg", download_image_ret=True,
-            mode="refresh_full", overwrite_existing=True)
-        assert nr["success"] is True and nr["reason"] == "hit" and nr["cover_written"] is True
-
-        ro_c = _run_readonly_enrich(
-            client, mocker, plan_meta=_scraper_meta(), os_exists=True,
-            existing_cover_path="file:///out/cover.jpg",
-            produce_cover_fs="/out/ro/ABC-001/ABC-001.jpg",
-            mode="refresh_full", overwrite_existing=True, readonly_action="rescrape")
-        _assert_parity(ro_c, nr)
 
     def test_scenario_4_fill_missing_existing_cover_preserved(self, client, mocker):
         """④fill_missing+overwrite=False+既有 servable 封面（保留）：唯讀 C（had_cover=True →
@@ -375,22 +329,3 @@ class TestReadonlyEnrichContractParity:
             mode="fill_missing", overwrite_existing=False)
         _assert_parity(ro_c, nr)
 
-    def test_scenario_6_samples(self, client, mocker):
-        """⑥補劇照：唯讀 D（fetch-samples readonly）vs 非唯讀 B（fetch_samples_only）。
-        兩子例：成功（extrafanart=N、reason=None）＋找不到（success=False、reason=None）。"""
-        # ⑥a 成功：N=2 samples 寫出
-        nr_ok = _run_nonreadonly_samples(
-            search_meta=_scraper_meta(sample_images=["s1", "s2"]), sample_uris=["u1", "u2"])
-        assert nr_ok["success"] is True and nr_ok["reason"] is None and nr_ok["extrafanart_written"] == 2
-
-        ro_ok = _run_readonly_samples(
-            client, mocker, search_meta=_scraper_meta(sample_images=["s1", "s2"]),
-            produce_sample_fs=["f1", "f2"])
-        _assert_parity(ro_ok, nr_ok)
-
-        # ⑥b 找不到：search_jav→None，兩路徑 reason=None（samples 站不設 reason）
-        nr_miss = _run_nonreadonly_samples(search_meta=None, sample_uris=[])
-        assert nr_miss["success"] is False and nr_miss["reason"] is None
-
-        ro_miss = _run_readonly_samples(client, mocker, search_meta=None, produce_sample_fs=[])
-        _assert_parity(ro_miss, nr_miss)

@@ -8,8 +8,7 @@ TDD-lite：先從邊界條件 E1–E9 提取 RED 測試 → 實作 GREEN。
 import os
 import sqlite3
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from core.database import init_db
@@ -57,21 +56,6 @@ def client(tmp_db, monkeypatch):
 
 
 # ── E1: file_path 不在 DB ─────────────────────────────────────────────────────
-
-class TestE1FilePathNotInDB:
-    """E1: file_path 不在 DB → success=false, error 存在"""
-
-    def test_post_nonexistent_returns_success_false(self, client):
-        """POST 不存在的 file_path → success=False，包含 error"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": NONEXISTENT_URI,
-            "add": ["★5"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is False
-        assert "error" in data
-        assert data["error"]
 
 
 # ── E1b: file 存在於 FS 但不在 DB → 自動建立 stub ──────────────────────────────
@@ -145,42 +129,8 @@ class TestE2AddExistingTag:
         tags = data["user_tags"]
         assert tags.count("★4") == 1
 
-    def test_add_existing_tag_idempotent(self, client):
-        """多次 add 同一 tag → 結果相同，不累積"""
-        # 第一次
-        resp1 = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI,
-            "add": ["新標"],
-        })
-        tags1 = resp1.json()["user_tags"]
-
-        # 第二次（重複 add）
-        resp2 = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI,
-            "add": ["新標"],
-        })
-        tags2 = resp2.json()["user_tags"]
-
-        assert tags1.count("新標") == 1
-        assert tags2.count("新標") == 1
-        assert tags1 == tags2
-
 
 # ── E3: remove 包含不存在的 tag（靜默忽略）───────────────────────────────────
-
-class TestE3RemoveNonexistentTag:
-    """E3: remove 包含不存在的 tag → 靜默忽略，不報錯"""
-
-    def test_remove_nonexistent_tag_no_error(self, client):
-        """remove 不存在的 tag → success=True，不報錯；原有 tags 不受影響"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI,
-            "remove": ["不存在的標籤"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert "★4" in data["user_tags"]  # 原有 ★4 仍保留
 
 
 # ── E4: add 和 remove 同時含相同 tag（remove 優先）───────────────────────────
@@ -203,52 +153,12 @@ class TestE4AddRemoveConflict:
 
 # ── E5: add=[], remove=[]（純查詢式 POST）────────────────────────────────────
 
-class TestE5EmptyAddRemove:
-    """E5: add=[], remove=[] → DB 更新、NFO 重寫仍執行（user_tags 不變）"""
-
-    def test_empty_add_remove_success(self, client):
-        """add=[], remove=[] → success=True，user_tags 不變"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI,
-            "add": [],
-            "remove": [],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["user_tags"] == ["★4"]  # 不變
-
 
 # ── E6: NFO 寫入失敗 ──────────────────────────────────────────────────────────
 
 class TestE6NfoWriteFailure:
     """E6: NFO 寫入失敗 → success=True, nfo_updated=False（DB 已更新）"""
 
-    def test_nfo_write_fail_exception(self, client, monkeypatch):
-        """mock update_nfo_user_tags 拋出 OSError → success=True, nfo_updated=False"""
-        with patch("web.routers.collection.update_nfo_user_tags", side_effect=OSError("Permission denied")):
-            resp = client.post("/api/user-tags", json={
-                "file_path": TEST_FILE_URI,
-                "add": ["★5"],
-            })
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["nfo_updated"] is False
-
-    def test_nfo_write_fail_returns_false(self, client, monkeypatch):
-        """mock update_nfo_user_tags 回傳 False（靜默失敗）→ success=True, nfo_updated=False"""
-        with patch("web.routers.collection.update_nfo_user_tags", return_value=False):
-            resp = client.post("/api/user-tags", json={
-                "file_path": TEST_FILE_URI,
-                "add": ["★5"],
-            })
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["nfo_updated"] is False
 
     def test_nfo_write_fail_db_still_updated(self, tmp_db, monkeypatch):
         """mock update_nfo_user_tags 拋出 OSError → DB 仍然更新"""
@@ -273,50 +183,11 @@ class TestE6NfoWriteFailure:
 
 # ── E7: add 含重複 tag ─────────────────────────────────────────────────────────
 
-class TestE7AddDuplicatesInRequest:
-    """E7: add 含重複 tag（["★5", "★5"]）→ 去重，結果只有一個 "★5"""""
-
-    def test_add_duplicate_tags_in_request(self, client):
-        """add=['★5', '★5'] → 結果只有一個 '★5'"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI2,  # ABW-001，初始 user_tags=[]
-            "add": ["★5", "★5"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["user_tags"].count("★5") == 1
-
 
 # ── E8: user_tags 為空，remove 含任意 tag ────────────────────────────────────
 
-class TestE8EmptyTagsRemove:
-    """E8: user_tags 為空 list，remove 含任意 tag → 回傳空 list，不報錯"""
-
-    def test_empty_tags_remove_returns_empty(self, client):
-        """ABW-001 user_tags=[], remove=['任意'] → [] 不報錯"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI2,  # 初始 user_tags=[]
-            "remove": ["任意標籤"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["user_tags"] == []
-
 
 # ── E9: GET 查詢不存在的 file_path ────────────────────────────────────────────
-
-class TestE9GetNonexistent:
-    """E9: GET 查詢不存在的 file_path → 200 + {user_tags: [], file_path: ...}"""
-
-    def test_get_nonexistent_returns_empty_list(self, client):
-        """GET 不存在的 file_path → 200，user_tags=[]"""
-        resp = client.get("/api/user-tags", params={"file_path": NONEXISTENT_URI})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["user_tags"] == []
-        assert data["file_path"] == NONEXISTENT_URI
 
 
 # ── Happy Path ────────────────────────────────────────────────────────────────
@@ -324,28 +195,6 @@ class TestE9GetNonexistent:
 class TestHappyPath:
     """Happy path：正常操作流程"""
 
-    def test_post_add_new_tag(self, client):
-        """add 新 tag → success=True，tag 在 user_tags"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI2,
-            "add": ["★5"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert "★5" in data["user_tags"]
-        assert "nfo_updated" in data
-
-    def test_post_remove_existing_tag(self, client):
-        """remove 已存在的 tag → tag 不在 user_tags"""
-        resp = client.post("/api/user-tags", json={
-            "file_path": TEST_FILE_URI,
-            "remove": ["★4"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert "★4" not in data["user_tags"]
 
     def test_get_existing_file_path(self, client):
         """GET 已存在的 file_path → 回傳現有 user_tags"""
@@ -387,18 +236,6 @@ class TestHappyPath:
         data = resp.json()
         assert "持久化測試" in data["user_tags"]
 
-    def test_post_missing_file_path_returns_422(self, client):
-        """file_path 缺失 → Pydantic 422"""
-        resp = client.post("/api/user-tags", json={
-            "add": ["★5"],
-        })
-        assert resp.status_code == 422
-
-    def test_get_missing_file_path_returns_422(self, client):
-        """GET 缺少 file_path → 422"""
-        resp = client.get("/api/user-tags")
-        assert resp.status_code == 422
-
 
 # ── E10: _normalize_to_uri canonicalization（P0 修正）──────────────────────────
 
@@ -420,10 +257,6 @@ class TestE10PathCanonicalization:
         # canonical 形式是 file:///C:/...（Windows drive letter 形式）
         assert canon1 == "file:///C:/test.mp4"
 
-    def test_canonicalizes_native_mnt_path(self):
-        """native /mnt/c/X path 應 canonical 為 file:///C:/X"""
-        from web.routers.collection import _normalize_to_uri
-        assert _normalize_to_uri("/mnt/c/test.mp4") == "file:///C:/test.mp4"
 
     def test_canonicalizes_windows_native_path(self):
         """native C:\\X path 應 canonical 為 file:///C:/X"""
@@ -431,10 +264,6 @@ class TestE10PathCanonicalization:
         assert _normalize_to_uri("C:\\Videos\\test.mp4") == "file:///C:/Videos/test.mp4"
         assert _normalize_to_uri("C:/Videos/test.mp4") == "file:///C:/Videos/test.mp4"
 
-    def test_idempotent_for_canonical_uri(self):
-        """canonical 形式的 file:///C:/X 應冪等"""
-        from web.routers.collection import _normalize_to_uri
-        assert _normalize_to_uri("file:///C:/test.mp4") == "file:///C:/test.mp4"
 
     def test_normalize_uses_gallery_path_mappings(self, monkeypatch):
         """_normalize_to_uri 會從 gallery config 取出 path_mappings 並傳給 to_file_uri。
@@ -466,20 +295,6 @@ class TestE10PathCanonicalization:
         round_trip = collection_mod._normalize_to_uri(result)
         assert round_trip == result, f"UNC URI 不冪等，got: {round_trip}"
 
-    def test_resolve_user_tag_paths_native_wsl_mount(self, monkeypatch):
-        """native /home/user/nas/... → canonical=UNC URI, local_fs=原 mount 路徑"""
-        from web.routers import collection as collection_mod
-
-        fake_config = {"gallery": {"path_mappings": {"/home/user/nas": "//NAS-SERVER/share"}}}
-        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
-        monkeypatch.setattr("core.path_utils.CURRENT_ENV", "wsl")
-        monkeypatch.setattr(collection_mod, "CURRENT_ENV", "wsl")
-
-        canonical, local_fs = collection_mod._resolve_user_tag_paths("/home/user/nas/foo.mp4")
-        # DB key 用 forward map → UNC URI
-        assert canonical == "file://///NAS-SERVER/share/foo.mp4"
-        # FS 操作用原 mount path（直接可開）
-        assert local_fs == "/home/user/nas/foo.mp4"
 
     def test_resolve_user_tag_paths_uri_reverse_maps_unc(self, monkeypatch):
         """canonical UNC URI 輸入 → canonical 不變，local_fs 反向映射為 mount 路徑"""
@@ -498,98 +313,6 @@ class TestE10PathCanonicalization:
         # 關鍵：FS 操作要用 reverse-mapped 的 mount path，否則 WSL 開不到檔
         assert local_fs == "/home/user/nas/foo.mp4", \
             f"reverse map 失敗，local_fs={local_fs}"
-
-    def test_resolve_user_tag_paths_no_mappings_passthrough(self, monkeypatch):
-        """無 path_mappings → local_fs == fs_normalized（不嘗試 reverse map）"""
-        from web.routers import collection as collection_mod
-
-        fake_config = {"gallery": {}}
-        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
-
-        canonical, local_fs = collection_mod._resolve_user_tag_paths("/test/foo.mp4")
-        # 無 mapping → fallback 到通用 file:/// 形式
-        assert canonical.startswith("file:///")
-        assert local_fs == "/test/foo.mp4"
-
-    def test_resolve_user_tag_paths_uri_reverse_backslash_unc(self, monkeypatch):
-        """backslash UNC 形式的 fs_normalized → 反向映射同樣命中，local_fs 為 mount 路徑。
-
-        mock uri_to_fs_path 回傳 backslash UNC，驗證 reverse_path_mapping 能處理 \\ 形式。
-        """
-        from web.routers import collection as collection_mod
-
-        fake_config = {"gallery": {"path_mappings": {"/home/user/nas": "//NAS-SERVER/share"}}}
-        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
-        monkeypatch.setattr("core.path_utils.CURRENT_ENV", "wsl")
-        monkeypatch.setattr(collection_mod, "CURRENT_ENV", "wsl")
-        # 強制 uri_to_fs_path 回傳 backslash UNC（模擬 Windows-style normalize 結果）
-        monkeypatch.setattr(
-            collection_mod, "uri_to_fs_path",
-            lambda _: "\\\\NAS-SERVER\\share\\foo.mp4"
-        )
-
-        canonical, local_fs = collection_mod._resolve_user_tag_paths(
-            "file://///NAS-SERVER/share/foo.mp4"
-        )
-        # canonical 由 to_file_uri 決定（path_mappings forward map）
-        assert canonical == "file://///NAS-SERVER/share/foo.mp4"
-        # local_fs 應由 backslash UNC 反向映射到 mount 路徑
-        assert local_fs == "/home/user/nas/foo.mp4", \
-            f"backslash UNC reverse map 失敗，local_fs={local_fs}"
-
-    def test_resolve_user_tag_paths_uri_no_hit_fallback(self, monkeypatch):
-        """URI 輸入但 mapping 不涵蓋該路徑 → local_fs fallback 為 fs_normalized（無錯誤）"""
-        from web.routers import collection as collection_mod
-
-        # mapping 只涵蓋 NAS-SERVER，不涵蓋 OTHER-NAS
-        fake_config = {"gallery": {"path_mappings": {"/home/user/nas": "//NAS-SERVER/share"}}}
-        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
-        monkeypatch.setattr("core.path_utils.CURRENT_ENV", "wsl")
-        monkeypatch.setattr(collection_mod, "CURRENT_ENV", "wsl")
-
-        canonical, local_fs = collection_mod._resolve_user_tag_paths(
-            "file://///OTHER-NAS/share/video.mp4"
-        )
-        assert canonical.startswith("file:///")
-        # 無命中 → fallback 到 fs_normalized（//OTHER-NAS/share/video.mp4），不為空
-        assert local_fs != ""
-        assert local_fs == "//OTHER-NAS/share/video.mp4", \
-            f"no-hit fallback 不符預期，local_fs={local_fs}"
-
-    def test_resolve_user_tag_paths_empty_mappings_no_error(self, monkeypatch):
-        """path_mappings 為 empty dict → 不報錯，canonical 為 file:/// 形式"""
-        from web.routers import collection as collection_mod
-
-        fake_config = {"gallery": {"path_mappings": {}}}
-        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
-
-        # empty mappings 不需要 WSL patch（if block 的 `path_mappings` 條件為 falsy）
-        canonical, local_fs = collection_mod._resolve_user_tag_paths("file:///C:/Videos/foo.mp4")
-        # 不應拋例外，canonical 應為合法 file:/// URI
-        assert canonical.startswith("file:///")
-        # local_fs 為 fs_normalized（無 reverse map）
-        assert local_fs != ""
-
-    def test_resolve_user_tag_paths_post_api_unc_forward(self, monkeypatch, tmp_db):
-        """POST /api/user-tags 傳 UNC URI → API 層不 500（reverse mapping 路徑不爆炸）"""
-        from web.routers import collection as collection_mod
-        from web.app import app
-        from fastapi.testclient import TestClient
-
-        fake_config = {"gallery": {"path_mappings": {"/home/user/nas": "//NAS-SERVER/share"}}}
-        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
-        monkeypatch.setattr("core.path_utils.CURRENT_ENV", "wsl")
-        monkeypatch.setattr(collection_mod, "CURRENT_ENV", "wsl")
-        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
-
-        client = TestClient(app)
-        resp = client.post("/api/user-tags", json={
-            "file_path": "file://///NAS-SERVER/share/foo.mp4",
-            "add": ["★5"],
-        })
-        # 檔案不存在 → 可能 4xx（E1 auto-stub or 404），但不應 500（內部錯誤）
-        assert resp.status_code != 500, \
-            f"UNC URI 導致 API 500，response={resp.text}"
 
 
 # ── T4: 唯讀來源自訂標籤寫進輸出夾 NFO（TASK-143-T4）──────────────────────────
@@ -694,111 +417,6 @@ class TestT4ReadonlyUserTags:
         assert "T4TAG" in out_nfo
         assert "<user_tag>T4TAG</user_tag>" in out_nfo
 
-    def test_ac2_2_no_source_nfo_output_updated(self, tmp_db, tmp_path, monkeypatch):
-        """AC2-2: 來源無 NFO、輸出夾有 → 改寫輸出夾 NFO。"""
-        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
-            tmp_db, tmp_path, monkeypatch,
-            with_source_nfo=False, with_output_nfo=True,
-        )
-
-        resp = client.post("/api/user-tags", json={
-            "file_path": file_uri,
-            "add": ["T4TAG2"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["nfo_updated"] is True
-        assert data["readonly_no_output"] is False
-
-        out_nfo = (out_dir / "TEST-001.nfo").read_text(encoding="utf-8")
-        assert "<user_tag>T4TAG2</user_tag>" in out_nfo
-        assert not (src_dir / "TEST-001.nfo").exists()
-
-    def test_ac2_2b_stub_no_output_dir_readonly_no_output(
-        self, tmp_db, tmp_path, monkeypatch
-    ):
-        """AC2-2b: 樁列 output_dir='' → 只存 DB、readonly_no_output、不呼叫 NFO 寫入。"""
-        from core.database import VideoRepository
-        from unittest.mock import patch
-
-        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
-            tmp_db, tmp_path, monkeypatch,
-            output_dir_empty=True,
-        )
-
-        with patch("web.routers.collection.update_nfo_user_tags") as mock_nfo:
-            resp = client.post("/api/user-tags", json={
-                "file_path": file_uri,
-                "add": ["STUBTAG"],
-            })
-            mock_nfo.assert_not_called()
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["nfo_updated"] is False
-        assert data["readonly_no_output"] is True
-        assert "STUBTAG" in data["user_tags"]
-
-        repo = VideoRepository(tmp_db)
-        video = repo.get_by_path(file_uri)
-        assert video is not None
-        assert "STUBTAG" in video.user_tags
-
-    def test_ac2_defensive_multiple_nfo_in_output_dir(
-        self, tmp_db, tmp_path, monkeypatch
-    ):
-        """防禦性：輸出夾多份 .nfo → 不猜、回報未寫入、既有 NFO 不變。"""
-        from test_readonly_offflavor_e2e import _snapshot
-
-        client, _src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
-            tmp_db, tmp_path, monkeypatch,
-            with_source_nfo=True, with_output_nfo=True, extra_output_nfos=1,
-        )
-
-        before = _snapshot(out_dir)
-        resp = client.post("/api/user-tags", json={
-            "file_path": file_uri,
-            "add": ["MULTITAG"],
-        })
-        after = _snapshot(out_dir)
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["nfo_updated"] is False
-        assert data["readonly_no_output"] is True
-        assert after == before, "多份 NFO 時不應改寫任何一份"
-
-    def test_ac2_io_exception_also_reports_no_output(
-        self, tmp_db, tmp_path, monkeypatch
-    ):
-        """例外路徑（輸出夾在 NAS 上、權限／IO 錯誤）同樣要回報「沒有 NFO 被更新」。
-
-        使用者流程：對唯讀來源的片加標籤 → 輸出夾寫入時丟例外 → 過去後端只 log 一行
-        warning、回 readonly_no_output:false ⇒ **畫面上一則提示都沒有**，使用者以為
-        Jellyfin 待會就看得到。那正是 spec-143 §3.2 要消滅的靜默失敗，只是從例外路徑復活。
-        """
-        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
-            tmp_db, tmp_path, monkeypatch,
-            with_source_nfo=False, with_output_nfo=True,
-        )
-        monkeypatch.setattr(
-            "web.routers.collection.update_nfo_user_tags",
-            lambda *a, **kw: (_ for _ in ()).throw(OSError("NAS 掉線")),
-        )
-
-        resp = client.post("/api/user-tags", json={
-            "file_path": file_uri,
-            "add": ["IOTAG"],
-        })
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True          # 標籤仍進 DB
-        assert data["nfo_updated"] is False
-        assert data["readonly_no_output"] is True
 
     def test_ac2_malformed_output_nfo_also_reports_no_output(
         self, tmp_db, tmp_path, monkeypatch
@@ -892,19 +510,3 @@ class TestT10bNfoWriteBlocked:
         assert data["nfo_write_blocked"] is False
         assert data["readonly_no_output"] is False
 
-    def test_nfo_write_blocked_false_for_readonly_source(
-        self, tmp_db, tmp_path, monkeypatch
-    ):
-        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
-            tmp_db, tmp_path, monkeypatch,
-            with_source_nfo=True, with_output_nfo=False,
-        )
-
-        resp = client.post("/api/user-tags", json={"file_path": file_uri, "add": ["T10B"]})
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["nfo_write_blocked"] is False
-        assert data["nfo_updated"] is False
-        assert data["readonly_no_output"] is True

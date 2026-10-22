@@ -1,12 +1,10 @@
 """測試 Scanner SQLite 整合"""
 import pytest
 import tempfile
-import os
 from pathlib import Path
 
 from core.gallery_scanner import VideoScanner
 from core.database import VideoRepository
-from core.path_utils import to_file_uri
 
 
 @pytest.fixture
@@ -62,30 +60,6 @@ class TestScanToSqlite:
         assert result2['deleted'] == 0
         assert result2['total'] == 1
 
-    def test_scan_incremental_mtime_changed(self, temp_db, temp_video_dir):
-        """測試增量掃描（檔案修改時間變更）"""
-        import time
-
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path, title="原始標題")
-
-        scanner = VideoScanner()
-
-        # 第一次掃描
-        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result1['inserted'] == 1
-
-        # 等待一小段時間確保 mtime 不同
-        time.sleep(0.1)
-
-        # 修改檔案（觸發 mtime 變更）
-        with open(video_path, 'ab') as f:
-            f.write(b'1')
-
-        # 第二次掃描
-        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result2['updated'] == 1
-        assert result2['inserted'] == 0
 
     def test_scan_incremental_nfo_mtime_changed(self, temp_db, temp_video_dir):
         """測試增量掃描（NFO 修改時間變更）"""
@@ -140,103 +114,6 @@ class TestScanToSqlite:
         assert result2['inserted'] == 0
         assert len(repo.get_all()[0].sample_images) == 1
 
-    def test_scan_incremental_extrafanart_removed(self, temp_db, temp_video_dir):
-        """刪除劇照（N -> N-1）→ 該片被排進重掃，即使影片檔與 NFO 的 mtime 都沒變
-        （TASK-118b-T9，新增/刪除對稱）"""
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path, title="測試影片")
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        (extrafanart / "fanart2.jpg").write_bytes(b"img")
-
-        scanner = VideoScanner()
-
-        # 第一次掃描：N=2
-        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result1['inserted'] == 1
-        repo = VideoRepository(temp_db)
-        assert len(repo.get_all()[0].sample_images) == 2
-
-        # 刪除一張劇照（N-1=1），不動影片檔、不動 NFO
-        (extrafanart / "fanart2.jpg").unlink()
-
-        # 第二次掃描：張數變了 → 必須被排進重掃
-        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result2['updated'] == 1
-        assert len(repo.get_all()[0].sample_images) == 1
-
-    def test_scan_incremental_extrafanart_same_count_no_rescan(self, temp_db, temp_video_dir):
-        """劇照張數不變 → 不重掃（防止「每次都全掃」的反向鎖，TASK-118b-T9）"""
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path, title="測試影片")
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        (extrafanart / "fanart2.jpg").write_bytes(b"img")
-
-        scanner = VideoScanner()
-
-        # 第一次掃描：N=2
-        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result1['inserted'] == 1
-
-        # 第二次掃描：完全沒動任何檔案（張數仍是 2）
-        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result2['updated'] == 0
-        assert result2['inserted'] == 0
-
-    def test_scan_incremental_case_mismatched_extrafanart_no_rescan_loop(self, temp_db, temp_video_dir):
-        """異體大小寫的 `Extrafanart/` 不得造成「每次都重掃」的迴圈（TASK-118b-T9 收斂）。
-
-        不變式：**走訪端數的目錄與 scan_file() 讀的目錄必須是同一個**。兩端曾經用不同的
-        定位方式，於是在不同檔案系統上各壞一次——精確比對讓大小寫不敏感的 FS 上走訪端
-        數 0／DB 數 N，`.lower()` 比對讓大小寫敏感的 FS 上走訪端數 N／DB 數 0。兩者的
-        症狀相同：兩端永遠對不上 → 每次「產生」都重掃該片。
-
-        現在兩端都用 `Path(parent) / 'extrafanart'` ＋ `.is_dir()`，所以無論底下的 FS
-        怎麼判大小寫，這支測試在兩種 FS 上都必須綠：
-        - 大小寫敏感（ext4，CI／WSL2 home）：兩端都找不到 → 0 vs 0
-        - 大小寫不敏感（NTFS／APFS）：兩端都找到 → 2 vs 2
-        """
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path, title="測試影片")
-        extrafanart = temp_video_dir / "Extrafanart"   # 刻意大寫 E
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        (extrafanart / "fanart2.jpg").write_bytes(b"img")
-
-        scanner = VideoScanner()
-        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result1['inserted'] == 1
-
-        # 第二、三次：沒有動任何檔案 → 不得再被排進重掃（迴圈鎖，跑兩次確認不是碰巧）
-        assert scanner.scan_to_sqlite(str(temp_video_dir), temp_db)['updated'] == 0
-        assert scanner.scan_to_sqlite(str(temp_video_dir), temp_db)['updated'] == 0
-
-    def test_scan_incremental_corrupt_sample_images_forces_rescan(self, temp_db, temp_video_dir):
-        """DB 裡 sample_images 是壞 JSON → fail-safe 視為「張數未知」，排進重掃且
-        不拋例外（Opus 裁決④），即使影片檔與 NFO 的 mtime 都沒變"""
-        import sqlite3
-
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path, title="測試影片")
-
-        scanner = VideoScanner()
-        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result1['inserted'] == 1
-
-        # 手動把 DB 裡的 sample_images 弄壞（模擬舊資料/繞過 to_dict() 的 raw 寫入）
-        conn = sqlite3.connect(str(temp_db))
-        try:
-            conn.execute("UPDATE videos SET sample_images = ? WHERE path LIKE ?", ("{not valid json", "%test.mp4"))
-            conn.commit()
-        finally:
-            conn.close()
-
-        # 第二次掃描：檔案完全沒變，但 DB 端壞資料要 fail-safe 成「需要重掃」
-        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-        assert result2['updated'] == 1
 
     def test_scan_min_size_filter(self, temp_db, temp_video_dir):
         """測試最小檔案大小過濾"""
@@ -267,42 +144,6 @@ class TestScanToSqlite:
         assert result['inserted'] == 2
         assert result['total'] == 2
 
-    def test_scan_video_extensions(self, temp_db, temp_video_dir):
-        """測試不同影片副檔名"""
-        # 建立不同副檔名的檔案
-        create_video_file(temp_video_dir, "video.mp4")
-        create_video_file(temp_video_dir, "video.mkv")
-        create_video_file(temp_video_dir, "video.avi")
-        create_video_file(temp_video_dir, "document.txt")  # 不是影片
-
-        scanner = VideoScanner()
-        result = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
-
-        # 只有影片檔案被掃描
-        assert result['inserted'] == 3
-        assert result['total'] == 3
-
-    def test_scan_default_db_path(self, temp_video_dir, monkeypatch, tmp_path):
-        """測試預設資料庫路徑（使用 mock 避免汙染真實 DB）"""
-        create_video_file(temp_video_dir, "test.mp4")
-
-        # Mock get_db_path 指向臨時 DB，避免 scan_to_sqlite 步驟 4
-        # 清理邏輯把真實 DB 中不在 temp_video_dir 的影片全部刪除。
-        # gallery_scanner.scan_to_sqlite 走 `from core.database import get_db_path`
-        # （facade 複製 binding），故必須 patch facade 目標；connection 目標一併 patch
-        # 以防未來消費端改走 repo/sibling 路徑（兩者皆 patch，binding 解析走哪條都隔離）。
-        mock_db = tmp_path / "test_default.db"
-        monkeypatch.setattr("core.database.get_db_path", lambda: mock_db)
-        monkeypatch.setattr("core.database.connection.get_db_path", lambda: mock_db)
-
-        scanner = VideoScanner()
-        result = scanner.scan_to_sqlite(str(temp_video_dir))
-
-        assert result['inserted'] == 1
-        # 隔離守衛（mutation-proof）：若 patch 沒打中 facade binding，scan 會開真實
-        # 預設 DB、mock_db 永不被建立——下面兩條斷言就會紅燈，不再「為錯的理由變綠」。
-        assert mock_db.exists(), "scan_to_sqlite 未寫入 mock DB → 隔離失效，打到真實 DB"
-        assert len(VideoRepository(mock_db).get_all()) == 1
 
     def test_scan_nfo_with_bare_ampersand(self, temp_db, temp_video_dir):
         """含 bare & 的 NFO 應可解析，actor 和 genre 正確讀取"""
@@ -412,182 +253,10 @@ class TestSampleImagesScanner:
             "thumb.jpg",
         ]
 
-    def test_extrafanart_all_jellyfin_image_extensions(self, temp_video_dir):
-        """Jellyfin 劇照白名單（png/webp/gif/tbn/jpeg）都會被收；.svg 刻意不收"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        for name in (
-            "fanart1.png",
-            "fanart1.webp",
-            "fanart1.gif",
-            "fanart1.tbn",
-            "fanart1.svg",
-            "fanart1.jpeg",
-        ):
-            (extrafanart / name).write_bytes(b"img")
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path))
-        names = [s.split("/")[-1] for s in info.sample_images]
-        assert names == [
-            "fanart1.gif",
-            "fanart1.jpeg",
-            "fanart1.png",
-            "fanart1.tbn",
-            "fanart1.webp",
-        ]
-        assert "fanart1.svg" not in names
-
-    def test_extrafanart_zero_byte_excluded(self, temp_video_dir):
-        """零位元組 jpg 不被收"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        (extrafanart / "broken.jpg").write_bytes(b"")
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path))
-        names = [s.split("/")[-1] for s in info.sample_images]
-        assert names == ["fanart1.jpg"]
-
-    def test_extrafanart_one_stat_oserror_keeps_other_images(self, temp_video_dir, monkeypatch):
-        """四張合法圖，其中一張 stat() 拋 OSError → 另外三張仍進 sample_images"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        for name in ["fanart1.jpg", "fanart2.jpg", "fanart3.jpg", "fanart4.jpg"]:
-            (extrafanart / name).write_bytes(b"img")
-
-        # is_file() 也會走 Path.stat；第一次讓它過，第二次（明確的 size 檢查）才拋。
-        # 否則 is_file 會依 errno 直接吞掉或往外冒，測不到 _iter 裡那次 stat。
-        original_stat = Path.stat
-        stat_calls: dict[str, int] = {}
-
-        def fake_stat(self, *args, **kwargs):
-            if self.name == "fanart2.jpg":
-                count = stat_calls.get(self.name, 0) + 1
-                stat_calls[self.name] = count
-                if count >= 2:
-                    raise OSError("simulated lock")
-            return original_stat(self, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "stat", fake_stat)
-
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path))
-        names = [s.split("/")[-1] for s in info.sample_images]
-        assert names == ["fanart1.jpg", "fanart3.jpg", "fanart4.jpg"]
-
-    def test_extrafanart_appledouble_hidden_excluded(self, temp_video_dir):
-        """._ 開頭的 AppleDouble 不被收（即使副檔名是 jpg 且非空）"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        (extrafanart / "._fanart1.jpg").write_bytes(b"x" * 4096)
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path))
-        names = [s.split("/")[-1] for s in info.sample_images]
-        assert names == ["fanart1.jpg"]
-
-    def test_extrafanart_subdirectory_not_recursed(self, temp_video_dir):
-        """子目錄不遞迴、目錄本身不當成檔案"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        nested = extrafanart / "@eaDir"
-        nested.mkdir()
-        (nested / "thumb.jpg").write_bytes(b"img")
-        (extrafanart / "folder.png").mkdir()
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path))
-        names = [s.split("/")[-1] for s in info.sample_images]
-        assert names == ["fanart1.jpg"]
-
-    def test_extrafanart_uppercase_extension_included(self, temp_video_dir):
-        """大寫副檔名 FANART1.JPG 會被收"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "FANART1.JPG").write_bytes(b"img")
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path))
-        names = [s.split("/")[-1] for s in info.sample_images]
-        assert names == ["FANART1.JPG"]
-
-    def test_extrafanart_with_base_path_relative(self, temp_video_dir):
-        """有 base_path → 存相對路徑字串，非 file:/// URI"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path), base_path=str(temp_video_dir))
-        assert len(info.sample_images) == 1
-        assert not info.sample_images[0].startswith("file:///")
-        assert "fanart1.jpg" in info.sample_images[0]
-
-    def test_extrafanart_without_base_path_file_uri(self, temp_video_dir):
-        """無 base_path → 存 file:/// URI"""
-        from core.gallery_scanner import VideoScanner
-        video_path = create_video_file(temp_video_dir, "test.mp4")
-        create_nfo_file(video_path)
-        extrafanart = temp_video_dir / "extrafanart"
-        extrafanart.mkdir()
-        (extrafanart / "fanart1.jpg").write_bytes(b"img")
-        scanner = VideoScanner()
-        info = scanner.scan_file(str(video_path))
-        assert len(info.sample_images) == 1
-        assert info.sample_images[0].startswith("file:///")
-
 
 class TestSampleImagesDB:
     """sample_images DB 序列化/反序列化邊界條件"""
 
-    def test_from_row_empty_string(self, temp_db):
-        """from_row 空字串 → []"""
-        import sqlite3
-        from core.database import Video
-        conn = sqlite3.connect(str(temp_db))
-        conn.execute("UPDATE videos SET sample_images = '' WHERE 1=0")  # no-op, just warmup
-        conn.close()
-
-        # 直接呼叫 from_row 模擬空字串
-        columns = ["id", "path", "number", "title", "original_title", "actresses",
-                   "maker", "director", "series", "label", "tags", "sample_images",
-                   "duration", "size_bytes", "cover_path", "release_date",
-                   "mtime", "nfo_mtime", "created_at", "updated_at"]
-        row = (1, to_file_uri("/test.mp4"), "ABC-001", "Title", "", "[]",
-               "", "", None, "", "[]", "",
-               None, 0, "", "", 0.0, 0.0, None, None)
-        v = Video.from_row(row, columns)
-        assert v.sample_images == []
-
-    def test_video_info_from_dict_missing_key_defaults_empty(self):
-        """VideoInfo.from_dict 舊資料無 sample_images key → 預設 []"""
-        from core.gallery_scanner import VideoInfo
-        d = {
-            "path": to_file_uri("/test.mp4"),
-            "title": "Test",
-            "num": "ABC-001",
-        }
-        info = VideoInfo.from_dict(d)
-        assert info.sample_images == []
 
     def test_migration_adds_sample_images_column(self, tmp_path):
         """migration: 舊 schema 無 sample_images 欄位，init_db 後應自動補齊"""

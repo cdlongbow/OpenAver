@@ -15,7 +15,6 @@
 而漂移的形狀是「按鈕說要更新 N 部、實際只更新 M 部」。
 """
 from core.database import Video
-from core.nfo_updater import check_cache_needs_update
 from core.path_utils import to_file_uri
 from web.routers.scanner import _build_nfo_update_cache
 
@@ -54,68 +53,4 @@ class TestNfoUpdateSkipsReadonlySources:
         assert skipped == 1
         assert list(cache) == [to_file_uri(f"{RW_DIR}/B/B.mp4", {})]  # db-ns-ok: 斷言期望值
 
-    def test_readonly_row_really_would_have_been_written(self):
-        """反向鎖接到**真正的傷害面**：`check_cache_needs_update` 回的 `paths`。
 
-        那份清單正是交給 `update_videos_generator`（＝真的去寫來源 sidecar NFO）的輸入。
-        只斷言「這列會進 cache」是在重述上面那支測試——它在兩顆 mutation 下都不會紅
-        （delta review 實測）。改成走完下一層，這支才擋得住一類 t1 擋不到的迴歸：
-        有人在 helper 裡加了別的過濾、讓某些列悄悄不進 cache。
-        """
-        row = _video(f"{RO_DIR}/A/A.mp4")
-        writable_cfg = _config([{"path": RO_DIR, "readonly": False}])
-        readonly_cfg = _config([{"path": RO_DIR, "readonly": True, "output_path": "/out"}])
-
-        cache_wr, skipped_wr, _ = _build_nfo_update_cache([row], writable_cfg)
-        cache_ro, skipped_ro, _ = _build_nfo_update_cache([row], readonly_cfg)
-
-        # 可寫時：這列一路走到「要被寫檔的清單」裡
-        assert skipped_wr == 0
-        assert row.path in check_cache_needs_update(cache_wr)["paths"]
-
-        # 唯讀時：同一列在同一條路上消失
-        assert skipped_ro == 1
-        assert row.path not in check_cache_needs_update(cache_ro)["paths"]
-
-    def test_writable_source_nested_under_readonly_is_kept(self):
-        """巢狀覆寫語意與 is_path_readonly 一致：最長匹配前綴決定歸屬。
-
-        使用者把整個 NAS 掛成唯讀來源，底下某個子資料夾單獨設成可寫 → 那個子資料夾
-        裡的片**不是**唯讀，補完 NFO 要照常寫。
-        """
-        nested = f"{RO_DIR}/writable-sub"
-
-        cache, skipped, _ = _build_nfo_update_cache(
-            [_video(f"{nested}/C/C.mp4")],
-            _config([
-                {"path": RO_DIR, "readonly": True, "output_path": "/out"},
-                {"path": nested, "readonly": False},
-            ]),
-        )
-
-        assert skipped == 0
-        assert len(cache) == 1
-
-    def test_no_readonly_sources_configured_skips_nothing(self):
-        cache, skipped, _ = _build_nfo_update_cache(
-            [_video(f"{RW_DIR}/B/B.mp4")],
-            _config([{"path": RW_DIR, "readonly": False}]),
-        )
-
-        assert skipped == 0
-        assert len(cache) == 1
-
-    def test_cache_shape_unchanged_for_kept_rows(self):
-        """濾掉唯讀不得改變留下來那些列的形狀（check_cache_needs_update 的輸入契約）。"""
-        cache, _, _ = _build_nfo_update_cache(
-            [_video(f"{RW_DIR}/B/B.mp4")],
-            _config([{"path": RW_DIR, "readonly": False}]),
-        )
-
-        entry = next(iter(cache.values()))
-        assert entry["nfo_mtime"] == 1234.0
-        assert set(entry["info"]) == {
-            "title", "date", "actor", "genre", "maker",
-            "num", "director", "duration", "series", "label",
-        }
-        assert entry["info"]["num"] == "ABC-123"

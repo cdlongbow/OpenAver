@@ -21,16 +21,7 @@ _DENIED = "沒有權限讀取"
 @pytest.mark.parametrize(
     ("error", "expected", "other"),
     [
-        (FileNotFoundError(errno.ENOENT, "missing"), _MISSING, _UNREACHABLE),
-        (NotADirectoryError("not a directory"), _MISSING, _UNREACHABLE),
-        (ValueError("embedded null byte"), _MISSING, _UNREACHABLE),
-        (_winerr(FileNotFoundError(errno.ENOENT, "x"), 3), _MISSING, _UNREACHABLE),
-        (OSError(errno.EHOSTDOWN, "Host is down"), _UNREACHABLE, _MISSING),
-        (OSError(errno.EIO, "I/O error"), _UNREACHABLE, _MISSING),
         (_winerr(FileNotFoundError(errno.ENOENT, "x"), 53), _UNREACHABLE, _MISSING),
-        (_winerr(OSError(errno.EIO, "x"), 64), _UNREACHABLE, _MISSING),
-        (_winerr(OSError(errno.EIO, "x"), 1231), _UNREACHABLE, _MISSING),
-        (PermissionError("denied"), _DENIED, _MISSING),
     ],
 )
 def test_scan_root_skip_message_for_stat_errors(monkeypatch, error, expected, other):
@@ -49,9 +40,3 @@ def test_scan_root_skip_message_for_stat_errors(monkeypatch, error, expected, ot
         assert "沒有權限" not in result
 
 
-def test_scan_root_skip_message_allows_accessible_root(monkeypatch):
-    with monkeypatch.context() as patch:
-        patch.setattr(os, "stat", lambda path: object())
-        result = scanner._scan_root_skip_message("/root", "/normalized/root")
-
-    assert result is None

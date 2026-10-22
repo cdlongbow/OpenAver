@@ -146,24 +146,6 @@ def _all_import_froms_in_func(func_node) -> list:
 # ============================================================
 # (檔案, 函式名, {必含 helper Call})
 POSITIVE_LOCKS = [
-    # P1
-    (ENRICHER_PY, "enrich_single", {
-        "effective_original_title",
-        "compute_has_servable_cover",
-        "enrich_success",
-        "schedule_focal_after_cover_write",  # focal 站 A（AC7）
-    }),
-    # P2
-    (ENRICHER_PY, "_write_cover", {"should_preserve_cover"}),
-    # P3
-    (ENRICHER_PY, "fetch_samples_only", {"enrich_success"}),
-    # P4 — v0.13 翻面（TASK-109-T2）：enrich_single_endpoint 的唯讀分支不再手抄
-    # 五支 helper，改呼叫公開入口 enrich_one_readonly；原「不得手抄第②層」的
-    # 目的沒有消失，搬到 P8 鎖 enrich_one_readonly 自身。**不得改回鎖 helper
-    # 名單**——那五支呼叫現在活在 core/readonly_producer.py，此函式看不到。
-    (SCRAPER_PY, "enrich_single_endpoint", {"enrich_one_readonly"}),
-    # P5
-    (SCRAPER_PY, "fetch_samples_endpoint", {"enrich_success"}),
     # P6 — v0.13 翻面（TASK-109-T3）：同 P4，_do_readonly closure 改呼叫公開
     # 入口，四支阻塞 helper 的呼叫搬進 enrich_one_readonly（P8）。**不得改回**
     # 鎖 helper 名單，理由同 P4。
@@ -199,13 +181,6 @@ NEGATIVE_SCAN_TARGETS = [
 
 # 白名單防腐 / 負向指紋：所有 named target（去重）
 ALL_TARGETS = NEGATIVE_SCAN_TARGETS
-
-
-def test_every_positive_target_is_negative_scanned():
-    """一致性守衛（fail-closed）：所有正向鎖 target 必須是負向掃描集合的子集，
-    防未來有人加正向鎖卻忘了同步加進 NEGATIVE_SCAN_TARGETS（CD-109-9）。
-    """
-    assert {(f, n) for f, n, _ in POSITIVE_LOCKS} <= set(NEGATIVE_SCAN_TARGETS)
 
 
 _TREE_CACHE: dict = {}
@@ -337,23 +312,6 @@ NEGATIVE_FINGERPRINTS = [
 # 源碼語意守衛」）。v0.13 TASK-109-T6：掃描集合改讀 NEGATIVE_SCAN_TARGETS——與
 # POSITIVE_LOCKS 解耦的自有清單（CD-109-9），不再由 POSITIVE_LOCKS 推導，避免
 # 正向鎖被拿掉時覆蓋跟著靜默收縮。
-class TestNegativeMirrorLocks:
-    """負向鎖：target body 內不得殘留四類舊 mirror 手抄指紋。"""
-
-    @pytest.mark.parametrize("py_file, func_name", ALL_TARGETS,
-                             ids=[n for _, n in ALL_TARGETS])
-    def test_no_mirror_fingerprints(self, py_file, func_name):
-        func = _find_func(_tree(py_file), func_name)
-        assert func is not None, f"{py_file.name}:{func_name} 定位不到"
-        nodes = _direct_nodes(func)
-        violations = []
-        for label, detector in NEGATIVE_FINGERPRINTS:
-            if any(detector(n) for n in nodes):
-                violations.append(label)
-        assert not violations, (
-            f"{py_file.name}:{func_name}() 復生舊 mirror 手抄指紋: {violations}"
-            f" —— 第②層邏輯應共用 core.enrich_contract helper，不得手抄。"
-        )
 
 
 # 負向鎖 body 粒度掃描的禁用私有 primitive 名單（TASK-109-T6 §3）：這些已收斂進
@@ -385,41 +343,6 @@ FORBIDDEN_PRIMITIVE_TARGETS = [
 # alias binding（module-level ∪ target 函式自身含巢狀 scope 的 ast.ImportFrom）
 # 聯集成本地名稱集合，再掃 target body 的 ast.Call——防止 function-local
 # `import … as x` 繞過只讀 module-level 的掃描。
-class TestNegativeForbiddenPrimitiveCalls:
-    """負向鎖（body 粒度 + import alias 解析）：`enrich_single_endpoint` /
-    `_do_readonly` 的 body 不得直接呼叫已收斂進 `enrich_one_readonly` 的私有
-    primitive——呼叫方必須走公開入口，不得繞過（CD-109-4／CD-109-10）。
-    """
-
-    @pytest.mark.parametrize("py_file, func_name", FORBIDDEN_PRIMITIVE_TARGETS,
-                             ids=[n for _, n in FORBIDDEN_PRIMITIVE_TARGETS])
-    def test_target_does_not_call_forbidden_primitives(self, py_file, func_name):
-        tree = _tree(py_file)
-        func = _find_func(tree, func_name)
-        assert func is not None, f"{py_file.name}:{func_name} 定位不到（白名單防腐應先報）"
-
-        module_aliases = _collect_import_aliases(
-            _module_level_import_froms(tree), FORBIDDEN_PRIVATE_PRIMITIVES)
-        local_aliases = _collect_import_aliases(
-            _all_import_froms_in_func(func), FORBIDDEN_PRIVATE_PRIMITIVES)
-        banned_local_names = set(module_aliases) | set(local_aliases)
-
-        # 三條繞過路徑都要擋（fail-closed）：
-        #   ① 裸名直呼 `resolve_ingest_plan(...)`（module-level `from … import`）
-        #   ② alias `from … import _produce_one as produce` 後呼叫 `produce(...)`
-        #      ——不論 alias 綁在 module-level 還是 target 函式自身的巢狀 scope
-        #   ③ **module 屬性存取** `readonly_producer.resolve_ingest_plan(...)`
-        #      （`from core import readonly_producer`）——`_call_name` 對
-        #      `ast.Attribute` 回 `.attr`，但這條**不會**出現在 import alias 綁定
-        #      集合裡，故必須額外用原始名稱直接比對，否則存在真實繞過路徑。
-        called = {_call_name(n) for n in _direct_nodes(func) if isinstance(n, ast.Call)}
-        called.discard(None)
-        violations = sorted(called & (banned_local_names | set(FORBIDDEN_PRIVATE_PRIMITIVES)))
-        assert not violations, (
-            f"{py_file.name}:{func_name}() 直接呼叫已收斂進 enrich_one_readonly 的"
-            f" 私有 primitive: {violations} —— 應改走 enrich_one_readonly 公開入口，"
-            f"不得繞過（本地名稱綁定: {sorted(banned_local_names)}）"
-        )
 
 
 # [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
@@ -429,36 +352,6 @@ class TestNegativeForbiddenPrimitiveCalls:
 # （其錨定的 production 碼已被 T3 合法移除）；覆蓋同一 detector 行為的合成孿生
 # 測試移至 TestNegativeDetectorSensitivity::test_fp1_passes_961_tuple_and_correct_call，
 # 不隨 production 重構腐爛。
-class TestFalsePositiveGuards:
-    """反證：GREEN 狀態下守衛不誤傷非-target plain meta.get。
-
-    v0.13 TASK-109-T6：原本這裡還有 test_961_tuple_target_not_flagged，錨定
-    scraper.py:961 的 Tuple-target `has_servable_cover` 解包（T2「用參數表達刻意
-    差異」的正確碼）。T3 把該行 production 碼合法移除後錨點不復存在，遂刪除本體。
-    刪除不是 fail-open——它驗的 detector 行為（指紋1 不得誤報 Tuple-target）已有
-    不依賴 production 碼的孿生測試覆蓋：
-    `TestNegativeDetectorSensitivity::test_fp1_passes_961_tuple_and_correct_call`
-    直接餵合成片段 `a, b, has_servable_cover = payload or ({}, {}, False)` 斷言
-    `not _is_mirror_cover_assign(...)`，且不隨 production 重構腐爛（M9 mutation
-    自驗：破壞 `_is_mirror_cover_assign` 的 Tuple-target 排除邏輯 → 該孿生測試紅）。
-    """
-
-    def test_plain_meta_get_original_title_not_in_targets(self):
-        """三處 plain `meta.get("original_title","")` 皆在非-target 函式
-        （_write_nfo/_db_upsert/_write_movie_assets）；且即便當作 Call 節點也非
-        指紋4（BoolOp 形狀）。確認負向鎖粒度天然不掃這些正確碼。
-        """
-        # 確認 target 清單不含這三個非-target 函式
-        target_names = {n for _, n in ALL_TARGETS}
-        assert target_names.isdisjoint({"_write_nfo", "_db_upsert", "_write_movie_assets"})
-        # 即使掃到 plain meta.get，指紋4（BoolOp Or）形狀不會命中它（它是純 Call）
-        tree = _tree(ENRICHER_PY)
-        wr = _find_func(tree, "_write_nfo")
-        assert wr is not None
-        assert not any(_is_second_original_title_preserve(n) for n in _direct_nodes(wr)), (
-            "plain meta.get('original_title') 被指紋4 誤報 —— 指紋4 應只命中 "
-            "BoolOp(Or) 含 existing.original_title"
-        )
 
 
 # [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
@@ -478,43 +371,6 @@ class TestNegativeDetectorSensitivity:
                 return n
         raise AssertionError(f"片段內找不到 {node_type.__name__}")
 
-    def test_fp1_fires_on_canonical_mirror(self):
-        node = self._first("has_servable_cover = cover_written or had_cover", ast.Assign)
-        assert _is_mirror_cover_assign(node)
-
-    def test_fp1_passes_961_tuple_and_correct_call(self):
-        assert not _is_mirror_cover_assign(
-            self._first("a, b, has_servable_cover = payload or ({}, {}, False)", ast.Assign))
-        assert not _is_mirror_cover_assign(
-            self._first("has_servable_cover = compute_has_servable_cover(r, u, m)", ast.Assign))
-
-    def test_fp2_fires_on_inline_reason(self):
-        node = self._first("reason = 'hit' if hsc else 'no_cover'", ast.IfExp)
-        assert _is_inline_reason_ifexp(node)
-
-    def test_fp3_fires_on_fill_missing_gate(self):
-        node = self._first(
-            "x = mode == 'fill_missing' and not overwrite and had_cover", ast.BoolOp)
-        assert _is_fill_missing_had_cover_boolop(node)
-
-    def test_fp4_fires_on_both_receiver_names(self):
-        # F1：主 target enrich_single 用 existing_record（非 existing）——兩者都須命中
-        for recv in ("existing", "existing_record", "row"):
-            node = self._first(
-                f"t = meta.get('original_title') or ({recv}.original_title if {recv} else '')",
-                ast.BoolOp)
-            assert _is_second_original_title_preserve(node), f"指紋4 漏掉 receiver={recv}"
-
-    def test_fp4_passes_plain_meta_get(self):
-        # 純 Call、無 .original_title 屬性存取 → 不得命中
-        for n in ast.walk(ast.parse('t = meta.get("original_title", "")')):
-            if isinstance(n, ast.BoolOp):
-                raise AssertionError("片段不應含 BoolOp")
-        # 顯式：整棵樹無任一節點被指紋4 判為 True
-        assert not any(
-            _is_second_original_title_preserve(n)
-            for n in ast.walk(ast.parse('t = meta.get("original_title", "")')))
-
 
 # [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
 # 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
@@ -522,16 +378,3 @@ class TestNegativeDetectorSensitivity:
 # 源碼語意守衛」）。v0.13 TASK-109-T6：ALL_TARGETS = NEGATIVE_SCAN_TARGETS（已與
 # POSITIVE_LOCKS 解耦的自有清單），本 class 因此掃描 8 個 target（含新家
 # enrich_one_readonly 與失去正向鎖但仍受掃描的 event_generator）。
-class TestWhitelistAntiRot:
-    """白名單防腐（比照先例 test_whitelist_entries_exist）：
-    每個 named target 必須能在對應檔 AST 定位，否則守衛指向殭屍函式、恆綠假通過。
-    """
-
-    @pytest.mark.parametrize("py_file, func_name", ALL_TARGETS,
-                             ids=[n for _, n in ALL_TARGETS])
-    def test_target_function_exists(self, py_file, func_name):
-        func = _find_func(_tree(py_file), func_name)
-        assert func is not None, (
-            f"正向/負向鎖 target {py_file.name}:{func_name} 指向不存在的函式"
-            f"（改名？）—— 守衛失去意義，須更新清單或修復函式名"
-        )

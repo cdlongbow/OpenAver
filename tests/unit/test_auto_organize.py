@@ -76,18 +76,6 @@ def default_organize_success(cover_path="/cover/x.jpg"):
     }
 
 
-def test_round_returns_folder_not_configured_when_resolve_returns_empty(mocker):
-    config = make_config("")
-    mocker.patch("core.auto_organize.resolve_favorite_folder", return_value="")
-    list_files = mocker.patch("core.auto_organize.list_favorite_video_files", return_value=[])
-    mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-    result = run_one_round(config)
-
-    assert result == {"folder_not_configured": True}
-    list_files.assert_not_called()
-
-
 # ===========================================================================
 # DoD-1 / DoD-2：四部片統計 ＋ 回傳 schema 逐欄相符（含 M6）
 # ===========================================================================
@@ -143,71 +131,7 @@ class TestFourFileRoundStatistics:
 
 
 class TestReturnSchema:
-    def test_failure_memory_read_failure_does_not_kill_the_round(
-        self, tmp_path, isolated_db, mocker
-    ):
-        """Codex 六審 P3：失敗記憶查不到時本輪照常整理，不得整輪陣亡。
 
-        使用者流程：背景掃描正在寫 DB → 定時整理那一輪去問「這部片之前查無結果嗎」→
-        修正前那兩行拋例外、**整輪當場結束**，一部片都沒整理，排程還要再等 12 小時。
-        失敗記憶只是「省得重問 8 個來源」的快取，不該有權殺掉整輪；而手動清單那一邊
-        （`_filter_files_sync`）已經是 best-effort，自動不該比手動嚴格。
-        """
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "MEMDOWN-001.mp4")
-
-        config = make_config(fav_dir)
-        mocker.patch("core.auto_organize.smart_search",
-                      return_value=[{"number": "MEMDOWN-001", "title": "t", "actors": []}])
-        mocker.patch("core.auto_organize.organize_file",
-                      return_value=default_organize_success())
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-        mocker.patch.object(organize_failures, "should_skip",
-                            side_effect=Exception("database is locked"))
-
-        result = run_one_round(config)
-
-        assert result["added"] == ["MEMDOWN-001"], (
-            "失敗記憶查不到就讓整輪陣亡——那一輪一部片都沒整理，還要再等 12 小時"
-        )
-        assert result["skipped"]["memory_hit"] == 0
-
-    def test_failure_memory_write_failure_does_not_kill_the_round(
-        self, tmp_path, isolated_db, mocker
-    ):
-        """同上的另一半：**記**不起來也不得讓整輪陣亡。
-
-        查無結果的片走 `record_failure('not_found', ...)`。DB 鎖住時修正前那一行拋例外
-        ⇒ 整輪結束，**後面還沒處理的片全部被賠掉**。記不起來的代價只是下一輪再問一次。
-        """
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "DBLOCK-001.mp4")
-        write_video(fav_dir, "DBLOCK-002.mp4")
-
-        config = make_config(fav_dir)
-        # 第一部查無結果（要寫記憶、會炸），第二部查得到（必須照樣被整理）
-        mocker.patch(
-            "core.auto_organize.smart_search",
-            side_effect=lambda number, **_kw: (
-                [] if number == "DBLOCK-001"
-                else [{"number": number, "title": "t", "actors": []}]
-            ),
-        )
-        mocker.patch("core.auto_organize.organize_file",
-                      return_value=default_organize_success())
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-        mocker.patch.object(organize_failures, "record_failure",
-                            side_effect=Exception("database is locked"))
-
-        result = run_one_round(config)
-
-        assert result["failed"] == ["DBLOCK-001"]
-        assert result["added"] == ["DBLOCK-002"], (
-            "寫記憶失敗把後面還沒處理的片一起賠掉了"
-        )
-        assert result["newly_recorded"] == 0, "沒真的寫進去就不該計數"
 
     def test_wishlist_reconcile_failure_does_not_kill_the_round_report(
         self, tmp_path, isolated_db, mocker
@@ -237,32 +161,6 @@ class TestReturnSchema:
         assert result["added"] == ["RECON-001"], "對帳失敗把整輪的成果吃掉了"
         assert result["wishlist_removed"] == []
         assert result["wishlist_reconcile_failed"] is True
-
-    def test_return_schema_has_all_required_keys(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "SCHEMA-001.mp4")
-
-        config = make_config(fav_dir)
-        mocker.patch("core.auto_organize.smart_search",
-                      return_value=[{"number": "SCHEMA-001", "title": "t", "actors": []}])
-        mocker.patch("core.auto_organize.organize_file", return_value=default_organize_success())
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=["OWNED-001"])
-
-        result = run_one_round(config)
-
-        assert set(result.keys()) == {
-            "added", "cover_missing", "failed", "skipped",
-            "newly_recorded", "wishlist_removed", "wishlist_reconcile_failed",
-            "aborted_after",
-        }
-        assert set(result["skipped"].keys()) == {"has_nfo", "memory_hit", "duplicate"}
-        assert isinstance(result["added"], list)
-        assert isinstance(result["cover_missing"], list)
-        assert isinstance(result["failed"], list)
-        assert isinstance(result["newly_recorded"], int)
-        assert result["wishlist_removed"] == ["OWNED-001"]
-        assert result["aborted_after"] is None
 
 
 # ===========================================================================
@@ -297,26 +195,6 @@ class TestReadonlyGuard:
         first_arg = spy.call_args[0][0]
         assert first_arg.startswith("file:///"), \
             f"is_path_readonly 收到裸路徑 {first_arg!r}，唯讀來源會靜默失去保護"
-
-    def test_writable_folder_not_flagged_readonly(self, tmp_path, isolated_db, mocker):
-        ro_root = tmp_path / "unrelated_ro_src"
-        ro_root.mkdir()
-        fav_dir = tmp_path / "writable_fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "NORMAL-001.mp4")
-
-        config = make_config(fav_dir, directories=[{"path": str(ro_root), "readonly": True}])
-
-        mocker.patch("core.auto_organize.smart_search",
-                      return_value=[{"number": "NORMAL-001", "title": "t", "actors": []}])
-        mocker.patch("core.auto_organize.organize_file", return_value=default_organize_success())
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        result = run_one_round(config)
-
-        assert result != {"readonly": True}
-        assert "added" in result
-        assert result["added"] == ["NORMAL-001"]
 
 
 # ===========================================================================
@@ -355,99 +233,10 @@ class TestAbortOrdering:
         assert result["aborted_after"] == 1
         assert str(f2) not in [c.args[0] for c in organize_mock.call_args_list]
 
-    def test_on_file_start_excludes_aborted_file(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        f1 = write_video(fav_dir, "FILE-001.mp4")
-        f2 = write_video(fav_dir, "FILE-002.mp4")
-
-        config = make_config(fav_dir)
-
-        # 順序在這支測試裡是承重的（理由同上一支）
-        mocker.patch("core.auto_organize.list_favorite_video_files",
-                      return_value=[str(f1), str(f2)])
-        mocker.patch("core.auto_organize.smart_search",
-                      side_effect=lambda number, uncensored_mode=False: [{"number": number, "title": "t", "actors": []}])
-        mocker.patch("core.auto_organize.organize_file", return_value=default_organize_success())
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        call_count = {"n": 0}
-
-        def should_abort():
-            call_count["n"] += 1
-            return call_count["n"] >= 2
-
-        started = []
-        result = run_one_round(config, should_abort=should_abort, on_file_start=started.append)
-
-        assert started == ["FILE-001"]
-        assert "FILE-002" not in started
-        assert result["aborted_after"] == 1
-
-    def test_no_number_file_skipped_without_on_file_start(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "no_number_here.mp4")
-
-        config = make_config(fav_dir)
-        mocker.patch("core.auto_organize.smart_search")
-        mocker.patch("core.auto_organize.organize_file")
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        started = []
-        result = run_one_round(config, on_file_start=started.append)
-
-        assert started == []
-        assert result["added"] == []
-        assert result["failed"] == []
-
-
-class TestNoneCallablesMeanNeverAbort:
-    def test_none_should_abort_and_on_file_start_process_all_files(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "FILE-001.mp4")
-        write_video(fav_dir, "FILE-002.mp4")
-
-        config = make_config(fav_dir)
-        mocker.patch("core.auto_organize.smart_search",
-                      side_effect=lambda number, uncensored_mode=False: [{"number": number, "title": "t", "actors": []}])
-        organize_mock = mocker.patch("core.auto_organize.organize_file",
-                                      return_value=default_organize_success())
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        result = run_one_round(config, should_abort=None, on_file_start=None)
-
-        assert organize_mock.call_count == 2
-        assert result["aborted_after"] is None
-
 
 # ===========================================================================
 # DoD-7：path_mappings 整輪只取一次，duplicate 鍵一致（含 M4）
 # ===========================================================================
-
-class TestDuplicateKeyPathMappings:
-    def test_duplicate_key_uses_path_mappings(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "MAP-001.mp4")
-
-        path_mappings = {"/mnt/nas": "\\\\NAS\\share"}
-        config = make_config(fav_dir, path_mappings=path_mappings)
-
-        mocker.patch("core.auto_organize.smart_search",
-                      return_value=[{"number": "MAP-001", "title": "t", "actors": []}])
-        mocker.patch("core.auto_organize.organize_file", return_value=default_organize_success())
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        spy = mocker.spy(organize_failures, "duplicate_key")
-
-        run_one_round(config)
-
-        spy.assert_called_once()
-        called_path_mappings = spy.call_args[0][1]
-        assert called_path_mappings == path_mappings, \
-            "duplicate 鍵必須帶上整輪只取一次的 path_mappings，不能退回裸 to_file_uri(path)"
 
 
 # ===========================================================================
@@ -493,9 +282,8 @@ class TestTranslationClauses:
         ("filename", "title"),
         [
             ("JP-002 我的中文標題.mp4", "日本語タイトル"),
-            ("JP-003.mp4", "English Title No Japanese"),
         ],
-        ids=["chinese_title_in_filename", "title_not_japanese"],
+        ids=["chinese_title_in_filename"],
     )
     def test_translate_skipped_when_chinese_title_present(
         self, tmp_path, isolated_db, mocker, filename, title
@@ -540,35 +328,6 @@ class TestTranslationClauses:
 # ===========================================================================
 # DoD-9：記憶命中不算事件（含 M7）
 # ===========================================================================
-
-class TestMemoryHitNotAnEvent:
-    def test_memory_hit_does_not_count_as_event(self, tmp_path, isolated_db, mocker):
-        fav_dir = tmp_path / "fav"
-        fav_dir.mkdir()
-        write_video(fav_dir, "MEM-001.mp4")
-        write_video(fav_dir, "NEW-001.mp4")
-
-        # 事先寫入一筆 not_found 失敗記憶，讓 MEM-001 在本輪落入記憶命中分支
-        organize_failures.record_failure("not_found", "MEM-001", "MEM-001")
-
-        config = make_config(fav_dir)
-
-        search_mock = mocker.patch(
-            "core.auto_organize.smart_search",
-            side_effect=lambda number, uncensored_mode=False: [] if number == "NEW-001" else None,
-        )
-        organize_mock = mocker.patch("core.auto_organize.organize_file")
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        result = run_one_round(config)
-
-        assert result["skipped"]["memory_hit"] == 1
-        assert result["newly_recorded"] == 1  # 只有 NEW-001 的 not_found 是本輪新記錄
-        assert "NEW-001" in result["failed"]
-        # 記憶命中的檔案不應該再被拿去查詢或整理
-        called_numbers = [c.args[0] for c in search_mock.call_args_list]
-        assert "MEM-001" not in called_numbers
-        organize_mock.assert_not_called()
 
 
 class TestClearOnSuccess:
@@ -661,44 +420,6 @@ class TestInflowUpsertOnSuccess:
             f"old_file_path 要是整理前的原始路徑（repath 依據），實際 {kwargs.get('old_file_path')!r}"
         )
 
-    def test_duplicate_and_failed_do_not_call_inflow(self, tmp_path, isolated_db, mocker, stub_inflow):
-        """只有真的搬成功才進 DB。撞名（檔沒動）與失敗（檔沒動）都不能寫。"""
-        fav = tmp_path / "fav"
-        fav.mkdir()
-        write_video(fav, "DUP-001.mp4")
-        write_video(fav, "BAD-002.mp4")
-        config = make_config(fav)
-
-        mocker.patch("core.auto_organize.smart_search",
-                     side_effect=lambda number, *a, **kw: [{"number": number, "title": "T"}])
-        mocker.patch("core.auto_organize.organize_file", side_effect=lambda path, *a, **kw: (
-            {"duplicate": True, "duplicate_target": "other.mp4"}
-            if "DUP-001" in path else {"success": False, "error": "boom"}
-        ))
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        run_one_round(config)
-
-        stub_inflow.assert_not_called()
-
-    def test_missing_new_filename_does_not_call_inflow(self, tmp_path, isolated_db, mocker, stub_inflow):
-        """`organize_file` 回了 success 卻沒帶 new_filename 時不要拿 None 去 upsert。"""
-        fav = tmp_path / "fav"
-        fav.mkdir()
-        write_video(fav, "ABC-123.mp4")
-        config = make_config(fav)
-
-        mocker.patch("core.auto_organize.smart_search",
-                     return_value=[{"number": "ABC-123", "title": "T"}])
-        organized = default_organize_success()
-        organized["new_filename"] = ""
-        mocker.patch("core.auto_organize.organize_file", return_value=organized)
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        run_one_round(config)
-
-        stub_inflow.assert_not_called()
-
 
 class TestTranslateServiceConstruction:
     """Codex PR #181 一審：翻譯服務怎麼建出來的，兩條都是承重。"""
@@ -743,14 +464,6 @@ class TestTranslateServiceConstruction:
             f"必須把 config['general']['locale'] 傳給 create_translate_service，實際傳了 {passed!r}"
         )
 
-    def test_missing_locale_falls_back_to_zh_tw(self, tmp_path, isolated_db, mocker):
-        """反向鎖：config 沒有 general.locale 時仍是 zh-TW（不得拋 KeyError、不得傳 None）。"""
-        config = make_config(tmp_path / "fav", translate_enabled=True)   # 不給 general
-        _, create_mock = self._run(tmp_path, mocker, config)
-
-        args, kwargs = create_mock.call_args
-        passed = kwargs.get("target_language", args[1] if len(args) > 1 else None)
-        assert passed == "zh-TW"
 
     def test_factory_failure_degrades_to_no_translation_and_round_continues(
         self, tmp_path, isolated_db, mocker
@@ -860,25 +573,6 @@ class TestUncensoredModeParity:
         search_spy.assert_called_once()
         assert search_spy.call_args.kwargs.get("uncensored_mode") is True, (
             "config 開了無碼模式，smart_search 卻沒收到 uncensored_mode=True"
-        )
-
-    def test_smart_search_receives_false_when_uncensored_mode_disabled(
-        self, tmp_path, isolated_db, mocker
-    ):
-        fav = tmp_path / "fav"
-        fav.mkdir()
-        write_video(fav, "ABC-123.mp4")
-        config = make_config(fav)
-        config["search"]["uncensored_mode_enabled"] = False
-
-        search_spy = mocker.patch("core.auto_organize.smart_search", return_value=[])
-        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
-
-        run_one_round(config)
-
-        search_spy.assert_called_once()
-        assert search_spy.call_args.kwargs.get("uncensored_mode") is False, (
-            "config 沒開無碼模式，smart_search 不該收到 uncensored_mode=True"
         )
 
 

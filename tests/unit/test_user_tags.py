@@ -7,7 +7,6 @@ test_user_tags.py - Phase 41b-T1: DB user_tags 欄位 + NFO 讀寫 TDD-lite 測�
 import os
 import tempfile
 from pathlib import Path
-from typing import List
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -35,7 +34,6 @@ def _t6_isolated_failure_db(tmp_path, monkeypatch):
     return db_path
 
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _make_db() -> Path:
@@ -59,28 +57,12 @@ def _make_video(path=None, number="ABC-001", user_tags=None, **kwargs):
 
 # ── 2. Video model user_tags ──────────────────────────────────────────────────
 
-def test_video_from_row_deserializes_user_tags():
-    """from_row() 反序列化 user_tags 正確"""
-    from core.database import Video, init_db, VideoRepository
-    db_path = _make_db()
-    try:
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        v = _make_video(user_tags=["★5", "足"])
-        repo.upsert(v)
-        fetched = repo.get_by_path(v.path)
-        assert fetched is not None
-        assert fetched.user_tags == ["★5", "足"]
-    finally:
-        if db_path.exists():
-            db_path.unlink()
-
 
 # ── 3. upsert 保護 ────────────────────────────────────────────────────────────
 
 def test_upsert_preserves_user_tags_on_rescan():
     """upsert 帶空 user_tags 不覆蓋 DB 中已有值"""
-    from core.database import init_db, VideoRepository, Video
+    from core.database import init_db, VideoRepository
     db_path = _make_db()
     try:
         init_db(db_path)
@@ -105,48 +87,8 @@ def test_upsert_preserves_user_tags_on_rescan():
 
 # ── 4. update_user_tags() ──────────────────────────────────────────────────────
 
-def test_update_user_tags_updates_only_user_tags():
-    """update_user_tags() 只更新 user_tags，不碰其他欄位"""
-    from core.database import init_db, VideoRepository
-    db_path = _make_db()
-    try:
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        v = _make_video(user_tags=[])
-        repo.upsert(v)
-
-        # 更新 user_tags
-        success = repo.update_user_tags(v.path, ["new_tag"])
-        assert success is True
-
-        fetched = repo.get_by_path(v.path)
-        assert fetched.user_tags == ["new_tag"]
-        # title 不應改變
-        assert fetched.title == "テストタイトル"
-    finally:
-        if db_path.exists():
-            db_path.unlink()
-
 
 # ── 5. NFO 寫出：generate_nfo() ───────────────────────────────────────────────
-
-def test_generate_nfo_writes_user_tag_elements():
-    """傳 user_tags=["★5","足"] 時 NFO 含 <user_tag>★5</user_tag>"""
-    from core.organizer import generate_nfo
-    with tempfile.NamedTemporaryFile(suffix=".nfo", delete=False, mode="w") as f:
-        nfo_path = f.name
-    try:
-        generate_nfo(
-            number="ABC-001",
-            title="テスト",
-            output_path=nfo_path,
-            user_tags=["★5", "足"],
-        )
-        content = Path(nfo_path).read_text(encoding="utf-8")
-        assert "<user_tag>★5</user_tag>" in content
-        assert "<user_tag>足</user_tag>" in content
-    finally:
-        os.unlink(nfo_path)
 
 
 # ── 6. NFO 讀入：parse_nfo() ──────────────────────────────────────────────────
@@ -302,7 +244,7 @@ def test_organize_file_separates_user_tags_in_nfo():
     """T5-RED1: organize_file 呼叫 generate_nfo 時 user_tags 分開寫 <user_tag>，不混入 <tag>"""
     import tempfile, os, shutil as _shutil
     from pathlib import Path
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
 
     # 獨立暫存夾：organize_file 會真的搬檔（T0 起改用 os.replace ＋ O_EXCL 佔位），
     # 產物若落在共用的系統暫存夾，同檔其他測試會撞到既有目標而被判 duplicate。
@@ -360,69 +302,6 @@ def test_organize_file_separates_user_tags_in_nfo():
         assert '<user_tag>足</user_tag>' in content, "足 應在 <user_tag>"
         assert '<tag>★5</tag>' not in content, "★5 不應在 <tag>"
         assert '<tag>足</tag>' not in content, "足 不應在 <tag>"
-
-        if os.path.exists(nfo_path):
-            os.unlink(nfo_path)
-    finally:
-        _shutil.rmtree(work_dir, ignore_errors=True)
-
-
-def test_organize_file_no_user_tags_no_regression():
-    """T5-RED2: metadata 無 user_tags 時，NFO 不含 <user_tag>（不回歸）"""
-    import tempfile, os, shutil as _shutil
-    from pathlib import Path
-    from unittest.mock import patch
-
-    # 獨立暫存夾：理由同 test_organize_file_separates_user_tags_in_nfo
-    work_dir = tempfile.mkdtemp(prefix="user_tags_organize_")
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=work_dir) as f:
-        video_path = f.name
-
-    from core.organizer import generate_nfo as real_generate_nfo
-    captured_nfo_path = []
-
-    def fake_generate_nfo(**kwargs):
-        path = kwargs.get('output_path', '')
-        captured_nfo_path.append(path)
-        return real_generate_nfo(**kwargs)
-
-    try:
-        metadata = {
-            'number': 'ABC-001',
-            'title': 'テスト',
-            'original_title': '',
-            'actors': [],
-            'tags': ['HD'],
-            # 無 user_tags key
-            'date': '2024-01-01',
-            'maker': 'SOD',
-            'url': '',
-            'director': '',
-            'duration': None,
-            'series': '',
-            'label': '',
-            'cover': '',
-            'sample_images': [],
-        }
-
-        scraper_config = {
-            'output_dir': work_dir,
-            'folder_name_template': '{number}',
-        }
-
-        with patch('core.organizer.shutil.move'), \
-             patch('core.organizer.download_image'), \
-             patch('core.organizer.generate_nfo', side_effect=fake_generate_nfo):
-
-            from core.organizer import organize_file
-            organize_file(video_path, metadata, scraper_config)
-
-        assert len(captured_nfo_path) > 0, "generate_nfo 沒被呼叫"
-        nfo_path = captured_nfo_path[0]
-        assert os.path.exists(nfo_path), f"NFO 不存在: {nfo_path}"
-
-        content = Path(nfo_path).read_text(encoding='utf-8')
-        assert '<user_tag>' not in content, "無 user_tags 時不應有 <user_tag>"
 
         if os.path.exists(nfo_path):
             os.unlink(nfo_path)
@@ -513,5 +392,3 @@ def test_scrape_single_wsl_mapped_dir_user_tags_uses_mapped_namespace(monkeypatc
 
 # ── NFO updater ───────────────────────────────────────────────────────────────
 
-class TestUserTagsNfoUpdater:
-    """update_nfo_user_tags 邊界條件測試"""

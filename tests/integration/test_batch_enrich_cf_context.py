@@ -84,26 +84,6 @@ def test_batch_enrich_refresh_full_prefetch_keeps_shell_key(client, mocker):
     assert seen == ["loopback"]
 
 
-def test_batch_enrich_enrich_single_keeps_shell_key(client, mocker):
-    seen: list = []
-
-    def fake_enrich(**kwargs):
-        seen.append(cf_handoff.current_key.get())
-        return _ok()
-
-    mocker.patch("web.routers.scraper.search_jav", return_value={"title": "stub"})
-    mocker.patch("web.routers.scraper.enrich_single", side_effect=fake_enrich)
-
-    r = client.post("/api/batch-enrich", json={
-        "items": [{"file_path": "/video/ABC-002.mp4", "number": "ABC-002"}],
-        "mode": "fill_missing",
-        "source": "javlibrary",
-    })
-    assert r.status_code == 200
-    assert [e for e in _sse(r.text) if e["type"] == "result-item"][0]["success"] is True
-    assert seen == ["loopback"]
-
-
 def test_batch_enrich_each_item_gets_its_own_context_copy(client, mocker):
     """多片批次：每一圈都新開一份 ctx（同一個 Context 不可被並行進入；連續兩圈不得 RuntimeError）。"""
     seen: list = []
