@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.16] - 2026-10-22
+
+> 測試套件整理：刪除 287 支以「捏造的站方回應」當輸入的離線測試，爬蟲健康度改以活站金絲雀為準；零畫面改動、零使用者可見差異。
+
 ## [0.17.15] - 2026-10-22
 
 > 模糊搜尋補完 JavBus 與 DMM：JavBus 打女優名會先認出人、列出她的完整作品（連沒有磁鏈的片也在），系列、導演、label 也能直接打；DMM 排第一時，女優、系列、導演、label、片商改用 DMM 自己的編號精準列出（含還沒發行的預購片），結果卡上的番號也改用 DMM 官方番號。

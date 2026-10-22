@@ -239,11 +239,21 @@ If a regression of this class arises, the fix is:
   pre-merge SA-pre-6 flags untagged ones as BLOCKER. The canonical criterion lives in
   `feature/AI_COLLABORATION/pre-merge.md` 步驟 5.7 — read it before flagging.
   **Out of scope for this rule** (no lint tool can express these, so they belong in pytest
-  and need no tag): assertions on the *return value* of Python code — scraper parse results
-  (`assert video.title == "…"`, `assert "tag" in video.tags`), request URLs a client builds,
+  and need no tag): assertions on the *return value* of Python code — request URLs a client builds,
   JSON API response bodies, DB round-trips. (Asserting a literal against
-  `TestClient(...).get(...).text` when that response **is** HTML/JS/CSS is still in scope.) The 8 existing scraper test files carry ~500 such
-  assertions and none is tagged; that is correct, not debt.
+  `TestClient(...).get(...).text` when that response **is** HTML/JS/CSS is still in scope.)
+  Scraper parse results are NOT in this list. Decide by INPUT, not by module: a test whose
+  input is a site response we fabricated (synthetic HTML/JSON/GraphQL, canned transports, fake
+  scrapers returning site-shaped rows, stubs of requests/curl_cffi/httpx returning site
+  content) is not written at all, whatever it asserts (fields, null handling, guards, cache
+  hits, request budgets, exception classification). Tests on our own structures stay (spec-176
+  §3 whitelist): pure functions on our strings (number parsing, name normalization, maker
+  tables), aggregation/contract layers fed our own dicts / Video / card dicts (incl. the
+  metatube mapper and source_merger), provider/relay stubs, the custom-source interpreter's
+  tiny synthetic pages (tests/unit/_custom_source_pages.py), shipped-table reconciliation,
+  security guards, and request-shape tests whose responses are mere placeholders (assert on
+  the params/URL/throttle WE send). Live canaries under tests/smoke/ are the guard for
+  site-response handling.
 - When migrating a guard to lint, port it at the **same scan granularity** as the original
   (whole-file / element-scoped / attribute-value / method-body window) and prefer
   fail-closed over fail-open — 7 scope-narrowing regressions of exactly this kind were
@@ -253,6 +263,7 @@ If a regression of this class arises, the fix is:
   negation re-allowing `*.html` under `tests/` (default: `*.html` is ignored). Site
   structure is verified against the live site when a scraper is actually being fixed
   (canary NG → owner reproduces → compare with the live page); a stored copy goes stale
-  silently and only adds friction. Behaviour of **our own** logic (exact-name matching,
-  empty-result handling, the custom-source interpreter) is tested with a few lines of
-  inline synthetic markup inside the test file. Severity P3, but flag it every time.
+  silently and only adds friction. The only inline synthetic markup allowed is for the
+  custom-source interpreter (tests/unit/_custom_source_pages.py). Exact-name matching /
+  empty-result handling whose input is a site response is not tested offline; extract it into
+  a pure function over our own dicts if it needs a test. Severity P3, but flag it every time.

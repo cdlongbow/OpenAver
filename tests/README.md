@@ -67,9 +67,6 @@ tests/
 │       ├── javbus/SONE-103.json
 │       └── javdb/actress_search.json
 │
-├── mock_data/               # Mock JSON 資料
-│   └── mikami_profile.json
-│
 └── samples/                 # 番號解析測試樣本
     ├── basic/               # 基本格式 (SONE-103.mp4)
     ├── real_world/          # 真實世界格式
