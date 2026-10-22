@@ -13,6 +13,7 @@ import pytest
 
 import core.scraper as scraper_mod
 from core.scrapers.errors import SourceBlocked
+from core.search_providers import cursor as cursor_codec
 from core.search_providers import types as sp_types
 from core.search_providers.javbus import JavBusProvider
 from core.search_providers.types import EntityRef, Kind, WorkItem, Window
@@ -122,10 +123,11 @@ def numbers(cards):
 @pytest.mark.parametrize("kind", ["prefix", "keyword", "actress"])
 def test_shim_forwards_offset(monkeypatch, kind, offset, first_page):
     env = Env(monkeypatch)
+    token = cursor_codec.encode(cursor_codec.Token("javbus", "keyword"))  # offset>0 ⇒ 載入更多必須帶有效 token（175d）
     if kind == "prefix":
-        out = scraper_mod.search_prefix("midv", 20, offset)
+        out = scraper_mod.search_prefix("midv", 20, offset, cursor=token)
     elif kind == "actress":
-        out = scraper_mod.search_actress("MIDV", 20, offset)
+        out = scraper_mod.search_actress("MIDV", 20, offset, cursor=token)
     else:
         out = scraper_mod._javbus_keyword_search("MIDV", 20, offset, None, None)
     assert env.id_calls[0][1] == first_page

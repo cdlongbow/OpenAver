@@ -66,3 +66,13 @@ test('url-maker-encoded: special chars round-trip through searchParams', () => {
 test('MAKER_PAGE_SIZE is 30', () => {
     assert.equal(MAKER_PAGE_SIZE, 30);
 });
+
+// ─── 175d-T7：cursor（不透明續頁 token；只在 REST 附加、附在所有既有參數之後）────────
+test('url-cursor: keyword REST 附加在 offset／limit 之後；沒有 offset／limit 也附加', () => {
+    assert.equal(
+        buildSearchUrl({ query: 'SONE-205', offset: 20, limit: 20, cursor: 'tok' }),
+        '/api/search?q=SONE-205&offset=20&limit=20&cursor=tok'
+    );
+    assert.equal(buildSearchUrl({ query: 'x', cursor: 'tok' }), '/api/search?q=x&cursor=tok');
+});
+

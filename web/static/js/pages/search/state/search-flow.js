@@ -95,6 +95,7 @@ export function searchStateSearchFlow() {
         this.currentIndex = 0;
         this.currentQuery = '';
         this.currentMaker = null;
+        this.currentCursor = null;  // 175d
         this.searchQuery = '';  // 清空搜尋框
         this.currentOffset = 0;
         this.hasMoreResults = false;
@@ -163,6 +164,7 @@ export function searchStateSearchFlow() {
             displayMode: this.displayMode,      // T3 fix: 還原 Grid 狀態
             currentMode: this.currentMode,      // T3 fix: 還原搜尋模式（toggle 顯示依賴）
             currentMaker: this.currentMaker,    // 173 CD-173-12：取消時還原片商
+            currentCursor: this.currentCursor,  // 175d：取消時還原續頁 token
             errorText: this.errorText,           // T6c fix: 還原錯誤訊息
             errorKind: this.errorKind,
         };
@@ -175,6 +177,7 @@ export function searchStateSearchFlow() {
         this.currentMaker = maker
             ? { key: maker.key, label: maker.label, spellings: [...(maker.spellings || [])] }
             : null;
+        this.currentCursor = null;  // 175d：新搜尋清掉上一份清單的續頁 token
         if (maker) this.searchQuery = '';  // 片商模式搜尋框維持空白
         this.detailDone = 0;
         this.detailTotal = 0;
@@ -328,7 +331,6 @@ export function searchStateSearchFlow() {
                         this._coverSwapTimer = null;
                     }
                     this.$nextTick(() => { this.isStreaming = false; });
-                    this.hasMoreResults = data.has_more || false;
                     this.actressProfile = data.actress_profile || null;
                     if (this.actressProfile) this._heroCardImageError = false;  // A6-1 fix: actressProfile 到達，重新嘗試載入
                     // A7-Prod: result-complete 不拆 Hero placeholder — 最終命運由 result 事件決定
@@ -356,6 +358,7 @@ export function searchStateSearchFlow() {
                     // else: user already selected a valid item during streaming, don't override
                 }
                 else if (data.type === 'result') {
+                    this.currentCursor = data.cursor ?? null;  // 175d：三個分支共用，只在 result 寫（result-complete 不寫）；hasMoreResults 也只在 result 開放（FE-TIMING-13）
                     // T4: Stream guard — 漸進路徑的 result 決定最終狀態後關閉連線
                     if (this.streamComplete) {
                         const allFailed = this.searchResults.every(r => r._failed);
@@ -558,6 +561,7 @@ export function searchStateSearchFlow() {
                 this.searchResults = data.data;
                 this.currentIndex = 0;
                 this.hasMoreResults = data.has_more || false;
+                this.currentCursor = data.cursor ?? null;  // 175d
                 this.actressProfile = data.actress_profile || null;  // T2d: 寫入女優資料
                 if (this.actressProfile) this._heroCardImageError = false;  // A6-1 fix: actressProfile 到達，重新嘗試載入
                 // A7-Prod Issue 2: fallbackSearch 處理 _heroSlotReserved
@@ -746,6 +750,7 @@ export function searchStateSearchFlow() {
             this.displayMode = snap.displayMode || 'detail';
             this.currentMode = snap.currentMode || '';
             this.currentMaker = snap.currentMaker ?? null;
+            this.currentCursor = snap.currentCursor ?? null;
             this.errorText = snap.errorText || '';
             this.errorKind = snap.errorKind || '';
 

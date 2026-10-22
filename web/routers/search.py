@@ -146,7 +146,25 @@ def _maker_param_error(maker_key: str, spellings, offset: int) -> Optional[str]:
     return None
 
 
-def _run_maker_search(maker_key, maker, spellings, offset, status_callback=None, result_callback=None):
+# 續頁 token（175d）：路由只驗長度與字元集後原樣轉傳，解析是 relay 的事；缺／壞 token ⇒ 查無，超長／非法字元 ⇒ 422
+CursorParam = Annotated[Optional[str], Query(
+    max_length=512, pattern=r"^[A-Za-z0-9_\-=]*$",
+    description="續頁 token（上一頁回應的 cursor；只在 offset>0 才有作用）",
+)]
+
+
+def _cursor_arg(cursor: Optional[str]) -> Optional[str]:
+    """空字串＝未帶：REST 與 stream 共用的正規化。"""
+    return cursor or None
+
+
+def _cursor_fields(meta: dict) -> dict:
+    """成功回應共用的兩欄位：新 token 與回答者（沒有就是 null，鍵仍在）。"""
+    return {"cursor": meta.get("cursor"), "answered_by": meta.get("answered_by")}
+
+
+def _run_maker_search(maker_key, maker, spellings, offset, status_callback=None, result_callback=None,
+                      cursor=None, meta=None):
     """解析＋列表（由呼叫端放進背景執行緒）；未預期例外一律當連不上，不當找不到。"""
     label = maker or maker_key
     try:
@@ -158,6 +176,8 @@ def _run_maker_search(maker_key, maker, spellings, offset, status_callback=None,
             titles=titles, today=_today(),
             status_callback=status_callback, result_callback=result_callback,
             db_path=db_path,
+            cursor=cursor,
+            meta=meta,
         )
     except Exception:
         logger.exception("maker search failed: %s", maker_key)
@@ -183,17 +203,18 @@ def _maker_result_extras(maker_key: str, results: list, result) -> dict:
     return extras
 
 
-def _search_maker_rest(maker_key, maker, spellings, offset) -> dict:
+def _search_maker_rest(maker_key, maker, spellings, offset, cursor=None) -> dict:
     error = _maker_param_error(maker_key, spellings, offset)
     if error:
         return JSONResponse(status_code=400, content={"success": False, "error": error})
-    result = _run_maker_search(maker_key, maker, spellings, offset)
+    meta: dict = {}
+    result = _run_maker_search(maker_key, maker, spellings, offset, cursor=cursor, meta=meta)
     extras = _maker_result_extras(maker_key, result.results, result)
     if result.results:
         return {
             "success": True, "data": result.results, "total": len(result.results),
             "mode": "maker", "offset": offset, "has_more": _maker_has_more(result),
-            "actress_profile": None, **extras,
+            "actress_profile": None, **extras, **_cursor_fields(meta),
         }
     return {
         "success": False, "error": f"找不到 {maker or maker_key} 的資料", "data": [], "total": 0,
@@ -309,6 +330,7 @@ def search(
     maker_key: Optional[str] = Query(None, description="片商 key；給了就走片商最新作品（忽略 q）"),
     maker: Optional[str] = Query(None, description="片商顯示名"),
     spellings: Annotated[Optional[List[str]], Query(description="片商的片庫寫法（可重複）")] = None,
+    cursor: CursorParam = None,
 ) -> dict:
     """
     搜尋 JAV 資訊
@@ -328,8 +350,9 @@ def search(
     - **limit**: 每頁結果數（預設 20，最大 50）
     - **offset**: 跳過前 N 個結果，用於載入更多
     """
+    cursor = _cursor_arg(cursor)
     if maker_key is not None:
-        return _search_maker_rest(maker_key, maker, spellings, offset)
+        return _search_maker_rest(maker_key, maker, spellings, offset, cursor)
 
     q = (q or "").strip()
     if not q or len(q) < 2:
@@ -361,7 +384,7 @@ def search(
     # 自動模式使用 smart_search
     meta: dict = {}
     if mode == "auto":
-        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, discovery_only=use_discovery, resolve_makers=True, meta=meta)
+        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, discovery_only=use_discovery, resolve_makers=True, meta=meta, cursor=cursor)
     elif mode == "exact":
         if source:
             # 指定來源搜索
@@ -441,11 +464,11 @@ def search(
             data = search_jav(q)
             results = [data] if data else []
     elif mode == "partial":
-        results = search_partial(q, discovery_only=use_discovery)
+        results = search_partial(q, discovery_only=use_discovery, cursor=cursor, meta=meta)
     elif mode == "actress":
-        results = search_actress(q, limit=limit, offset=offset, discovery_only=use_discovery)
+        results = search_actress(q, limit=limit, offset=offset, discovery_only=use_discovery, cursor=cursor, meta=meta)
     else:
-        results = smart_search(q, limit=limit, offset=offset, discovery_only=use_discovery)
+        results = smart_search(q, limit=limit, offset=offset, discovery_only=use_discovery, cursor=cursor, meta=meta)
 
     detected_mode = mode if mode != "auto" else _detect_mode(q, True)
 
@@ -478,6 +501,7 @@ def search(
             "has_more": has_more,
             "actress_profile": actress_profile
         }
+        response_data.update(_cursor_fields(meta))
         # discovery flag 只在實際走 discovery 路徑時才標記（auto→exact 不算）
         if use_discovery and detected_mode in ('actress', 'partial', 'prefix'):
             response_data["discovery"] = True
@@ -730,6 +754,7 @@ async def search_stream(
     maker_key: Optional[str] = Query(None, description="片商 key；給了就走片商最新作品（忽略 q）"),
     maker: Optional[str] = Query(None, description="片商顯示名"),
     spellings: Annotated[Optional[List[str]], Query(description="片商的片庫寫法（可重複）")] = None,
+    cursor: CursorParam = None,
 ):
     """
     串流搜尋 API（SSE）- 即時回報搜尋狀態
@@ -739,6 +764,7 @@ async def search_stream(
     - result: 搜尋結果
     """
     mark_manual_activity()
+    cursor = _cursor_arg(cursor)
     is_maker = maker_key is not None
     q = (q or "").strip()
     invalid = _maker_param_error(maker_key, spellings, offset) if is_maker else (
@@ -777,9 +803,9 @@ async def search_stream(
     def run_search():
         """在背景執行搜尋"""
         if is_maker:
-            maker_out.append(_run_maker_search(maker_key, maker, spellings, offset, status_callback, result_callback))
+            maker_out.append(_run_maker_search(maker_key, maker, spellings, offset, status_callback, result_callback, cursor, meta))
             return maker_out[0].results
-        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, result_callback=result_callback, resolve_makers=True, meta=meta)
+        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, result_callback=result_callback, resolve_makers=True, meta=meta, cursor=cursor)
 
     async def event_generator():
         nonlocal sent_seed
@@ -856,6 +882,7 @@ async def search_stream(
                         'has_more': has_more,
                         'actress_profile': actress_profile
                     }
+                    complete_response.update(_cursor_fields(meta))
                     yield f"data: {json.dumps(complete_response)}\n\n"
 
                 # 永遠送傳統 result event（向後相容，前端的 source of truth）
@@ -871,6 +898,7 @@ async def search_stream(
                 }
                 if is_maker:
                     response.update(_maker_result_extras(maker_key, results, maker_out[0]))
+                response.update(_cursor_fields(meta))
                 yield f"data: {json.dumps(response)}\n\n"
 
             except Exception as e:

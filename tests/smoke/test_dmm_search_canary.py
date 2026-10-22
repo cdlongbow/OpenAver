@@ -312,3 +312,19 @@ def test_reverse_nonexistent_id_returns_empty_page(provider):
     sent = [rec for rec in _LISTS[mark:] if any(i == "999999999" for _, i in _filter_ids(rec))]
     assert sent, "沒有記錄到以 999999999 篩選的 list_contents 呼叫"
     assert sent[-1]["rows"] == [], f"站方原始 rows 不是空陣列: {len(sent[-1]['rows'] or [])} 筆"
+
+
+def test_d6_renamed_actress_names_resolve_to_same_id(provider):
+    """D6 (175d): 二階堂麗 and あかね麗 are one actress; both names must find the SAME DMM actress id.
+
+    The probe cache is cleared before every test (conftest), so each name costs a real request (counter delta >= 2).
+    """
+    _require_live()
+    from core.search_providers.types import Kind
+
+    before = _STATE["calls"]
+    new_name = provider.resolve(Kind.ACTOR, "二階堂麗")
+    old_name = provider.resolve(Kind.ACTOR, "あかね麗")
+    assert _STATE["calls"] - before >= 2, f"兩個名字沒有各發出請求（快取命中會讓這格變空殼）: {_STATE['calls'] - before}"
+    assert new_name is not None and old_name is not None, (new_name, old_name)
+    assert new_name.id == old_name.id, (new_name.id, old_name.id)

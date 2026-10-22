@@ -90,6 +90,7 @@ export function searchStateAdvancedPicker() {
             this.searchResults = payload.data;
             this.currentIndex = 0;
             this.hasMoreResults = payload.has_more || false;
+            this.currentCursor = null;  // 175d：高階搜尋／rescrape 的 payload 沒有 cursor，不殘留上一個搜尋的 token
             this.actressProfile = payload.actress_profile || null;
             if (this.actressProfile) this._heroCardImageError = false;
             this.listMode = 'search';

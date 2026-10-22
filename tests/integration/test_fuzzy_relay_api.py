@@ -148,7 +148,6 @@ import datetime
 import pytest
 
 from core.database import init_db
-from core.search_providers import relay
 
 
 def _dmm_chain(monkeypatch, ids):
@@ -159,7 +158,6 @@ def _dmm_chain(monkeypatch, ids):
 @pytest.fixture
 def dmm_only_chain(monkeypatch, tmp_path):
     """鏈只有 dmm、使用端名單認得 S1、片庫空、tmp DB。"""
-    relay._reset_maker_answerers()
     _dmm_chain(monkeypatch, {"dmm"})
     known = lambda: frozenset({maker_key_of("S1")})  # noqa: E731
     monkeypatch.setattr("core.maker_names.known_makers", known)
@@ -169,7 +167,6 @@ def dmm_only_chain(monkeypatch, tmp_path):
     db = tmp_path / "t.db"
     monkeypatch.setattr("core.database.get_db_path", lambda: db)
     yield
-    relay._reset_maker_answerers()
 
 
 def test_capsules_enabled_when_only_dmm_is_on(client, dmm_only_chain, monkeypatch, tmp_path):

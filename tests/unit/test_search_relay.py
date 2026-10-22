@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
-from core.search_providers import registry, relay
+from core.search_providers import cursor, registry, relay
 from core.search_providers.types import Enriched, EntityRef, Kind, Page, Provider, Window, WorkItem
 
 W = Window(0, 20)
@@ -196,7 +196,8 @@ def test_mode_maps_to_kind_and_forwards_window_and_callbacks(chain, mode, kind):
     chain([a])
     status, result = MagicMock(), MagicMock()
     w = Window(30, 7)
-    search(mode, "needle", w, status_callback=status, result_callback=result, discovery_only=False)
+    token = cursor.encode(cursor.Token("a", "keyword"))  # offset>0 ⇒ 載入更多必須帶有效 token（175d）
+    search(mode, "needle", w, status_callback=status, result_callback=result, discovery_only=False, cursor=token)
     k, target, got_w, got_status, got_result, got_disc = a.run_calls[0]
     assert (k, target, got_w, got_status, got_disc) == (kind, "needle", w, status, False)
     assert got_result is not None and got_result is not result  # 包過 tracker，不是原物件

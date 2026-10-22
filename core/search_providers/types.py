@@ -57,6 +57,7 @@ class WorkItem:
     actors: list[str] | None  # None＝列表沒給（要靠 enrich 補）；[]＝確定沒有
     source: str
     ref: object = None  # provider 內部用（例如 JavDB 的 movie id）
+    origin: EntityRef | None = None  # 多 ref 歸併時這部片來自哪個 ref；只由 merge_windows 設（CD-175d-5）
 
 
 @dataclass
@@ -115,6 +116,11 @@ class Provider(Protocol):
     def enrich(self, item: WorkItem, ref: EntityRef | None) -> Enriched:
         """管線掛鉤：把 WorkItem 補成結果卡（legacy dict）＋成員資格事實。"""
         ...
+
+    # 可選方法與屬性（175d；Protocol 不強制，沒有就視為不支援，relay 以 getattr 探測；DMM 不實作）：
+    #   resolve_all(kind, name) -> list[EntityRef]   名字 → 全部對應實體（JavBus：同名女優的有碼／無碼代號，有碼在前）
+    #   alt_names(kind, name) -> list[str]           名字 → 換名候選（JavDB：日文正名＋other_name 的非拉丁 token）
+    #   list_chunk: int                              一次取頁的單位筆數（JavBus 30、JavDB 50）
 
 
 class MakerSearchResult(NamedTuple):

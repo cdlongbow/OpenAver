@@ -17,9 +17,10 @@ const enc = encodeURIComponent;
  * @param {{key:string,label:string,spellings?:string[]}|null} [p.maker]
  * @param {number} [p.offset]
  * @param {number} [p.limit]
+ * @param {string|null} [p.cursor] - 175d：後端的不透明續頁 token；只在 REST 且為真值時附加（在所有既有參數之後）
  * @returns {string}
  */
-export function buildSearchUrl({ stream = false, query = '', maker = null, offset, limit } = {}) {
+export function buildSearchUrl({ stream = false, query = '', maker = null, offset, limit, cursor } = {}) {
     const params = [];
     if (maker) {
         params.push(`maker_key=${enc(maker.key)}`);
@@ -32,6 +33,7 @@ export function buildSearchUrl({ stream = false, query = '', maker = null, offse
         if (maker) params.push(`offset=${offset ?? 0}`);
         else if (offset !== undefined) params.push(`offset=${offset}`);
         if (limit !== undefined) params.push(`limit=${limit}`);
+        if (cursor) params.push(`cursor=${enc(cursor)}`);
     }
     return `${stream ? '/api/search/stream' : '/api/search'}?${params.join('&')}`;
 }

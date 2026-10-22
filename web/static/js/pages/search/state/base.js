@@ -12,6 +12,7 @@ export function searchStateBase() {
         currentIndex: 0,
         currentQuery: '',
         currentMaker: null,  // 173 CD-173-9：null | {key, label, spellings}；只經 activeMaker() 讀（惰性靠 currentMode==='maker'）
+        currentCursor: null,  // 175d CD-175d-11：null | string；後端給的不透明續頁 token，只存、只送（loadMore）、不解析
         searchQuery: '',  // V1c: 對應 input 即時輸入值（x-model 綁定）
         currentOffset: 0,
         hasMoreResults: false,
