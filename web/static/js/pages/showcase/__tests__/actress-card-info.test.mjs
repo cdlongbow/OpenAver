@@ -81,9 +81,6 @@ function keysOf(actress, isNarrow) {
     return partsOf(actress, isNarrow).map((p) => p.key);
 }
 
-function textsOf(actress, isNarrow) {
-    return partsOf(actress, isNarrow).map((p) => p.text);
-}
 
 function byKey(actress, isNarrow) {
     return Object.fromEntries(partsOf(actress, isNarrow).map((p) => [p.key, p]));
@@ -134,11 +131,6 @@ test('dim/value：height 傳原始 \'160cm\'（單位由 _setActressPill 剝）�
 // =====================================================================
 // _actressCardMiddle
 // =====================================================================
-
-function cardMiddle(actress, sort) {
-    const c = Object.assign({}, stateActress(), { actressSort: sort });
-    return c._actressCardMiddle(actress);
-}
 
 
 // =====================================================================

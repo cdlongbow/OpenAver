@@ -92,16 +92,6 @@ function mockFetchOk(payload) {
     return () => { globalThis.fetch = prev; };
 }
 
-function mockFetchSequence(handlers) {
-    const prev = globalThis.fetch;
-    let i = 0;
-    globalThis.fetch = async (...args) => {
-        const h = handlers[Math.min(i, handlers.length - 1)];
-        i++;
-        return h(...args);
-    };
-    return () => { globalThis.fetch = prev; };
-}
 
 function flushMicrotasks() {
     return new Promise((r) => setImmediate(r));

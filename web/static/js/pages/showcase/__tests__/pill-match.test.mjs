@@ -18,13 +18,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 // ===== Part A の純函式 import（無 window 依賴，可靜態 import） =====
-import { buildPillPredicate, mergeTagTokens } from '../../../shared/pill-filter.js';
+import { buildPillPredicate } from '../../../shared/pill-filter.js';
 
 // ===== Part B 的 resolve hook + window stub（FE-GUARD-11，照抄 T1 pill-state.test.mjs） =====
 

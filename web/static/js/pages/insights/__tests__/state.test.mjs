@@ -51,20 +51,6 @@ function rec(opts) {
 }
 
 
-// TASK-161b-T6：以 setter 計算整份 sel 提交次數。
-function ganttClickState() {
-    const state = libraryInsightsState();
-    state.sel = { period: { type: 'all' }, actress: null, maker: null };
-    let current = state.sel;
-    let commits = 0;
-    Object.defineProperty(state, 'sel', {
-        get: () => current,
-        set: (value) => { current = value; commits += 1; },
-    });
-    return { state, commits: () => commits };
-}
-
-
 // ── topDisplayCount (TASK-156e-T3) ───────────────────────────────────
 
 

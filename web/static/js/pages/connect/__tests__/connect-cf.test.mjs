@@ -10,10 +10,6 @@ globalThis.setTimeout = () => 1;
 window.addEventListener = () => {};
 
 const { connectPage } = await import('../main.js');
-const { cfView } = await import('../connect-logic.js');
-
-const REASONS = ['starting', 'no_windows', 'proxy_unusable', 'server_old', 'unreachable', 'unauthorized', 'offline_boot', 'webview2_failed'];
-const OLD = { state: 'not_ready', reason: 'shell_old', proxy: null };
 
 
 function mk(cfReply, shellKind = 'windows') {

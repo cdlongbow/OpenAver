@@ -10,7 +10,6 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay；
 // state-base.js 模組頂層讀 localStorage（清壞值）。
@@ -53,45 +52,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 const { stateActress } = await import('../state-actress.js');
 const { stateBase, _setActresses } = await import('../state-base.js');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '../../../../../..');
-const STATE_ACTRESS_SRC = readFileSync(
-    path.join(REPO_ROOT, 'web/static/js/pages/showcase/state-actress.js'),
-    'utf8',
-);
-const SHOWCASE_HTML = readFileSync(
-    path.join(REPO_ROOT, 'web/templates/showcase.html'),
-    'utf8',
-);
-
-/**
- * 抽出 class="filter-pill-group actress-filter-pill-group" 起的那一個元素 markup
- * （含內層，depth-aware）。比照 actress-pill-shell.test.mjs。
- */
-function extractActressFilterPillGroup(html) {
-    const openRe = /<div\b[^>]*\bclass="filter-pill-group actress-filter-pill-group"[^>]*>/;
-    const m = openRe.exec(html);
-    assert.ok(m, 'showcase.html 應含 class="filter-pill-group actress-filter-pill-group" 的容器');
-    const start = m.index;
-    let i = start + m[0].length;
-    let depth = 1;
-    while (i < html.length && depth > 0) {
-        const nextOpen = html.indexOf('<div', i);
-        const nextClose = html.indexOf('</div>', i);
-        if (nextClose === -1) break;
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-            depth++;
-            i = nextOpen + 4;
-        } else {
-            depth--;
-            i = nextClose + 6;
-            if (depth === 0) {
-                return html.slice(start, i);
-            }
-        }
-    }
-    throw new Error('actress-filter-pill-group 未找到匹配的 </div>');
-}
 
 /**
  * 合併 stateBase + stateActress 的 harness（比照 actress-pill-state.test.mjs）。

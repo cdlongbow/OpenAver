@@ -15,7 +15,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
-import { searchStateBase } from '../state/base.js';
 
 globalThis.window = globalThis;
 
@@ -23,7 +22,6 @@ globalThis.window = globalThis;
 // 註解），掛一個 scope 僅本檔的 resolve hook 後才能動態 import。
 register(new URL('./alias-loader.mjs', import.meta.url), import.meta.url);
 const { buildOrganizeMetadata } = await import('../state/batch.js');
-const { searchStateNavigation } = await import('../state/navigation.js');
 
 test('buildOrganizeMetadata: selectedCandidateIndex=2 → 送 searchResults[2]（非寫死 [0]）', () => {
   const file = {

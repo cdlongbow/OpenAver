@@ -31,16 +31,8 @@ globalThis.document = globalThis.document || {
 };
 
 const {
-    shouldAnimate,
     escapeHtml,
-    emptyKeyForCard,
     resolveDragResult,
-    resolveGestureResult,
-    isTouchZrEvent,
-    beginYearsDrag,
-    cancelYearsDrag,
-    getYearsDragState,
-    disposeAll,
 } = await import('../charts.js');
 const { UNKNOWN_KEY } = await import('../aggregate.js');
 
@@ -60,15 +52,6 @@ test('escapeHtml: <img onerror> payload 被拆解，不再是可執行的標籤'
     }
     assert.ok(!escapeHtml(cases[0].input).includes('<img'));
 });
-
-// ── shouldAnimate ────────────────────────────────────────────────────
-
-
-// ── emptyKeyForCard（TASK-156c-T6／161a-T5a：舊版型別白名單寫法已刪）────────
-
-const ALL_PERIOD = { type: 'all' };
-const cRec = (year, actresses, maker) => ({ year, actresses, maker });
-const cSel = (over) => ({ period: ALL_PERIOD, actress: null, maker: null, ...over });
 
 
 // ── resolveDragResult（TASK-161a-T6a：年份拖曳手勢的純判定）──────────────

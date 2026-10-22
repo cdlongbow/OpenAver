@@ -8,12 +8,11 @@ import assert from 'node:assert/strict';
 
 import {
     classifyWishlistAging,
-    ageDaysOf,
     WISHLIST_AGING_THRESHOLD_DAYS,
 } from '../wishlist-aging.js';
 
 // [branch review P3-7] CD-5：門檻只在定義處出現一次，測試由常數推導邊界。
-const { STAGE1, STAGE2 } = WISHLIST_AGING_THRESHOLD_DAYS;
+const { STAGE1 } = WISHLIST_AGING_THRESHOLD_DAYS;
 
 // 固定基準時刻（不依賴真實 wall-clock，CD-6 可注入的意義所在）
 const NOW_MS = Date.UTC(2026, 8, 3, 12, 0, 0); // 2026-09-03T12:00:00Z

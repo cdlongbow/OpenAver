@@ -11,13 +11,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    parseReleaseKey,
-    parseReleaseYearOnly,
-    parseEndpoint,
     expandPill,
     matchesReleasePill,
     composeEndpoint,
-    videoYearRange,
 } from '../release-window.js';
 
 // ===== parseReleaseKey =====

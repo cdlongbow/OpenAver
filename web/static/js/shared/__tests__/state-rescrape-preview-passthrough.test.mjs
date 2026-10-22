@@ -67,16 +67,5 @@ test('rescrapeConfirm (search 入口): rescrapePreview 解構重注入 → cover
 // ---------------------------------------------------------------------------
 // TASK-113c-T8 P1（Codex PR#128 round-4）：`_previewFailed` 不得隨採用流入 result
 // ---------------------------------------------------------------------------
-// 上面兩支守的是「新欄位要自動同進同出」；這兩支守的是**反面**——
-// `_previewFailed` 是彈窗這一次顯示的暫態旗標（rescrapePreview 依 CD-62-2 是
-// transient），不是資料。漏剝的話：彈窗裡預覽失敗過一次 → 採用後那一筆帶著旗標
-// 進 searchResults → saveState() 持久化 → 即使 metatube 已恢復也永遠停在 cover。
-//
-// 判準分界：**沒有底線前綴的欄位 = 來自 API 的資料 → 同進同出；
-// `_previewFailed` = 客戶端暫態 → 剝除。** 兩者不是同一類東西。
-
-function makeFailedPreview() {
-  return { ...makePreview(), _previewFailed: true };
-}
 
 

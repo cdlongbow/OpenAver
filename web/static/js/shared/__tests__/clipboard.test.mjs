@@ -27,7 +27,7 @@ function setNavigator(value) {
     Object.defineProperty(globalThis, 'navigator', { value, configurable: true });
 }
 
-const { copyText, execCommandCopy } = await import('../clipboard.js');
+const { copyText } = await import('../clipboard.js');
 
 beforeEach(() => {
     delete globalThis.pywebview;

@@ -12,7 +12,6 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay；
 // state-base.js 模組頂層讀 localStorage（清壞值）。比照既有 showcase 測試先 stub window。
@@ -63,82 +62,6 @@ const { stateActress } = await import('../state-actress.js');
 const stateBaseMod = await import('../state-base.js');
 const { _setActresses } = stateBaseMod;
 
-const STATE_BASE_SRC = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
-
-/** 抽「<sig> 起的下一個 `{` 開始 brace-match 到對應 `}`」的函式 body。 */
-function extractFnBody(code, sig, label) {
-    const sigIdx = code.indexOf(sig);
-    assert.ok(sigIdx >= 0, `原始碼應含 \`${sig}\`（${label}）`);
-    const open = code.indexOf('{', sigIdx);
-    assert.ok(open >= 0, `${label} 應有 {`);
-    let depth = 0;
-    for (let i = open; i < code.length; i++) {
-        const ch = code[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) return code.slice(open + 1, i);
-        }
-    }
-    throw new Error(`${label} 大括號未閉合（brace-match 失敗）`);
-}
-
-/**
- * CD-1 新契約：兩個錨點——
- *   1. 「提前啟動」：restoreState() 之後、fetchVideos() 之前含 _reconcileHeroCard
- *   2. 「await」：fetchVideos() 之後、applyFilterAndSort(true) 之前 await heroCardPromise
- * eval span ＝ 提前啟動那一行 ＋ `await heroCardPromise;`（不 eval `_awaitHeroCardWithTimeout`
- * ——模組作用域 binding 在 eval 裡取不到；await 行改由結構斷言鎖住）。
- * AsyncFunction 承載 span：ESM 嚴格模式下 eval 無法直接吃 `await`。
- */
-function runInitReconcileLine(c) {
-    const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
-    const restoreIdx = body.indexOf('this.restoreState()');
-    const fetchIdx = body.indexOf('await this.fetchVideos()');
-    const applyIdx = body.indexOf('this.applyFilterAndSort(true)');
-    assert.ok(
-        restoreIdx >= 0 && fetchIdx >= 0 && applyIdx >= 0,
-        'init() 應含 restoreState()、await fetchVideos()、applyFilterAndSort(true)',
-    );
-    assert.ok(restoreIdx < fetchIdx, 'restoreState() 應在 fetchVideos() 之前');
-
-    // 「提前啟動」段：restoreState() 之後、fetchVideos() 之前，必須含 _reconcileHeroCard 呼叫
-    const startZone = body.slice(restoreIdx, fetchIdx);
-    const startMatch = startZone.match(/[^\n]*_reconcileHeroCard[^\n]*/);
-    assert.ok(
-        startMatch,
-        '[pill-hero:CD-1-start] init() 在 restoreState() 之後、fetchVideos() 之前應含提前啟動 _reconcileHeroCard 的那一行',
-    );
-    const startLine = startMatch[0].replace(/\/\/[^\n]*$/, '').trim();
-    const startOffset = restoreIdx + startZone.indexOf(startMatch[0]);
-
-    // 「await」段：fetchVideos() 之後、applyFilterAndSort(true) 之前，必須 await 上面啟動的 promise
-    const awaitZone = body.slice(fetchIdx, applyIdx);
-    const awaitMatch = awaitZone.match(/[^\n]*await[^\n]*heroCardPromise[^\n]*/);
-    assert.ok(
-        awaitMatch,
-        '[pill-hero:CD-1-await] init() 在 fetchVideos() 之後、applyFilterAndSort(true) 之前應 await 提前啟動的 heroCardPromise',
-    );
-    const awaitOffset = fetchIdx + awaitZone.indexOf(awaitMatch[0]);
-
-    assert.ok(
-        startOffset < awaitOffset,
-        '[pill-hero:CD-1-order] 提前啟動那一行必須在 await 那一行之前（不得原地不動、也不得順序反轉）',
-    );
-
-    // eval span ＝ 提前啟動行 ＋ await heroCardPromise;（不 eval _awaitHeroCardWithTimeout）
-    const span = `${startLine}\nawait heroCardPromise;`;
-    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    try {
-        return AsyncFunction(span).call(c);
-    } catch (e) {
-        throw new Error(
-            `[pill-hero:CD-1-eval] 擷取到的那一行無法單獨執行——heroCardPromise 的賦值是否被換成多行了？`
-            + `見 state-base.js 該行註解「單行：pill-hero.test.mjs 以單行 regex 擷取本行並 eval，勿換行」。`
-            + `擷取到的內容：${JSON.stringify(span)}；原始錯誤：${e.message}`,
-        );
-    }
-}
 
 /**
  * 合併 stateVideos()＋stateActress()（比照 main.js 的 mergeState），保留

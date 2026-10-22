@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const metricMod = await import('../actress-metric.js');
-const { actressAgeValue, actressHeightValue, actressCupValue, actressMetricRange } = metricMod;
+const { actressHeightValue, actressMetricRange } = metricMod;
 
 // ── CUP_RANK 已刪除（120-C1：改字元碼推導，不留第二張真實來源）────────────────
 

@@ -13,7 +13,6 @@ globalThis.document = {
 
 register(new URL('./alias-loader.mjs', import.meta.url), import.meta.url);
 const { searchStateResultCard } = await import('../state/result-card.js');
-const { searchStateBatch } = await import('../state/batch.js');
 const provider = await import('../../../shared/translate-provider.js');
 
 const zh = JSON.parse(fs.readFileSync(new URL('../../../../../../locales/zh_TW.json', import.meta.url), 'utf8'));
@@ -85,24 +84,4 @@ test('test_failure_toast_key_by_reason', async () => {
     });
 });
 
-
-function makeBatch(provider = 'ollama') {
-    const toasts = [];
-    const state = {
-        ...searchStateBatch(),
-        appConfig: { translate: { provider } },
-        searchResults: [{ title: 'タイトルA' }, { title: 'タイトルB' }, { title: 'タイトルC' }],
-        translateState: { isProcessing: false, isPaused: false, total: 0, processed: 0, success: 0, failed: 0 },
-        hasJapanese: (t) => /[\u3040-\u30ff]/.test(t),
-        showToast(msg, type) { toasts.push([msg, type]); },
-        _getAbortSignal: () => undefined,
-        _clearAbort() {},
-    };
-    return { state, toasts };
-}
-
-function fakeFetch(responses) {
-    let i = 0;
-    return async () => ({ json: async () => responses[i++] });
-}
 

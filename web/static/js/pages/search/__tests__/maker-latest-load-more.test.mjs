@@ -98,7 +98,6 @@ const OK_BODY = (n, hasMore = true) => ({
     ok: true,
     json: async () => ({ success: true, has_more: hasMore, data: Array.from({ length: n }, (_, i) => ({ number: `NEW-${i}` })) }),
 });
-const FAIL_BODY = { ok: true, json: async () => ({ success: false, data: [] }) };
 
 function primeMaker(page, overrides = {}) {
     Object.assign(page, {

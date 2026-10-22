@@ -65,20 +65,6 @@ const ZH_TW = JSON.parse(
 );
 globalThis.window.__i18n = ZH_TW;
 
-const { stateBase } = await import('../state-base.js');
-
-function makeComponent(overrides) {
-    const c = stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
-    return Object.assign(c, overrides);
-}
-
-/** 抽出包住 footer-count--unreachable 的外層 <template x-if="..."> 條件。 */
-function extractUnreachablePillXIf(html) {
-    const re = /<template\s+x-if="([^"]+)">\s*<span\b[^>]*\bfooter-count--unreachable\b/;
-    const m = re.exec(html);
-    assert.ok(m, 'showcase.html 應有 <template x-if="..."> 包住 .footer-count--unreachable');
-    return m[1];
-}
 
 /** 抽出 unreachable pill 整段 markup（外層 template 起至對應 </template>）。 */
 function extractUnreachablePillBlock(html) {
@@ -111,21 +97,6 @@ function tKey(key, params) {
     return globalThis.window.t(key, params);
 }
 
-function composePillText(sources) {
-    const list = sources.map((s) => s.display).join('、');
-    if (sources.length <= 2) {
-        return {
-            key: 'showcase.status.source_unreachable_list',
-            text: tKey('showcase.status.source_unreachable_list', { list }),
-            title: null,
-        };
-    }
-    return {
-        key: 'showcase.status.source_unreachable_count',
-        text: tKey('showcase.status.source_unreachable_count', { n: sources.length }),
-        title: list,
-    };
-}
 
 // ===== DoD 1：空陣列 → pill 綁定條件為 false =====
 
@@ -164,27 +135,5 @@ test('permission footer renders new text only when every source lacks permission
 
 // ===== DoD 9：模式無關 — 女優牆也要看得到那句話 =====
 
-/** 取 .footer-left 的內容（到對應 </div>），用 depth-aware 配對。 */
-function extractFooterLeftInner(html) {
-    const m = /<div class="footer-left">/.exec(html);
-    assert.ok(m, 'showcase.html 應有 .footer-left');
-    const start = m.index + m[0].length;
-    let i = start;
-    let depth = 1;
-    while (i < html.length && depth > 0) {
-        const nextOpen = html.indexOf('<div', i);
-        const nextClose = html.indexOf('</div>', i);
-        if (nextClose === -1) break;
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-            depth++;
-            i = nextOpen + 4;
-        } else {
-            depth--;
-            if (depth === 0) return html.slice(start, nextClose);
-            i = nextClose + 6;
-        }
-    }
-    throw new Error('.footer-left 未找到匹配的 </div>');
-}
 
 // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：女優牆模式下來源連不到的警告仍要看得到

@@ -63,7 +63,6 @@ function makeFetch() {
     return f;
 }
 
-const tick = () => new Promise((r) => setImmediate(r));
 
 function merge(...parts) {
     const target = {};
@@ -161,20 +160,6 @@ test('a1-sse-message-late reopen: 取消並重開 B 後 A 的 SSE message 晚到
 });
 
 
-// ─── A2：onerror 晚到 ───────────────────────────────────────────────
-
-
-// ─── A3／A4：REST fallback 回應／拒絕晚到 ────────────────────────────
-const REST_OK = { ok: true, json: async () => ({ success: true, mode: 'maker', has_more: true, data: [{ number: 'AAA-001' }] }) };
-
-async function restSetup(page, fetchFake) {
-    const es = await a1Setup(page);
-    es.onerror();
-    assert.equal(fetchFake.calls.length, 1);
-    return fetchFake.pending[0];
-}
-
-
 // ─── _applyMakerError（CD-173-13） ──────────────────────────────────
 function sseFail(page, code) {
     page.doSearch('', { maker: MAKER_A });
@@ -183,14 +168,6 @@ function sseFail(page, code) {
     lastES().emit(ev);
 }
 
-async function restFail(page, fetchFake, code) {
-    page.doSearch('', { maker: MAKER_A });
-    lastES().onerror();
-    const body = { success: false, error: '後端原文', mode: 'maker' };
-    if (code) body.error_code = code;
-    fetchFake.pending[0].resolve({ ok: false, json: async () => body });
-    await tick();
-}
 
 test('error-not-found-hides error-sse-routes-maker: SSE 失敗 maker_not_found ⇒ 片商錯誤頁＋隱藏膠囊', async () => {
     await withEnv(async ({ page }) => {

@@ -52,7 +52,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 
 const { _recomputeCardActorAges, _setActresses, _setFilteredVideos } = await import('@/showcase/state-base.js');
 const { stateVideos } = await import('../state-videos.js');
-const { stateLightbox } = await import('../state-lightbox.js');
 
 test('_recomputeCardActorAges 單元行為：falsy 安全退出、正確為 video 寫入 _cardActorAges', () => {
     // 1. falsy 不拋錯

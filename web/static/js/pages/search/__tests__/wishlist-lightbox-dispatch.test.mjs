@@ -47,16 +47,6 @@ function makeKeyEvent(key) {
     };
 }
 
-function makeWheelEvent({ deltaX = 0, deltaY = 0 } = {}) {
-    return {
-        deltaX,
-        deltaY,
-        deltaMode: 0,
-        target: { closest() { return null; } },
-        preventDefault() { this._pd = true; },
-        _pd: false,
-    };
-}
 
 // DoD 5a
 test('handleKeydown: 書籤燈箱開著時 Escape 呼叫 closeWishlistLightbox 且不呼叫 closeLightbox', () => {

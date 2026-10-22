@@ -14,20 +14,12 @@ register(
   import.meta.url,
 );
 
-const { stateScan, DRAG_OVERLAY_TIMEOUT_MS } = await import('../state-scan.js');
+const { stateScan } = await import('../state-scan.js');
 
 function makeFakeEvent() {
   return { preventDefault() {} };
 }
 
-function makeFakeDragEvent() {
-  return { preventDefault() {}, dataTransfer: { types: ['Files'] } };
-}
-function makeFakeNonFileDragEvent() {
-  return { preventDefault() {}, dataTransfer: { types: ['text/plain'] } };
-}
-
-let dragTimeoutCalls;
 
 function makeHarness({ withPywebview } = { withPywebview: false }) {
   const openBrowseDirCalls = [];

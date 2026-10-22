@@ -21,21 +21,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { computeMaskWinGeometry, computeMaskDragRoom, MASK_MIN_DRAG_ROOM, computeMaskSettleGeometry } = await import('../mask-geometry.js');
+const { computeMaskWinGeometry, computeMaskDragRoom, MASK_MIN_DRAG_ROOM } = await import('../mask-geometry.js');
 
 const R_ACTRESS = 0.75;   // --actress-crop-ratio（女優 3/4 置中窗，CD-3）
-const R_VIDEO = 0.71;     // --poster-crop-ratio（showcase.css:311/345/1250/1260/1300，CD-3）
 
-// 固定種子 xorshift32 PRNG——DoD② 的小數 fuzz 需求：CI 必須可重現，不可用 Math.random()。
-function xorshift32(seed) {
-  let s = seed >>> 0;
-  return function next() {
-    s ^= s << 13; s >>>= 0;
-    s ^= s >>> 17;
-    s ^= s << 5; s >>>= 0;
-    return s / 4294967296;
-  };
-}
 
 // ── G1：computeMaskWinGeometry 恆回傳 object（99a-T5 回歸鎖）────────────────
 

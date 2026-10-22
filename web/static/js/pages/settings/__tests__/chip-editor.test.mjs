@@ -121,21 +121,4 @@ function installDomShim() {
 
 installDomShim();
 
-const { ChipEditor: ChipEditorClass } = await import('../chip-editor.js');
-
-function makeHost() {
-  const children = [];
-  return {
-    children,
-    childNodes: children,
-    appendChild(c) { children.push(c); c.parentNode = this; return c; },
-  };
-}
-
-function chipXCount(chip) {
-  return chip.childNodes.filter(
-    (c) => c.nodeType === 1 && String(c.className).split(/\s+/).includes('chip-x'),
-  ).length;
-}
-
 

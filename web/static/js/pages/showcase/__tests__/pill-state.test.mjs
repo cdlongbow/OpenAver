@@ -55,7 +55,6 @@ export async function resolve(specifier, context, nextResolve) {
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
 const { stateVideos } = await import('../state-videos.js');
-const { normalizePillValue } = await import('../../../shared/pill-filter.js');
 
 // makeComponent 用 spy 覆寫 _reconcileHeroCard/_animateFilter，因此 call-count 斷言只證明
 // 「三個 mutation 有呼叫它」，證明不了「state-videos.js 裡真的有那個 no-op stub」。

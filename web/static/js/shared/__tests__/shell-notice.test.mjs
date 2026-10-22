@@ -39,12 +39,3 @@ test('handleShellNotice returns false and never calls show when the page has no 
 });
 
 
-// 168e-T12: update_marker 純 DOM，不依賴 toast 容器與 Alpine
-function setupDots(n) {
-  const dots = Array.from({ length: n }, () => ({ hidden: true, title: '' }));
-  globalThis.document = { querySelector: () => null, querySelectorAll: () => dots };
-  delete globalThis.Alpine;
-  return dots;
-}
-
-

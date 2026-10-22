@@ -138,19 +138,6 @@ function visibleMenuCount(c) {
     }).length;
 }
 
-/** 新鈕：x-show 含 showTableList 的 <button>（下拉觸發鈕沒有這個 gate）。 */
-function extractShapeToggleButton(menu) {
-    const re = /<button\b([^>]*)>/g;
-    let m;
-    while ((m = re.exec(menu)) !== null) {
-        const attrs = m[1];
-        const xs = attrs.match(/\bx-show="([^"]*)"/);
-        if (xs && xs[1].includes('showTableList')) {
-            return { attrs, xShow: xs[1] };
-        }
-    }
-    return null;
-}
 
 // =====================================================================
 // 反向鎖（§0.1 / P2-1）：桌面 + poster 仍是四條／四段（旗標開）

@@ -15,9 +15,6 @@ const SHOWCASE_HTML = readFileSync(
     path.join(REPO_ROOT, 'web/templates/showcase.html'),
     'utf8',
 );
-const ZH_TW = JSON.parse(
-    readFileSync(path.join(REPO_ROOT, 'locales/zh_TW.json'), 'utf8'),
-);
 
 /**
  * 抽出女優模式 loading / empty / search-empty / grid 區塊
@@ -132,12 +129,6 @@ function extractGridShow(block) {
 const STATE_PAGE_SHOWS = extractStatePageShows(ACTRESS_BLOCK);
 const GRID_SHOW = extractGridShow(ACTRESS_BLOCK);
 
-// 期望字面（契約鎖）——互斥性求值用的是下方從 HTML 抽出的實際條件，
-// 這樣拿掉 actressCount > 0 時互斥表會真的轉紅（mutation 可證偽）。
-const LOADING_SHOW_EXPECTED = 'actressLoading';
-const EMPTY_SHOW_EXPECTED = '!actressLoading && actressCount === 0';
-const SEARCH_EMPTY_SHOW_EXPECTED = '!actressLoading && actressCount > 0 && filteredActressCount === 0';
-const GRID_SHOW_EXPECTED = '!actressLoading && filteredActressCount > 0';
 
 // 實際抽出的條件（互斥求值以此為準）
 assert.equal(STATE_PAGE_SHOWS.length, 3, `預期 3 個 state-page，實際：${JSON.stringify(STATE_PAGE_SHOWS)}`);
@@ -218,31 +209,6 @@ test('空狀態：任意合法 (loading, count, filtered) 組合 state-page 分�
 
 // ===== footer 三段式 =====
 
-/** 抽出 class="footer-count footer-count--actress" 元素 markup（depth-aware）。 */
-function extractActressFooter(html) {
-    const openRe = /<span\b[^>]*\bclass="footer-count footer-count--actress"[^>]*>/;
-    const m = openRe.exec(html);
-    assert.ok(m, 'showcase.html 應含 footer-count footer-count--actress');
-    const start = m.index;
-    let i = start + m[0].length;
-    let depth = 1;
-    while (i < html.length && depth > 0) {
-        const nextOpen = html.indexOf('<span', i);
-        const nextClose = html.indexOf('</span>', i);
-        if (nextClose === -1) break;
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-            depth++;
-            i = nextOpen + 5;
-        } else {
-            depth--;
-            i = nextClose + 7;
-            if (depth === 0) {
-                return html.slice(start, i);
-            }
-        }
-    }
-    throw new Error('footer-count--actress 未找到匹配的 </span>');
-}
 
 /** 抽出女優 footer 外層 template x-if 條件。 */
 function extractActressFooterOuterIf(html) {
@@ -253,21 +219,8 @@ function extractActressFooterOuterIf(html) {
     return m[1];
 }
 
-const ACTRESS_FOOTER = extractActressFooter(SHOWCASE_HTML);
 const OUTER_IF = extractActressFooterOuterIf(SHOWCASE_HTML);
 
-function extractXIfConditions(markup) {
-    const re = /<template\s+x-if="([^"]+)"/g;
-    const conds = [];
-    let m;
-    while ((m = re.exec(markup)) !== null) {
-        conds.push(m[1]);
-    }
-    return conds;
-}
-
-// 內層三個 x-if 在 footer-count 內部（不包含外層 template，因為 extractActressFooter 從 span 起）
-const INNER_CONDS = extractXIfConditions(ACTRESS_FOOTER);
 
 const FOOTER_TOTAL = '!actressSearch && !actressPills.length';
 const FOOTER_SEARCH = 'actressSearch && filteredActressCount > 0 && !actressPills.length';

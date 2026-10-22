@@ -21,9 +21,6 @@ function namesMatching(pills) {
     return ALL.filter(pred).map((a) => a.name);
 }
 
-function assertNoThrow(fn, label) {
-    assert.doesNotThrow(fn, label);
-}
 
 // ── age ────────────────────────────────────────────────────────────────────
 

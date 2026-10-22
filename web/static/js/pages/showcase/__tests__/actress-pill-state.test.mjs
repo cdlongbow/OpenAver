@@ -8,7 +8,6 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay；
 // state-base.js 模組頂層讀 localStorage（清壞值）。
@@ -51,12 +50,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 const { stateActress } = await import('../state-actress.js');
 const { stateBase, _setActresses } = await import('../state-base.js');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '../../../../../..');
-const STATE_BASE_SRC = readFileSync(
-    path.join(REPO_ROOT, 'web/static/js/pages/showcase/state-base.js'),
-    'utf8',
-);
 
 /**
  * 合併 stateBase + stateActress 的 harness。

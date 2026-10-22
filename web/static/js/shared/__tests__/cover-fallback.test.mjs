@@ -21,7 +21,6 @@ globalThis.window.t = (key) => key;
 // alias-loader.mjs（scope 僅本測試檔的 module graph，不動 package.json）。
 register(new URL('../../pages/search/__tests__/alias-loader.mjs', import.meta.url), import.meta.url);
 const { resolveResultCoverUrl, shouldFallbackToCover, isStaleCoverError } = await import('../cover-fallback.js');
-const { clearPreviewFailedFlags } = await import('../../pages/search/state/persistence.js');
 
 // ===== resolveResultCoverUrl =====
 

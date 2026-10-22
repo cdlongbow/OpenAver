@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { whenBridgeReady, callBridge, clientRouting } = await import('../shell-client.js');
+const { callBridge, clientRouting } = await import('../shell-client.js');
 
 function freshWindow(api) {
     const w = new EventTarget();

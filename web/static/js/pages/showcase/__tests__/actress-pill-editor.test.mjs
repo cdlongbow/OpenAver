@@ -83,7 +83,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 const { stateActress } = await import('../state-actress.js');
 const { stateBase, _setActresses } = await import('../state-base.js');
 const { stateVideos } = await import('../state-videos.js');
-const { buildActressPillPredicate } = await import('../../../shared/actress-pill-filter.js');
 
 // ── matchMedia stub（可控 matches ＋ 記錄 handler 參考）────────────────────
 
@@ -197,27 +196,6 @@ function makeComponent(overrides) {
     return c;
 }
 
-/** 跑 init() 到 matchMedia 註冊完成（stub 掉網路與 Alpine 依賴） */
-async function runInit(c) {
-    globalThis.window.__registerPage = () => {};
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => ({
-        ok: true,
-        json: async () => ({ success: true, videos: [], groups: [] }),
-    });
-    // 覆寫會打網路／DOM 的方法
-    c.restoreState = () => {};
-    c.fetchVideos = async () => {};
-    c.applyFilterAndSort = () => {};
-    c.updatePagination = () => {};
-    c.loadActresses = () => {};
-    try {
-        await c.init();
-    } finally {
-        globalThis.fetch = origFetch;
-        delete globalThis.window.__registerPage;
-    }
-}
 
 // ── DoD #2：✗ 不刪除不修改（CD-116b-5 / spec §5.6）────────────────────────
 
@@ -280,20 +258,6 @@ test('DoD#11 _togglePillEditor 桌機可開、再點同 dim 關閉', () => {
 
 // 129-T1b：clearAllFilters 依分頁分流之後，這條拆成兩個分支各驗一次。
 // teardown 仍是**無條件**（CD-116b-8b 不變），所以兩邊的 `_pillEditor === null` 都要成立；
-// 差別在 actressPills——只有女優牆那條會清它，影片牆那條**不准碰**（spec-129 S1）。
-
-
-/** 斷言 pill 陣列裡沒有 value/value2 為字面 'null' 或空字串的項目 */
-function assertNoNullOrEmptyPillValues(pills, msg) {
-    for (const p of pills) {
-        assert.notEqual(p.value, 'null', msg || 'value 不得為字面 null');
-        assert.notEqual(p.value, '', msg || 'value 不得為空字串');
-        if (p.value2 != null) {
-            assert.notEqual(p.value2, 'null', msg || 'value2 不得為字面 null');
-            assert.notEqual(p.value2, '', msg || 'value2 不得為空字串');
-        }
-    }
-}
 
 // ── 116c-T2 改寫：兩格皆空按 ✓ →（防禦性 return）不寫入、不關閉 ───────────
 

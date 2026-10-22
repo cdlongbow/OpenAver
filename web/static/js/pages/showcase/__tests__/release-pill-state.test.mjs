@@ -177,26 +177,6 @@ function makeComponent(overrides) {
     return c;
 }
 
-/** 跑 init() 到 matchMedia 註冊完成（stub 掉網路與 Alpine 依賴），比照 actress-pill-editor.test.mjs */
-async function runInit(c) {
-    globalThis.window.__registerPage = () => {};
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => ({
-        ok: true,
-        json: async () => ({ success: true, videos: [], groups: [] }),
-    });
-    c.restoreState = () => {};
-    c.fetchVideos = async () => {};
-    c.applyFilterAndSort = () => {};
-    c.updatePagination = () => {};
-    c.loadActresses = () => {};
-    try {
-        await c.init();
-    } finally {
-        globalThis.fetch = origFetch;
-        delete globalThis.window.__registerPage;
-    }
-}
 
 /** 直接構造一枚 release pill（不透過 addPill），供 _toggleReleaseEditor 開啟用 */
 function releasePill(op, value, value2) {
@@ -359,22 +339,6 @@ test('AC4 取代語意：第二次呼叫後 release 維度仍恰 1 枚且值是�
     assert.equal(c.pills[0], actressPill, 'actress pill 參照不變');
     assert.equal(c.pills[1], pickPill, 'pick pill 參照不變');
 });
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 移除 release pill 時的浮層 teardown（§3.3）
-// ═══════════════════════════════════════════════════════════════════════════
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// §3.5 不變式：四個跨切面 teardown 點各走一次，兩個 slot 皆 null
-// hero 橋接（state-actress.js:1271）不寫測試——由 git diff 兩行機械自證（Opus 裁決）。
-// ═══════════════════════════════════════════════════════════════════════════
-
-function seedBothEditors(c) {
-    c._pillEditor = { dim: 'age', op: '=', value: '30', rangeLo: null, rangeHi: null, badLo: false, badHi: false };
-    c._releaseEditor = { op: '=', value: '2020', value2: null, loYear: null, loMonth: null, hiYear: null, hiMonth: null, badLoY: false, badLoM: false, badHiY: false, badHiM: false };
-}
 
 
 // ═══════════════════════════════════════════════════════════════════════════

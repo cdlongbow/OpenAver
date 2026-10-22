@@ -9,7 +9,7 @@ globalThis.window.t = (key, params) => (params && params.path !== undefined ? `$
 const toastCalls = [];
 globalThis.Alpine = { store: () => ({ show: (m, t) => toastCalls.push([m, t]) }) };
 
-const { notifyOpenResult, bridgeReasonMessage, handleBridgeUncovered } = await import('../bridge-notify.js');
+const { notifyOpenResult, handleBridgeUncovered } = await import('../bridge-notify.js');
 
 function run(result, kind) {
     const calls = [];
@@ -19,7 +19,6 @@ function run(result, kind) {
 
 // local_path 與 server_path 刻意給不同值（BE-TEST-11），uncovered 的 local_path 為 null（真實契約）
 const NOT_FOUND = { ok: false, reason: 'not_found', local_path: 'D:\\AV\\A.mp4', server_path: '/srv/av/A.mp4' };
-const NOT_VIDEO = { ok: false, reason: 'not_video', local_path: 'D:\\AV\\A.txt', server_path: '/srv/av/A.txt' };
 const UNCOVERED = { ok: false, reason: 'uncovered', local_path: null, server_path: '/srv/other/A.mp4' };
 
 for (const kind of ['file']) {

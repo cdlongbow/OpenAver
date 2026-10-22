@@ -50,7 +50,6 @@ const { stateLightboxMask } = await import('../state-lightbox-mask.js');
 
 const AUTO_DISABLED_KEY = 'showcase.lightbox.mask_focal_too_slow_auto_disabled';
 const HINT_KEY = 'showcase.lightbox.mask_focal_too_slow_hint';
-const FAILED_KEY = 'showcase.lightbox.mask_detect_failed';
 const SAVE_FAILED_KEY = 'showcase.lightbox.mask_save_failed';
 
 function mockFetch(payload) {

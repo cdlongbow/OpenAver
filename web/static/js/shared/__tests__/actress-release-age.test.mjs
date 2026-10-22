@@ -6,7 +6,6 @@ import assert from 'node:assert/strict';
 
 const mod = await import('../actress-release-age.js');
 const {
-    LONG_FORM_MIN_DURATION_MINUTES,
     computeAgeAtDate,
     computeActressAgeForVideo,
     resolveFavoriteActressAge,

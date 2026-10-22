@@ -70,13 +70,6 @@ test('I-12 gen: preview landing after reopen leaves the new window untouched', a
 });
 
 
-function confirmCtx(ctx) {
-    ctx.openRescrape({ number: 'AAA-111', path: '/x/a.mp4' });
-    ctx.rescrapePreview = { url: 'u' };
-    ctx.rescrapeStep = 'preview';
-    ctx._rescrapeCommitSource = 'javbus';
-}
-
 for (const [name, body] of [['success', { success: true }], ['cf_needed', { cf_needed: true }]]) {
 }
 

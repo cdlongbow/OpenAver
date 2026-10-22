@@ -10,7 +10,6 @@ const { scopeRecords } = await import('../selection.js');
 const {
     setRecords,
     getRecords,
-    canonicalizeMakers,
     buildMainMakerYearMap,
 } = agg;
 const {
@@ -20,15 +19,12 @@ const {
     REST_KEY,
     ACTRESS_TOP_N,
     buildMakerDonutData,
-    classifyRecordAgainstMainMaker,
     buildActressBoard,
     aggregateTags,
     aggregateAge,
     aggregateFieldTop8,
     buildGanttRows,
-    ganttYearAxis,
     buildGanttYearCells,
-    buildGanttAgeCells,
     buildSoloRows,
     buildCostarRows,
 } = agg;

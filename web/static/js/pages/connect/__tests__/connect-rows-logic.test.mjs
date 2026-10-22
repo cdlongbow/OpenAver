@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    connectActions, mergeRows, staleRows, rulesForSave, stripWrappingQuotes, isRowsDirty, rowResultView, pathMapForApply,
+     mergeRows, staleRows, rulesForSave, stripWrappingQuotes, isRowsDirty,
 } from '../connect-logic.js';
 
 const SRC = [
@@ -14,7 +14,6 @@ const SAVED = [
     { server: '/volume1/av', local: '\\\\nas\\av' },
     { server: '/volume1/gone', local: 'Z:\\gone' },
 ];
-const URL_A = 'http://good.test:8765';
 
 function allRows() {
     return [...mergeRows(SRC, SAVED), ...staleRows(SRC, SAVED)];
@@ -97,25 +96,5 @@ test('rulesForSave 去掉成對引號且與 Python 同表', () => {
     const snap = JSON.stringify(rulesForSave(rows));
     assert.equal(isRowsDirty(rows, snap), false);
 });
-
-
-function loaded(over = {}) {
-    const rows = allRows();
-    return {
-        sourcesState: 'ok', sourcesFor: URL_A, rows, rowsSnapshot: JSON.stringify(rulesForSave(rows)),
-        probe: { url: URL_A }, ...over,
-    };
-}
-
-
-function actionState(over = {}) {
-    return {
-        ...loaded(),
-        bridge: 'ready', busy: null, restarting: false, mode: 'client', phase: 'authed',
-        urlText: URL_A, savedUrl: URL_A, probedText: URL_A, pin: '',
-        probe: { ok: true, url: URL_A, auth_required: true, authed: true, compat: { status: 'ok' } },
-        ...over,
-    };
-}
 
 

@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  stripFolderExcludedTokens, normalizeFolderLayers, buildNamingPreview,
-  formatNfoTitle, buildNfoTitlePreview,
+   normalizeFolderLayers, buildNamingPreview,
+  formatNfoTitle,
 } from '../naming-preview.js';
 
 // ── 以下 13 個 test 從 pages/settings/__tests__/chip-editor.test.mjs 搬來（CD-146a-13），

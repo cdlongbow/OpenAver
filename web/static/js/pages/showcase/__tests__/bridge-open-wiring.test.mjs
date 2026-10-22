@@ -64,16 +64,6 @@ test('openLocal 具名原因贏（error toast 帶路徑）', async () => {
 });
 
 
-function withClipboard(fn) {
-    return async () => {
-        Object.defineProperty(globalThis, 'navigator', {
-            value: { clipboard: { writeText: () => Promise.resolve() } }, configurable: true, writable: true,
-        });
-        try { await fn(); } finally { delete globalThis.navigator; }
-    };
-}
-
-
 // 168e-T4：剪貼簿 spy 會記錄每次寫入的內容
 function withClipboardSpy(fn) {
     return async () => {

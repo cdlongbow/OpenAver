@@ -87,7 +87,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 await import('../animations.js');
 const ShowcaseAnimations = globalThis.window.ShowcaseAnimations;
 
-const { stateBase } = await import('../state-base.js');
 
 const VIEWPORT_H = 900;
 
@@ -166,27 +165,6 @@ function resetCalls() {
     globalThis.window.innerHeight = VIEWPORT_H;
 }
 
-function clearPropsCalls(exact) {
-    return gsapCalls.set.filter((args) => {
-        const cp = args[1] && args[1].clearProps;
-        if (!cp) return false;
-        if (exact === undefined) return true;
-        return cp === exact;
-    });
-}
-
-function makeToggleInfoCtx() {
-    const fakeGrid = makeGrid([]);
-    const ctx = Object.assign(
-        stateBase.call({ $persist: (obj) => ({ as: () => obj }) }),
-        {
-            infoVisible: false,
-            _persistedShowcase: {},
-            _getActiveGrid: () => fakeGrid,
-        },
-    );
-    return { ctx, fakeGrid };
-}
 
 // ── 1. toggleInfo：第一行就寫 infoVisible ────────────────────────
 

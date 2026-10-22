@@ -10,7 +10,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { rankMakerCapsules } from '../maker-capsules.js';
-import { canonicalizeMakers } from '../../insights/aggregate.js';
 
 const row = (maker, recent, total = recent) => ({ maker, total, recent });
 

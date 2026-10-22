@@ -4,10 +4,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const {
-  customStatusToProbeState, customStatusIcon, customStatusKey,
-  mismatchVerbKey, formatVerifiedAt, pickFirstMismatch, describeCustomLine,
+  customStatusToProbeState,
+     describeCustomLine,
 } = await import('../custom-source-logic.js');
-const { PROBE_ICON_MAP } = await import('../source-probe-logic.js');
 
 const P = 'settings.sources.';
 

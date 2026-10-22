@@ -16,9 +16,6 @@ const { searchPage, DRAG_OVERLAY_TIMEOUT_MS } = await import('../main.js');
 function makeFakeDragEvent() {
   return { preventDefault() {}, dataTransfer: { types: ['Files'] } };
 }
-function makeFakeNonFileDragEvent() {
-  return { preventDefault() {}, dataTransfer: { types: ['text/plain'] } };
-}
 
 function makeHarness() {
   const handleFileDropCalls = [];

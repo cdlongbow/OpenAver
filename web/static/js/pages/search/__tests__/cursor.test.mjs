@@ -27,10 +27,7 @@ const { searchStateBase } = await import('../state/base.js');
 const { searchStateSearchFlow } = await import('../state/search-flow.js');
 const { searchStateNavigation } = await import('../state/navigation.js');
 const { searchStatePersistence } = await import('../state/persistence.js');
-const { searchStateAdvancedPicker } = await import('../state/advanced-picker.js');
 
-const MAKER_A = { key: 'moodyz', label: 'MOODYZ', spellings: ['MOODYZ', 'Moodyz'] };
-const MAKER_B = { key: 's1', label: 'S1', spellings: ['S1'] };
 
 class FakeES {
     static instances = [];
@@ -105,21 +102,7 @@ function body(n, { cursor, hasMore = true } = {}) {
     if (cursor !== undefined) b.cursor = cursor;
     return { ok: true, json: async () => b };
 }
-const FAIL_BODY = { ok: true, json: async () => ({ success: false, data: [], cursor: 'from-failure' }) };
 
-function primeMaker(page, overrides = {}) {
-    Object.assign(page, {
-        pageState: 'result',
-        listMode: 'search',
-        currentMode: 'maker',
-        currentMaker: { ...MAKER_A },
-        currentQuery: '',
-        searchQuery: '',
-        searchResults: [{ number: 'MIDV-001' }, { number: 'MIDV-002' }],
-        currentOffset: 0,
-        hasMoreResults: true,
-    }, overrides);
-}
 
 function primeKeyword(page, overrides = {}) {
     Object.assign(page, {
@@ -136,7 +119,6 @@ function primeKeyword(page, overrides = {}) {
 }
 
 const KW_URL = '/api/search?q=%E4%B8%89%E4%B8%8A%E6%82%A0%E4%BA%9C&offset=20&limit=20';
-const MAKER_URL = '/api/search?maker_key=moodyz&maker=MOODYZ&spellings=MOODYZ&spellings=Moodyz&offset=30';
 
 // ─── loadMore：送出 ───────────────────────────────────────────────────
 test('cursor-load-more-sends-cursor: 關鍵字結果按載入更多 ⇒ URL 逐字＝既有 URL ＋ &cursor=<token>', async () => {
@@ -220,41 +202,6 @@ function mockSessionStorage(initial = {}) {
         removeItem: (k) => { delete store[k]; },
     };
     return store;
-}
-
-// fake this：刻意不含 currentCursor（驗 ?? null 的容錯）
-function persistThis(STATE_KEY, overrides = {}) {
-    return merge(
-        searchStatePersistence(),
-        { activeMaker: searchStateSearchFlow().activeMaker },
-        {
-            STATE_KEY,
-            searchResults: [{ number: 'MIDV-001' }],
-            currentIndex: 0,
-            currentQuery: 'q',
-            currentOffset: 0,
-            hasMoreResults: true,
-            fileList: [],
-            currentFileIndex: 0,
-            listMode: 'search',
-            searchQuery: 'q',
-            displayMode: 'detail',
-            _preWishlistDisplayMode: null,
-            _preWishlistListMode: null,
-            currentMode: 'exact',
-            currentMaker: null,
-            actressProfile: null,
-            pageState: 'result',
-            _searchSnapshot: null,
-            lightboxOpen: false,
-            lightboxIndex: 0,
-            _heroCardImageError: false,
-            _heroLightboxImageError: false,
-            _resetCoverState: () => {},
-            switchToWishlist: () => {},
-        },
-        overrides,
-    );
 }
 
 

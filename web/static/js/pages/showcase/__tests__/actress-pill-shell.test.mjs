@@ -67,11 +67,6 @@ const GROUP = extractActressFilterPillGroup(SHOWCASE_HTML);
 
 // ===== i18n key 存在性：三個新 dim_label key =====
 
-const EXPECTED_NEW_DIM_LABELS = {
-    'showcase.pill.dim_label.age': '年齡',
-    'showcase.pill.dim_label.height': '身高',
-    'showcase.pill.dim_label.cup': '罩杯',
-};
 
 function lookupNested(obj, dotted) {
     return dotted.split('.').reduce(

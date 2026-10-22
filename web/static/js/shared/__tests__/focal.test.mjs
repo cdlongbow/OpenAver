@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { FOCAL_X_DEADZONE, parseFocal, focalObjectPosition, focalCellObjectPosition, clampMaskWinLeft } =
+const { parseFocal, focalObjectPosition, focalCellObjectPosition, clampMaskWinLeft } =
   await import('../focal.js');
 
 // ── parseFocal（鏡射 parse_focal 同粒度） ─────────────────────────────────
@@ -91,26 +91,6 @@ test('focalCellObjectPosition〔clamp 下界〕x=0（極端左）→ clamp 進 0
     '0.00% center',
   );
 });
-
-
-// ── by-construction：小格 objPos% 換算的可見窗中心 應與遮罩換算的可見窗中心一致 ──
-// 鏡射 state-lightbox.js:867-892 的像素空間算法（正規化 W=1），驗證兩套機制對同一
-// (x, a, r) 算出「所見即所得」（不做像素級 CDP 驗收，計算層一致性即可，見 card §1）。
-
-function maskWindowCenterFraction(x, a, r) {
-  const W = 1;
-  const H = W / a;
-  const winW = Math.min(W, H * r);
-  let left = x * W - winW / 2;
-  left = Math.max(0, Math.min(left, W - winW));
-  return (left + winW / 2) / W;
-}
-
-function cellWindowCenterFraction(objPosStr, a, r) {
-  const p = parseFloat(objPosStr) / 100;
-  const v = r / a;
-  return p * (1 - v) + v / 2;
-}
 
 
 // ── clampMaskWinLeft（99a Gemini P2：拖曳死區）────────────────────────────

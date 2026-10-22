@@ -15,8 +15,8 @@ export async function resolve(specifier, context, nextResolve) {
 }`)}`, import.meta.url);
 
 const {
-    applyServerLocalFields, buildLocalPatch, localDiff, mergeLocalIntoForm,
-    combineSaveOutcome, resolveLocalMachine,
+    applyServerLocalFields, buildLocalPatch, localDiff,
+     resolveLocalMachine,
 } = await import('../local-machine.js');
 
 const FORM = { viewerPlayer: '  FORM-PLAYER  ', closeAction: 'exit', defaultPage: 'search' };

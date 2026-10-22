@@ -22,7 +22,6 @@ afterEach(() => {
   while (live.length) live.pop().destroy();
 });
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
 
 function make() {
   const c = customSources();
@@ -41,14 +40,6 @@ function resp(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
-// 手動 resolve 的 fetch stub
-function deferredFetch() {
-  const calls = [];
-  globalThis.fetch = (url, init) => new Promise((resolve, reject) => {
-    calls.push({ url, init, resolve, reject });
-  });
-  return calls;
-}
 
 // 依 URL 回覆固定內容的 fetch stub
 function routedFetch(routes) {

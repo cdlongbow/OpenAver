@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildSearchUrl, MAKER_PAGE_SIZE } from '../search-url.js';
+import { buildSearchUrl } from '../search-url.js';
 
 const MOODYZ = { key: 'moodyz', label: 'MOODYZ', spellings: ['MOODYZ', 'Moodyz'] };
 

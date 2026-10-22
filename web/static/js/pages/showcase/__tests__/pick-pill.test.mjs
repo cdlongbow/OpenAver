@@ -60,25 +60,6 @@ export async function resolve(specifier, context, nextResolve) {
 `;
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
-const { stateVideos } = await import('../state-videos.js');
-
-function makeComponent(overrides) {
-    const c = Object.assign({}, stateVideos(), {
-        pills: [],
-        search: '',
-        actressSearch: '',
-        sort: 'title',
-        order: 'asc',
-        animateCalls: 0,
-        heroCalls: 0,
-        _clearPreciseMatch() {},
-        _checkPreciseActressMatch() {},
-        applyActressFilterAndSort() {},
-    }, overrides);
-    c._animateFilter = function () { c.animateCalls++; };
-    c._reconcileHeroCard = function () { c.heroCalls++; };
-    return c;
-}
 
 // =====================================================================
 // Part A — buildPillPredicate 的 pick 分支

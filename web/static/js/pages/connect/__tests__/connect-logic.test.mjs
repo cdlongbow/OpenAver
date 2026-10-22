@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { connectActions, probeCode, dotState, kindCode, forgotCode } =
+const { connectActions } =
     await import('../connect-logic.js');
 
 const URL_A = 'http://good.test:8765';

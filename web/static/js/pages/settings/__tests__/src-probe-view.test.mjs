@@ -13,11 +13,10 @@ register(
 );
 
 const logic = await import('../source-probe-logic.js');
-const { describeProbe, PROBE_ICON_MAP, ADVICE_KEY_MAP, STATE_KEY_MAP, REASON_KEY_MAP, REASON_KEY_GENERIC } = logic;
+const { REASON_KEY_MAP } = logic;
 const { stateSourceProbe } = await import('../state-source-probe.js');
 const { mergeState } = await import('@/shared/merge-state.js');
 
-const STATES = ['ok', 'blocked', 'unreachable', 'skipped'];
 const EXPECTED_ICON = {
   ok: 'bi-check-circle-fill',
   blocked: 'bi-exclamation-triangle-fill',

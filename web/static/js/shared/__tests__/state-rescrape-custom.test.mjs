@@ -1,7 +1,7 @@
 // TASK-165-T10：重刮視窗自訂來源接線（第三組膠囊、番號格式灰化、三種自訂失敗句）。
 // 判斷全在後端；這裡只驗前端的世代守衛、過濾、擋點、互斥與時序。
 
-import { test, mock } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 
@@ -51,7 +51,6 @@ function installFetch() {
     return calls;
 }
 
-async function flush(n = 6) { for (let i = 0; i < n; i++) await Promise.resolve(); }
 
 test('rescrapeCustomSources excludes routable false and other types', () => {
     const ctx = makeCtx();

@@ -25,20 +25,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { searchStatePersistence, pendingEditWatchKey } from '../state/persistence.js';
-
-function captureWatchers(fakeThisOverrides = {}) {
-    const watchCalls = [];
-    const fakeThis = {
-        ...searchStatePersistence(),
-        $watch: (keyOrGetter, cb) => watchCalls.push({ keyOrGetter, cb }),
-        _setTimer: () => {},
-        _resetPendingEdits: () => { fakeThis._resetPendingEditsCalls = (fakeThis._resetPendingEditsCalls || 0) + 1; },
-        ...fakeThisOverrides,
-    };
-    searchStatePersistence().setupAutoSave.call(fakeThis);
-    return { fakeThis, watchCalls };
-}
+import { pendingEditWatchKey } from '../state/persistence.js';
 
 
 // ── 核心回歸（Codex PR#115 P2）──

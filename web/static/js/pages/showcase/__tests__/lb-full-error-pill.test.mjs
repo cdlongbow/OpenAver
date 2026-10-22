@@ -40,10 +40,9 @@ export async function resolve(specifier, context, nextResolve) {
 `;
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
-const { stateLightbox, isStaleLbFullError } = await import('../state-lightbox.js');
+const { stateLightbox } = await import('../state-lightbox.js');
 
 const FULL_SRC = '/api/gallery/image?path=%2Fdata%2Fcover.jpg';
-const OTHER_SRC = '/api/gallery/image?path=%2Fdata%2Fother.jpg';
 
 function makeImg(src) {
     return {

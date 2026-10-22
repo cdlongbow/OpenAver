@@ -17,7 +17,6 @@ window.t = (key) => key;
 
 register(new URL('./alias-loader.mjs', import.meta.url), import.meta.url);
 
-const { searchStateMakerLatest } = await import('../state/maker-latest.js');
 const { searchPage } = await import('../main.js');
 
 const MAKERS = ['A', 'B', 'C', 'D', 'E', 'F'].map((m, i) => ({ maker: m, total: 50, recent: 20 - i }));

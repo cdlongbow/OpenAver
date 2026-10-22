@@ -56,7 +56,7 @@ const { stateVideos } = await import('../state-videos.js');
 // 117-T5：_actresses / _filteredActresses 是 module-level 共享陣列（測試間互相污染）——
 // 每個測試前都要重置。_actressesLoaded 走 setter；讀取用 live binding（同一模組實例）。
 const stateBase = await import('../state-base.js');
-const { _actresses, _filteredActresses, _setActresses, _setFilteredVideos } = stateBase;
+const { _actresses, _filteredActresses, _setFilteredVideos } = stateBase;
 // init() factory 本體（與命名空間物件 stateBase 撞名，另取別名）——
 // 頂層 `this.$persist(...)` 需要綁定一個提供 $persist 的假 this（照抄 pill-match.test.mjs）。
 const stateBaseFactory = stateBase.stateBase;
@@ -110,9 +110,6 @@ function okResp(actresses) {
 }
 function notOkResp() {
     return { ok: false, status: 500, json: async () => ({}) };
-}
-function successFalseResp() {
-    return { ok: true, status: 200, json: async () => ({ success: false }) };
 }
 
 // ── 並行 dedup ──────────────────────────────────────────────────────────

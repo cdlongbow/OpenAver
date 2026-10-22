@@ -12,7 +12,6 @@ globalThis.document = {
 
 register(new URL('./alias-loader.mjs', import.meta.url), import.meta.url);
 const { searchStateResultCard } = await import('../state/result-card.js');
-const { searchStateBatch } = await import('../state/batch.js');
 
 function makeResultCardState(overrides = {}) {
     const translateWithOllamaCalls = [];
@@ -40,24 +39,6 @@ function makeResultCardState(overrides = {}) {
     return { state, translateWithOllamaCalls, translateBatchCalls };
 }
 
-function makeBatchState(overrides = {}) {
-    return {
-        ...searchStateBatch(),
-        translateState: {
-            isPaused: false,
-            isProcessing: false,
-            total: 0,
-            processed: 0,
-            success: 0,
-            failed: 0,
-        },
-        hasJapanese: (t) => /[-ゟ゠-ヿ]/.test(t),
-        showToast() {},
-        _getAbortSignal: () => undefined,
-        _clearAbort() {},
-        ...overrides,
-    };
-}
 
 test('cloud providers translate only the current slice', async () => {
     for (const provider of ['gemini', 'openai', 'claude']) {

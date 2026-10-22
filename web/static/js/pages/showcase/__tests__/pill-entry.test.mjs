@@ -12,7 +12,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay；
@@ -76,11 +75,6 @@ globalThis.document = {
     body: { classList: { add() {}, remove() {} } },
 };
 
-const SHOWCASE_HTML = readFileSync(
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../templates/showcase.html'),
-    'utf8',
-);
-const LIGHTBOX_SRC = readFileSync(new URL('../state-lightbox.js', import.meta.url), 'utf8');
 
 function makeComponent(overrides) {
     const base = stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
@@ -96,69 +90,9 @@ function makeComponent(overrides) {
     return c;
 }
 
-// 抽「<sig> 起的下一個 `{` 開始 brace-match 到對應 `}`」的函式 body（比照
-// readonly-action-intent.test.mjs 的 extractFnBody）。
-function extractFnBody(code, sig, label) {
-    const sigIdx = code.indexOf(sig);
-    assert.ok(sigIdx >= 0, `原始碼應含 \`${sig}\`（${label}）`);
-    const open = code.indexOf('{', sigIdx);
-    assert.ok(open >= 0, `${label} 應有 {`);
-    let depth = 0;
-    for (let i = open; i < code.length; i++) {
-        const ch = code[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) return code.slice(open + 1, i);
-        }
-    }
-    throw new Error(`${label} 大括號未閉合（brace-match 失敗）`);
-}
-
-// 抽出 showcase.html 全部 `searchFromMetadata(...)` call 的參數字串（depth-aware，
-// 容納參數本身含 `.trim()` 這類巢狀括號）。
-function extractSearchFromMetadataCalls(html) {
-    const marker = 'searchFromMetadata(';
-    const calls = [];
-    let idx = 0;
-    for (;;) {
-        const found = html.indexOf(marker, idx);
-        if (found === -1) break;
-        const argStart = found + marker.length;
-        let depth = 1;
-        let i = argStart;
-        for (; i < html.length; i++) {
-            const ch = html[i];
-            if (ch === '(') depth++;
-            else if (ch === ')') {
-                depth--;
-                if (depth === 0) break;
-            }
-        }
-        assert.ok(depth === 0, `searchFromMetadata( 未找到匹配的收尾括號（offset ${found}）`);
-        calls.push(html.slice(argStart, i));
-        idx = i + 1;
-    }
-    return calls;
-}
 
 // ===== 十二個入口逐一核對（plan CD-2b / TASK-115-T4「現況分析」表，文件順序；
 // #3／#11 是 TASK-124a-T3 新增的發售日入口）=====
-
-const EXPECTED_DIMS = [
-    'actress',   // #1 卡片 · 女優
-    'maker',     // #2 卡片 · 片商
-    'release',   // #3 卡片 · 發售日（TASK-124a-T3 新增）
-    'series',    // #4 卡片 · 系列
-    'tag',       // #5 卡片 · 標籤
-    'actress',   // #6 燈箱 · 女優
-    'maker',     // #7 燈箱 · 片商
-    'director',  // #8 燈箱 · 導演
-    'series',    // #9 燈箱 · 系列
-    'label',     // #10 燈箱 · 廠牌
-    'release',   // #11 燈箱 · 發售日（TASK-124a-T3 新增）
-    'tag',       // #12 燈箱 · 標籤
-];
 
 
 // ===== card-info 與燈箱同片同維度產生相同 pill（#1 vs #6 女優、#5 vs #12 標籤）=====

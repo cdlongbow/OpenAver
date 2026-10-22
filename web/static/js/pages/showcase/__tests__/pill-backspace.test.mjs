@@ -13,7 +13,6 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay；
 // 任務卡聲稱 open-local 的 window 存取皆在函式體內，實際並非如此。
@@ -57,64 +56,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 
 const { stateVideos } = await import('../state-videos.js');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '../../../../../..');
-const STATE_VIDEOS_SRC = readFileSync(
-    path.join(REPO_ROOT, 'web/static/js/pages/showcase/state-videos.js'),
-    'utf8',
-);
-const LIGHTBOX_SRC = readFileSync(
-    path.join(REPO_ROOT, 'web/static/js/pages/showcase/state-lightbox.js'),
-    'utf8',
-);
-const SHOWCASE_HTML = readFileSync(
-    path.join(REPO_ROOT, 'web/templates/showcase.html'),
-    'utf8',
-);
-
-/** 抽出 class="filter-pill-group" 起的那一個元素 markup（含內層，depth-aware）。 */
-function extractFilterPillGroup(html) {
-    const openRe = /<div\b[^>]*\bclass="filter-pill-group"[^>]*>/;
-    const m = openRe.exec(html);
-    assert.ok(m, 'showcase.html 應含 class="filter-pill-group" 的容器');
-    const start = m.index;
-    let i = start + m[0].length;
-    let depth = 1;
-    while (i < html.length && depth > 0) {
-        const nextOpen = html.indexOf('<div', i);
-        const nextClose = html.indexOf('</div>', i);
-        if (nextClose === -1) break;
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-            depth++;
-            i = nextOpen + 4;
-        } else {
-            depth--;
-            i = nextClose + 6;
-            if (depth === 0) {
-                return html.slice(start, i);
-            }
-        }
-    }
-    throw new Error('filter-pill-group 未找到匹配的 </div>');
-}
-
-/** 抽出 searchFromMetadata 方法體（brace-matched），供 D6 focus 回歸鎖。 */
-function extractFnBody(src, signatureNeedle, label) {
-    const start = src.indexOf(signatureNeedle);
-    assert.ok(start !== -1, `找不到 ${label} 定義：${signatureNeedle}`);
-    const braceStart = src.indexOf('{', start);
-    assert.ok(braceStart !== -1, `${label} 找不到開括號`);
-    let depth = 0;
-    for (let i = braceStart; i < src.length; i++) {
-        const ch = src[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) return src.slice(braceStart + 1, i);
-        }
-    }
-    throw new Error(`${label} 方法體未閉合`);
-}
 
 function makeComponent(overrides) {
     const c = Object.assign({}, stateVideos(), {

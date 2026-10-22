@@ -4,13 +4,11 @@ import assert from 'node:assert/strict';
 const selMod = await import('../selection.js');
 const {
     emptySel,
-    periodContainsYear,
     toggleYear,
     toggleActress,
     toggleMaker,
     toggleGanttCell,
     scopeRecords,
-    emptyKey,
 } = selMod;
 
 function rec(opts = {}) {

@@ -5,7 +5,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { buildActressPillPredicate } = await import('../actress-pill-filter.js');
-const { actressHeightValue } = await import('../actress-metric.js');
 
 // Fixture：三維度皆有值 + 各一缺值（fail-closed / 正向命中共用）
 const A_FULL = { name: 'full', age: 37, height: '160cm', cup: 'B' };

@@ -19,7 +19,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isHorizontalWheel, isVerticalWheel, createWheelNav } from '../wheel-nav.js';
+import { createWheelNav } from '../wheel-nav.js';
 
 // ── 假時鐘：手動推進，呼叫端完全掌控時間流逝（不需真 sleep）───────────────
 function makeClock(startAt = 0) {

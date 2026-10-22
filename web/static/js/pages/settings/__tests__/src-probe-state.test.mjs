@@ -50,7 +50,6 @@ function deferredFetch() {
   const ok = (call, results) => call.resolve({ ok: true, status: 200, json: async () => ({ results }) });
   return { calls, ok };
 }
-const tick = () => new Promise((r) => setTimeout(r, 0));
 const RES = { dmm: { state: 'ok' }, 'mt-a': { state: 'blocked' } };
 
 test('srcProbeKey changes with proxyUrl, proxyScope, and any pill', () => {

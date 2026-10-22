@@ -41,13 +41,6 @@ function okJson(body) {
     };
 }
 
-function errJson(status, error) {
-    return {
-        ok: false,
-        status,
-        json: async () => ({ success: false, error }),
-    };
-}
 
 function flush() {
     return new Promise((r) => setImmediate(r));
