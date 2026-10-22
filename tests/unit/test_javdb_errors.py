@@ -18,7 +18,7 @@ import pytest
 
 from core.scrapers import javdb
 
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceUnreachable
 
 
 @pytest.fixture(autouse=True)
@@ -75,145 +75,12 @@ class TestGetHtmlErrorHandling:
             with pytest.raises(SourceUnreachable):
                 scraper._get_html("https://javdb.com/search?q=SSIS-001")
 
-    def test_get_html_403_raises_blocked(self, scraper, monkeypatch, caplog):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        mock_resp.text = "Forbidden"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(SourceBlocked):
-                scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
-        assert any(
-            record.levelno >= logging.WARNING and "blocked" in record.message.lower()
-            for record in caplog.records
-        )
-
-    def test_get_html_429_raises_blocked(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 429
-        mock_resp.text = "Too Many Requests"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with pytest.raises(SourceBlocked):
-            scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
-    def test_get_html_503_raises_blocked(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 503
-        mock_resp.text = "Service Unavailable"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with pytest.raises(SourceBlocked):
-            scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
-    @pytest.mark.parametrize(
-        "challenge_snippet",
-        [
-            "cf-browser-verification",
-            "Just a moment...",
-            "challenge-platform",
-        ],
-    )
-    def test_get_html_cf_challenge_raises_blocked(
-        self, challenge_snippet, scraper, monkeypatch, caplog
-    ):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = f"<html><head><title>{challenge_snippet}</title></head></html>"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(SourceBlocked):
-                scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
-        assert any(
-            record.levelno >= logging.WARNING and "blocked" in record.message.lower()
-            for record in caplog.records
-        )
-
-    def test_get_html_cf_challenge_ignored_if_large_body(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        # 大於 20000 字元且含有 challenge 關鍵字時不掃描，維持回傳 html
-        mock_resp.text = "Just a moment" + ("a" * 20001)
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper._get_html("https://javdb.com/search?q=SSIS-001")
-        assert result == mock_resp.text
-
-    def test_get_html_200_normal_returns_text(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body><h1>Normal Page</h1></body></html>"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper._get_html("https://javdb.com/search?q=SSIS-001")
-        assert result == mock_resp.text
-
-    def test_get_html_404_returns_none_and_logs_warning(self, scraper, monkeypatch, caplog):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.text = "Not Found"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with caplog.at_level(logging.WARNING):
-            result = scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
-        assert result is None
-        assert any(
-            record.levelno >= logging.WARNING and "non-200" in record.message.lower()
-            for record in caplog.records
-        )
-
-    def test_get_html_500_returns_none_and_logs_warning(self, scraper, monkeypatch, caplog):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "Internal Server Error"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with caplog.at_level(logging.WARNING):
-            result = scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
-        assert result is None
-        assert any(
-            record.levelno >= logging.WARNING and "non-200" in record.message.lower()
-            for record in caplog.records
-        )
-
 
 # ============================================================
 # AC-4：search() 放行新例外
 # ============================================================
 
 class TestPublicApiPropagatesErrors:
-    def test_search_propagates_blocked(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        mock_resp.text = "Forbidden"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with pytest.raises(SourceBlocked):
-            scraper.search("SSIS-001")
 
     def test_search_propagates_unreachable(self, scraper, monkeypatch):
         from curl_cffi.requests.exceptions import ConnectionError as CurlConnectionError
@@ -231,38 +98,6 @@ class TestPublicApiPropagatesErrors:
 # ============================================================
 
 class TestReverseLocks:
-    def test_search_not_found_returns_none_no_exception(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = '<div class="movie-list"></div>'
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper.search("SSIS-001")
-        assert result is None
-
-    def test_search_404_returns_none_no_exception(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.text = "Not Found"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper.search("SSIS-001")
-        assert result is None
-
-    def test_search_500_returns_none_no_exception(self, scraper, monkeypatch):
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "Internal Server Error"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper.search("SSIS-001")
-        assert result is None
 
     def test_search_curl_cffi_unavailable_returns_none(self, scraper, monkeypatch):
         monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", False)

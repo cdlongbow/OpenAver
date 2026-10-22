@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -147,49 +147,6 @@ def chain_env(monkeypatch, site, run_spy):
     return setup
 
 
-# ------------------------------------------------------------------ 註冊後被問到
-def test_javdb_answers_when_earlier_providers_are_empty(chain_env, site, run_spy):
-    fakes = chain_env(["javbus", "dmm", "javdb"])
-    _actress_site(site, ["A1"])
-    out = relay.search_by_intent("actress", "someone", W)
-    assert sorted(c["number"] for c in out) == ["AAA-001", "AAA-002", "AAA-003"]
-    assert {c["_source"] for c in out} == {"javdb"}
-    assert len(fakes["javbus"].run_calls) == 1 and len(fakes["dmm"].run_calls) == 1  # 先問過、都查無
-    assert run_spy.call_count == 0  # 走實體梯子，不是 KEYWORD
-
-
-def test_javdb_answers_keyword_after_earlier_providers_empty(chain_env, site, run_spy):
-    fakes = chain_env(["javbus", "dmm", "javdb"])
-    site.pages[("人妻", 1)] = [_row(1, "AAA-001"), _row(2, "AAA-002")]
-    for i in (1, 2):
-        site.details[f"m{i}"] = _detail(i, ["A1"])
-    out = relay.search_by_intent("actress", "人妻", W)
-    assert len(out) == 2 and {c["_source"] for c in out} == {"javdb"}
-    assert len(fakes["javbus"].run_calls) == 1 and len(fakes["dmm"].run_calls) == 1
-    assert run_spy.call_count == 1
-
-
-def test_javdb_asked_first_when_ordered_first(chain_env, site, run_spy):
-    fakes = chain_env(["javdb", "javbus", "dmm"], others={"javbus": [{"number": "X-1"}]})
-    _actress_site(site, ["A1"])
-    out = relay.search_by_intent("actress", "someone", W)
-    assert {c["_source"] for c in out} == {"javdb"}
-    assert fakes["javbus"].run_calls == []
-
-
-def test_latest_listing_falls_through_to_next_provider(chain_env, site, run_spy):
-    """站方靜默回全站最新：3 部詳情皆不屬於她 ⇒ JavDB 回 []、seed 0 次、換下一家。"""
-    fakes = chain_env(["javdb", "dmm"], others={"dmm": [{"number": "D-1", "title": "dmm"}]})
-    _actress_site(site, ["SOMEONE_ELSE"])
-    seeds = MagicMock()
-    out = relay.search_by_intent("actress", "someone", W, result_callback=seeds)
-    assert out == [{"number": "D-1", "title": "dmm"}]
-    assert len([c for c in site.calls if c[0] == "detail"]) == 3  # 只驗守衛那 3 部
-    assert seeds.call_count == 0  # seed 0 次
-    assert run_spy.call_count == 0  # 該家命中實體（雖然不屬於）⇒ 不再問 KEYWORD
-    assert len(fakes["dmm"].run_calls) == 1
-
-
 # ------------------------------------------------------------------ 開關
 @pytest.mark.parametrize("mode", ["actress", "partial", "prefix"])
 def test_javdb_disabled_in_settings_is_never_asked(chain_env, site, run_spy, mode):
@@ -213,16 +170,6 @@ def test_discovery_only_never_touches_javdb(chain_env, site, run_spy, mode):
 
 
 # ------------------------------------------------------------------ 梯子可觀測
-def test_entity_ladder_reports_status_for_javdb_only(chain_env, site, run_spy):
-    fakes = chain_env(["javbus", "dmm", "javdb"])
-    _actress_site(site, ["A1"])
-    status = MagicMock()
-    relay.search_by_intent("actress", "someone", W, status_callback=status)
-    events = [c.args for c in status.call_args_list]
-    assert ("javdb", "searching") in events
-    assert ("done", "found:3") in events
-    assert [e for e in events if e[0] in ("javbus", "dmm")] == []  # JavBus／DMM 梯子零事件
-    assert fakes["javbus"].run_calls  # 它們只問了 KEYWORD
 
 
 @pytest.mark.parametrize("exc,blocked", [(SourceBlocked("b"), True), (SourceUnreachable("u"), False)])

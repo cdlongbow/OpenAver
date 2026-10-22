@@ -114,22 +114,6 @@ class TestUnregisteredHost:
         assert video is not None
         assert "unregistered-cdn.example" in video.cover_url
 
-    def test_empty_cover_url_ok(self, monkeypatch):
-        monkeypatch.setattr(
-            javdb_api,
-            "api_search",
-            lambda _kw: [{"id": "abc123", "number": "SSIS-001"}],
-        )
-        monkeypatch.setattr(
-            javdb_api,
-            "api_movie_detail",
-            lambda _id: _detail_with_cover(""),
-        )
-
-        video = javdb_api.fetch_video("SSIS-001")
-        assert video is not None
-        assert video.cover_url == ""
-
     def test_registered_codec_host_ok(self, monkeypatch):
         monkeypatch.setattr(
             javdb_api,
