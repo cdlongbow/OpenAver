@@ -7,9 +7,10 @@
   列表階段的番號用官方 makerContentId，缺值才退 cid 推導（精準搜尋與進階搜尋打 cid 不變）。
   傳輸失敗（被擋／連不上）原樣往外丟，由 relay 換下一家；contents 為空才是「查無」。
 - 守衛 belongs 全由列表階段已取得的事實算出（enrich 內除 _fetch_by_id 外零網路）；實體路徑自補 _source。
-- run_maker（片商膠囊與打字片商）：片商名（label 與各拼法）→ _resolve_maker → list_entity 視窗 → run_window(guard=False)；
-  DMM 以片商 id 精查，不需要片庫樣本、不寫 JavBus 的片商對照表。錯誤碼：不認得 ⇒ maker_not_found、
-  傳輸例外 ⇒ maker_unreachable（絕不互換）、列表空 ⇒ maker_empty。
+- run_maker（片商膠囊與打字片商）：比對候選＝label 與各拼法各自經對照表展開（正名＋別名）後去重保序 → _resolve_maker
+  → list_entity 視窗 → run_window(guard=False)；膠囊只送片庫寫法（如 S1），DMM 站上的片商名靠展開才比得中。
+  DMM 以片商 id 精查，不需要片庫樣本、不寫 JavBus 的片商對照表；呼叫端傳入的鍵與拼法、回傳值都不改寫。
+  錯誤碼：不認得 ⇒ maker_not_found、傳輸例外 ⇒ maker_unreachable（絕不互換）、列表空 ⇒ maker_empty。
 - 不宣告 CODE／PARTIAL（DMM 前綴是 token 子字串，會混入重製版，CD-175c-10）。
 頂層不得 import core.scraper／core.database（BE-PY-08）。補詳情一律經 pipeline.run_window。
 """
@@ -230,6 +231,12 @@ def _dedupe_names(names: list[str]) -> list[str]:
     return list(first.values())
 
 
+def _expand_names(names: list[str]) -> list[str]:
+    """每個名字各經對照表展開（輸入、正名、同正名的全部別名；names.maker_names）後攤平。
+    膠囊路徑只送片庫寫法（如 S1），DMM 站上的片商名（エスワン ナンバーワンスタイル）要靠這一步才進得了比對候選。"""
+    return [n for name in names for n in maker_names(name)]
+
+
 class DMMProvider:
     id = SOURCE
     capabilities = frozenset({Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.LABEL, Kind.MAKER, Kind.KEYWORD})
@@ -342,11 +349,13 @@ class DMMProvider:
                   status_callback=None, result_callback=None, db_path=None) -> MakerSearchResult:
         """片商最新作品（175c-T9，CD-175c-8）：label 與各拼法 → 片商 id → 依 id 列出完整作品（含預購）→ 補詳情。
 
-        片庫樣本相關的參數接受但不使用（DMM 以片商 id 精查，不需要樣本，也不寫 JavBus 的對照表）；
-        limit=None ⇒ 視窗取 30；offset 為 DMM 原生，不要求 30 的倍數。結果順序＝站方清單順序，不重排。"""
+        比對候選＝label 與各拼法各自展開（正名＋別名）後以 maker_key_of 去重保序；展開只用於本地比對，
+        maker_key、spellings 與回傳值都不改寫。片庫樣本相關的參數接受但不使用（DMM 以片商 id 精查，
+        不需要樣本，也不寫 JavBus 的對照表）；limit=None ⇒ 視窗取 30；offset 為 DMM 原生，不要求 30 的倍數。
+        結果順序＝站方清單順序，不重排。"""
         if status_callback:
             status_callback(SOURCE, "searching")
-        names = _dedupe_names([label, *spellings])
+        names = _dedupe_names(_expand_names([label, *spellings]))
         try:
             ref = self._resolve_maker(names)
             if ref is None:

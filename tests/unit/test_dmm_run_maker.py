@@ -23,10 +23,12 @@ import requests
 
 from core.database import init_db, maker_javbus_map
 from core.maker_names import maker_spellings
+from core.search_providers.names import maker_names
 from core.proxy_policy import ProxySettings
 from core.scrapers.dmm import DMMScraper, Facts, ListResult
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.scrapers.models import ScraperConfig, Video
+from core.search_providers import dmm as dmm_mod
 from core.search_providers import pipeline, relay
 from core.search_providers.dmm import DMMProvider
 from core.search_providers.javbus import JavBusProvider
@@ -178,6 +180,15 @@ def _provider():
 
 
 @pytest.fixture
+def name_table(monkeypatch):
+    """合成對照表：patch 使用端 binding（core.search_providers.dmm.maker_names），預設不展開（輸入原樣回），
+    測試往 table 登記『名字→展開後的候選』。不依賴真對照表，讓『展開』與『拼法』各自可被單獨破壞。"""
+    table = {}
+    monkeypatch.setattr(dmm_mod, "maker_names", lambda q: list(table.get(q, [q])))
+    return table
+
+
+@pytest.fixture
 def chain(monkeypatch):
     """鏈順序與開關 patch 使用端 core.scraper.*（BE-TEST-01／02）；真 registry，DMM 為真 provider。"""
     def setup(order):
@@ -230,6 +241,7 @@ def test_only_dmm_chain_sod_stays_not_found(site, chain, bus):
     這格把它釘成可證偽的維持：哪天有人補了別名，這案轉紅是對的——提示要重新裁決，不是測試壞〕"""
     chain(["dmm"])
     assert maker_spellings("SOD") == ["SOD"]  # 前提：對照表沒把 SOD 併到 SOD Create
+    assert maker_names("SOD") == ["SOD"]  # run_maker 的展開候選也只有 SOD（展開不會把 SODクリエイト 帶進來）
     site.by_word["SOD"] = ListResult(_probe_rows(("45276", "SODクリエイト")), 3, False)
     out = _search(site, label="SOD", key="sod", spellings=maker_spellings("SOD"))
     assert out.error_code == "maker_not_found" and out.results == []
@@ -245,6 +257,22 @@ def test_default_order_dmm_answers_javbus_not_asked(site, chain, bus):
     out = _search(site)
     assert [c["number"] for c in out.results] == OFFICIAL_ORDER and out.error_code is None
     assert bus.call_count == 0
+
+
+def test_capsule_path_alias_resolves_dmm_maker_through_relay(site, chain, bus):
+    """〔使用者只開 DMM、或 DMM 排第一，點 S1 膠囊 → 膠囊只送片庫寫法 ['S1']，DMM 站上的片商名叫「エスワン ナンバーワンスタイル」；
+    若沒把對照表的別名展開進比對候選，DMM 回「找不到」、退給沒有預購的 JavBus，「膠囊點 S1 含未發行」就不成立〕
+    這格用真對照表（前提在 assert 裡）走 relay 入口，鏈 [dmm, javbus]：DMM 答、JavBus 一次都不用被問。"""
+    chain(["dmm", "javbus"])
+    _world(site)
+    assert DMM_NAME in maker_names("S1")  # 前提：真對照表裡 S1 的別名含 DMM 站上的名字
+    sp = ["S1"]
+    out = _search(site, spellings=sp)
+    assert out.error_code is None and [c["number"] for c in out.results] == OFFICIAL_ORDER
+    assert [c["query_word"] for c in site.probe_calls][0] == "S1"
+    assert [c["filter"] for c in site.list_calls] == [FILTER]
+    assert bus.call_count == 0
+    assert sp == ["S1"]  # 展開只用於本地比對，呼叫端的拼法清單不被改寫
 
 
 # ================================================================ 2. 錯誤碼與例外（直接呼叫 run_maker）
@@ -399,8 +427,8 @@ def test_dmm_does_not_touch_library_sampling_or_javbus_map(site, tmp_path):
     assert maker_javbus_map.get_mapping("s1", db_path=db) is None
 
 
-def test_names_are_deduped_by_maker_key_keeping_order(monkeypatch):
-    """_resolve_maker 收到的 names＝[label, *spellings] 以 maker_key_of 去重保序（重複拼法只探一次，不佔 3 次上限）。"""
+def test_names_are_deduped_by_maker_key_keeping_order(monkeypatch, name_table):
+    """_resolve_maker 收到的 names＝[label, *spellings]（各自展開後）以 maker_key_of 去重保序（重複拼法只探一次，不佔 3 次上限）。"""
     seen = []
 
     def spy(self, names):
@@ -412,13 +440,37 @@ def test_names_are_deduped_by_maker_key_keeping_order(monkeypatch):
     assert seen == [["S1", DMM_NAME]]
 
 
-def test_all_spellings_are_match_candidates(site):
+def test_all_spellings_are_match_candidates(site, name_table):
     """〔使用者點 S1 膠囊 → 前端送來的各種拼法（含 DMM 站上的名字「エスワン ナンバーワンスタイル」）若被丟掉，
     DMM 只拿 S1 去比、認不出該片商，明明有數千部卻回「沒有」〕。probe「S1」撈回的片商叫 DMM_NAME，
     只有 spellings 內含這個寫法才比得中（label 本身不等於它）。"""
     _world(site)
     assert maker_spellings(LABEL)[1] == DMM_NAME  # 前提：DMM 站上的名字確實在 S1 的拼法集合內
-    out = _provider().run_maker("s1", LABEL, SPELLINGS, 0)
+    out = _provider().run_maker("s1", LABEL, SPELLINGS, 0)  # name_table 不展開：只有 spellings 能帶來 DMM_NAME
     assert out.error_code is None and len(out.results) == len(LISTING)
     assert [c["filter"] for c in site.list_calls] == [FILTER]
+
+
+def test_capsule_spellings_expand_through_name_table(site, name_table):
+    """〔使用者點 S1 膠囊（只送片庫寫法 ['S1']）→ DMM 站上的片商名「エスワン ナンバーワンスタイル」只在對照表的別名裡；
+    候選沒經對照表展開就比不中，回「找不到」並退給沒有預購的 JavBus〕。label 與每個拼法各自展開；
+    maker_key、spellings 與回傳值都不改寫（BE-DATA-17：展開只用於本地比對）。"""
+    name_table["S1"] = ["S1", DMM_NAME]
+    _world(site)
+    sp = ["S1"]
+    out = _provider().run_maker("s1", LABEL, sp, 0)
+    assert out.error_code is None and [c["number"] for c in out.results] == OFFICIAL_ORDER
+    assert [c["filter"] for c in site.list_calls] == [FILTER]
+    assert sp == ["S1"] and all(c["_source"] == "dmm" for c in out.results)
+
+
+def test_expanded_candidates_keep_order_dedupe_and_probe_at_most_three(site, name_table):
+    """展開後的候選依「label 的展開、各拼法的展開」順序、以 maker_key_of 去重（重複的別名只留第一次）；
+    探測仍至多前 3 個（一個都沒中時第 4 個不探）。"""
+    alias3, alias4 = "S1 NO.1 STYLE", "エスワン"  # fold 後互不相同（_stage1 以 fold 為鍵快取，相同者第二次不發請求）
+    name_table["S1"] = ["S1", DMM_NAME, alias3, alias4]
+    name_table[DMM_NAME] = [DMM_NAME, "S1", alias3, alias4]  # 與 S1 的展開重疊：全部去重
+    out = _provider().run_maker("s1", LABEL, ["S1", DMM_NAME], 0)  # site 沒登記任何 probe ⇒ 全落空
+    assert out == MakerSearchResult([], False, "maker_not_found")
+    assert [c["query_word"] for c in site.probe_calls] == ["S1", DMM_NAME, alias3]
 

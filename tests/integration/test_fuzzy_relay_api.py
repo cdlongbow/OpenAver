@@ -248,3 +248,19 @@ def test_capsules_enabled_when_only_dmm_is_on(client, dmm_maker, monkeypatch, tm
     _dmm_chain(monkeypatch, set())
     body = client.get("/api/search/maker-capsules").json()
     assert body["success"] is True and body["maker_search_enabled"] is False
+
+
+def test_rest_capsule_alias_answered_by_dmm(client, dmm_maker, monkeypatch, tmp_path):
+    """使用者只開 DMM、點 S1 片商膠囊（前端只送片庫寫法 spellings=S1）→ 看到 DMM 用片商 ID 列出的作品。
+    DMM 站上的片商名是對照表裡 S1 的別名，比對候選沒展開別名就會回「找不到」。真對照表、真路由（maker_key 路徑）。"""
+    calls = dmm_maker(5, True)
+    db = tmp_path / "caps-rest.db"
+    monkeypatch.setattr("web.routers.search.get_db_path", lambda: db)
+    monkeypatch.setattr("web.routers.search._library_titles", lambda db_path: [])
+    monkeypatch.setattr("web.routers.search._today", lambda: datetime.date(2026, 10, 21))
+    body = client.get("/api/search", params={"maker_key": "s1", "maker": "S1", "spellings": ["S1"], "offset": 0}).json()
+    assert body["success"] is True and body["mode"] == "maker" and body["maker_key"] == "s1"
+    assert [c["number"] for c in body["data"]] == calls["numbers"]
+    assert {c["_source"] for c in body["data"]} == {"dmm"} and body["has_more"] is True
+    assert calls["probe"][0] == "S1" and len(calls["list"]) == 1
+    assert (calls["list"][0]["limit"], calls["list"][0]["offset"]) == (30, 0)  # 膠囊路徑不帶 limit ⇒ 一頁 30
