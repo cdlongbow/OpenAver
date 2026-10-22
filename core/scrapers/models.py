@@ -43,6 +43,10 @@ class Video(BaseModel):
     # 簡介欄（僅供 NFO，排除於 to_legacy_dict，US7 硬契約）
     summary: str = Field(default='', description="簡介（僅供 NFO，排除於 to_legacy_dict）")
 
+    # 站方連結代號段（175c：僅 javbus 詳情解析填，供實體清單守衛比對）；不輸出到 to_legacy_dict
+    entity_ids: dict[str, list[str]] = Field(
+        default_factory=dict, description="形如 {'actors': ['2xi'], 'director': ['o7'], 'series': ['fg8'], 'label': ['9x']}；無該類不出鍵")
+
     def to_legacy_dict(self) -> dict[str, object]:
         """轉換成舊格式（向後相容）"""
         from core.maker_mapping import normalize_maker_name

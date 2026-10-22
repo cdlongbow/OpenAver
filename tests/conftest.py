@@ -478,6 +478,30 @@ def _no_startup_update_network(request, monkeypatch):
     yield
 
 
+# ============ TASK-175c-T3：JavBus resolve 模組層快取，每個測試前清 ============
+#
+# `core.search_providers.javbus` 的 resolve 快取是模組層級（重啟才清），測試間不清會讓「同名第二次 0 請求」
+# 這類斷言被前一個測試的結果污染。只清「已載入」的模組，不主動 import（同 `_no_startup_update_network`：
+# 守衛自測會把本 conftest 複製到暫存 repo 跑，主動 import 會在那裡長出副作用）。
+@pytest.fixture(autouse=True)
+def _clear_javbus_resolve_cache():
+    import sys as _sys
+    mod = _sys.modules.get("core.search_providers.javbus")
+    if mod is not None:
+        mod.clear_resolve_cache()
+    yield
+
+
+# 175c-T7：DMM 的 Probe 快取是模組層（name_key -> Probe），同樣會讓請求數隨執行順序飄；只清已載入的模組。
+@pytest.fixture(autouse=True)
+def _clear_dmm_probe_cache():
+    import sys as _sys
+    mod = _sys.modules.get("core.search_providers.dmm")
+    if mod is not None:
+        mod.clear_probe_cache()
+    yield
+
+
 # ============ TASK-174-T2：漏 mock 的全域防線（avbase）====
 #
 # 外連防線只攔 Python `socket`，`curl_cffi`（libcurl 在 C 層連線）不在範圍（BE-TEST-43）。
@@ -566,6 +590,42 @@ def isolate_reconcile_db(tmp_path_factory, monkeypatch):
 def empty_library_makers(monkeypatch):
     """opt-in（非 autouse）：片庫片商名回空集合（靜態對照表半邊照常）。"""
     monkeypatch.setattr("core.maker_names.library_maker_names", lambda: set())
+
+
+# ============ TASK-175c-T4：名稱→實體 resolve 的隔離（R14 測試遷移）====
+#
+# JavBus 宣告 ACTOR／SERIES／DIRECTOR／LABEL 能力後，relay 的實體梯子對 `actress` 模式會先 `resolve`
+# 才輪到 KEYWORD：真 `JavBusProvider.resolve` 會發 searchstar／搜尋請求（被 `_outbound_guard` 擋成
+# `OutboundConnectionViolation`），或在假 scraper 沒有 `search_stars` 時被梯子吞成 `[]` 而讓 KEYWORD 沒被問。
+# 這些既有測試要驗的是 KEYWORD／前綴／部分番號的舊行為，所以把 resolve 換成「查無」讓梯子走空。
+# 不做 autouse：受影響的檔案逐檔 pytestmark opt-in（站方回應不再於單元測試造假，真 resolve 的測試已刪，靠活站金絲雀）：
+#     pytestmark = pytest.mark.usefixtures("no_entity_lookup")
+# 只 patch 既有屬性（不用 create=True，命名錯誤要炸）；T7 加入 DMM 的 resolve 後擴成兩家。
+# T9：DMM 宣告 MAKER 後，片商路徑（`relay.search_maker` → `DMMProvider.run_maker`）經 `_resolve_maker` 解析片商名
+# （不經 `resolve`，上面兩行攔不到），預設順序 DMM 排第一，既有的片商接力測試（test_fuzzy_chain.py 的
+# TestMakerLatestPipeline）會在片商解析第一步被 `_outbound_guard` 擋成 `OutboundConnectionViolation`；
+# 片商解析也是「名稱→實體」查詢，所以併進這個 fixture（已 opt-in 的檔零修改）。
+@pytest.fixture
+def no_entity_lookup(monkeypatch):
+    """opt-in（非 autouse）：JavBus、DMM 名稱→實體 resolve（含 DMM 的片商解析）回 None（0 請求）。"""
+    monkeypatch.setattr("core.search_providers.javbus.JavBusProvider.resolve", lambda self, kind, name: None)
+    monkeypatch.setattr("core.search_providers.dmm.DMMProvider.resolve", lambda self, kind, name: None)
+    monkeypatch.setattr("core.search_providers.dmm.DMMProvider._resolve_maker", lambda self, names: None)
+
+
+# ============ TASK-175c-T8：DMM 官方番號 facts 的隔離（R14 測試遷移）====
+#
+# DMM 列表（關鍵字與實體共用的頁面組裝）現在在回傳前多打一次 `fetch_facts` 取官方番號（CD-175c-7）。
+# 只 patch `list_contents` 的既有測試（假 rows、斷言推導番號）沒有替身可吃這次呼叫，真 `fetch_facts` 會被
+# `_outbound_guard` 擋成 `OutboundConnectionViolation`。這裡把它換成「站方一個 alias 都沒回」（`{}`）＝官方番號全走
+# cid 推導的退路＝等於這些測試今天斷言的值。
+# 不做 autouse：受影響的檔案逐檔 pytestmark opt-in（站方回應不再於單元測試造假，要真 facts 的測試已刪，靠活站金絲雀）：
+#     pytestmark = pytest.mark.usefixtures("no_dmm_facts")
+# 只 patch 既有屬性（不用 create 旗標，命名錯誤要炸）。
+@pytest.fixture
+def no_dmm_facts(monkeypatch):
+    """opt-in（非 autouse）：DMMScraper.fetch_facts 回 {}（0 請求；官方番號走推導退路）。"""
+    monkeypatch.setattr("core.scrapers.dmm.DMMScraper.fetch_facts", lambda self, content_ids: {})
 
 
 # ============ CI 修復：session 開始前把真實預設資料根真的定版一次 ============

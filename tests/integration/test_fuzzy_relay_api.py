@@ -137,3 +137,51 @@ def test_batch_search_does_not_resolve_makers(client):
     with patch("web.routers.search.smart_search", side_effect=fake):
         client.post("/api/batch-search", json={"numbers": ["SSIS-816"]})
     assert seen and all("resolve_makers" not in kw for kw in seen)
+
+
+# ---------------------------------------------------------------- 175c-T9：只開 DMM 時的片商膠囊列
+#
+# DMM 實際回答片商搜尋（REST／SSE／膠囊別名）的端到端不在這裡造假回應：靠活站金絲雀
+# （tests/smoke/test_dmm_search_canary.py）。這裡只留不碰站方回應的一案：鏈只有 dmm 時膠囊列啟用。
+import datetime
+
+import pytest
+
+from core.database import init_db
+from core.search_providers import relay
+
+
+def _dmm_chain(monkeypatch, ids):
+    monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ["dmm"])
+    monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: sid in ids)
+
+
+@pytest.fixture
+def dmm_only_chain(monkeypatch, tmp_path):
+    """鏈只有 dmm、使用端名單認得 S1、片庫空、tmp DB。"""
+    relay._reset_maker_answerers()
+    _dmm_chain(monkeypatch, {"dmm"})
+    known = lambda: frozenset({maker_key_of("S1")})  # noqa: E731
+    monkeypatch.setattr("core.maker_names.known_makers", known)
+    monkeypatch.setattr("web.routers.search.known_makers", known)
+    monkeypatch.setattr("core.scraper._library_title_list", lambda db_path: [])
+    monkeypatch.setattr("core.scraper.is_uncensored_route", lambda *a, **kw: False)
+    db = tmp_path / "t.db"
+    monkeypatch.setattr("core.database.get_db_path", lambda: db)
+    yield
+    relay._reset_maker_answerers()
+
+
+def test_capsules_enabled_when_only_dmm_is_on(client, dmm_only_chain, monkeypatch, tmp_path):
+    """使用者只開 DMM 進搜尋頁 → 片商膠囊列可用（DMM 宣告了 MAKER）；DMM 也關了 → 整排停用。"""
+    db = tmp_path / "caps.db"
+    init_db(db)
+    monkeypatch.setattr("web.routers.search.get_db_path", lambda: db)
+    monkeypatch.setattr("web.routers.search._today", lambda: datetime.date(2026, 10, 21))
+    monkeypatch.setattr("web.routers.search.get_configured_gallery_dirs", lambda cfg: (set(), {}))
+    body = client.get("/api/search/maker-capsules").json()
+    assert body["success"] is True and body["maker_search_enabled"] is True
+    assert body["hidden_keys"] == []  # 鏈不是恰為 javbus ⇒ 不信 JavBus 的「沒有這家」對照表
+    _dmm_chain(monkeypatch, set())
+    body = client.get("/api/search/maker-capsules").json()
+    assert body["success"] is True and body["maker_search_enabled"] is False

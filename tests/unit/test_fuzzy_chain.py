@@ -7,11 +7,12 @@ Mock 策略：monkeypatch get_all_source_ids_ordered + patch.object on scraper c
 import pytest
 from unittest.mock import patch, MagicMock, call
 
-from core.scrapers.dmm import DMMScraper
+from core.scrapers.dmm import DMMScraper, ListResult
 from core.scrapers.javbus import JavBusScraper
 from core.scrapers.jav321 import JAV321Scraper
 from core.scrapers.javdb import JavDBScraper
 from core.scrapers.models import Video
+pytestmark = pytest.mark.usefixtures("no_entity_lookup", "no_dmm_facts")
 
 
 # ============================================================
@@ -70,8 +71,8 @@ class TestFuzzyChain:
                             lambda: ['javbus', 'dmm'])
 
         with patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
-             patch.object(DMMScraper, 'search_by_keyword_with_ids',
-                          return_value=[('mide00100', _make_video('dmm', 'MIDE-100'))]) as mock_dmm, \
+             patch.object(DMMScraper, 'list_contents',
+                          return_value=ListResult([{'id': 'mide00100', 'title': 'Test Title'}], None, False)) as mock_dmm, \
              patch.object(DMMScraper, '_fetch_by_id', return_value=_make_video('dmm', 'MIDE-100')):
             results = search_actress("some actress")
 
@@ -90,7 +91,7 @@ class TestFuzzyChain:
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])
 
-        with patch.object(DMMScraper, 'search_by_keyword_with_ids') as mock_dmm, \
+        with patch.object(DMMScraper, 'list_contents') as mock_dmm, \
              patch.object(JavBusScraper, 'get_ids_from_search',
                           return_value=['SONE-205']) as mock_jb, \
              patch('core.scraper.search_jav',
@@ -211,7 +212,7 @@ class TestFuzzyChain:
             if slot == -1:
                 seed_calls.append(data)
 
-        with patch.object(DMMScraper, 'search_by_keyword_with_ids') as mock_dmm, \
+        with patch.object(DMMScraper, 'list_contents') as mock_dmm, \
              patch.object(JavBusScraper, 'get_ids_from_search',
                           side_effect=[['SONE-205'], []]) as mock_jb, \
              patch('core.scraper.search_jav',
@@ -227,15 +228,15 @@ class TestFuzzyChain:
 
     # ---- 9. DMM None 視為空 → 繼續試下一個 ----
     def test_dmm_none_result_falls_through_to_javbus(self, monkeypatch):
-        """DMM search_by_keyword_with_ids 回 []（progressive 回 None）→ adapter 轉 []
+        """DMM list_contents 回空 ListResult（progressive 回 None）→ adapter 轉 []
         → 鏈繼續，javbus 命中"""
         from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])
 
-        with patch.object(DMMScraper, 'search_by_keyword_with_ids',
-                          return_value=[]) as mock_dmm, \
+        with patch.object(DMMScraper, 'list_contents',
+                          return_value=ListResult([], None, False)) as mock_dmm, \
              patch.object(JavBusScraper, 'get_ids_from_search',
                           side_effect=[['SONE-205'], []]) as mock_jb, \
              patch('core.scraper.search_jav',
@@ -300,14 +301,14 @@ class TestFuzzyChain:
     # ---- 14. 迴歸：DMM 排第一 + proxy + discovery_only=True → DMM 不呼叫，回 javbus stubs ----
     def test_dmm_first_discovery_only_skips_dmm(self, monkeypatch):
         """Regression: DMM first in Active Row + discovery_only=True
-        → DMMScraper.search_by_keyword_with_ids must NOT be called;
+        → DMMScraper.list_contents must NOT be called;
         result must be javbus stub list [{'number': ..., 'title': ''}]."""
         from core.scraper import search_actress
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['dmm', 'javbus', 'jav321', 'javdb'])
 
-        with patch.object(DMMScraper, 'search_by_keyword_with_ids') as mock_dmm, \
+        with patch.object(DMMScraper, 'list_contents') as mock_dmm, \
              patch.object(JavBusScraper, 'get_ids_from_search',
                           side_effect=[['SONE-999'], []]):
             results = search_actress(
@@ -460,8 +461,8 @@ class TestSmartSearchPrefixSwitches:
     def test_prefix_with_only_dmm_on_still_reaches_actress_retreat(self):
         """只開 DMM：前綴鏈（CODE）無人可問，但 DMM 的 KEYWORD 要接得住 actress 退路。"""
         video = _make_video("dmm", "MIDV-001")
-        with patch.object(DMMScraper, "search_by_keyword_with_ids",
-                          lambda self, *a, **kw: [("midv00001", video)]), \
+        with patch.object(DMMScraper, "list_contents",
+                          lambda self, *a, **kw: ListResult([{"id": "midv00001", "title": "Test Title"}], None, False)), \
              patch.object(DMMScraper, "_fetch_by_id", lambda self, cid: video):
             results, jav321, javbus = _run_smart("MIDV", {"dmm"})
         assert len(results) == 1
@@ -494,8 +495,8 @@ class TestFuzzyDmmSource:
 
         # DMM returns 1 result (no _source yet — DMMProvider.run must add it)
         video = _make_video('dmm', 'STARS-001')
-        monkeypatch.setattr(DMMScraper, 'search_by_keyword_with_ids',
-                            lambda self, *a, **kw: [('stars00001', video)])
+        monkeypatch.setattr(DMMScraper, 'list_contents',
+                            lambda self, *a, **kw: ListResult([{'id': 'stars00001', 'title': 'Test Title'}], None, False))
         monkeypatch.setattr(DMMScraper, '_fetch_by_id', lambda self, cid: video)
 
         # 膠囊開（autouse fixture）所以 DMM 閘放行

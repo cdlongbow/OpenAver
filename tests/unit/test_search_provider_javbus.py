@@ -16,6 +16,7 @@ from core.scrapers.errors import SourceBlocked
 from core.search_providers import types as sp_types
 from core.search_providers.javbus import JavBusProvider
 from core.search_providers.types import EntityRef, Kind, WorkItem, Window
+pytestmark = pytest.mark.usefixtures("no_entity_lookup")
 
 
 # ---------------------------------------------------------------- fixtures
@@ -78,7 +79,7 @@ class Env:
             def __init__(self, lang=None):
                 env.lang = lang
 
-            def get_ids_from_search(self, query, page=1, search_type=None):
+            def get_ids_from_search(self, query, page=1, search_type=None, uncensored=False):
                 env.id_calls.append((query, page, search_type))
                 if page > env.pages:
                     return []

@@ -13,7 +13,7 @@
 
 ### `search_providers/` 套件
 **模糊搜尋共用介面**（175a）
-- 型別（查詢契約）、註冊表、視窗換算與進度式補詳情、接力（relay，依來源順序逐家嘗試）；目前註冊 JavBus、DMM。
+- 型別（查詢契約）、註冊表、視窗換算與進度式補詳情、接力（relay，依來源順序逐家嘗試）；目前註冊 JavBus、DMM、JavDB；名稱比對與片商名展開的共用工具在 `core/name_match.py`（`fold`、`split_paren_name`）與 `core/search_providers/names.py`（`maker_names`）。
 - 頂層不得 import `core.scraper`／`core.database`（需要時函式內延後取用）。
 
 ### `query_intent.py`

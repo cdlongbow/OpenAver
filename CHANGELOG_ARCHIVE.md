@@ -1,4 +1,4 @@
-# Changelog Archive (v0.1.0 ~ v0.17.7)
+# Changelog Archive (v0.1.0 ~ v0.17.8)
 
 All notable changes to this project will be documented in this file.
 
@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 0.17.x
 
+- [0.17.8] 2026-10-17 — 來源斷線改說「無法存取」不說「資料夾不存在」（NAS 掛別台分享關機時狀態列會提示）＋ Synology 權限指引涵蓋遠端掛載 ＋ Jellyfin 10.11.7 起 .strm 只能指向網址的文案改口與逃生口
 - [0.17.7] 2026-10-13 — 桌面 App 可連到另一台電腦或 NAS 上的 OpenAver（連線入口、路徑對照表、連線時用 JavLibrary／FC2-javten、播放失敗說原因）
 - [0.17.6] 2026-10-12 — 封面圖不再因圖床網域不在內建名單而破圖（圖片代理改為只要是公網點陣圖就顯示），自訂來源新增 {number_compact} 占位符
 - [0.17.5] 2026-10-12 — 開機不再等 NAS 與 metatube：舊版 NFO 時間補正與 metatube 重連改背景，debug.log 記啟動耗時
@@ -231,6 +232,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [0.1.3] 2026-01-17 — path_utils 集中化路徑處理，NFO updater / image proxy 全部改用
 - [0.1.1] 2026-01-17 — 圖片 proxy Windows 路徑修正 + Settings 手動更新檢查按鈕
 - [0.1.0] 2026-01-15 — 初始版本（Spotlight Search + Gallery Generator + Ollama 翻譯 + PyWebView）
+
+## [0.17.8] - 2026-10-17
+
+> NAS 掛著另一台機器的分享、那台關機時，瀏覽頁狀態列現在會說「無法存取」、掃描也不再誤說「資料夾不存在」；整理失敗的權限指引同時涵蓋 DSM 共用資料夾與遠端掛載；Jellyfin 10.11.7 起 `.strm` 只能指向網址，說明書改口並給逃生口。Synology 維持 beta。
+
+### Changed
+
+#### 📡 來源斷線時的說法（全平台）
+
+- 片庫路徑連不上（主機關機、網路斷線、I/O 錯誤）時，掃描訊息改說「無法存取: …」，只有路徑真的不存在才說「資料夾不存在」；Windows 的網路磁碟主機關機也一樣。片庫資料不會被刪。
+- OpenAver 裝在 NAS、片庫是 File Station 掛載的另一台 SMB 分享時，那台關機後瀏覽頁狀態列會出現「N 個位置無法存取」（跟外接硬碟沒插時相同）；以前因為探測等待太短永遠不顯示。來源探測等待由 5 秒拉長到 20 秒，只在來源真的慢或斷線時才多花，背景進行、不擋畫面。
+- 連帶：斷線的來源封面會立刻顯示破圖，不再逐張卡在逾時。
+
+#### 🔐 Synology 權限指引
+
+- 整理失敗「無法建立資料夾」、掃描「沒有權限讀取」與狀態列的指引，同時寫出兩種情況：片庫是 DSM 共用資料夾 → 控制台授權路徑；片庫是掛載的遠端資料夾 → 除了本機授權那步，也要到提供分享的那台機器確認權限。
+- 設定頁「我的最愛資料夾」範例在 Synology 上顯示 `/volume1/<共用資料夾>/下載`，不再是 Windows 路徑。
+
+#### 📺 Jellyfin 與 `.strm`（純文案）
+
+- README、說明頁「唯讀來源」步驟 3、設定頁「播放端路徑替換」說明：Jellyfin 10.11.7 起 `.strm` 只能指向網址（http／https／rtsp／rtp），寫硬碟路徑的一律不播，不管硬碟在哪台機器；Emby、Kodi 不受影響。不再承諾「Jellyfin 掃到就能直接播原檔」。
+- 逃生口：雲端硬碟若已透過 Alist／OpenList 等以 HTTP 提供，把「播放端路徑替換」的播放端填成那個網址前綴即可（例 `/volume1/cloud` → `http://nas:5244/d/115`）。設定頁另註明規則是全域一份、套用到所有 `.strm`。
+- 這兩段的英／日／簡譯文先改回顯示繁中（舊譯文會繼續承諾 Jellyfin 能播），待下次 milestone 翻譯。
+
+#### 📄 Synology 文件
+
+- `docs/synology.md`：已驗證版本補 7.2.2、7.4.1（vDSM）；有多個儲存空間時安裝會多一頁「請選擇套件的安裝位置」；拿掉權限後的自動加回只對目前精靈選的片庫有效，重裝換過片庫要手動授權；File Station 遠端掛載與 USB 外接碟要手動給 `openaver-svc` 權限。
 
 ## [0.17.7] - 2026-10-13
 

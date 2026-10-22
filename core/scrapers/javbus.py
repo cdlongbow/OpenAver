@@ -2,6 +2,7 @@
 import re
 from typing import Optional
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -11,6 +12,7 @@ from .errors import SourceBlocked, SourceUnreachable
 from .models import Video, Actress
 from .utils import rate_limit, strip_number_prefix
 from core.logger import get_logger
+from core.name_match import fold
 from core.source_probe import ProbePlan, ProbeTarget
 
 logger = get_logger(__name__)
@@ -40,11 +42,32 @@ JAVBUS_LIST_PAGE_SIZE = 30
 
 _STUDIO_HREF_RE = re.compile(r"^(?:https?://[^/]+)?(?:/(?:ja|en))?(?:/(uncensored))?/studio/([0-9A-Za-z]+)/?(?:[?#].*)?$")
 
+# --- 名稱→實體（175c-T3）---
+_STAR_HREF_RE = re.compile(r"^(?:https?://[^/]+)?(?:/(?:ja|en))?(/uncensored)?/star/([0-9A-Za-z]+)/?(?:[?#].*)?$")
+_ENTITY_HREF_RE = re.compile(r"^(?:https?://[^/]+)?(?:/(?:ja|en))?/(series|director|label)/([0-9A-Za-z]+)/?(?:[?#].*)?$")
+# fetch_entity_link 的搜尋 type：series 走一般搜尋（type=5 對系列名實測全 404，175c-T3 活站探針 G1 負例）、director 2、label 4
+_ENTITY_SEARCH_TYPE = {"series": 0, "director": 2, "label": 4}
+
 
 class StudioVote(NamedTuple):
     """單樣本投票：kind ∈ {'censored','uncensored'}、studio_id 為 JavBus 片商代號。"""
     kind: str
     studio_id: str
+
+
+class ListCard(NamedTuple):
+    """清單頁單張卡：番號／標題／封面縮圖／發行日。cover 是站方相對路徑原樣（如 /pics/thumb/…）；缺值為空字串。"""
+    number: str
+    title: str
+    cover: str
+    date: str
+
+
+class StarCard(NamedTuple):
+    """searchstar 候選單張卡：id 為 `star/<id>`（有碼）或 `uncensored/star/<id>`（無碼）；uncensored 另看按鈕字樣「無修正」。"""
+    id: str
+    name: str
+    uncensored: bool
 
 
 # 單樣本的另外兩種結果：Miss 只留 HTTP 404；其餘一切看不懂的都是 Unreachable（BE-PY-03）
@@ -250,6 +273,7 @@ class JavBusScraper(BaseScraper):
             label=parsed.get("label", ""),
             series=parsed.get("series", ""),
             sample_images=sample_images,
+            entity_ids=self._parse_entity_ids(info),
         )
 
         rate_limit(self.config.delay)
@@ -316,7 +340,38 @@ class JavBusScraper(BaseScraper):
 
         return result
 
-    def _build_search_url(self, keyword: str, page: int = 1, search_type: int = 0) -> str:
+    @staticmethod
+    def _parse_entity_ids(info) -> dict[str, list[str]]:
+        """詳情頁 info 區塊內的實體連結代號（女優／導演／系列／label）；去重保序、無該類不出鍵。
+
+        只掃 `div.col-md-3.info` 內的 a[href]（頁面別處的 avatar-waterfall 另有一份女優連結，不算）。
+        href 的 /ja、/en、無前綴皆認；片商（studio）與類別（genre）連結不收。
+        重用 `_STAR_HREF_RE`／`_ENTITY_HREF_RE`（與名稱→實體同一份判斷）。
+        """
+        ids: dict[str, list[str]] = {}
+        for a in info.find_all("a", href=True):
+            href = a["href"].strip()
+            m = _STAR_HREF_RE.match(href)
+            if m:
+                key, code = "actors", m.group(2)
+            else:
+                m = _ENTITY_HREF_RE.match(href)
+                if not m:
+                    continue
+                key, code = m.group(1), m.group(2)
+            bucket = ids.setdefault(key, [])
+            if code not in bucket:
+                bucket.append(code)
+        return ids
+
+    @staticmethod
+    def _plus_join(keyword: str) -> str:
+        """空白（含全形 U+3000）→ 單一 `+`，首尾空白先去掉；不用 %20（站方對 %20 回 403）。
+        一般搜尋與 searchstar 共用這一份。"""
+        return re.sub(r"\s+", "+", keyword.strip())
+
+    def _build_search_url(self, keyword: str, page: int = 1, search_type: int = 0,
+                          uncensored: bool = False) -> str:
         """
         組建搜尋 URL。
 
@@ -324,6 +379,7 @@ class JavBusScraper(BaseScraper):
           第 1 頁：/search/{keyword}
           第 N 頁：/search/{keyword}/{N}
           前綴搜尋：上述 URL 後加 &type=1
+          無碼區：/uncensored 接在語系前綴之後（{語系前綴}/uncensored/search/…），其餘同上
 
         注意：`&type=1` 是 JavBus 的原生非標準 path-suffix 格式（commit 35-T3
         Playwright 實測確認），**不是** 標準 query string——勿「修正」成 `?type=1`。
@@ -331,36 +387,67 @@ class JavBusScraper(BaseScraper):
         `search_type=1` 的 path-suffix 過濾是否生效另論，勿改成標準 query string。
         """
         prefix = self._get_lang_prefix()
-        base = f"{self.BASE_URL}{prefix}/search/{keyword}"
+        section = "/uncensored" if uncensored else ""
+        base = f"{self.BASE_URL}{prefix}{section}/search/{self._plus_join(keyword)}"
         if page > 1:
             base += f"/{page}"
         if search_type > 0:
             base += f"&type={search_type}"
         return base
 
-    def _parse_search_ids(self, soup) -> list[str]:
-        """從搜尋結果頁解析番號列表。"""
-        ids = []
+    def _parse_list_cards(self, soup) -> list[ListCard]:
+        """從清單頁（搜尋結果／片商頁）解析卡片。
+
+        a.movie-box：第一個 <date> 是番號、第二個是發行日；img[src] 是封面縮圖（相對路徑原樣）、
+        img[title] 是標題。無 <date> 的卡片退 href 最後一段當番號；有 <date> 但番號為空則丟棄（不退 href）。
+        """
         waterfall = soup.find(id="waterfall")
         if not waterfall:
             return []
+        cards = []
         for card in waterfall.find_all("a", class_="movie-box"):
-            # 優先從 <date> 元素取番號（第一個 date 是番號，第二個是日期）
             dates = card.find_all("date")
             if dates:
                 number = dates[0].get_text(strip=True)
-                if number:
-                    ids.append(number)
             else:
-                # fallback：從 href 最後一段提取
-                href = card.get("href", "")
-                if href:
-                    number = href.rstrip("/").split("/")[-1]
-                    if number:
-                        ids.append(number)
-        return ids
+                number = card.get("href", "").rstrip("/").split("/")[-1]
+            if not number:
+                continue
+            date = dates[1].get_text(strip=True) if len(dates) > 1 else ""
+            img = card.find("img")
+            cover = img.get("src", "") if img else ""
+            title = img.get("title", "") if img else ""
+            cards.append(ListCard(number, title, cover, date))
+        return cards
 
-    def get_ids_from_search(self, keyword: str, page: int = 1, search_type: int = 0) -> list[str]:
+    def _parse_search_ids(self, soup) -> list[str]:
+        """從搜尋結果頁解析番號列表。"""
+        return [c.number for c in self._parse_list_cards(soup)]
+
+    def _get_list(self, url: str):
+        """作品清單 GET（搜尋、片商頁）：先把 session jar 的 existmag 設為 all，再送出。
+
+        站方在 session 的第一個回應就 Set-Cookie: existmag=mag，所以每次請求前都要覆蓋同格 cookie
+        （domain＋path 與站方 cookie 同格才會覆蓋）；只設一次或 per-request cookies= 都會與它並存而失效。
+        不在這裡映射例外、不節流：搜尋與片商兩條路徑各自維持今天的例外型別。
+        """
+        self._session.cookies.set("existmag", "all", domain=urlparse(self.BASE_URL).hostname, path="/")
+        return self._session.get(url, timeout=self.config.timeout)
+
+    def _ids_from_list_response(self, resp, url: str) -> list[str]:
+        """清單回應 → 番號列表。404（頁碼超界／無結果）回 []；看不懂或被擋一律丟例外，絕不回 []。"""
+        has_wf = self._has_waterfall(resp.text) if resp.status_code == 200 else False
+        verdict = classify_list_response(resp.status_code, has_wf)
+        if verdict == LIST_END:
+            return []
+        if verdict == LIST_BLOCKED:
+            raise SourceBlocked(f"JavBus list HTTP {resp.status_code}: {url}")
+        if verdict == LIST_UNREADABLE:
+            raise SourceUnreachable(f"JavBus list unreadable (no #waterfall): {url}")
+        return self._parse_search_ids(BeautifulSoup(resp.text, "html.parser"))
+
+    def get_ids_from_search(self, keyword: str, page: int = 1, search_type: int = 0,
+                            uncensored: bool = False) -> list[str]:
         """
         輕量版搜尋：只回傳番號列表，不 fetch 每筆詳情。
 
@@ -368,22 +455,22 @@ class JavBusScraper(BaseScraper):
             keyword: 搜尋關鍵字或前綴
             page: 頁碼（從 1 開始）
             search_type: 0=一般搜尋，1=前綴搜尋（&type=1，JavBus 原生格式）
+            uncensored: True=改問無碼區（/uncensored/search/…；站方一般搜尋對無碼前綴回 404，如 HEYZO）
 
         Returns:
-            番號列表（list[str]）
+            番號列表（list[str]）；404（無結果／頁碼超界）回 []
 
         Raises:
             TimeoutError: 請求超時
+            SourceBlocked: 非 200 非 404（403／429／503…）
+            SourceUnreachable: 200 但沒有 #waterfall（看不懂）
         """
-        url = self._build_search_url(keyword, page, search_type)
+        url = self._build_search_url(keyword, page, search_type, uncensored)
         try:
-            resp = self._session.get(url, timeout=self.config.timeout)
+            resp = self._get_list(url)
         except (requests.Timeout, requests.ConnectionError) as e:
             raise TimeoutError(f"Search request timed out for keyword: {keyword}") from e
-        if resp.status_code != 200:
-            return []
-        soup = BeautifulSoup(resp.text, "html.parser")
-        return self._parse_search_ids(soup)
+        return self._ids_from_list_response(resp, url)
 
     def _fetch_by_id(self, id_str: str) -> Optional[Video]:
         """直接用 ID 取得影片資訊（繞過 validate_number，支援 variant ID 如 SONE-001_2026-03-20）"""
@@ -426,7 +513,7 @@ class JavBusScraper(BaseScraper):
         """
         try:
             ids = self.get_ids_from_search(keyword, page=page)
-        except (TimeoutError, requests.ConnectionError):
+        except (TimeoutError, requests.ConnectionError, SourceBlocked, SourceUnreachable):
             return []
         results: list[Video] = []
         for num_id in ids[:limit]:
@@ -479,15 +566,109 @@ class JavBusScraper(BaseScraper):
         """片商列表單頁番號。404（頁碼超界）回 []；看不懂或被擋一律丟例外，絕不回 []。"""
         url = self.build_studio_url(ref, page)
         try:
-            resp = self._session.get(url, timeout=self.config.timeout)
+            resp = self._get_list(url)
         except requests.RequestException as exc:
             raise SourceUnreachable(f"JavBus studio list request failed: {url}") from exc
-        has_wf = self._has_waterfall(resp.text) if resp.status_code == 200 else False
+        return self._ids_from_list_response(resp, url)
+
+    # ---------- 名稱→實體（175c-T3）----------
+
+    def _list_soup(self, resp, url: str):
+        """清單類回應 → 可解析的 soup；404（無結果）回 None。
+
+        分類與 `_ids_from_list_response` 相同（被擋→SourceBlocked；200 無 #waterfall→SourceUnreachable），
+        絕不把擋下或看不懂變成「沒有」。200＋#waterfall 零卡回 soup（呼叫端解出零張卡＝空）。
+        """
+        soup = BeautifulSoup(resp.text, "html.parser") if resp.status_code == 200 else None
+        has_wf = soup is not None and soup.find(id="waterfall") is not None
         verdict = classify_list_response(resp.status_code, has_wf)
         if verdict == LIST_END:
-            return []
+            return None
         if verdict == LIST_BLOCKED:
-            raise SourceBlocked(f"JavBus studio list HTTP {resp.status_code}: {url}")
+            raise SourceBlocked(f"JavBus list HTTP {resp.status_code}: {url}")
         if verdict == LIST_UNREADABLE:
-            raise SourceUnreachable(f"JavBus studio list unreadable (no #waterfall): {url}")
-        return self._parse_search_ids(BeautifulSoup(resp.text, "html.parser"))
+            raise SourceUnreachable(f"JavBus list unreadable (no #waterfall): {url}")
+        return soup
+
+    @staticmethod
+    def _parse_star_cards(soup) -> list[StarCard]:
+        """searchstar 頁 → 候選卡。a.avatar-box：href 取 star id、img[title] 取名稱、按鈕字樣「無修正」＝無碼記錄。缺名稱或缺 id 的卡丟棄。"""
+        cards = []
+        for a in soup.find(id="waterfall").find_all("a", class_="avatar-box"):
+            m = _STAR_HREF_RE.match((a.get("href") or "").strip())
+            img = a.find("img")
+            name = ((img.get("title") if img else "") or "").strip()
+            if not m or not name:
+                continue
+            label = a.select_one("span.mleft") or a
+            uncensored = bool(m.group(1)) or "無修正" in label.get_text()
+            cards.append(StarCard(("uncensored/" if m.group(1) else "") + "star/" + m.group(2), name, uncensored))
+        return cards
+
+    def search_stars(self, name: str) -> list[StarCard]:
+        """女優名 → searchstar 候選卡（子字串候選也會回來，精確比對是呼叫端的事）。
+
+        404／200＋零卡 → []；被擋（403／429／503…）→ SourceBlocked；200 無 #waterfall → SourceUnreachable。
+        不吞 requests 例外、不 rate_limit、不帶 existmag（searchstar 不是作品清單）。
+        """
+        if not fold(name):
+            return []
+        url = f"{self.BASE_URL}{self._get_lang_prefix()}/searchstar/{self._plus_join(name)}"
+        resp = self._session.get(url, timeout=self.config.timeout)
+        soup = self._list_soup(resp, url)
+        return [] if soup is None else self._parse_star_cards(soup)
+
+    def fetch_entity_link(self, name: str, segment: str):
+        """名稱 → 站上實體 (id, 連結文字)|None。segment ∈ {"series","director","label"}。
+
+        三段：① 搜尋（series 一般搜尋、director type=2、label type=4；`get_ids_from_search`，T2 行為照舊）
+        ② 只看第一張卡的番號 → 詳情頁 ③ 詳情頁 `div.col-md-3.info` 內該 segment 的連結，
+        連結文字 fold 後與輸入相等才收。搜尋無卡 → None（1 個請求）；其餘最多 2 個請求。
+        搜尋是子字串搜尋且回的是影片，不能當實體清單，詳情頁連結才有 id 與精確名稱（plan CD-175c-3）。
+        """
+        if segment not in _ENTITY_SEARCH_TYPE:
+            raise ValueError(f"unknown entity segment: {segment!r}")
+        wanted = fold(name)
+        if not wanted:
+            return None
+        ids = self.get_ids_from_search(name, page=1, search_type=_ENTITY_SEARCH_TYPE[segment])
+        if not ids:
+            return None
+        return self._entity_link_from_detail(ids[0], segment, wanted)
+
+    def _entity_link_from_detail(self, number: str, segment: str, wanted: str):
+        """詳情頁 → 該 segment 連結 (id, 連結文字)|None。404／沒有這種連結／文字不符 → None；擋下與看不懂丟例外。"""
+        url = f"{self.BASE_URL}{self._get_lang_prefix()}/{number}"
+        resp = self._session.get(url, timeout=self.config.timeout)
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            raise SourceBlocked(f"JavBus detail HTTP {resp.status_code}: {url}")
+        info = BeautifulSoup(resp.text, "html.parser").select_one("div.col-md-3.info")
+        if info is None:
+            raise SourceUnreachable(f"JavBus detail unreadable (no info block): {url}")
+        for a in info.find_all("a", href=True):
+            m = _ENTITY_HREF_RE.match(a["href"].strip())
+            text = a.get_text(strip=True)
+            if m and m.group(1) == segment and fold(text) == wanted:
+                return f"{segment}/{m.group(2)}", text
+        return None
+
+    # ---------- 實體清單（175c-T4）----------
+
+    def get_entries_from_entity(self, entity_id: str, page: int = 1) -> list[ListCard]:
+        """實體頁（女優／系列／導演／label）單頁作品卡。entity_id 形如 `star/okq`、`uncensored/star/23f`、`series/rvz`。
+
+        URL＝<BASE_URL><語系前綴>/<entity_id>，第 N≥2 頁尾綴 `/<N>`。走 `_get_list`（帶 existmag=all，否則近期無磁鏈新片缺席）。
+        404（頁碼超界）→ []；被擋（403／429／503…）→ SourceBlocked；200 無 #waterfall → SourceUnreachable；
+        requests 例外 → SourceUnreachable。絕不把擋下或看不懂變成 []（BE-PY-03）。
+        """
+        url = f"{self.BASE_URL}{self._get_lang_prefix()}/{entity_id}"
+        if page > 1:
+            url += f"/{page}"
+        try:
+            resp = self._get_list(url)
+        except requests.RequestException as exc:
+            raise SourceUnreachable(f"JavBus entity page request failed: {url}") from exc
+        soup = self._list_soup(resp, url)
+        return [] if soup is None else self._parse_list_cards(soup)

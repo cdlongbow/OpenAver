@@ -251,6 +251,24 @@ def _source_display_name(source: str) -> str:
 VALID_JAVBUS_LANGS = {'zh-tw', 'ja', 'en'}
 
 
+def build_card(video: Video, number: str) -> Dict[str, Any]:
+    """單一來源的 Video → 結果卡 dict（legacy 形狀）。search_jav 尾段原樣抽出，JavBus 實體清單的 enrich 共用。
+
+    number 是呼叫端已正規化的番號（缺 maker 時依它的前綴補）。
+    """
+    # 補全 maker
+    if not video.maker:
+        maker = get_maker_by_prefix(number)
+        if maker:
+            video = video.model_copy(update={'maker': maker})
+
+    result = video.to_legacy_dict()
+    result['_source'] = video.source  # 保留內部欄位
+    result.update(internal_nfo_carriers(video))  # _summary / _rating（NFO 用，to_legacy_dict 省略）
+    logger.info(f"[Search] {number} 完成，來源: {video.source}")
+    return result
+
+
 def search_jav(
     number: str, source: str = 'auto', javbus_lang: Optional[str] = None,
     surface_access_errors: bool = False,
@@ -418,17 +436,7 @@ def search_jav(
         user_order = list(all_data.keys())  # already in get_enabled_source_ids() / drag order
         main_video = merge_results(all_data, user_order)
 
-    # 補全 maker
-    if not main_video.maker:
-        maker = get_maker_by_prefix(number)
-        if maker:
-            main_video = main_video.model_copy(update={'maker': maker})
-
-    result = main_video.to_legacy_dict()
-    result['_source'] = main_video.source  # 保留內部欄位
-    result.update(internal_nfo_carriers(main_video))  # _summary / _rating（NFO 用，to_legacy_dict 省略）
-    logger.info(f"[Search] {number} 完成，來源: {main_video.source}")
-    return result
+    return build_card(main_video, number)
 
 
 def search_jav_single_source(
