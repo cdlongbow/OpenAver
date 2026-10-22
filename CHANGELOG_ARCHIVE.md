@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 0.17.x
 
+- [0.17.10] 2026-10-19 — AI 翻譯四家統一：思考型模型不再翻出空白、截斷譯文算失敗、「測試翻譯」走真正翻譯同一條路、搜尋頁翻譯失敗分被擋／限流／其他
 - [0.17.9] 2026-10-18 — AI 翻譯新增 Claude 引擎（貼 Anthropic API Key、模型清單自動抓只列 Haiku／Sonnet）＋ OpenAI 相容引擎搜尋頁操作與 Gemini 統一
 - [0.17.8] 2026-10-17 — 來源斷線改說「無法存取」不說「資料夾不存在」（NAS 掛別台分享關機時狀態列會提示）＋ Synology 權限指引涵蓋遠端掛載 ＋ Jellyfin 10.11.7 起 .strm 只能指向網址的文案改口與逃生口
 - [0.17.7] 2026-10-13 — 桌面 App 可連到另一台電腦或 NAS 上的 OpenAver（連線入口、路徑對照表、連線時用 JavLibrary／FC2-javten、播放失敗說原因）
@@ -233,6 +234,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [0.1.3] 2026-01-17 — path_utils 集中化路徑處理，NFO updater / image proxy 全部改用
 - [0.1.1] 2026-01-17 — 圖片 proxy Windows 路徑修正 + Settings 手動更新檢查按鈕
 - [0.1.0] 2026-01-15 — 初始版本（Spotlight Search + Gallery Generator + Ollama 翻譯 + PyWebView）
+
+## [0.17.10] - 2026-10-19
+
+> 設定頁按「測試翻譯」成功，就代表真正翻譯也能用。會「先思考」的模型（Gemini flash-latest、Gemma 4、OpenAI 推理型）不再默默翻出空白；翻不出來時，搜尋頁分得出是「被翻譯服務的內容審查擋下」「額度用完或限流」還是其他原因。
+
+### Fixed
+
+#### 🤖 思考型模型翻不出東西
+- Gemini `gemini-flash-latest`、`gemma-4-26b-a4b-it`、`gemma-4-31b-it` 之前幾乎每片都翻出空白（回答上限太小，被模型的思考過程吃光）。現在 Gemini 與 OpenAI 相容引擎都改用各家預設，不再送回答上限、溫度與思考參數；三個模型對一般片名都翻得出來。預設模型 `gemini-flash-lite-latest` 不受影響。
+- OpenAI 相容引擎過去會把被截斷的半截譯文當成功，整理時寫進檔名與 NFO 標題；現在截斷一律算失敗、保留原標題。回應被服務商標示拒絕、只有思考內容沒有譯文、或譯文夾著 `<think>`／`<thought>` 思考標記的情況，三家雲端引擎都用同一套規則判定並清理。
+- Gemini／OpenAI 相容的 API Key 前後帶空白或換行時照常可用；含不合法字元時只顯示「認證失敗」，金鑰內容不會寫進 `debug.log`。
+
+### Changed
+
+#### 🔘 設定頁「測試翻譯」＝真正翻譯
+- Ollama、Gemini、OpenAI 相容三家的「測試翻譯」改走與搜尋頁、整理流程相同的那條路（同一份提示詞、同樣的參數、同樣的成功判定）；測試成功就代表真的翻得出來（Claude 在 0.17.9 已是如此）。
+- Gemini 的測試結果不再顯示 Google 原始錯誤訊息，改成和 Claude 一樣的分類提示：認證失敗、模型不存在、額度或限流、連線失敗或逾時、被內容審查擋下。
+- Gemini／OpenAI 相容的翻譯與測試等待時間由 30 秒放寬到 60 秒，讓慢的思考型模型翻得完。Claude 與 Ollama 不變。
+
+#### 🔍 搜尋頁翻譯失敗講得出原因
+- 單片「翻譯」失敗時，提示分成三種：被翻譯服務的內容審查擋下（換模型通常沒用，可改用 Claude 或本機 Ollama）、額度用完或請求太頻繁（稍後再試）、其他（維持通用提示）。
+- 「全部翻譯」結束時，若有片被擋或遇到限流，提示會說「其中 N 片被擋」「N 片限流」。
+- 說明頁「疑難排解」新增「測試成功，但有些片翻不出來」與「OpenAI 相容模型清單抓不到時可手打模型名」兩條。
+
+#### 已知限制
+- 透過 OpenAI 相容端點接 Gemini 時，被內容審查擋下的片只會回空內容、沒有原因，只能歸入「其他」；Gemini 原生引擎能正確辨識為「被擋」。
+- 「支援 OpenRouter／OpenCode」不在本版承諾範圍：三家官方 API 金鑰未實測，只依官方文件確認請求格式相容；唯一實測過的非 OpenAI 服務是 Gemini 的 OpenAI 相容端點。
+- 新文案目前只有繁體中文，其他語系待下次 milestone 翻譯。
 
 ## [0.17.9] - 2026-10-18
 

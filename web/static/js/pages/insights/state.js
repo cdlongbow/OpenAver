@@ -67,7 +67,28 @@ import {
     emptyKeyForCard,
 } from './charts.js';
 import { applyCellFocal } from '../../shared/focal-cell.js';
-import { applyHandoff } from '../../shared/showcase-handoff.js';
+import { applyHandoff, normalizeExtraPill } from '../../shared/showcase-handoff.js';
+import { toastState } from '../../shared/state-toast.js';
+import { classifyFavoriteResponse, buildFavoriteEntry, mergeFavorite } from './favorite-sync.js';
+
+// TASK-177-T3b：收藏回應分類 → [提示 type, 既有 i18n key]（零新增 key）
+const FAVORITE_TOAST = {
+    added: ['success', 'showcase.actress.addSuccess'],
+    already: ['info', 'showcase.actress.addDuplicate'],
+    not_found: ['error', 'showcase.actress.addNotFound'],
+    failed: ['error', 'showcase.actress.addTimeout'],
+};
+
+// goBrowse／goBrowseWith 共用：寫入 showcase_state 成功才同步導向瀏覽頁；失敗＝不導航。
+function writeHandoffAndNavigate(sel, extra) {
+    try {
+        localStorage.setItem('showcase_state', applyHandoff(localStorage.getItem('showcase_state'), sel, extra));
+    } catch (e) {
+        console.warn('goBrowse: 無法寫入 showcase_state，不導航', e);
+        return;
+    }
+    window.location.assign('/showcase');
+}
 
 let _pageshowBound = false;
 let _pageAlive = false;
@@ -246,6 +267,10 @@ export function libraryInsightsState() {
         // @error 直接改寫 DOM textContent 的寫法（會把 x-if 錨點一併砍掉，
         // Alpine 之後永遠無法再插回新內容）。女優格與女優榜共用同一份。
         photoFailed: {},
+        // TASK-177-T3b／CD-177-5：收藏請求進行中的名字表（鍵＝captured name、值 true）
+        favoriteBusy: {},
+
+        ...toastState(),
 
         // 模板 @load / $watch 呼叫（同 showcase 揭露慣例）
         applyCellFocal,
@@ -253,6 +278,68 @@ export function libraryInsightsState() {
         markPhotoFailed(name) {
             if (!name) return;
             this.photoFailed[name] = true;
+        },
+
+        isFavoriteActress(name) {
+            const favs = this.snapshot && this.snapshot.actressFavorites;
+            return !!(favs && favs[name]);
+        },
+
+        favoriteBusyFor(name) {
+            return !!this.favoriteBusy[name];
+        },
+
+        // TASK-177-T3b：收藏焦點女優。寫入一律用點擊當下的 name，不再讀 this.sel.actress。
+        async addFocusedFavorite() {
+            const name = this.sel && this.sel.actress;
+            if (!name || !this.snapshot) return;
+            if (this.favoriteBusyFor(name)) return;
+            if (this.isFavoriteActress(name)) return;
+            this.favoriteBusy[name] = true;
+            let kind = 'failed';
+            let data = null;
+            try {
+                const res = await fetch('/api/actresses/favorite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
+                try { data = await res.json(); } catch (e) { data = null; }
+                kind = classifyFavoriteResponse(res.status, data);
+            } catch (e) {
+                kind = 'failed';
+            } finally {
+                delete this.favoriteBusy[name];
+            }
+            if (!_pageAlive) return;
+            if (!this.snapshot) return;
+            if (kind === 'added' || kind === 'already') {
+                this.snapshot.actressFavorites = mergeFavorite(this.snapshot.actressFavorites, name, buildFavoriteEntry(data.actress));
+                this.photoFailed[name] = false;
+                this.redrawAge(); // I-4：年齡圖命令式重繪
+                this.playFavoriteReveal(name);
+            }
+            const [type, key] = FAVORITE_TOAST[kind];
+            this.showToast(window.t(key), type);
+        },
+
+        // TASK-177-T4：收藏成功後頭像淡入（焦點已切到別人就不動；node 測試無 $nextTick／motion 時直接略過）
+        playFavoriteReveal(name) {
+            if (typeof this.$nextTick !== 'function') return;
+            const motion = window.OpenAver && window.OpenAver.motion;
+            if (!motion) return;
+            if (!this.sel || this.sel.actress !== name) return;
+            this.$nextTick(() => {
+                const els = document.querySelectorAll('#tileActress .insights-focus-avatar:not(.mk) img');
+                if (!els.length) return;
+                motion.playFadeTo(els, {
+                    fromOpacity: 0,
+                    opacity: 1,
+                    duration: motion.DURATION.fast,
+                    overwrite: 'auto',
+                    onComplete: () => motion.clearProps(els, 'opacity'),
+                });
+            });
         },
 
         recomputeScopedCount() {
@@ -281,13 +368,15 @@ export function libraryInsightsState() {
          */
         goBrowse() {
             if (!this.canGoBrowse) return;
-            try {
-                localStorage.setItem('showcase_state', applyHandoff(localStorage.getItem('showcase_state'), this.sel));
-            } catch (e) {
-                console.warn('goBrowse: 無法寫入 showcase_state，不導航', e);
-                return;
-            }
-            window.location.assign('/showcase');
+            writeHandoffAndNavigate(this.sel);
+        },
+
+        /** 帶一枚一次性 extra pill（tag／director／series）跳瀏覽頁；extra 無效＝不寫入不導航。 */
+        goBrowseWith(extra) {
+            const pill = normalizeExtraPill(extra);
+            if (pill === null) return;
+            if (!this.canGoBrowse) return;
+            writeHandoffAndNavigate(this.sel, pill);
         },
 
         /**
@@ -1582,6 +1671,7 @@ export function libraryInsightsState() {
             const self = this;
             return {
                 getSel: () => self.sel,
+                goBrowseWith: (extra) => self.goBrowseWith(extra),
             };
         },
 
@@ -1598,11 +1688,13 @@ export function libraryInsightsState() {
             const self = this;
             return {
                 getSel: () => self.sel,
+                goBrowseWith: (extra) => self.goBrowseWith(extra),
             };
         },
 
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
+            _pageAlive = true; // bfcache 還原後復活（I-5③）
             // 側欄離頁已 cleanup；bfcache 不重跑 init，還原監聽及下次離頁的 hooks。
             if (this._bindPodiumResize()) this._registerInsightsCleanup();
             const size = podiumSizeForViewport(window.innerWidth);

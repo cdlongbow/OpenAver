@@ -1837,6 +1837,19 @@
   &lt;/div&gt;
 &lt;/dialog&gt;</code></pre>
             </div>
+
+            <div class="ds-subsection">
+                <h3>Actress Heart — 分析頁焦點卡頭像格</h3>
+                <div class="ds-state-matrix">
+                    <div class="ds-state-item"><span class="ds-state-label">閒置</span><div style="width:52px;height:52px;border-radius:50%;overflow:hidden;background:var(--surface-2);">
+                        <button type="button" class="actress-add-heart" title="加入收藏" style="width:100%;height:100%;min-width:0;"><i class="bi bi-heart"></i></button>
+                    </div></div>
+                    <div class="ds-state-item"><span class="ds-state-label">載入中</span><div style="width:52px;height:52px;border-radius:50%;overflow:hidden;background:var(--surface-2);">
+                        <button type="button" class="actress-add-heart" disabled title="新增中" style="width:100%;height:100%;min-width:0;"><span class="loading loading-spinner loading-xs"></span></button>
+                    </div></div>
+                </div>
+                <p class="ds-note">左：閒置；右：載入中（disabled）。生產環境用 pages/insights.css 的 .insights-container .insights-focus-avatar .actress-add-heart 覆寫尺寸（本頁不載入 insights.css，以 inline 近似）；hover 打亮與鍵盤焦點內縮也在該作用域覆寫補上。</p>
+            </div>
         </section>
 
         <!-- 區塊: Toasts -->

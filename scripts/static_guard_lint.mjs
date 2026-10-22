@@ -5494,11 +5494,15 @@ const RULES = [
   // ---- [161a-T5b] 頂排拆女優格／片商格、兩條件疊加 ----
   { file: 'web/static/js/pages/insights/state.js', kind: 'required-string', pattern: '#tileActress .insights-focus-avatar:not(.mk)', count: 2, note: '[161a-T5b] state.js 頭像飛行目標是 #tileActress（清除分支與 _flyAvatarToFocusTile 各一處）：指到別格＝替身飛不到頭像、卡在半空' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearMaker()"', scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 的 × 接 clearMaker：接成別的＝按片商格的 × 清掉別的條件' },
-  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearActress()"', scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 的 × 接 clearActress：接成別的＝按女優格的 × 清掉別的條件' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearActress()"', scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[161a-T5b] #tileActress 的 × 接 clearActress：接成別的＝按女優格的 × 清掉別的條件' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_maker')", scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 未選時顯示淡色「全部片商」：寫成別的字＝使用者分不出兩格' },
-  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_actress')", scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 未選時顯示淡色「全部女優」：寫成別的字＝使用者分不出兩格' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_actress')", scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[161a-T5b] #tileActress 未選時顯示淡色「全部女優」：寫成別的字＝使用者分不出兩格' },
   { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（insights.html）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
   { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（state.js）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
+  // ---- [177-T4] 焦點卡愛心 ----
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click.stop="addFocusedFavorite()"', scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[177-T4-heart-click] #tileActress 的愛心接 addFocusedFavorite：沒接＝使用者點空心愛心什麼都沒發生（沒送收藏、沒轉圈、沒提示）' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'isFavoriteActress(', count: 2, scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[177-T4-heart-state] #tileActress 頭像槽首字態與愛心態各讀一次 isFavoriteActress：少一處或寫成恆真＝已收藏女優的照片旁多出愛心、再點又送一次收藏' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'x-show="$store.toast.visible"', note: '[177-T4-toast] insights.html 要有 toast 容器：沒有＝使用者點愛心收藏後成功或失敗都沒有任何提示' },
 
   // ---- [161a-T6b] 年份拖曳：預覽蓋板、年表淡化、觸控降級、dispose 清理 ----
   { file: 'web/static/js/pages/insights/charts.js', kind: 'forbidden-string', pattern: "getZr().on('click'", note: '[161a-T6b] charts.js 年份圖不得有 click 監聽：單點與範圍都由 mousedown→mouseup 手勢提交，加回 click 會在拖完範圍後多觸發一次單點、把剛選的範圍改成單年' },
@@ -9377,6 +9381,41 @@ const RULES = [
     file: 'web/templates/search.html', kind: 'required-string',
     pattern: /advanced_search_cta'\)"(?:(?!\) \}\})[\s\S])*?(?<![\w:-])x-show="!activeMaker\(\)"/,
     note: '[lint-guard 173-T13-cta-xshow] 進階搜尋 CTA 少了 x-show="!activeMaker()" → 片商搜尋失敗頁冒出「使用番號進階搜尋」按鈕，使用者被導去對片商無意義的入口',
+  },
+  // ---- [177-T2] 三種圖可點（樹圖／導演系列長條／拉出標籤）接線 ----
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '_tagsCallbacks.goBrowseWith(', count: 1,
+    scope: { anchor: /export function initTagsChart\s*\(\s*containerEl\s*,\s*callbacks\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-tree] 使用者點標籤樹圖一格 → 游標與提示都像可點，點下去卻什麼都沒發生（initTagsChart 內樹圖 click 要呼叫 goBrowseWith 回呼）',
+  },
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '.goBrowseWith(', count: 1,
+    scope: { anchor: /export function initFieldBarChart\s*\(\s*containerEl\s*,\s*field\s*,\s*callbacks\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-bar] 使用者點導演／系列長條 → 游標是手形、提示說可在瀏覽頁查看，點下去卻沒反應（initFieldBarChart 內長條 click 要呼叫 goBrowseWith 回呼）',
+  },
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '_tagsCallbacks.goBrowseWith(', count: 1,
+    scope: { anchor: /export function updateTagsChart\s*\(\s*state\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-chip-forward] 使用者點上方拉出的高佔比標籤 → 沒有任何反應（updateTagsChart 內 chip 的 onPick 要轉給 _tagsCallbacks.goBrowseWith）',
+  },
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: "onPick({ dim: 'tag', value: e[0] })", count: 1,
+    scope: { anchor: /export function renderPulledChips\s*\(\s*el\s*,\s*pulled\s*,\s*total\s*,\s*prefix\s*,\s*onPick\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-chip] 使用者點上方拉出的高佔比標籤（看起來是連結）→ 沒有任何反應（renderPulledChips 內每顆按鈕 click 要呼叫 onPick）',
+  },
+  {
+    file: 'web/static/js/pages/insights/state.js', kind: 'required-string', pattern: 'goBrowseWith: (extra) => self.goBrowseWith(extra)', count: 2,
+    stripLineComments: true,
+    note: '[177-T2-callbacks] 使用者點樹圖或長條，游標與提示都像可點，點下去卻沒反應（_tagsCallbacks／_fieldCallbacks 各要提供 goBrowseWith）',
+  },
+  {
+    file: { dir: 'web/static/js/pages/insights', ext: ['.js'] }, kind: 'forbidden-string', pattern: /\.(innerHTML|insertAdjacentHTML)\b/,
+    stripLineComments: true,
+    note: '[177-T2-no-innerHTML] 分析頁 JS 不得用 innerHTML／insertAdjacentHTML：標籤、導演名稱來自外部刮削的 NFO，當 HTML 插入會執行其中的 script／載入外部圖',
   },
 ];
 
