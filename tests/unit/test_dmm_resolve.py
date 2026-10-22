@@ -208,6 +208,17 @@ def test_actor_tolerates_null_and_malformed_rows(transport, provider):
     assert provider.resolve(Kind.ACTOR, "三上悠亜") == EntityRef(Kind.ACTOR, "1030262", "三上悠亜")
 
 
+@pytest.mark.parametrize("bad", [None, "壞項目", 7, ["三上悠亜"]], ids=["null", "str", "int", "list"])
+def test_actor_tolerates_non_dict_items_inside_actresses(transport, provider, bad):
+    # actresses 陣列裡夾 null／非 dict 的項目：只略過那一項。若 AttributeError 往外丟，梯子的 except 會回 []，
+    # 整家 DMM 對這個名字被跳過（連關鍵字都不問），而且壞 rows 已進 Probe 快取、持續到重啟
+    transport.rows["三上悠亜"] = [_row("b1", [bad, MIKAMI])]  # 她只出現在這一列：吃得到她才算只略過壞項
+    assert provider.resolve(Kind.ACTOR, "三上悠亜") == EntityRef(Kind.ACTOR, "1030262", "三上悠亜")
+    assert len(transport.list_calls) == 1
+    assert provider.resolve(Kind.ACTOR, "三上悠亜") == EntityRef(Kind.ACTOR, "1030262", "三上悠亜")
+    assert len(transport.list_calls) == 1  # 沒有因為壞列而每次重打
+
+
 def test_actor_not_found_when_rows_empty(transport, provider):
     assert provider.resolve(Kind.ACTOR, "查無此人") is None
     assert transport.list_calls == [("查無此人", 40, 0, None)]

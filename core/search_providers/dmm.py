@@ -111,6 +111,8 @@ def _pick_actor(rows: list[dict], wanted: str) -> EntityRef | None:
     hits = []
     for row in rows:
         for actress in row.get("actresses") or []:
+            if not isinstance(actress, dict):  # 陣列裡夾 null／非 dict：只略過這一項（與 _row_actress_ids 對齊）
+                continue
             aid = _ident(actress.get("id"))
             names = _actor_names(actress)
             if aid and any(_same_name(n, wanted) for n in names):
