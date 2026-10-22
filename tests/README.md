@@ -21,7 +21,6 @@ tests/
 │   ├── test_database.py
 │   ├── test_gallery_scanner.py
 │   ├── test_local_status_api.py
-│   ├── test_motion_lab_router.py
 │   ├── test_organizer.py
 │   ├── test_path_utils.py
 │   ├── test_scanner_sqlite.py
@@ -44,8 +43,7 @@ tests/
 │   ├── test_api_gallery.py
 │   ├── test_api_scanner.py
 │   ├── test_api_search.py
-│   ├── test_api_translate.py
-│   └── test_new_scrapers.py
+│   └── test_api_translate.py
 │
 ├── smoke/                   # 煙霧測試（需網路/服務）
 │   ├── conftest.py
@@ -171,7 +169,6 @@ pytest tests/smoke/test_source_canary.py tests/smoke/test_extra_paths_live.py -v
 | `test_api_scanner.py` | 掃描 API 測試 |
 | `test_api_translate.py` | 翻譯 API 測試 |
 | `test_actress_profile.py` | 女優資料 scraper 測試 |
-| `test_new_scrapers.py` | 新增爬蟲模組測試 |
 
 ### 煙霧測試 (`smoke/`)
 
