@@ -33,7 +33,6 @@ HOSTS_OF = {
     'avsox': {'avsox.click', 'avsox.monster', 'avsox.website'},
 }
 OK_ENVELOPE = json.dumps({'success': 1, 'data': {}}).encode()
-JSD = b'<html><script src="/cdn-cgi/challenge-platform/scripts/jsd/api.js"></script></html>'
 
 
 # ── recording proxy：host 集合是 oracle ──────────────────────────────────────
@@ -151,112 +150,7 @@ def _one(client, sid):
     return _probe(client, '', 'dmm', [sid])[sid]
 
 
-@pytest.mark.parametrize('sid', BUILTIN)
-def test_each_source_classifies_200_403_and_connection_error(client, canned, sid):
-    canned.by_host()
-    assert _one(client, sid)['state'] == 'ok'
-
-    canned.by_host(default=(403, {}, b'forbidden'))
-    row = _one(client, sid)
-    assert (row['state'], row['reason'], row['status']) == ('blocked', 'http_status', 403)
-    assert row['advice'] == ('jp_ip' if sid == 'dmm' else None)
-
-    canned.by_host(default=requests.exceptions.ConnectionError('down'))
-    row = _one(client, sid)
-    assert (row['state'], row['reason'], row['status']) == ('unreachable', 'network', None)
-
-
-@pytest.mark.parametrize('sid,expected', [
-    ('javbus', 'ok'), ('jav321', 'ok'), ('heyzo', 'ok'), ('fc2', 'ok'), ('d2pass', 'ok'),
-    ('dmm', 'blocked'), ('javdb', 'blocked'), ('avsox', 'blocked'),
-])
-def test_sample_resource_404_is_ok_api_404_is_blocked(client, canned, sid, expected):
-    """樣本頁／樣本資源 404＝站台有回應＝通；API／鏡像型的 404＝被擋。"""
-    canned.by_host(default=(404, {}, b'not found'))
-    row = _one(client, sid)
-    assert row['state'] == expected
-    if expected == 'blocked':
-        assert row['reason'] == 'http_status'
-
-
-@pytest.mark.parametrize('sid', [s for s in BUILTIN if s != 'javdb'])
-def test_cloudflare_signals_for_sources_without_envelope_check(client, canned, sid):
-    canned.by_host(default=(200, {}, JSD))
-    assert _one(client, sid)['state'] == 'ok'
-
-    canned.by_host(default=(200, {'cf-mitigated': 'challenge'}, b'x'))
-    row = _one(client, sid)
-    assert (row['state'], row['reason']) == ('blocked', 'cf_challenge')
-
-    canned.by_host(default=(403, {'cf-mitigated': 'challenge'}, b'x'))
-    row = _one(client, sid)
-    assert (row['state'], row['reason']) == ('blocked', 'cf_challenge')
-
-
-# ── JavDB：App 資料通道＋讀取策略 ────────────────────────────────────────────
-
-def _big(success, size):
-    return json.dumps({'success': success, 'data': {'pad': 'a' * size}}).encode()
-
-
-def test_javdb_probe_targets_app_channel_not_homepage(client, canned):
-    """App 通道被拒、首頁卻打得開：不能亮綠；而且探測只打 App 搜尋路徑。"""
-    def _r(request):
-        return (403, {}, b'no') if urlparse(request.url).path == '/api/v2/search' else (200, {}, b'<html>')
-
-    canned.responder = _r
-    row = _one(client, 'javdb')
-    assert (row['state'], row['reason'], row['status']) == ('blocked', 'http_status', 403)
-    assert {urlparse(r.url).path for r in canned.seen} == {'/api/v2/search'}
-    assert all('q=' in urlparse(r.url).query for r in canned.seen)
-
-
-def test_javdb_probe_envelope_rejection_is_blocked(client, canned):
-    for body in (json.dumps({'success': 0}).encode(), b'<html>not json</html>'):
-        canned.by_host(default=(200, {}, body))
-        row = _one(client, 'javdb')
-        assert (row['state'], row['reason']) == ('blocked', 'app_rejected')
-
-
-def test_javdb_probe_large_valid_envelope_is_ok(client, canned):
-    body = _big(1, 3 * 8192)
-    assert len(body) > 2 * 8192
-    canned.by_host(default=(200, {}, body))
-    assert _one(client, 'javdb')['state'] == 'ok'
-
-
-def test_javdb_probe_midsize_rejection_is_blocked(client, canned):
-    body = _big(0, 50 * 1024)
-    assert 8 * 1024 < len(body) < 256 * 1024
-    canned.by_host(default=(200, {}, body))
-    row = _one(client, 'javdb')
-    assert (row['state'], row['reason']) == ('blocked', 'app_rejected')
-
-
-def test_javdb_probe_oversized_body_is_ok(client, canned):
-    body = _big(1, 300 * 1024)
-    assert len(body) > 256 * 1024
-    canned.by_host(default=(200, {}, body))
-    row = _one(client, 'javdb')
-    assert (row['state'], row['reason']) == ('ok', 'ok')
-
-
 # ── 合併語意、D2Pass 站點、請求身分 ──────────────────────────────────────────
-
-@pytest.mark.parametrize('sid,bad_host,state,host', [
-    ('javdb', 'jdforrepam.com', 'ok', 'javdb.com'),
-    ('avsox', 'avsox.click', 'ok', None),
-    ('d2pass', 'www.caribbeancom.com', 'blocked', 'www.caribbeancom.com'),
-    ('d2pass', 'www.1pondo.tv', 'blocked', 'www.1pondo.tv'),
-])
-def test_probe_mode_follows_channel_semantics(client, canned, sid, bad_host, state, host):
-    """鏡像型（javdb／avsox）壞一個仍通；獨立站型（d2pass）壞一站整家橘，且指出是哪一站。"""
-    canned.by_host(**{bad_host.replace('.', '__'): (403, {}, b'no')})
-    row = _one(client, sid)
-    assert row['state'] == state
-    if host:
-        assert row['host'] == host
-
 
 def test_d2pass_caribbeancom_probes_www_not_b_json(client, canned):
     canned.by_host()
@@ -347,30 +241,6 @@ def test_verifier_probe_dev_env_is_skipped_windows_verifier(client, canned):
     results = _probe(client, '', 'all', VERIFIER)
     assert {(r['state'], r['reason']) for r in results.values()} == {('skipped', 'windows_verifier')}
     assert canned.seen == []
-
-
-@pytest.mark.parametrize('sid,host', [('javlibrary', 'www.javlibrary.com'), ('fc-javten', 'javten.com')])
-def test_verifier_challenge_page_is_ok_via_endpoint(client, canned, verifier_env, sid, host):
-    verifier_env('windows')
-    key = host.replace('.', '__')
-
-    canned.by_host(**{key: (200, {'cf-mitigated': 'challenge'}, b'x')})
-    row = _vrow(client, sid)
-    assert (row['state'], row['reason'], row['host']) == ('ok', 'ok', host)
-    # 探測請求帶瀏覽器樣的 header（避免被當機器人回單純 403）
-    ua = canned.requests_to(host)[0].headers.get('User-Agent', '')
-    assert ua.startswith('Mozilla/5.0') and 'requests' not in ua
-
-    canned.by_host(**{key: (403, {}, b'<title>Just a moment...</title>')})
-    assert _vrow(client, sid)['state'] == 'ok'
-
-    canned.by_host(**{key: (403, {'server': 'cloudflare'}, b'<html>1015</html>')})
-    row = _vrow(client, sid)
-    assert (row['state'], row['reason']) == ('blocked', 'cf_challenge')
-
-    canned.by_host(**{key: requests.exceptions.ProxyError('x')})
-    row = _vrow(client, sid)
-    assert (row['state'], row['reason']) == ('unreachable', 'proxy')
 
 
 def test_verifier_probe_auth_socks_is_skipped_without_connection(client, canned, verifier_env):

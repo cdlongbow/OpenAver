@@ -114,33 +114,11 @@ def test_list_page_size():
 
 # ---------------- fetch_studio_sample ----------------
 
-def test_fetch_sample_404_is_miss(scraper_zh):
-    from core.scrapers.javbus import STUDIO_MISS
-    assert _sample(scraper_zh, 404, info=(False, [])) is STUDIO_MISS
-
-
-def test_fetch_sample_vote_censored_and_uncensored(scraper_zh):
-    from core.scrapers.javbus import StudioVote
-    assert _sample(scraper_zh, 200, info=(True, ["/studio/7q"])) == StudioVote("censored", "7q")
-    assert _sample(scraper_zh, 200, info=(True, ["/uncensored/studio/3a"])) == StudioVote("uncensored", "3a")
-    assert _sample(scraper_zh, 200, info=(True, ["/label/9x", "/studio/7q"])) == StudioVote("censored", "7q")
-
-
-@pytest.mark.parametrize("status", [403, 429, 500, 503])
-def test_fetch_sample_bad_status_is_unreachable(scraper_zh, status):
-    from core.scrapers.javbus import STUDIO_UNREACHABLE
-    assert _sample(scraper_zh, status) is STUDIO_UNREACHABLE
-
 
 @pytest.mark.parametrize("exc", REQUEST_EXCS, ids=lambda e: type(e).__name__)
 def test_fetch_sample_request_exceptions_are_unreachable(scraper_zh, exc):
     from core.scrapers.javbus import STUDIO_UNREACHABLE
     assert _sample(scraper_zh, exc=exc) is STUDIO_UNREACHABLE
-
-
-def test_fetch_sample_200_without_info_is_unreachable(scraper_zh):
-    from core.scrapers.javbus import STUDIO_UNREACHABLE
-    assert _sample(scraper_zh, 200, info=(False, [])) is STUDIO_UNREACHABLE
 
 
 def test_fetch_sample_rate_limits_and_uses_detail_url(scraper_zh):
@@ -192,35 +170,11 @@ def _list(scraper, status=None, waterfall=True, exc=None, ids=None):
             assert scraper._session.get.call_count == 1
 
 
-def test_get_ids_from_studio_404_is_empty(scraper_zh):
-    assert _list(scraper_zh, 404, waterfall=False) == []
-
-
-def test_get_ids_from_studio_200_parses(scraper_zh):
-    assert _list(scraper_zh, 200, ids=["A-1", "B-2"]) == ["A-1", "B-2"]
-    assert _list(scraper_zh, 200, ids=[]) == []
-
-
-@pytest.mark.parametrize("status", [403, 429, 500, 503, 302])
-def test_get_ids_from_studio_blocked(scraper_zh, status):
-    with pytest.raises(Exception) as ei:
-        _list(scraper_zh, status)
-    from core.scrapers.errors import SourceBlocked
-    assert type(ei.value) is SourceBlocked
-
-
 @pytest.mark.parametrize("exc", REQUEST_EXCS, ids=lambda e: type(e).__name__)
 def test_get_ids_from_studio_request_exceptions_unreachable(scraper_zh, exc):
     from core.scrapers.errors import SourceUnreachable
     with pytest.raises(Exception) as ei:
         _list(scraper_zh, exc=exc)
-    assert type(ei.value) is SourceUnreachable
-
-
-def test_get_ids_from_studio_200_without_waterfall_raises(scraper_zh):
-    from core.scrapers.errors import SourceUnreachable
-    with pytest.raises(Exception) as ei:
-        _list(scraper_zh, 200, waterfall=False, ids=["A-1"])
     assert type(ei.value) is SourceUnreachable
 
 

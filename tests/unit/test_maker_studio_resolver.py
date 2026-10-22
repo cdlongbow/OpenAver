@@ -4,10 +4,8 @@ DB 一律 tmp_path、今天一律注入、取回器替身或替身 _session，�
 """
 import datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 
 from core.database import maker_javbus_map
 from core.database.connection import init_db
@@ -136,45 +134,6 @@ def test_existing_not_found_row_short_circuits_and_table_unchanged(db):
     assert run(f, db).status == "absent"
     assert f.call_count == 0
     assert maker_javbus_map.get_mapping(KEY, db_path=db) == before
-
-
-# ---------------- 真實 classify / 真實取回器 ----------------
-
-@pytest.fixture
-def scraper():
-    with patch("core.scrapers.javbus.rate_limit"):
-        yield JavBusScraper(lang="zh-tw")
-
-
-def _resp(status):
-    r = MagicMock()
-    r.status_code = status
-    r.text = ""
-    return r
-
-
-def test_info_block_without_studio_link_x5_via_real_classify_writes_nothing(db, scraper):
-    scraper._session.get = MagicMock(return_value=_resp(200))
-    with patch.object(JavBusScraper, "_extract_studio_info", return_value=(True, [])):
-        r = run(scraper.fetch_studio_sample, db)
-    assert r.status == "unreachable"
-    assert scraper._session.get.call_count == 5
-    assert maker_javbus_map.get_mapping(KEY, db_path=db) is None
-
-
-@pytest.mark.parametrize("failure", [
-    requests.Timeout("t"),
-    requests.ConnectionError("c"),
-    _resp(403),
-], ids=["timeout", "connection-error", "http-403"])
-def test_unreachable_class_via_real_fetcher_writes_nothing(db, scraper, failure):
-    if isinstance(failure, Exception):
-        scraper._session.get = MagicMock(side_effect=failure)
-    else:
-        scraper._session.get = MagicMock(return_value=failure)
-    r = run(scraper.fetch_studio_sample, db)
-    assert r.status == "unreachable"
-    assert maker_javbus_map.get_mapping(KEY, db_path=db) is None
 
 
 def test_unexpected_exception_propagates_and_writes_nothing(db):

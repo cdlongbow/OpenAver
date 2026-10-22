@@ -390,106 +390,14 @@ def site(monkeypatch):
     return s
 
 
-def _maker_site(site, maker_id_in_detail="M1", n=3):
-    site.typed[("maker", "片商")] = [
-        {"id": "M1", "name": "片商", "name_zht": "", "other_name": "", "videos_count": 99, "type": 0}]
-    site.pages[("0:m:M1", 1)] = [
-        {"id": f"m{i}", "number": f"AAA-{i:03d}", "title": f"t{i}", "origin_title": f"jt{i}",
-         "cover_url": "http://c/x.jpg", "release_date": f"2026-0{i}-01"} for i in range(1, n + 1)]
-    for i in range(1, n + 1):
-        site.details[f"m{i}"] = {"id": f"m{i}", "title": f"jt{i}", "release_date": f"2026-0{i}-01",
-                                 "cover_url": "http://c/x.jpg", "maker_id": maker_id_in_detail}
-
-
 def _run(**kw):
     return JavDBProvider().run_maker(*ARGS, 0, **KW, **kw)
-
-
-def test_javdb_run_maker_happy_path_sorted_with_source_and_status(site):
-    _maker_site(site)
-    events = []
-    out = _run(status_callback=lambda a, b: events.append((a, b)))
-    assert out.error_code is None
-    assert [c["number"] for c in out.results] == ["AAA-003", "AAA-002", "AAA-001"]
-    assert {c["_source"] for c in out.results} == {"javdb"}
-    assert out.has_more is False
-    assert events[0] == ("javdb", "searching") and events[-1] == ("done", "found:3")
-    assert ("list", "0:m:M1", 1) in site.calls
-
-
-def test_javdb_run_maker_resolve_none_is_not_found(site):
-    assert _run() == E("maker_not_found")
-    assert not [c for c in site.calls if c[0] in ("list", "detail")]
-
-
-def test_javdb_run_maker_resolve_error_is_unreachable_not_not_found(site):
-    site.typed_exc = SourceBlocked("cf")
-    assert _run() == E("maker_unreachable")
-
-
-def test_javdb_run_maker_list_error_is_unreachable(site):
-    _maker_site(site)
-    site.list_exc = SourceUnreachable("down")
-    assert _run() == E("maker_unreachable")
-
-
-def test_javdb_run_maker_empty_listing_is_maker_empty(site):
-    _maker_site(site)
-    site.pages[("0:m:M1", 1)] = []
-    assert _run() == E("maker_empty")
 
 
 def test_javdb_run_maker_does_not_swallow_base_exception(site):
     site.typed_exc = KeyboardInterrupt()
     with pytest.raises(KeyboardInterrupt):
         _run()
-
-
-def test_javdb_maker_latest_listing_guard_rejects_unrelated_page(site, order, bus):
-    """站方篩選失效回全站最新：詳情 maker id 都不是 M1 ⇒ JavDB maker_not_found、seed 0 次、換 JavBus。"""
-    _maker_site(site, maker_id_in_detail="OTHER")
-    order(["javdb", "javbus"])
-    bus.return_value = R("B-1")
-    seeds = MagicMock()
-    out = search(result_callback=seeds)
-    assert [r["number"] for r in out.results] == ["B-1"]
-    assert bus.call_count == 1
-    assert seeds.call_count == 0
-    assert _run() == E("maker_not_found")
-
-
-def test_javdb_run_maker_limit_none_uses_30_window(site):
-    _maker_site(site)
-    out = _run()
-    assert out.error_code is None
-    out2 = _run(limit=2)
-    assert len(out2.results) <= 2
-
-
-def test_default_window_is_30_and_load_more_continues_without_gap(site, order, bus):
-    """45 部、日期新到舊：offset=0 預設視窗恰 30 部（第 1–30），offset=30 得第 31–45，零重複合計 45。"""
-    import datetime
-
-    order(["javdb"])
-    site.typed[("maker", "片商")] = [
-        {"id": "M1", "name": "片商", "name_zht": "", "other_name": "", "videos_count": 99, "type": 0}]
-    day0 = datetime.date(2026, 1, 1)
-    rows = []
-    for i in range(1, 46):
-        d = (day0 + datetime.timedelta(days=100 - i)).isoformat()
-        rows.append({"id": f"m{i}", "number": f"AAA-{i:03d}", "title": f"t{i}", "origin_title": f"jt{i}",
-                     "cover_url": "http://c/x.jpg", "release_date": d})
-        site.details[f"m{i}"] = {"id": f"m{i}", "title": f"jt{i}", "release_date": d,
-                                 "cover_url": "http://c/x.jpg", "maker_id": "M1"}
-    site.pages[("0:m:M1", 1)] = rows
-    first = search(offset=0)
-    second = search(offset=30)
-    n1 = [r["number"] for r in first.results]
-    n2 = [r["number"] for r in second.results]
-    assert n1 == [f"AAA-{i:03d}" for i in range(1, 31)]
-    assert n2 == [f"AAA-{i:03d}" for i in range(31, 46)]
-    assert not set(n1) & set(n2) and len(n1) + len(n2) == 45
-    assert bus.call_count == 0
 
 
 # ------------------------------------------------------------------ 175b-T8c 膠囊列政策

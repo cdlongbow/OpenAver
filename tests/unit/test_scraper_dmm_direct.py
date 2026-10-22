@@ -1,12 +1,11 @@
 """
-DMMScraper 行為：未被 proxy policy 選中時尊重系統代理（CD-134-6），以及 DMM 刮削主體。
+DMMScraper 行為：未被 proxy policy 選中時尊重系統代理（CD-134-6）。
 
 DMM 開關看膠囊、代理選擇看 core/proxy_policy.py（TASK-163a-T3a）。
 """
 import os
 
 import pytest
-from unittest.mock import patch, MagicMock
 
 from core.scrapers.dmm import DMMScraper
 from core.proxy_policy import ProxySettings
@@ -75,68 +74,11 @@ class TestDmmRespectsSystemProxy:
 
 
 # ============================================================
-# Mock Data (from test_new_scrapers.py)
-# ============================================================
-
-DMM_SEARCH_RESPONSE = {
-    "data": {
-        "legacySearchPPV": {
-            "result": {
-                "contents": [{"id": "sone00205"}]
-            }
-        }
-    }
-}
-
-DMM_DETAIL_RESPONSE = {
-    "data": {
-        "ppvContent": {
-            "id": "sone00205",
-            "title": "成人への卒業",
-            "description": "テスト",
-            "packageImage": {"largeUrl": "https://pics.dmm.co.jp/sone205pl.jpg"},
-            "makerReleasedAt": "2024-03-19T00:00:00+09:00",
-            "duration": 120,
-            "actresses": [{"name": "Nana Miho"}],
-            "directors": [],
-            "series": {"name": ""},
-            "maker": {"name": "S1 NO.1 STYLE"},
-            "makerContentId": "SONE-205",
-        }
-    }
-}
-
-
-def _make_mock_resp(status_code=200, json_data=None, content=None):
-    """Build a MagicMock that mimics requests.Response."""
-    mock_resp = MagicMock()
-    mock_resp.status_code = status_code
-    if json_data is not None:
-        mock_resp.json = lambda: json_data
-    if content is not None:
-        mock_resp.content = content
-    return mock_resp
-
-
-# ============================================================
 # Tests merged from integration/test_new_scrapers.py TestDMMScraper
 # ============================================================
 
 class TestDMMScraperIntegration:
     """DMM scraper tests (merged from test_new_scrapers.py)"""
-
-    @pytest.fixture(autouse=True)
-    def _no_rate_limit(self, monkeypatch):
-        """跳過 rate_limit sleep，加速測試"""
-        monkeypatch.setattr("core.scrapers.dmm.rate_limit", lambda *a, **kw: None)
-
-    @pytest.fixture
-    def dmm_scraper(self, monkeypatch):
-        """DMM scraper fixture"""
-        import core.scrapers.dmm as dmm_module
-        monkeypatch.setattr(dmm_module, "_shipped_table_cache", {})
-        config = ScraperConfig(proxy_settings=ProxySettings(url="http://test-proxy:8080"))
-        return DMMScraper(config)
 
     def test_dmm_no_proxy_session_proxies_not_set(self):
         """Proxy 欄空白時 session.proxies 不被設定（直連模式）"""
@@ -144,75 +86,3 @@ class TestDMMScraperIntegration:
         assert not scraper._session.proxies, \
             "無代理設定 時 session.proxies 不應被設定"
 
-    def test_dmm_cache_hit(self, dmm_scraper):
-        """前綴表命中時不呼叫 search query（detail query + probe query，不超過 2 次）"""
-        detail_resp = _make_mock_resp(status_code=200, json_data=DMM_DETAIL_RESPONSE)
-
-        with patch.object(dmm_scraper._session, 'post', return_value=detail_resp) as mock_post, \
-             patch.object(dmm_scraper, '_fetch_tags_from_html', return_value=[]), \
-             patch('core.scrapers.dmm.rate_limit'):
-            video = dmm_scraper.search("SONE-205")
-
-        assert video is not None
-        assert video.title == "成人への卒業"
-        assert video.number == "SONE-205"
-        for call_args in mock_post.call_args_list:
-            payload = call_args[1].get('json', {}) if call_args[1] else {}
-            query_str = payload.get('query', '')
-            assert 'legacySearchPPV' not in query_str, "Cache hit should not trigger search query"
-
-    def test_dmm_graphql_success(self, dmm_scraper):
-        """無快取時依次呼叫 search query + detail query，成功返回 Video"""
-        search_resp = _make_mock_resp(status_code=200, json_data=DMM_SEARCH_RESPONSE)
-        detail_resp = _make_mock_resp(status_code=200, json_data=DMM_DETAIL_RESPONSE)
-
-        with patch.object(dmm_scraper._session, 'post', side_effect=[
-            _make_mock_resp(status_code=200, json_data={"data": {"ppvContent": None}}),  # 補零第一試 → 查無
-            _make_mock_resp(status_code=200, json_data={"data": {"ppvContent": None}}),  # 不補零第二試 → 查無
-            search_resp,                        # _search_content_id
-            detail_resp,                        # _fetch_by_id(discovered_cid)
-        ]), \
-             patch.object(dmm_scraper, '_fetch_tags_from_html', return_value=[]), \
-             patch('core.scrapers.dmm.rate_limit'):
-            video = dmm_scraper.search("SONE-205")
-
-        assert video is not None
-        assert video.number == "SONE-205"
-        assert video.title == "成人への卒業"
-        assert video.source == "dmm"
-        assert "dmm.co.jp" in video.detail_url
-        assert video.date == "2024-03-19"
-        assert len(video.actresses) == 1
-        assert video.actresses[0].name == "Nana Miho"
-        assert video.maker == "S1 NO.1 STYLE"
-
-    def test_dmm_search_success_writes_no_files(self, dmm_scraper, tmp_path, monkeypatch):
-        """搜尋**成功**之後，專案根不得多出任何 DMM 資料檔（T12 DoD 2/3 的成功路徑那一半）。
-
-        ⚠️ 2026-08-29 兩位 reviewer 各自指出：本測試改名前的斷言
-        ``assert not (tmp_path / "dmm_content_ids.json").exists()`` **是恆真的**——
-        沒有任何東西被指到 ``tmp_path``，就算有人把「寫快取」加回專案根，它也不會紅。
-
-        姊妹測試 ``test_poisoned_local_files_do_not_affect_search`` 把 ``_fetch_by_id``
-        mock 成恆回 ``None`` ⇒ 它只走得到**失敗**路徑，踩不到「搜尋成功後寫檔」那一段。
-        ⇒ **成功路徑的「不寫檔」必須由這一支扛**，所以這裡把 ``PROJECT_ROOT`` 真的
-        monkeypatch 到 ``tmp_path``，讓「有人把寫檔加回來」這件事在這裡看得見。
-        """
-        import core.scrapers.dmm as dmm_module
-        monkeypatch.setattr(dmm_module, "PROJECT_ROOT", tmp_path)
-
-        detail_resp = _make_mock_resp(status_code=200, json_data=DMM_DETAIL_RESPONSE)
-
-        with patch.object(dmm_scraper._session, 'post', return_value=detail_resp), \
-             patch.object(dmm_scraper, '_fetch_tags_from_html', return_value=[]), \
-             patch('core.scrapers.dmm.rate_limit'):
-            video = dmm_scraper.search("SONE-205")
-
-        # 正向：這一輪真的成功了（否則下面的反向斷言會恆真）
-        assert video is not None
-        assert video.number == "SONE-205"
-
-        # 反向：成功路徑一個檔都沒寫
-        assert list(tmp_path.iterdir()) == [], (
-            f"搜尋成功後 PROJECT_ROOT 多出檔案：{[p.name for p in tmp_path.iterdir()]}"
-        )

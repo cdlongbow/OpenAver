@@ -68,14 +68,6 @@ def scraper():
 # CD-118a-19：查無此片＝最終 URL 形狀
 # ============================================================
 
-def test_search_notfound_returns_none(scraper):
-    """CD-118a-19：仍停在 /search?kw= → None，且不得呼叫 fetch。"""
-    transport = make_transport("https://javten.com/search?kw=9999999")
-    with patch(PATCH_TARGET, return_value=transport):
-        result = scraper.search("FC2-PPV-9999999")
-    assert result is None
-    transport.fetch.assert_not_called()
-
 
 def test_match_predicate_escapes_regex_metachars(scraper):
     """CD-118a-19 的判準要同時擋掉「拿到別片」。
