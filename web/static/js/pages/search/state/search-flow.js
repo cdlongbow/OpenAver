@@ -331,7 +331,6 @@ export function searchStateSearchFlow() {
                         this._coverSwapTimer = null;
                     }
                     this.$nextTick(() => { this.isStreaming = false; });
-                    this.hasMoreResults = data.has_more || false;
                     this.actressProfile = data.actress_profile || null;
                     if (this.actressProfile) this._heroCardImageError = false;  // A6-1 fix: actressProfile 到達，重新嘗試載入
                     // A7-Prod: result-complete 不拆 Hero placeholder — 最終命運由 result 事件決定
@@ -359,7 +358,7 @@ export function searchStateSearchFlow() {
                     // else: user already selected a valid item during streaming, don't override
                 }
                 else if (data.type === 'result') {
-                    this.currentCursor = data.cursor ?? null;  // 175d：三個分支共用，只在 result 寫（result-complete 不寫）
+                    this.currentCursor = data.cursor ?? null;  // 175d：三個分支共用，只在 result 寫（result-complete 不寫）；hasMoreResults 也只在 result 開放（FE-TIMING-13）
                     // T4: Stream guard — 漸進路徑的 result 決定最終狀態後關閉連線
                     if (this.streamComplete) {
                         const allFailed = this.searchResults.every(r => r._failed);

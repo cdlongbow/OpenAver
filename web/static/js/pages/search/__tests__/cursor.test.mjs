@@ -311,6 +311,21 @@ test('cursor-first-page-stream-result: seed→result-complete→result ⇒ 以 r
     });
 });
 
+test('cursor-load-more-opens-with-token: result-complete 時按鈕不開，result 到達時 token 與按鈕一起開', async () => {
+    // why: 按鈕先開、token 後到 → 兩事件之間點「載入更多」送出沒有 token 的續頁 → 後端回「沒有更多」→ 按鈕消失、剩下的結果看不到
+    await withEnv(async ({ page }) => {
+        await page.doSearch('x');
+        const es = lastES();
+        send(es, { type: 'seed', slots: ['A-1', 'A-2'] });
+        send(es, { type: 'result-complete', has_more: true, cursor: 'tokC' });
+        assert.equal(page.hasMoreResults, false, 'result-complete 後按鈕尚未開放');
+        assert.equal(page.currentCursor, null);
+        send(es, { type: 'result', success: true, data: [{ number: 'A-1' }, { number: 'A-2' }], has_more: true, cursor: 'tokC', mode: 'actress' });
+        assert.equal(page.hasMoreResults, true);
+        assert.equal(page.currentCursor, 'tokC');
+    });
+});
+
 test('cursor-first-page-stream-result: result 沒有 cursor ⇒ null（兩條路徑）', async () => {
     await withEnv(async ({ page }) => {
         await page.doSearch('x');
