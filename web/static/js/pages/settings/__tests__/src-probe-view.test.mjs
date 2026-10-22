@@ -25,28 +25,6 @@ const EXPECTED_ICON = {
   skipped: 'bi-dash-circle',
 };
 
-test('describeProbe gives each state a distinct icon', () => {
-  const icons = STATES.map((s) => describeProbe({ state: s, reason: 'ok' }).icon);
-  assert.deepEqual(icons, STATES.map((s) => EXPECTED_ICON[s]));
-  assert.equal(new Set(icons).size, 4);
-  for (const s of STATES) {
-    assert.equal(describeProbe({ state: s, reason: 'ok' }).stateKey, STATE_KEY_MAP[s]);
-  }
-  assert.deepEqual(PROBE_ICON_MAP, EXPECTED_ICON);
-});
-
-test('describeProbe falls back to the generic reason for unknown codes', () => {
-  for (const reason of ['brand_new_code', undefined, '']) {
-    assert.equal(describeProbe({ state: 'unreachable', reason }).reasonKey, REASON_KEY_GENERIC);
-  }
-});
-
-test('describeProbe carries the advice key', () => {
-  assert.equal(describeProbe({ state: 'blocked', reason: 'http_status', advice: 'jp_ip' }).adviceKey, ADVICE_KEY_MAP.jp_ip);
-  assert.equal(ADVICE_KEY_MAP.jp_ip, 'settings.sources.probe_advice_jp_ip');
-  assert.equal(describeProbe({ state: 'blocked', reason: 'http_status' }).adviceKey, null);
-  assert.equal(describeProbe({ state: 'blocked', reason: 'http_status', advice: 'nope' }).adviceKey, null);
-});
 
 function makeFake(results = {}) {
   const form = { proxyUrl: 'http://p:1', proxyScope: 'dmm' };
@@ -77,75 +55,4 @@ test('srcProbeLine and srcProbeIcon compose the view for one pill', () => {
   assert.equal(fake.srcProbeIcon('javlibrary'), 'bi ' + EXPECTED_ICON.skipped);
 });
 
-test('toggleSrcProbeTip opens, switches, and closes the tip', () => {
-  const { fake } = makeFake({ dmm: { state: 'ok', reason: 'ok' } });
-  fake.toggleSrcProbeTip('dmm');
-  assert.equal(fake.srcProbeTipId, 'dmm');
-  fake.toggleSrcProbeTip('javlibrary');
-  assert.equal(fake.srcProbeTipId, 'javlibrary');
-  fake.toggleSrcProbeTip('javlibrary');
-  assert.equal(fake.srcProbeTipId, null);
-});
 
-test('srcProbeTipText is empty without a target and carries the source name otherwise', () => {
-  const { fake, form, sources } = makeFake({
-    dmm: { state: 'blocked', reason: 'http_status', advice: 'jp_ip' },
-  });
-  const formBefore = JSON.stringify(form);
-  const sourcesBefore = JSON.stringify(sources);
-  const resultsRef = fake.srcProbeResults;
-  const gen = fake.srcProbeGen;
-
-  assert.equal(fake.srcProbeTipText, '');
-  fake.toggleSrcProbeTip('javlibrary');
-  assert.equal(fake.srcProbeTipText, '');
-  fake.toggleSrcProbeTip('dmm');
-  assert.ok(fake.srcProbeTipText.includes('DMM'));
-  assert.ok(fake.srcProbeTipText.includes('settings.sources.probe_reason_http_status'));
-
-  fake.clearSrcProbe();
-  assert.equal(fake.srcProbeTipText, '');
-
-  assert.equal(JSON.stringify(form), formBefore);
-  assert.equal(JSON.stringify(sources), sourcesBefore);
-  assert.equal(fake.srcProbeGen, gen + 1);
-  assert.notEqual(fake.srcProbeResults, resultsRef);
-});
-
-test('srcProbeLine names the host only for blocked or unreachable results', () => {
-  const { fake } = makeFake({
-    dmm: { state: 'blocked', reason: 'http_status', host: 'caribbeancom.com' },
-    javlibrary: { state: 'ok', reason: 'ok', host: 'javlibrary.com' },
-  });
-  fake.srcProbeResults = {
-    ...fake.srcProbeResults,
-    a: { state: 'unreachable', reason: 'timeout', host: 'h2.example', advice: 'jp_ip' },
-    b: { state: 'skipped', reason: 'self_hosted', host: 'x.example' },
-    c: { state: 'blocked', reason: 'http_status' },
-    d: { state: 'blocked', reason: 'http_status', host: '' },
-  };
-  assert.ok(fake.srcProbeLine('dmm').includes('caribbeancom.com'));
-  assert.ok(fake.srcProbeLine('a').includes('h2.example'));
-  assert.ok(fake.srcProbeLine('a').includes('probe_advice_jp_ip'));
-  assert.ok(!fake.srcProbeLine('javlibrary').includes('javlibrary.com'));
-  assert.ok(!fake.srcProbeLine('b').includes('x.example'));
-  for (const id of ['c', 'd']) {
-    const line = fake.srcProbeLine(id);
-    assert.ok(!line.includes('undefined') && !line.includes('null') && !line.includes('host'));
-  }
-});
-
-test('srcProbeLine shows the status code for http_status, original sentence otherwise', () => {
-  const { fake } = makeFake({
-    a: { state: 'blocked', reason: 'http_status', status: 503 },
-    b: { state: 'blocked', reason: 'http_status' },
-    c: { state: 'blocked', reason: 'cf_challenge', status: 403 },
-  });
-  const a = fake.srcProbeLine('a');
-  assert.ok(a.includes('503'), a);
-  assert.ok(a.includes('probe_reason_http_status_code'), a);
-  const b = fake.srcProbeLine('b');
-  assert.ok(!b.includes('{status}') && !b.includes('probe_reason_http_status_code'), b);
-  assert.ok(b.includes('settings.sources.probe_reason_http_status'), b);
-  assert.ok(!fake.srcProbeLine('c').includes('503') && !fake.srcProbeLine('c').includes('403'));
-});

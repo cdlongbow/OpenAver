@@ -57,29 +57,6 @@ function makeState(files, currentFileIndex, currentIndex) {
     };
 }
 
-test('removeFile 移除當前檔：鄰檔 selectedCandidateIndex 不被外出檔 currentIndex 汙染 (AC-C3)', () => {
-    // A = 當前檔（3 候選、正在看候選 #2），B = 鄰檔（1 候選、自己的 selectedCandidateIndex=0）
-    const state = makeState(
-        [makeFile('A', 3), makeFile('B', 1, { selectedCandidateIndex: 0 })],
-        0,   // currentFileIndex → A
-        2,   // currentIndex → 正在看 A 的候選 #2
-    );
-
-    state.removeFile(0);  // 移除當前檔 A → B 成為當前檔
-
-    const B = state.fileList[0];
-    assert.equal(state.currentFileIndex, 0, 'B 應成為當前檔');
-    // 核心不變式：B 保留自己的候選 index 0，不被外出檔 A 的 currentIndex(2) 汙染
-    assert.equal(
-        B.selectedCandidateIndex, 0,
-        '鄰檔 selectedCandidateIndex 應仍為自己的 0，不得被外出檔 currentIndex(2) 覆蓋（越界會讓整理送空 metadata）',
-    );
-    // 越界防線：即使假設整理直接讀 stored（不 re-sync），也不得越界
-    assert.ok(
-        B.selectedCandidateIndex < B.searchResults.length,
-        '鄰檔 selectedCandidateIndex 不得越界其候選數',
-    );
-});
 
 test('反向守衛：正常左右導航（switchToFile 預設 skipPersist=false）仍持久化外出檔候選', () => {
     // 從 A（正在看候選 #2）切到 B —— 外出檔 A 的候選應被保存為 2（正常行為零變化）

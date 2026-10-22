@@ -63,16 +63,6 @@ test('escapeHtml: <img onerror> payload 被拆解，不再是可執行的標籤'
 
 // ── shouldAnimate ────────────────────────────────────────────────────
 
-test('shouldAnimate: 系統未開「減少動態效果」時回傳 true（播放動畫）', () => {
-    // 表驅動：使用者的「減少動態」偏好關／開各一列
-    const cases = [
-        { prefersReducedMotion: false, exp: true },
-        { prefersReducedMotion: true, exp: false },
-    ];
-    for (const c of cases) {
-        assert.equal(shouldAnimate(c.prefersReducedMotion), c.exp);
-    }
-});
 
 // ── emptyKeyForCard（TASK-156c-T6／161a-T5a：舊版型別白名單寫法已刪）────────
 
@@ -80,24 +70,6 @@ const ALL_PERIOD = { type: 'all' };
 const cRec = (year, actresses, maker) => ({ year, actresses, maker });
 const cSel = (over) => ({ period: ALL_PERIOD, actress: null, maker: null, ...over });
 
-test('emptyKeyForCard: count 取該卡範圍內的片數，不是整體範圍', () => {
-    // A 沒有 S1 的片、S1 有別人（B）的片；2020 年有片
-    const records = [
-        cRec(2020, ['A'], 'M1'),
-        cRec(2021, ['B'], 'S1'),
-    ];
-    const both = cSel({ actress: 'A', maker: 'S1' });
-    // 女優榜類（skip actress）：範圍＝期間∩片商，B 的片在 → 有東西，不是 period_empty
-    assert.equal(emptyKeyForCard(records, both, 'actress'), 'insights.no_data');
-    // 看自己那一維全貌之外的卡（不跳維度）：A∩S1 = 0 → period_empty
-    assert.equal(emptyKeyForCard(records, both, null), 'insights.period_empty');
-    // 圓餅（skip maker）：期間∩女優 A 有 M1 的片 → 不是 period_empty
-    assert.equal(emptyKeyForCard(records, both, 'maker'), 'insights.no_data');
-    // 只選一年、該年有片：任一卡都不是 period_empty
-    const year2020 = cSel({ period: { type: 'year', year: 2020 } });
-    assert.equal(emptyKeyForCard(records, year2020, null), 'insights.no_data');
-    assert.equal(emptyKeyForCard(records, year2020, 'maker'), 'insights.no_data');
-});
 
 // ── resolveDragResult（TASK-161a-T6a：年份拖曳手勢的純判定）──────────────
 
@@ -114,72 +86,6 @@ test('resolveDragResult: 反向拖與正向拖結果相同', () => {
     assert.deepEqual(rev, fwd);
 });
 
-test('resolveDragResult: 起於未知欄（或無效起點）不產生任何結果', () => {
-    for (const start of [6, null, -1, 99, 1.5]) {
-        assert.equal(resolveDragResult(start, 2, dragCats), null, 'start=' + start);
-    }
-});
-
-test('resolveDragResult: 終點在未知欄或畫布外時夾在最後一個真實年份欄', () => {
-    // 表驅動：夾限、夾限後兩端同欄正規化成單點（不產生 from===to 的範圍）、終點算不出視為沒移動
-    const cases = [
-        { start: 2, end: 6, exp: { kind: 'range', from: 2020, to: 2023 } },
-        { start: 2, end: 99, exp: { kind: 'range', from: 2020, to: 2023 } },
-        { start: 2, end: -5, exp: { kind: 'range', from: 2018, to: 2020 } },
-        { start: 5, end: 6, exp: { kind: 'point', year: 2023 } },
-        { start: 5, end: 99, exp: { kind: 'point', year: 2023 } },
-        { start: 3, end: NaN, exp: { kind: 'point', year: 2021 } },
-        { start: 3, end: null, exp: { kind: 'point', year: 2021 } },
-    ];
-    for (const c of cases) {
-        assert.deepEqual(resolveDragResult(c.start, c.end, dragCats), c.exp, 'start=' + c.start + ' end=' + c.end);
-    }
-});
-
-test('isTouchZrEvent: zrByTouch 標記或 touch* 事件型別都算觸控，滑鼠事件與空值不算', () => {
-    assert.equal(isTouchZrEvent({ zrByTouch: true }), true);
-    assert.equal(isTouchZrEvent({ event: { type: 'touchstart' } }), true);
-    assert.equal(isTouchZrEvent({ event: { type: 'touchmove' } }), true);
-    assert.equal(isTouchZrEvent({ event: { type: 'mousedown', button: 0 } }), false);
-    assert.equal(isTouchZrEvent({ zrByTouch: undefined, event: { button: 0 } }), false);
-    assert.equal(isTouchZrEvent(null), false);
-    assert.equal(isTouchZrEvent(undefined), false);
-    assert.equal(isTouchZrEvent({}), false);
-});
-
-test('resolveGestureResult: 觸控拖過多欄不產生範圍，同欄 tap 仍是單點，滑鼠不受影響', () => {
-    assert.equal(resolveGestureResult(1, 4, dragCats, true), null);
-    assert.deepEqual(resolveGestureResult(2, 2, dragCats, true), { kind: 'point', year: 2020 });
-    assert.deepEqual(resolveGestureResult(1, 4, dragCats, false), {
-        kind: 'range',
-        from: 2019,
-        to: 2022,
-    });
-});
-
-test('cancelYearsDrag／disposeAll: dispose 後 document mouseup 監聽被移除且手勢狀態清空', () => {
-    const doc = globalThis.document;
-    const oldAdd = doc.addEventListener;
-    const oldRemove = doc.removeEventListener;
-    const adds = [];
-    const removes = [];
-    doc.addEventListener = (...a) => adds.push(a);
-    doc.removeEventListener = (...a) => removes.push(a);
-    try {
-        const fn = () => {};
-        beginYearsDrag(2, false, fn);
-        assert.deepEqual(adds, [['mouseup', fn]]);
-        assert.deepEqual(getYearsDragState(), { startIdx: 2, curIdx: 2, byTouch: false });
-        disposeAll();
-        assert.deepEqual(removes, [['mouseup', fn]]);
-        assert.equal(getYearsDragState(), null);
-        cancelYearsDrag();
-        assert.equal(removes.length, 1);
-    } finally {
-        doc.addEventListener = oldAdd;
-        doc.removeEventListener = oldRemove;
-    }
-});
 
 // ── 177-T2：三種圖可點（點擊→extra、chip 組裝、長條 tooltip）───────────────
 

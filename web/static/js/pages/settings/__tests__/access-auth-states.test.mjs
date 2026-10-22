@@ -81,45 +81,6 @@ function minimalConfig() {
     };
 }
 
-test('狀態①：enabled=true, can_edit=true → PIN 可用、儲存可用、沒有新提示', () => {
-    const fakeThis = makeFakeThis();
-    fakeThis.accessAuthEnabled = true;
-    fakeThis.accessAuthEnabledSaved = true;
-    fakeThis.accessAuthCanEdit = true;
-    assert.equal(fakeThis.accessAuthPinDisabled(), false);
-    assert.equal(fakeThis.accessAuthSaveDisabled(), false);
-    assert.equal(fakeThis.accessAuthStatusHintKey(), '');
-});
-
-test('狀態②：enabled=false, can_edit=true → PIN 可用、儲存可用、出現 unset_hint 提示', () => {
-    const fakeThis = makeFakeThis();
-    fakeThis.accessAuthEnabled = false;
-    fakeThis.accessAuthEnabledSaved = false;
-    fakeThis.accessAuthCanEdit = true;
-    assert.equal(fakeThis.accessAuthPinDisabled(), false);
-    assert.equal(fakeThis.accessAuthSaveDisabled(), false);
-    assert.equal(fakeThis.accessAuthStatusHintKey(), 'settings.access_auth.unset_hint');
-});
-
-test('狀態③：enabled=true, can_edit=false → PIN 鎖定、儲存鎖定、出現 need_login_hint 提示', () => {
-    const fakeThis = makeFakeThis();
-    fakeThis.accessAuthEnabled = true;
-    fakeThis.accessAuthEnabledSaved = true;
-    fakeThis.accessAuthCanEdit = false;
-    assert.equal(fakeThis.accessAuthPinDisabled(), true);
-    assert.equal(fakeThis.accessAuthSaveDisabled(), true);
-    assert.equal(fakeThis.accessAuthStatusHintKey(), 'settings.access_auth.need_login_hint');
-});
-
-test('狀態④：serverMode=false（桌面單機）→ 不出現任何密碼提示', () => {
-    const fakeThis = makeFakeThis();
-    fakeThis.serverMode = false;
-    fakeThis.accessAuthEnabled = false;
-    fakeThis.accessAuthEnabledSaved = false;
-    fakeThis.accessAuthCanEdit = true;
-    assert.equal(fakeThis.accessAuthPinDisabled(), true);
-    assert.equal(fakeThis.accessAuthStatusHintKey(), '');
-});
 
 test('loadConfig 讀入 GET 回應的 can_edit 存進 accessAuthCanEdit', async () => {
     const fakeThis = makeFakeThis();

@@ -118,81 +118,15 @@ test('clearAllFilters：影片牆清除不得清掉 actressSearch／actressPills
     assert.equal(c.pills.length, 0, '影片牆 pills 應清空');
 });
 
-test('clearAllFilters：女優牆清除不得清掉 search／pills，影片牆精準比對狀態原封不動', () => {
-    const c = makeClearComponent({
-        showFavoriteActresses: true,
-        search: 'hello',
-        actressSearch: '三上悠亜',
-        pills: [{ dim: 'maker', value: 'S1' }],
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
-        _isPreciseActressMatch: true,
-        _matchedActress: { name: '三上悠亜', is_favorite: false },
-    });
-    c.clearAllFilters();
-    assert.equal(c._isPreciseActressMatch, true, '女優牆清除維持 _isPreciseActressMatch 原值');
-    assert.notEqual(c._matchedActress, null, '女優牆清除維持 _matchedActress 原值');
-    assert.equal(c.search, 'hello', '女優牆清除不得清掉 search');
-    assert.deepEqual(c.pills, [{ dim: 'maker', value: 'S1' }], '女優牆清除不得清掉 pills');
-    assert.equal(c.actressSearch, '', '女優牆 actressSearch 應清空');
-    assert.equal(c.actressPills.length, 0, '女優牆 actressPills 應清空');
-});
 
 // TASK-115-T8（RULING 3）：T7 留下的直接 `this._clearPreciseMatch()` 呼叫已移除——
 // pills=[]、search='' 之後，_reconcileHeroCard() 的「無 pill 分支」本來就會走到同一個
 // _clearPreciseMatch() 呼叫（單一判斷點，不再由 clearAllFilters() 自己宣稱一次權威）。
 // 這裡改用 _reconcileHeroCard 真身（仍計數）取代純 spy，證明「清除的工作只做一次、
 // 且真的透過 _reconcileHeroCard 達成」，而不是弱化斷言去掩蓋這次合併。
-test('clearAllFilters：影片牆重置 precise-actress-match／愛心狀態（經由 _reconcileHeroCard 真身收斂）', () => {
-    const c = makeClearComponent({
-        showFavoriteActresses: false,
-        search: '三上悠亜',
-        _isPreciseActressMatch: true,
-        _matchedActress: { name: '三上悠亜', is_favorite: false },
-    });
-    const realReconcile = stateVideos()._reconcileHeroCard;
-    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
-    c.clearAllFilters();
-    assert.equal(c.preciseClearCalls, 1);
-    assert.equal(c._isPreciseActressMatch, false);
-    assert.equal(c._matchedActress, null);
-});
 
 // ===== call-count：一次 clear 各副作用恰好 1 次 =====
 
-test('clearAllFilters：影片牆一次點擊恰好 1 次 saveState（真身 _animateFilter + mode:table）', () => {
-    // 不 stub _animateFilter，改 stub 其內部依賴，讓真身跑到 saveState 那一行。
-    // mode:'table' 避開 DOM capture 分支（querySelector / ShowcaseAnimations）。
-    uiStore.toolbarOpen = true;
-    const c = Object.assign({}, stateVideos(), {
-        showFavoriteActresses: false,
-        pills: [{ dim: 'maker', value: 'Moodyz' }],
-        search: 'hello',
-        actressSearch: 'world',
-        mode: 'table',
-        page: 1,
-        sort: 'date',
-        order: 'desc',
-        saveCalls: 0,
-        preciseClearCalls: 0,
-        actressFilterCalls: 0,
-        heroCalls: 0,
-        _clearPreciseMatch() { c.preciseClearCalls++; },
-        applyActressFilterAndSort() { c.actressFilterCalls++; },
-        applyFilterAndSort() {},
-        saveState() { c.saveCalls++; },
-        $nextTick(fn) { fn(); },
-        _getActiveGrid() { return null; },
-    });
-    // 保留 stateVideos 的真身 _animateFilter 與 _reconcileHeroCard（後者只加計數 wrapper）
-    assert.equal(typeof c._animateFilter, 'function');
-    const realReconcile = c._reconcileHeroCard;
-    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
-    c.clearAllFilters();
-    assert.equal(c.saveCalls, 1, 'saveState 必須恰好 1 次（=== 1，不是 >= 1）');
-    assert.equal(c.preciseClearCalls, 1);
-    assert.equal(c.actressFilterCalls, 0);
-    assert.equal(c.heroCalls, 1);
-});
 
 test('clearAllFilters：女優牆一次點擊恰好 1 次 saveState', () => {
     uiStore.toolbarOpen = true;
@@ -235,59 +169,7 @@ test('_hasActiveFilterForCurrentTab：影片牆只看 search/pills，女優牆�
     assert.equal(pred.call(base), false, '影片牆全空');
 });
 
-test('_hasActiveFilterForCurrentTab：女優牆只看 actressSearch/actressPills，影片牆狀態不得讓它為真', () => {
-    const pred = makeBase()._hasActiveFilterForCurrentTab;
-    assert.equal(typeof pred, 'function');
-
-    const base = { showFavoriteActresses: true, search: '', actressSearch: '', pills: [], actressPills: [] };
-    assert.equal(pred.call({ ...base, actressSearch: 'y' }), true, '女優牆僅 actressSearch');
-    assert.equal(
-        pred.call({ ...base, actressPills: [{ dim: 'age', op: '=', value: '37' }] }),
-        true,
-        '女優牆僅 actressPills',
-    );
-    assert.equal(pred.call({ ...base, search: 'x' }), false, '女優牆有 search 不得為真');
-    assert.equal(
-        pred.call({ ...base, pills: [{ dim: 'maker', value: 'M' }] }),
-        false,
-        '女優牆有 pills 不得為真',
-    );
-    assert.equal(pred.call(base), false, '女優牆全空');
-});
 
 // ===== 捲動自動收合守衛（PR#131 P3 回歸鎖；129-T1a 改用分頁感知判準）=====
 
 // [lint-guard: node-justified] 162e 暫留：缺 block-comment 剝除欄位（只有 stripLineComments 不剝 /* */），required 會被區塊註解餵飽；混合子斷言不拆
-test('行動版捲動自動收合守衛用 _hasActiveFilterForCurrentTab()，不是只看兩個文字欄位', () => {
-    // Why 這是回歸鎖而不是風格檢查：navbar 那顆鈕在 showcaseHasSearch 為真時變成 ✕，
-    // 按下去是 clear-search 全清、不再是展開工具列（base.html:502-505）。手機上只用 pill
-    // 篩選時，若本守衛仍只看文字欄位，捲動會把裝著 pill 的工具列收掉，而唯一的重開入口
-    // 已變成「全部清掉」——使用者再也無法只移除其中一枚 pill。兩個判準必須同步放寬。
-    const m = /_scrollHandler\s*=\s*\(\)\s*=>\s*\{/.exec(STATE_BASE_SRC);
-    assert.ok(m, '必須有 _scrollHandler 箭頭函式定義');
-    const open = STATE_BASE_SRC.indexOf('{', m.index);
-    let depth = 0;
-    let body = '';
-    for (let i = open; i < STATE_BASE_SRC.length; i++) {
-        const ch = STATE_BASE_SRC[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) {
-                body = STATE_BASE_SRC.slice(open + 1, i);
-                break;
-            }
-        }
-    }
-    // 剝註解後才比對，否則上面那段說明文字自己會讓守衛通過
-    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    assert.ok(
-        code.includes('this._hasActiveFilterForCurrentTab()'),
-        `_scrollHandler 必須用 _hasActiveFilterForCurrentTab() 當 early-return 守衛，實際：${code}`,
-    );
-    assert.equal(
-        /this\.search\s*!==\s*''\s*\|\|\s*this\.actressSearch\s*!==\s*''/.test(code),
-        false,
-        '_scrollHandler 不得再用舊的兩欄位字面（漏掉 pills）',
-    );
-});

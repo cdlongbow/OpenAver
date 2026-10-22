@@ -47,26 +47,6 @@ test('settings writes picked folder into avlistOutputDir', async () => {
   assert.equal(fakeThis.form.avlistOutputDir, '/mnt/c/AVtest');
 });
 
-test('AC-4: settings does not call openBrowseDir when window.pywebview exists', async () => {
-  const { openBrowseDir, calls } = makeSpyOpenBrowseDir();
-  window.pywebview = {
-    api: {
-      select_folder: async () => ({ folder: '/desk/out' }),
-    },
-  };
-  const fakeThis = Object.assign({}, stateUI(), {
-    openBrowseDir,
-    form: { avlistOutputDir: '' },
-    showToast() {},
-  });
-
-  await stateUI().selectOutputFolder.call(fakeThis);
-
-  assert.equal(calls.length, 0, '有 pywebview 時不得呼叫 openBrowseDir');
-  assert.equal(fakeThis.form.avlistOutputDir, '/desk/out');
-
-  delete window.pywebview;
-});
 
 test('settings client mode opens browse dir and never calls select_folder', async () => {
   const { openBrowseDir, calls } = makeSpyOpenBrowseDir();

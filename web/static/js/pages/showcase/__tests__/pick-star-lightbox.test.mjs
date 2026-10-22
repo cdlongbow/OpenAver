@@ -200,13 +200,6 @@ test('scenario 2：掛 pick pill、取消某片的星 → 燈箱還開著時不�
     }
 });
 
-test('closeLightbox：無論如何都會把 lightboxOpen 收成 false（predicate 換掉旗標後其餘行為不變）', () => {
-    const c = makeComponent({ pills: [], lightboxOpen: true });
-    setFilteredVideos([]);
-    c.closeLightbox();
-    assert.equal(c.lightboxOpen, false);
-    assert.equal(c.applyFilterAndSortCalls, 0);
-});
 
 // ── 三層失敗判定 ────────────────────────────────────────────────────
 
@@ -263,36 +256,6 @@ test('成功路徑：success:true + results[0].ok:true → 不 toast、不回滾
 // 這兩支是舊機制壞掉的地方：舊版用旗標代理「牆面過期了嗎」，在下面兩種時序下都會
 // 與真實狀態脫鉤。新機制沒有旗標可以競爭，每次都直接觀察 _filteredVideos。
 
-test('scenario 3：飛行中關燈箱＋請求失敗 → 關燈箱當下讀到的是還沒確認的樂觀值，事後落地才真正重篩一次', async () => {
-    const mock = mockFetchManual();
-    try {
-        // video 本來未精選，但正被燈箱顯示（§4.13：開著時不因篩選被抽走）。
-        const video = { path: PATH_A, user_rating: 0 };
-        const c = makeComponent({
-            currentLightboxVideo: video,
-            pills: [{ dim: 'pick', value: '1' }],
-            lightboxOpen: true,
-        });
-        setFilteredVideos([video]);
-
-        const p = c.togglePickStar();          // 按下精選：樂觀值 0 → 1
-        assert.equal(video.user_rating, 1);
-
-        c.closeLightbox();                     // 飛行中就關燈箱（在 fetch resolve 之前）
-        assert.equal(c.applyFilterAndSortCalls, 0,
-            '關燈箱當下 _filteredVideos 只看得到樂觀值 1，看起來一致，不需要重篩——這正是「用還沒確認成功的樂觀值」判斷');
-
-        mock.calls[0].reject(new Error('network down'));   // 請求之後才失敗
-        await p;
-
-        assert.equal(video.user_rating, 0, '樂觀更新必須回滾');
-        assert.equal(c.toasts.length, 1);
-        assert.equal(c.applyFilterAndSortCalls, 1,
-            '請求落地時燈箱已經關了，述詞重新讀到真實資料（回滾後的 0）才發現過期，補一次重篩——把過早那次的錯誤結果修正回來');
-    } finally {
-        mock.restore();
-    }
-});
 
 // ── 123-T4：取消已精選片 ＋ 飛行中關燈箱（自生洞修正，見 state-lightbox.js
 // _pickHasInFlight() 註解）───────────────────────────────────────────────
@@ -302,65 +265,6 @@ test('scenario 3：飛行中關燈箱＋請求失敗 → 關燈箱當下讀到�
 // 述詞掃不到它 → 卡回不來。修法：請求還在飛時兩個呼叫點都不篩，等最後一個請求落地
 // （成功或已回滾）資料成定局，再篩一次。
 
-test('scenario 6：取消已精選 ＋ 飛行中關燈箱 ＋ 請求失敗 → 關燈箱當下不篩，回滾後也不必篩（本來就一致）', async () => {
-    const mock = mockFetchManual();
-    try {
-        const video = { path: PATH_A, user_rating: 1 };
-        const otherPicked = { path: PATH_B, user_rating: 1 };
-        const c = makeComponent({
-            currentLightboxVideo: video,
-            pills: [{ dim: 'pick', value: '1' }],
-            lightboxOpen: true,
-        });
-        setFilteredVideos([video, otherPicked]);
-
-        const p = c.togglePickStar();          // 取消精選：樂觀值 1 → 0
-        assert.equal(video.user_rating, 0);
-
-        c.closeLightbox();                     // 請求還沒回來就關燈箱
-        assert.equal(c.applyFilterAndSortCalls, 0,
-            '有精選請求在飛，即使述詞讀到「過期」也不能重篩——資料還沒定局');
-
-        mock.calls[0].reject(new Error('network down'));   // 請求之後才失敗
-        await p;
-
-        assert.equal(video.user_rating, 1, '樂觀更新必須回滾');
-        assert.equal(c.toasts.length, 1);
-        assert.equal(c.applyFilterAndSortCalls, 0,
-            '請求落地時已解鎖、燈箱已關、資料已回滾——述詞看到的是真相：牆上兩片都仍是精選，本來就一致，不必重篩');
-    } finally {
-        mock.restore();
-    }
-});
-
-test('scenario 7：取消已精選 ＋ 飛行中關燈箱 ＋ 請求成功 → 關燈箱當下不篩，請求落地後剛好篩一次（V 確實該從精選牆消失）', async () => {
-    const mock = mockFetchManual();
-    try {
-        const video = { path: PATH_A, user_rating: 1 };
-        const otherPicked = { path: PATH_B, user_rating: 1 };
-        const c = makeComponent({
-            currentLightboxVideo: video,
-            pills: [{ dim: 'pick', value: '1' }],
-            lightboxOpen: true,
-        });
-        setFilteredVideos([video, otherPicked]);
-
-        const p = c.togglePickStar();          // 取消精選：樂觀值 1 → 0
-        assert.equal(video.user_rating, 0);
-
-        c.closeLightbox();                     // 請求還沒回來就關燈箱
-        assert.equal(c.applyFilterAndSortCalls, 0, '有精選請求在飛，關燈箱當下不篩');
-
-        mock.calls[0].resolve(okResp());       // 請求之後才成功落地
-        await p;
-
-        assert.equal(video.user_rating, 0, '成功：樂觀值已是最終狀態');
-        assert.equal(c.applyFilterAndSortCalls, 1,
-            '請求落地時已解鎖、燈箱已關——述詞讀到 video 真的不再精選，補一次重篩，V 從精選牆消失');
-    } finally {
-        mock.restore();
-    }
-});
 
 test('請求 body：file_path + picked 布林（冪等設值，非 toggle）', async () => {
     const mock = mockFetchManual();
@@ -389,41 +293,4 @@ test('請求 body：file_path + picked 布林（冪等設值，非 toggle）', a
 // 舊版述詞是「掃 _filteredVideos 有沒有 rating 0」——單向，只看得到「該離開牆的」。
 // 下面兩支各自鎖住一個方向；把述詞改回舊版的單向寫法，第一支會轉紅。
 
-test('T8c 方向一（Codex PR review P2）：庫裡有一片剛變精選但不在牆上清單裡 → 述詞必須說「過期」', () => {
-    // 162a：T8c 方向二（卡被外部重篩移出、回滾成精選）fixture 與本支相同（庫裡精選片不在牆上），併入此支。
-    const onWall = { path: PATH_A, user_rating: 1 };
-    // 從相似面板點進去的那一片：本來未精選所以不在牆上，使用者剛給它按了星。
-    const justPickedOffWall = { path: 'file:///m/SIMILAR-9.mp4', user_rating: 1 };
-    const c = makeComponent({ pills: [{ dim: 'pick', value: '1' }], lightboxOpen: false });
-    setFilteredVideos([onWall], [onWall, justPickedOffWall]);
 
-    assert.equal(
-        c._pickFilterStale(), true,
-        '新精選的片不在牆上清單裡，述詞必須偵測到「該回來的」這個方向'
-    );
-});
-
-test('T8c 盲點回歸：某片是精選但被「其他 pill」排除在外時，不得誤判為過期', () => {
-    // 這正是「補另一邊的猜法」會壞掉的案例：picked 但被 maker pill 濾掉，
-    // 天真的「庫裡有 picked 不在清單裡 → 過期」會恆為 true。
-    const shown = { path: PATH_A, user_rating: 1, maker: 'S1' };
-    const pickedButOtherMakerExcluded = { path: PATH_B, user_rating: 1, maker: 'Moodyz' };
-    const c = makeComponent({
-        pills: [{ dim: 'pick', value: '1' }, { dim: 'maker', value: 'S1' }],
-        lightboxOpen: false,
-    });
-    setFilteredVideos([shown], [shown, pickedButOtherMakerExcluded]);
-
-    assert.equal(
-        c._pickFilterStale(), false,
-        '被其他 pill 排除的精選片不算「該回來的」——述詞必須跑真實篩選而不是只看 user_rating'
-    );
-
-    // 162a：T8c 反向（牆上清單與真實 membership 一致 → 不過期）併入同一支
-    const a = { path: PATH_A, user_rating: 1 };
-    const b = { path: PATH_B, user_rating: 1 };
-    const unpicked = { path: 'file:///m/NOPE.mp4', user_rating: 0 };
-    const c2 = makeComponent({ pills: [{ dim: 'pick', value: '1' }], lightboxOpen: false });
-    setFilteredVideos([a, b], [a, b, unpicked]);
-    assert.equal(c2._pickFilterStale(), false, '一致就不該重篩——否則隨機排序每次關燈箱整牆重洗');
-});

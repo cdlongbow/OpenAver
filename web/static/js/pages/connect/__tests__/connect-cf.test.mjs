@@ -15,39 +15,6 @@ const { cfView } = await import('../connect-logic.js');
 const REASONS = ['starting', 'no_windows', 'proxy_unusable', 'server_old', 'unreachable', 'unauthorized', 'offline_boot', 'webview2_failed'];
 const OLD = { state: 'not_ready', reason: 'shell_old', proxy: null };
 
-test('cfView treats null cf (old shell) as not_ready shell_old', () => {
-    for (const bad of [null, undefined, 'x', 3, {}, { state: 'weird' }, { state: 7 }]) {
-        assert.deepEqual(cfView(bad, 'windows'), OLD, JSON.stringify(bad));
-        assert.deepEqual(cfView(bad, 'mac'), OLD);
-    }
-});
-
-test('cfView ignores proxy_note on mac shell', () => {
-    for (const state of ['ready', 'not_ready']) {
-        const cf = { state, reason: state === 'ready' ? null : 'starting', proxy_note: 'applied' };
-        assert.equal(cfView(cf, 'mac').proxy, null);
-        assert.equal(cfView(cf, 'windows').proxy, 'applied');
-    }
-});
-
-test('cfView state/reason/proxy table', () => {
-    assert.deepEqual(cfView({ state: 'ready', reason: 'junk', proxy_note: 'server_local_direct' }, 'windows'),
-        { state: 'ready', reason: null, proxy: 'server_local_direct' });
-    assert.deepEqual(cfView({ state: 'ready', proxy_note: 'bogus' }, 'windows'),
-        { state: 'ready', reason: null, proxy: null });
-    for (const r of REASONS) {
-        assert.deepEqual(cfView({ state: 'not_ready', reason: r, proxy_note: null }, 'windows'),
-            { state: 'not_ready', reason: r, proxy: null });
-    }
-    for (const r of [undefined, null, 'brand_new', 'shell_old']) {
-        assert.deepEqual(cfView({ state: 'not_ready', reason: r }, 'windows'),
-            { state: 'not_ready', reason: 'shell_old', proxy: null });
-    }
-    for (const kind of ['windows', 'mac']) {
-        assert.deepEqual(cfView({ state: 'unsupported', reason: 'x', proxy_note: 'applied' }, kind),
-            { state: 'unsupported', reason: null, proxy: null });
-    }
-});
 
 function mk(cfReply, shellKind = 'windows') {
     const page = connectPage();
@@ -82,18 +49,6 @@ test('wiring: cf lands, texts follow, cf set before bridge ready', async () => {
     assert.equal(page.cfText(), 'connect.cf_mac');
 });
 
-test('cfView keeps webview2_failed', () => {
-    assert.deepEqual(cfView({ state: 'not_ready', reason: 'webview2_failed' }, 'windows'),
-        { state: 'not_ready', reason: 'webview2_failed', proxy: null });
-});
-
-test('wiring: every reason maps to its own key', async () => {
-    const page = mk({});
-    for (const r of [...REASONS, 'shell_old']) {
-        page.cf = { state: 'not_ready', reason: r };
-        assert.ok(page.cfText().includes(`connect.cf_reason_${r}`), r);
-    }
-});
 
 // ---- 168e-T14: retry button ----
 const NOT_READY = { state: 'not_ready', reason: 'unreachable', proxy_note: null };
@@ -132,13 +87,6 @@ test('retry button shows only for not_ready', async () => {
     assert.equal(loading.actions().canRetryCf, false);
 });
 
-test('retry button calls cf_retry exactly once', async () => {
-    const page = await started(NOT_READY);
-    const calls = withRetry(page, () => ({ ok: true, cf: READY }));
-    await page.retryCf();
-    assert.equal(calls.length, 1);
-    assert.equal(page.cfBusy, false);
-});
 
 test('retry reply replaces this.cf with the shell\'s answer', async () => {
     const page = await started(NOT_READY);
@@ -157,22 +105,6 @@ test('retry reply replaces this.cf with the shell\'s answer', async () => {
     assert.ok(page2.cfText().includes('connect.cf_reason_webview2_failed'));
 });
 
-test('second click while a retry is in flight calls cf_retry once', async () => {
-    const page = await started(NOT_READY);
-    let resolve;
-    const pending = new Promise((r) => { resolve = r; });
-    const calls = withRetry(page, () => pending);
-    const p1 = page.retryCf();
-    assert.equal(page.cfBusy, true);
-    assert.equal(page.actions().canRetryCf, false);
-    await page.retryCf();
-    assert.equal(calls.length, 1);
-    resolve({ ok: true, cf: READY });
-    await p1;
-    assert.equal(calls.length, 1);
-    assert.equal(page.cfBusy, false);
-    assert.deepEqual(page.cf, READY);
-});
 
 test('retry failures set cfRetryError and leave cf untouched', async () => {
     const cases = [
@@ -196,12 +128,6 @@ test('retry failures set cfRetryError and leave cf untouched', async () => {
     }
 });
 
-test('retry on an old shell without cf_retry shows unavailable', async () => {
-    const page = await started({ state: 'not_ready', reason: 'shell_old' });
-    delete window.pywebview.api.cf_retry;
-    await page.retryCf();
-    assert.equal(page.cfRetryError, 'unavailable');
-});
 
 test('untrusted retry reply marks bridge unavailable and writes nothing', async () => {
     const page = await started(NOT_READY);

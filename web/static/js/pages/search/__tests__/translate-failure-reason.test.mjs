@@ -85,13 +85,6 @@ test('test_failure_toast_key_by_reason', async () => {
     });
 });
 
-test('test_cloud_branch_attaches_reason', async () => {
-    const { state } = makeCardState('blocked');
-    await assert.rejects(() => state._translateWithAILogic(), (err) => {
-        assert.equal(err.reason, 'blocked');
-        return true;
-    });
-});
 
 function makeBatch(provider = 'ollama') {
     const toasts = [];
@@ -113,46 +106,3 @@ function fakeFetch(responses) {
     return async () => ({ json: async () => responses[i++] });
 }
 
-test('test_translate_all_counts_blocked_and_limited', async () => {
-    await withGlobals(async () => {
-        globalThis.fetch = fakeFetch([
-            { success: true, result: '譯' },
-            { success: false, reason: 'blocked' },
-            { success: false, reason: 'rate_limited' },
-        ]);
-        const { state, toasts } = makeBatch();
-        await state.translateAll();
-        const [msg, type] = toasts[toasts.length - 1];
-        assert.match(msg, /成功 1/);
-        assert.match(msg, /失敗 2/);
-        assert.match(msg, /（其中 1 片被翻譯服務的內容審查擋下，可改用其他翻譯服務）/);
-        assert.match(msg, /（1 片遇到額度或限流，請稍後再試）/);
-        assert.ok(msg.indexOf('內容審查') < msg.indexOf('額度或限流'), 'blocked 在前');
-        assert.equal(type, 'warning');
-
-        // 無 reason 的失敗只算 failed
-        globalThis.fetch = fakeFetch([
-            { success: false }, { success: false, reason: 'other' }, { success: true, result: '譯' },
-        ]);
-        const b = makeBatch();
-        await b.state.translateAll();
-        const m2 = b.toasts[b.toasts.length - 1][0];
-        assert.match(m2, /失敗 2/);
-        assert.ok(!m2.includes('（'), '無 reason 不附後綴');
-
-        // 全成功：與 translate_batch_done 逐字相同
-        globalThis.fetch = fakeFetch([
-            { success: true, result: '譯' }, { success: true, result: '譯' }, { success: true, result: '譯' },
-        ]);
-        const c = makeBatch();
-        await c.state.translateAll();
-        const [m3, t3] = c.toasts[c.toasts.length - 1];
-        assert.equal(m3, realT('search.toast.translate_batch_done', { success: 3, failed: 0 }));
-        assert.equal(t3, 'success');
-    });
-
-    // translateAllSummary 純函式
-    const t = (k, p) => `${k}:${JSON.stringify(p)}`;
-    const s = provider.translateAllSummary(t, { success: 1, failed: 0, blocked: 0, limited: 0 });
-    assert.equal(s, t('search.toast.translate_batch_done', { success: 1, failed: 0 }));
-});

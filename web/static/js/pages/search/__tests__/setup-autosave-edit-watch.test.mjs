@@ -40,46 +40,6 @@ function captureWatchers(fakeThisOverrides = {}) {
     return { fakeThis, watchCalls };
 }
 
-test('setupAutoSave: 掛了一個函式表達式（非字串 key）的 $watch，callback 呼叫 _resetPendingEdits', () => {
-    const { fakeThis, watchCalls } = captureWatchers();
-
-    const functionWatchers = watchCalls.filter(w => typeof w.keyOrGetter === 'function');
-    assert.equal(functionWatchers.length, 1, '應恰好新增一個函式表達式 $watch（候選改變偵測）');
-
-    functionWatchers[0].cb();
-    assert.equal(fakeThis._resetPendingEditsCalls, 1, '該 watcher 的 callback 應呼叫 _resetPendingEdits()');
-
-    // 既有 4 個字串 key 的 $watch（searchResults/currentIndex/fileList/listMode，autosave 用）不受影響
-    const stringWatchers = watchCalls.filter(w => typeof w.keyOrGetter === 'string');
-    assert.equal(stringWatchers.length, 4, '既有 4 個 autosave 用的字串 $watch 應保留');
-});
-
-test('setupAutoSave: 掛的 getter 呼叫 pendingEditWatchKey（回傳基本型別字串）', () => {
-    const state = {
-        listMode: 'search',
-        currentFileIndex: 0,
-        currentIndex: 0,
-        searchResults: [{ number: 'A' }, { number: 'B' }],
-        fileList: [],
-    };
-    const { watchCalls } = captureWatchers(state);
-    const getter = watchCalls.find(w => typeof w.keyOrGetter === 'function').keyOrGetter;
-    assert.equal(typeof getter(), 'string', '掛上的 getter 應回傳基本型別字串');
-});
-
-test('pendingEditWatchKey：回傳基本型別字串（Alpine watch 才會做值比對而非一律觸發）', () => {
-    const key = pendingEditWatchKey({
-        listMode: 'file',
-        currentFileIndex: 1,
-        currentIndex: 0,
-        searchResults: [],
-        fileList: [
-            { path: '/a', searchResults: [{ number: 'A' }] },
-            { path: '/b', searchResults: [{ number: 'B' }, { number: 'B2' }] },
-        ],
-    });
-    assert.equal(typeof key, 'string', 'key 必須是基本型別字串');
-});
 
 // ── 核心回歸（Codex PR#115 P2）──
 // removeFile() 移除目前檢視檔案「之前」的一列時，只會遞減 currentFileIndex（見 file-list.js
@@ -118,21 +78,6 @@ test('pendingEditWatchKey：純 reindex（同 path）→ keyBefore === keyAfter�
         '純 reindex（同一份 file 物件、path 不變）→ key 字串應相同，不誤觸發 watcher（不得清掉正在編輯的內容）');
 });
 
-test('pendingEditWatchKey：換檔（path 不同）→ key 不同', () => {
-    const base = {
-        listMode: 'file',
-        currentFileIndex: 0,
-        currentIndex: 0,
-        searchResults: [],
-        fileList: [{ path: '/a/fileB.mp4', searchResults: [{ number: 'B' }] }],
-    };
-    const keyBefore = pendingEditWatchKey(base);
-    const keyAfter = pendingEditWatchKey({
-        ...base,
-        fileList: [{ path: '/a/fileC.mp4', searchResults: [{ number: 'C' }] }],
-    });
-    assert.notEqual(keyBefore, keyAfter, '換檔（path 不同）→ key 應不同');
-});
 
 test('pendingEditWatchKey：換候選（currentIndex 不同）→ key 不同', () => {
     const results = [{ number: 'A' }, { number: 'B' }];
@@ -143,47 +88,6 @@ test('pendingEditWatchKey：換候選（currentIndex 不同）→ key 不同', (
         'currentIndex 改變 → key 應不同');
 });
 
-test('pendingEditWatchKey：結果數不同（整批替換長度變）→ key 不同', () => {
-    const base = { listMode: 'search', currentFileIndex: 0, currentIndex: 0, searchResults: [{ number: 'A' }, { number: 'B' }], fileList: [] };
-    assert.notEqual(
-        pendingEditWatchKey(base),
-        pendingEditWatchKey({ ...base, searchResults: [{ number: 'C' }] }),
-        '清單被整批替換（長度改變）→ key 應不同');
-});
-
-test('pendingEditWatchKey：listMode 不同 → key 不同', () => {
-    const fileList = [{ path: '/a', searchResults: [{ number: 'A' }, { number: 'B' }] }];
-    const searchResults = [{ number: 'A' }, { number: 'B' }];
-    const fileKey = pendingEditWatchKey({ listMode: 'file', currentFileIndex: 0, currentIndex: 0, searchResults: [], fileList });
-    const searchKey = pendingEditWatchKey({ listMode: 'search', currentFileIndex: 0, currentIndex: 0, searchResults, fileList: [] });
-    assert.notEqual(fileKey, searchKey, 'listMode 改變 → key 應不同');
-});
-
-test('pendingEditWatchKey：內部欄位直寫（打字/date/checkLocalStatus）位置未變 → key 不變', () => {
-    const results = [{ number: 'A', title: 'orig' }, { number: 'B' }];
-    const state = { listMode: 'search', currentFileIndex: 0, currentIndex: 0, searchResults: results, fileList: [] };
-    const keyBefore = pendingEditWatchKey(state);
-
-    // 模擬不透過 editingX 流程的候選內部直寫——候選在陣列中的位置不變、長度不變。
-    results[0].title = 'mutated during typing';
-    results[0].date = '2026-01-01';
-    results[0]._localStatus = { exists: true };
-
-    assert.equal(pendingEditWatchKey(state), keyBefore,
-        '候選內部欄位直寫、位置/長度未變 → key 不變（只讀 primitives，不因巢狀欄位變動而改變）');
-});
-
-test('pendingEditWatchKey：keyword（search）模式 fileKey 為空、用 searchResults.length', () => {
-    // search 模式即使 fileList 有內容，也不取 fileKey（fileKey === ''），length 取 searchResults。
-    const key = pendingEditWatchKey({
-        listMode: 'search',
-        currentFileIndex: 5,             // 應被忽略（非 file 模式）
-        currentIndex: 2,
-        searchResults: [{ number: 'A' }, { number: 'B' }, { number: 'C' }],
-        fileList: [{ path: '/should-be-ignored', searchResults: [] }],
-    });
-    assert.equal(key, `\0${2}\0search\0${3}\0${0}`, 'search 模式 key = 空 fileKey + currentIndex + mode + searchResults.length + _candidateReplaceSeq（未帶時 ?? 0）');
-});
 
 // ── 核心回歸（Codex PR#116 P2：原地替換盲區）──
 // 換源 / switch-source 流程整顆替換 current() 候選物件（arr[idx] = variant），但

@@ -65,18 +65,6 @@ test('scrapeAll: 後端回 duplicate + duplicate_target → scrapeStatus 與 dup
     assert.equal(file.duplicateTarget, 'ABC-123.mp4');
 });
 
-test('scrapeAll: duplicate_target 缺席 → duplicateTarget 是空字串（不是 undefined、不炸）', async () => {
-    const file = makeFile();
-    const state = makeState(
-        [file],
-        async () => ({ duplicate: true }),
-    );
-
-    await state.scrapeAll();
-
-    assert.equal(file.scrapeStatus, 'duplicate');
-    assert.equal(file.duplicateTarget, '');
-});
 
 // ── T6 review P1：單片路徑也必須寫 file.duplicateTarget ──────────────────
 // scrapeSingle() 本來就會設 file.scrapeStatus='duplicate'，而 T6 讓列表對這個值

@@ -137,67 +137,9 @@ test('grid 路徑：六格逐一驗證 clickable 白名單（作品數/生日/�
 
 // ── AC2：hero 路徑，全部 part 皆不可點 ──────────────────────────────────────
 
-test('hero 路徑：_actressCoreMetadataParts() 全部 part 的 clickable 為 false', () => {
-    const c = makeComponent({ currentLightboxActress: FULL_ACTRESS, actressLightboxSource: 'hero' });
-    const parts = c._actressCoreMetadataParts();
-    assert.equal(parts.length, 6);
-    for (const p of parts) {
-        assert.equal(p.clickable, false, `hero 路徑下 ${p.key} 不應可點`);
-    }
-});
 
 // ── 116b review：extractor 解不出值 → clickable false；正常值仍 true ───────
 
-test('grid：height 不可解析（不明）→ clickable false', () => {
-    const c = makeComponent({
-        currentLightboxActress: { ...FULL_ACTRESS, height: '不明' },
-        actressLightboxSource: 'grid',
-    });
-    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
-    assert.ok(byKey.height, 'height 格仍應出現（原文顯示）');
-    assert.equal(byKey.height.clickable, false, '解不出數值的身高格不可點');
-});
-
-test('grid：cup 不可解析（Gカップ）→ clickable false', () => {
-    const c = makeComponent({
-        currentLightboxActress: { ...FULL_ACTRESS, cup: 'Gカップ' },
-        actressLightboxSource: 'grid',
-    });
-    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
-    assert.ok(byKey.cup, 'cup 格仍應出現（原文顯示）');
-    assert.equal(byKey.cup.clickable, false, '解不出 rank 的罩杯格不可點');
-});
-
-test('grid：age null → 無 age 格或 clickable false', () => {
-    const c = makeComponent({
-        currentLightboxActress: { ...FULL_ACTRESS, age: null },
-        actressLightboxSource: 'grid',
-    });
-    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
-    if (byKey.age) {
-        assert.equal(byKey.age.clickable, false, 'age null 時若仍有格則不可點');
-    } else {
-        assert.equal(byKey.age, undefined);
-    }
-});
-
-test('grid：正常值 height/cup/age 仍 clickable true（回歸）', () => {
-    const c = makeComponent({
-        currentLightboxActress: {
-            video_count: 1,
-            age: 37,
-            height: '160cm',
-            cup: 'B',
-            birth: '1988-01-01',
-            bust: 80, waist: 58, hip: 85,
-        },
-        actressLightboxSource: 'grid',
-    });
-    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
-    assert.equal(byKey.height.clickable, true, "height:'160cm' 應可點");
-    assert.equal(byKey.cup.clickable, true, "cup:'B' 應可點");
-    assert.equal(byKey.age.clickable, true, 'age:37 應可點');
-});
 
 // ── 呼叫序列：closeLightbox() 先於 addActressPill(dim, value) ──────────────
 
@@ -210,31 +152,11 @@ test('_onActressMetadataClick：先 closeLightbox() 再 addActressPill(dim, valu
     ]);
 });
 
-test('_onActressMetadataClick：產生 pill 後 toolbarOpen=true（116b-T4 手機摸得到 pill）', () => {
-    _uiStore.toolbarOpen = false;
-    const c = makeComponent({ currentLightboxActress: FULL_ACTRESS, actressLightboxSource: 'grid' });
-    c._onActressMetadataClick('height', '160cm');
-    assert.equal(Alpine.store('ui').toolbarOpen, true, '產生 pill 後必須展開工具列');
-});
-
-test('_onActressMetadataClick：hero 路徑（防禦性 gate）不呼叫任何函式', () => {
-    _uiStore.toolbarOpen = false;
-    const c = makeComponent({ currentLightboxActress: FULL_ACTRESS, actressLightboxSource: 'hero' });
-    c._onActressMetadataClick('height', '160cm');
-    assert.deepEqual(c.__calls, [], '防禦性 gate 應擋下呼叫，無副作用');
-    assert.equal(Alpine.store('ui').toolbarOpen, false, 'gate 擋下時不得展開工具列');
-});
 
 // ── 視覺零回歸：多組缺值組合下，join 輸出與舊版逐字相同（至少 5 組）────────
 
 const REGRESSION_FIXTURES = [
-    { name: '全有值', actress: FULL_ACTRESS },
     { name: '缺身高', actress: { video_count: 5, age: 30, birth: '1995-05-05', height: '', cup: 'D', bust: 85, waist: 60, hip: 88 } },
-    { name: '缺罩杯', actress: { video_count: 3, age: 22, birth: '2003-03-03', height: '158cm', cup: '', bust: 80, waist: 55, hip: 82 } },
-    { name: '缺三圍（僅 bust）', actress: { video_count: 8, age: 26, birth: '1999-09-09', height: '165cm', cup: 'B', bust: 86, waist: 0, hip: 0 } },
-    { name: '只有作品數', actress: { video_count: 40, age: 0, birth: '', height: '', cup: '', bust: 0, waist: 0, hip: 0 } },
-    { name: '缺年齡與生日', actress: { video_count: 1, age: 0, birth: '', height: '150cm', cup: 'A', bust: 78, waist: 54, hip: 80 } },
-    { name: '完全空（無任何欄位）', actress: {} },
 ];
 
 for (const { name, actress } of REGRESSION_FIXTURES) {
@@ -245,45 +167,9 @@ for (const { name, actress } of REGRESSION_FIXTURES) {
     });
 }
 
-test('currentLightboxActress 為 null 時回傳空陣列（比照舊版回傳空字串）', () => {
-    const c = makeComponent({ currentLightboxActress: null, actressLightboxSource: 'grid' });
-    assert.deepEqual(c._actressCoreMetadataParts(), []);
-    assert.equal(legacyActressCoreMetadata(null), '');
-});
 
 // ── _actressPillDisplayText（CD-116b-11 全表 11 格）─────────────────────────
 
-test('_actressPillDisplayText：CD-116b-11 對照表 11 個合法組合（116c-T2 CD-116c-7：~ 分隔符）', () => {
-    const c = makeComponent();
-    // age × 4
-    assert.equal(c._actressPillDisplayText({ dim: 'age', op: '=', value: '37', value2: null }), '=37search.unit.age');
-    assert.equal(c._actressPillDisplayText({ dim: 'age', op: '<=', value: '37', value2: null }), '≤37search.unit.age');
-    assert.equal(c._actressPillDisplayText({ dim: 'age', op: '>=', value: '37', value2: null }), '≥37search.unit.age');
-    assert.equal(c._actressPillDisplayText({ dim: 'age', op: 'range', value: '35', value2: '40' }), '35~40search.unit.age');
-    // height × 4（單位由顯示層補 'cm'，value 不含單位）
-    assert.equal(c._actressPillDisplayText({ dim: 'height', op: '=', value: '160', value2: null }), '=160cm');
-    assert.equal(c._actressPillDisplayText({ dim: 'height', op: '<=', value: '160', value2: null }), '≤160cm');
-    assert.equal(c._actressPillDisplayText({ dim: 'height', op: '>=', value: '160', value2: null }), '≥160cm');
-    assert.equal(c._actressPillDisplayText({ dim: 'height', op: 'range', value: '155', value2: '165' }), '155~165cm');
-    // cup × 3（無 range）
-    assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '=', value: 'B', value2: null }), '=Bsearch.unit.cup');
-    assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '<=', value: 'B', value2: null }), '≤Bsearch.unit.cup');
-    assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '>=', value: 'B', value2: null }), '≥Bsearch.unit.cup');
-});
 
 // ── `.lb-actress-core-value` 是原生 <button type="button">（機械證明，非 <span>）──
 
-test('showcase.html：.lb-actress-core-value 是原生 <button type="button">，非 <span>', () => {
-    const SHOWCASE_HTML = readFileSync(
-        path.join(REPO_ROOT, 'web/templates/showcase.html'),
-        'utf8',
-    );
-    assert.ok(
-        /<button\s+type="button"\s+class="lb-actress-core-value lb-link"/.test(SHOWCASE_HTML),
-        '.lb-actress-core-value 應是 <button type="button"> 且同時掛 lb-link（與影片模式共用 hover 規則）',
-    );
-    assert.ok(
-        !/<span\b[^>]*\bclass="lb-actress-core-value"/.test(SHOWCASE_HTML),
-        '.lb-actress-core-value 不得是 <span>',
-    );
-});

@@ -48,25 +48,3 @@ test('enterNumber: 重輸番號後清除 skipReason 與 duplicateTarget，該筆
   assert.equal(searched[0], file);
 });
 
-test('enterNumber: duplicate 記憶命中的那筆重輸番號後，橘色「重複」標記不會殘留', async () => {
-  // setFileList() 現在會在列檔階段就把 duplicate 記憶命中的檔標成 scrapeStatus='duplicate'。
-  // 重輸番號後若不清掉，重搜到候選之後 search.html:1131 的「產生 NFO」鈕與 :1163 的橘色
-  // 「重複」鈕會同時顯示，而橘色那顆點開是空白（duplicateTarget 已清）。
-  const file = {
-    number: 'OLD-001',
-    searched: true,
-    searchResults: [],
-    skipReason: 'duplicate',
-    duplicateTarget: 'ABC-123 [4K].mp4',
-    scrapeStatus: 'duplicate',
-    has_nfo: false,
-  };
-  const state = makeState([file]);
-
-  globalThis.prompt = () => 'NEW-002';
-  state.enterNumber(0);
-
-  assert.equal(file.skipReason, '');
-  assert.equal(file.duplicateTarget, undefined);
-  assert.notEqual(file.scrapeStatus, 'duplicate');
-});

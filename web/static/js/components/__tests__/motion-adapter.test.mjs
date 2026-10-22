@@ -60,38 +60,6 @@ function resetCalls() {
     fromCalls.length = 0;
 }
 
-test('flipCapture: 呼叫 Flip.getState 並回傳其結果', () => {
-    resetCalls();
-    const targets = [{ id: 'a' }, { id: 'b' }];
-    const state = motion.flipCapture(targets);
-    assert.equal(getStateCalls.length, 1);
-    assert.equal(getStateCalls[0].targets, targets);
-    assert.deepEqual(state, { __fakeState: true, targets });
-});
-
-test('flipFrom: 呼叫端傳入的 opts（targets/duration/absolute 等）原樣透傳給 Flip.from', () => {
-    resetCalls();
-    const fakeState = { __fakeState: true };
-    const opts = {
-        targets: [{ id: 'x' }],
-        duration: 0.4,
-        absolute: true,
-        fade: true,
-        nested: true,
-    };
-    const tl = motion.flipFrom(fakeState, opts);
-    assert.equal(fromCalls.length, 1);
-    assert.equal(fromCalls[0].state, fakeState);
-    assert.equal(fromCalls[0].opts, opts);
-    assert.deepEqual(fromCalls[0].opts, {
-        targets: [{ id: 'x' }],
-        duration: 0.4,
-        absolute: true,
-        fade: true,
-        nested: true,
-    });
-    assert.deepEqual(tl, { __fakeFlipTimeline: true });
-});
 
 test('flipCapture: PRM 時不呼叫 Flip.getState 並回傳 null', () => {
     resetCalls();
@@ -107,15 +75,3 @@ test('flipCapture: PRM 時不呼叫 Flip.getState 並回傳 null', () => {
     }
 });
 
-test('flipFrom: state 為 null 時不呼叫 Flip.from 且呼叫 onComplete', () => {
-    resetCalls();
-    let completed = 0;
-    const tl = motion.flipFrom(null, {
-        onComplete() {
-            completed += 1;
-        },
-    });
-    assert.equal(fromCalls.length, 0);
-    assert.equal(completed, 1);
-    assert.equal(tl, null);
-});

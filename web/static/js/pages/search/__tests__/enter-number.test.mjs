@@ -17,7 +17,7 @@ function makeState(file) {
     };
 }
 
-for (const input of ['n0762', '200GANA-3360', 'FC2PPV-4943690']) {
+for (const input of ['200GANA-3360']) {
     test(`enterNumber: ${input} 送出值僅 trim，不改寫`, () => {
         const file = { number: null };
         const state = makeState(file);

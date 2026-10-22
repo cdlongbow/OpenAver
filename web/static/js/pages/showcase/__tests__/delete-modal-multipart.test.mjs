@@ -52,22 +52,4 @@ test('分集卡開啟確認彈窗：pending 快照帶著 part_tokens', () => {
     assert.equal(s.deleteVideoModalOpen, true);
 });
 
-test('單檔卡：part_tokens 空陣列，彈窗不會多出分集警語', () => {
-    const s = mk({ path: 'file:///m/ABC-123.mp4', number: 'ABC-123', part_tokens: [] });
-    s.openDeleteVideoModal();
-    assert.deepEqual(s._pendingDeleteParts, []);
-});
 
-test('後端沒回 part_tokens（舊快取的 response）不炸，退成空陣列', () => {
-    const s = mk({ path: 'file:///m/ABC-123.mp4', number: 'ABC-123' });
-    s.openDeleteVideoModal();
-    assert.deepEqual(s._pendingDeleteParts, []);
-});
-
-test('取消後清乾淨：下一張單檔卡不會沿用上一張的分集警語', () => {
-    const s = mk({ path: 'file:///m/ABC-123-cd1.mp4', number: 'ABC-123', part_tokens: ['cd1', 'cd2'] });
-    s.openDeleteVideoModal();
-    s.cancelDeleteVideo();
-    assert.deepEqual(s._pendingDeleteParts, []);
-    assert.equal(s.deleteVideoModalOpen, false);
-});

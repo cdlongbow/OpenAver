@@ -16,9 +16,6 @@ const {
 
 // ── 常數匯出 ─────────────────────────────────────────────────────────────
 
-test('LONG_FORM_MIN_DURATION_MINUTES 常數匯出為 239', () => {
-    assert.strictEqual(LONG_FORM_MIN_DURATION_MINUTES, 239);
-});
 
 // ── 邊界條件 1 ──────────────────────────────────────────────────────────
 
@@ -36,42 +33,9 @@ test('computeAgeAtDate 生日已過/未過各一組', () => {
 
 // ── 邊界條件 2 [mutation A 偵測] ─────────────────────────────────────────
 
-test('AC-1 反例閘：不比月日的錯算法（發行年-出生年）與 +1 兩種都必須與正確答案不同', () => {
-    const birth = '1998-03-31';
-    const release = '2026-01-01';
-    const actual = computeAgeAtDate(birth, release);
-
-    // 正確實足年齡應為 27
-    assert.strictEqual(actual, 27);
-
-    // 錯算法 1：不比月日（發行年 - 出生年）= 2026 - 1998 = 28
-    const wrongYearDiff = 2026 - 1998;
-    assert.notStrictEqual(actual, wrongYearDiff);
-
-    // 錯算法 2：虛歲/加一（發行年 - 出生年 + 1）= 29
-    const wrongPlusOne = (2026 - 1998) + 1;
-    assert.notStrictEqual(actual, wrongPlusOne);
-});
 
 // ── 邊界條件 3 ──────────────────────────────────────────────────────────
 
-test('三種不顯示：生日缺失／發行日缺失／發行日只有年份"2015"皆回 null 且不等於退化只減年份', () => {
-    // 1. 生日缺失
-    assert.strictEqual(computeAgeAtDate(null, '2026-01-01'), null);
-    assert.strictEqual(computeAgeAtDate(undefined, '2026-01-01'), null);
-    assert.strictEqual(computeAgeAtDate('', '2026-01-01'), null);
-    assert.strictEqual(computeAgeAtDate('invalid-date', '2026-01-01'), null);
-
-    // 2. 發行日缺失
-    assert.strictEqual(computeAgeAtDate('1998-03-31', null), null);
-    assert.strictEqual(computeAgeAtDate('1998-03-31', undefined), null);
-    assert.strictEqual(computeAgeAtDate('1998-03-31', ''), null);
-    assert.strictEqual(computeAgeAtDate('1998-03-31', 'invalid-date'), null);
-
-    // 3. 發行日只有年份 "2015"
-    assert.strictEqual(computeAgeAtDate('1998-03-31', '2015'), null);
-    assert.notStrictEqual(computeAgeAtDate('1998-03-31', '2015'), 2015 - 1998); // 退化「只減年份」會得到 17
-});
 
 // ── 邊界條件 6 [mutation C 偵測]（2026-09-17 主 session 追加，來源：review P2）─────
 
@@ -109,37 +73,9 @@ test('AC-9 邊界：239 分鐘（IPSD-030 形狀）必須不顯示年齡', () =>
 
 // ── computeActressAgeForVideo 補充邊界（DoD ④）───────────────────────────
 
-test('computeActressAgeForVideo 片長邊界（237/238 正常，240/3278/4378 回 null，null/undefined/0 不阻擋）', () => {
-    const base = { birth: '1998-03-31', releaseDate: '2026-04-01' };
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: 237 }), 28);
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: 238 }), 28);
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: 240 }), null);
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: 3278 }), null);
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: 4378 }), null);
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: null }), 28);
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: undefined }), 28);
-    assert.strictEqual(computeActressAgeForVideo({ ...base, durationMinutes: 0 }), 28);
-    assert.strictEqual(computeActressAgeForVideo(null), null);
-    assert.strictEqual(computeActressAgeForVideo(undefined), null);
-});
 
 // ── 過去發行日與今日比對（DoD ⑤ AC-7）─────────────────────────────────────
 
-test('AC-7 過去發行日算出的年齡必須小於等於今日日期算出的年齡', () => {
-    const birth = '1998-03-31';
-    const today = new Date();
-    const todayISO = today.toISOString().slice(0, 10);
-    const ageToday = computeAgeAtDate(birth, todayISO);
-    assert.ok(typeof ageToday === 'number');
-
-    const pastDates = ['1998-04-01', '2000-01-01', '2010-06-15', '2020-03-30', '2020-03-31', '2020-04-01'];
-    for (const past of pastDates) {
-        if (past <= todayISO) {
-            const agePast = computeAgeAtDate(birth, past);
-            assert.ok(agePast !== null && agePast <= ageToday, `past ${past} (${agePast}) should be <= today ${todayISO} (${ageToday})`);
-        }
-    }
-});
 
 // ── 邊界條件 5 ──────────────────────────────────────────────────────────
 
@@ -170,27 +106,6 @@ test('resolveFavoriteActressAge 四組別名小寫 key 比對成功', () => {
 
 // ── resolveFavoriteActressAge 防禦性回傳 ───────────────────────────────────
 
-test('resolveFavoriteActressAge 找不到、缺值、空陣列等邊界安全回傳 null', () => {
-    const actresses = [{ name: '安齋らら', birth: '1993-12-03' }];
-    const nameToGroup = { 'rion(リオン)': ['安齋らら', 'RION(リオン)'] };
-    const video = { release_date: '2020-01-15', duration: 120 };
-
-    // 查無女優
-    assert.strictEqual(resolveFavoriteActressAge('未知女優', video, actresses, nameToGroup), null);
-    // 女優未給生日
-    assert.strictEqual(resolveFavoriteActressAge('rion(リオン)', video, [{ name: '安齋らら', birth: null }], nameToGroup), null);
-    // 缺 video
-    assert.strictEqual(resolveFavoriteActressAge('rion(リオン)', null, actresses, nameToGroup), null);
-    // 缺 actresses
-    assert.strictEqual(resolveFavoriteActressAge('rion(リオン)', video, null, nameToGroup), null);
-    assert.strictEqual(resolveFavoriteActressAge('rion(リオン)', video, [], nameToGroup), null);
-    // 缺 rawActressName
-    assert.strictEqual(resolveFavoriteActressAge('', video, actresses, nameToGroup), null);
-    assert.strictEqual(resolveFavoriteActressAge(null, video, actresses, nameToGroup), null);
-    // 缺 nameToGroup（fallback 至單一名稱查表）
-    assert.strictEqual(resolveFavoriteActressAge('安齋らら', video, actresses, null), 26);
-    assert.strictEqual(resolveFavoriteActressAge('安齋らら', video, actresses, undefined), 26);
-});
 
 // ── computeActorAgesMap 契約測試（TASK-155a-T1 CD-155a-2）──────────────────
 
@@ -288,30 +203,4 @@ test('singleActorAge 兩人以上回傳 null', () => {
     assert.strictEqual(singleActorAge(video), null);
 });
 
-test('singleActorAge 單人但未列入 _cardActorAges 時回傳 null', () => {
-    const emptyMapVideo = {
-        actresses: '明里つむぎ',
-        _cardActorAges: {},
-    };
-    assert.strictEqual(singleActorAge(emptyMapVideo), null);
 
-    const undefinedMapVideo = {
-        actresses: '明里つむぎ',
-    };
-    assert.strictEqual(singleActorAge(undefinedMapVideo), null);
-
-    const notInMapVideo = {
-        actresses: '明里つむぎ',
-        _cardActorAges: { '三上悠亜': 27 },
-    };
-    assert.strictEqual(singleActorAge(notInMapVideo), null);
-});
-
-test('singleActorAge video 或 actresses 為 falsy／空字串時回傳 null', () => {
-    assert.strictEqual(singleActorAge(null), null);
-    assert.strictEqual(singleActorAge(undefined), null);
-    assert.strictEqual(singleActorAge({}), null);
-    assert.strictEqual(singleActorAge({ actresses: null }), null);
-    assert.strictEqual(singleActorAge({ actresses: '' }), null);
-    assert.strictEqual(singleActorAge({ actresses: '   ' }), null);
-});

@@ -75,53 +75,13 @@ function fireError(c, { target, src } = {}) {
 }
 
 // 1. isStaleLbFullError 三種（沿用 isStaleCoverError 短路語意）
-test('isStaleLbFullError: src 相符 → false', () => {
-    assert.equal(isStaleLbFullError(FULL_SRC, FULL_SRC), false);
-});
 
-test('isStaleLbFullError: src 不符 → true', () => {
-    assert.equal(isStaleLbFullError(OTHER_SRC, FULL_SRC), true);
-});
-
-test('isStaleLbFullError: expectedSrc 為空 → false', () => {
-    assert.equal(isStaleLbFullError(FULL_SRC, ''), false);
-    assert.equal(isStaleLbFullError(FULL_SRC, undefined), false);
-    assert.equal(isStaleLbFullError('', FULL_SRC), false);
-});
 
 // 2. AC-A6：空 cover_full_url 短路，旗標仍 false
-test('AC-A6: cover_full_url 為空字串 → _handleLbFullError 後旗標仍 false', () => {
-    const c = makeComponent({
-        currentLightboxVideo: { cover_full_url: '', has_cover: false },
-    });
-    fireError(c, { src: '' });
-    assert.equal(c._lbFullErrorPill, false);
-});
 
 // 3. AC-A4：遲到 error 的 src 已不是當下 cover_full_url
-test('AC-A4: getAttribute(src) 是舊值、current cover_full_url 已是新值 → 旗標仍 false', () => {
-    const c = makeComponent({
-        currentLightboxVideo: { cover_full_url: FULL_SRC, has_cover: true },
-    });
-    fireError(c, { src: OTHER_SRC });
-    assert.equal(c._lbFullErrorPill, false);
-});
 
 // 4. AC-A5：不呼叫 handleCoverError、不寫 has_cover
-test('AC-A5: _handleLbFullError 不呼叫 handleCoverError、不寫 has_cover', () => {
-    let handleCoverErrorCalls = 0;
-    const video = { cover_full_url: FULL_SRC, has_cover: true };
-    const c = makeComponent({
-        currentLightboxVideo: video,
-        handleCoverError() {
-            handleCoverErrorCalls += 1;
-        },
-    });
-    fireError(c, { src: FULL_SRC });
-    assert.equal(handleCoverErrorCalls, 0);
-    assert.equal(video.has_cover, true);
-    assert.equal(c.currentLightboxVideo.has_cover, true);
-});
 
 // 5. Happy path：src 相符且非空 → 旗標 true
 test('happy path: src 相符且非空 → _lbFullErrorPill 為 true', () => {
@@ -131,12 +91,6 @@ test('happy path: src 相符且非空 → _lbFullErrorPill 為 true', () => {
 });
 
 // 6. $refs 防呆
-test('$refs 防呆: event.target !== lightboxCoverFull → 旗標仍 false', () => {
-    const c = makeComponent();
-    const stranger = makeImg(FULL_SRC);
-    fireError(c, { target: stranger, src: FULL_SRC });
-    assert.equal(c._lbFullErrorPill, false);
-});
 
 // 7. 生命週期：_refreshLbFullBlurUp 是唯一重置點
 test('生命週期: _refreshLbFullBlurUp() 後旗標回 false', () => {

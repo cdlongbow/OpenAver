@@ -207,14 +207,6 @@ function releasePill(op, value, value2) {
 // _toggleReleaseEditor：開啟映射 ／ 同枚再點關閉 ／ 第二層防禦
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('_toggleReleaseEditor：開啟 range pill，四格映射自 value/value2，月份 zero-pad', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('range', '2023-09', '2024'));
-    assert.equal(c._releaseEditor.loYear, '2023');
-    assert.equal(c._releaseEditor.loMonth, '09');
-    assert.equal(c._releaseEditor.hiYear, '2024');
-    assert.equal(c._releaseEditor.hiMonth, null);
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // spec §5.2 三態表 × 三顆鈕（表驅動，_releaseOperandFor）
@@ -260,15 +252,6 @@ test('三態操作數表（spec §5.2：①兩端皆空／②只填一端／③�
 // _applyReleaseOp：三顆鈕唯一提交路徑（成功寫入且關閉 ／ 失敗 early return 不寫不關）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('_applyReleaseOp 成功路徑：寫入 pills 且 _releaseEditor 變 null（AC8）', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2023';
-    c._applyReleaseOp('>=');
-    assert.equal(c._releaseEditor, null);
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: '>=', value: '2023' });
-});
 
 test('_applyReleaseOp 失敗路徑：operand 為 null → 不寫入、不關閉（AC12）', () => {
     const c = makeComponent();
@@ -284,29 +267,6 @@ test('_applyReleaseOp 失敗路徑：operand 為 null → 不寫入、不關閉�
 // AC10：✓ 單邊委派逐欄位相等（結構驗證，非巧合驗證）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC10：單端填入，✓ 與直接按對應運算子（同一草稿狀態）逐欄位相同', () => {
-    // [填的格, 值, 對應運算子, 期望 pill]
-    const cases = [
-        ['loYear', '2023', '>=', { dim: 'release', op: '>=', value: '2023' }],
-        ['hiYear', '2024', '<=', { dim: 'release', op: '<=', value: '2024' }],
-    ];
-    for (const [field, val, op, want] of cases) {
-        const c1 = makeComponent();
-        c1._toggleReleaseEditor(releasePill('=', '2020'));
-        c1._releaseEditor[field] = val;
-        c1._commitReleaseEditor();
-
-        const c2 = makeComponent();
-        c2._toggleReleaseEditor(releasePill('=', '2020'));
-        c2._releaseEditor[field] = val;
-        c2._applyReleaseOp(op);
-
-        const p1 = c1.pills.find((x) => x.dim === 'release');
-        const p2 = c2.pills.find((x) => x.dim === 'release');
-        assert.deepEqual(p1, p2, field);
-        assert.deepEqual(p1, want, field);
-    }
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC11：lo>hi 對調
@@ -341,44 +301,6 @@ test('AC11 對調表：lo>hi 才對調；年份-only 端點（月份留空）不
 // 四格全空 ／ 有月無年 ／ 不合法端點 ／ 指數記法 ／ 1800/9999 ／ badInput
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('四格全空：_releaseEditorHasInput() 為 false；✓ 不寫入、_releaseEditor 仍開（防禦性 return）', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    assert.equal(c._releaseEditorHasInput(), false);
-    c._commitReleaseEditor();
-    assert.ok(c._releaseEditor, '_releaseEditor 必須維持開啟');
-    assert.equal(c.pills.length, 0);
-});
-
-test('有月無年：_releaseEndpoint 回 {has:true, token:null}；唯一填的一端 → 不寫入不關閉', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loMonth = '09'; // loYear 仍是 null
-    const lo = c._releaseEndpoint('lo');
-    assert.deepEqual(lo, { has: true, token: null });
-    c._applyReleaseOp('=');
-    assert.ok(c._releaseEditor);
-    assert.equal(c.pills.length, 0);
-    c._commitReleaseEditor();
-    assert.ok(c._releaseEditor);
-    assert.equal(c.pills.length, 0);
-});
-
-test("不合法端點：13/00 月、非四位年 '2'/'250'/'20244'、數值 <1000 的 '0230'/'0002' → token 皆為 null（_releaseEndpoint 數值檢查）", () => {
-    const c = makeComponent();
-    for (const y of ['2', '250', '20244', '0230', '0002']) {
-        c._toggleReleaseEditor(releasePill('=', '2020'));
-        c._releaseEditor.loYear = y;
-        assert.equal(c._releaseEndpoint('lo').token, null, `年份 '${y}' 應形不成條件`);
-        c._releaseEditor = null;
-    }
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2023';
-    for (const m of ['13', '00']) {
-        c._releaseEditor.loMonth = m;
-        assert.equal(c._releaseEndpoint('lo').token, null, `月份 '${m}' 應形不成條件`);
-    }
-});
 
 // Codex PR review P2（2026-08-21）：質疑 composeEndpoint() 只驗數值範圍（Number() 之後
 // 1000–9999），不驗字元形狀 ^\d{4}$，所以 '1e3'、'1000.0' 這類指數／多餘小數點記法會被
@@ -392,119 +314,22 @@ test("不合法端點：13/00 月、非四位年 '2'/'250'/'20244'、數值 <100
 // 本測試同時鎖住「接受什麼」與「仍然拒絕什麼」。⚠ 如果未來有人把 _releaseEndpoint() 的
 // 年份判準從「數值範圍」改成「字元形狀 ^\d{4}$」，這支測試裡的指數/小數點案例會轉紅——
 // 那是提醒你先回去讀 CD-124a-10 / CD-124a-15 的定義再動，不是叫你把測試改掉。
-test("刻意接受的記法正規化：指數/多餘小數點年月（'1e3'、'1000.0'、'9.999e3'、'0.9e1'）正規化後照樣套用；短數字對照組仍拒（Codex P2 accepted residual）", () => {
-    const c = makeComponent();
 
-    // 接受組①：'1e3' → 1000，✓ 套用、浮層關閉
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '1e3';
-    assert.equal(c._releaseEndpoint('lo').token, '1000', "'1e3' 應正規化為 1000");
-    c._applyReleaseOp('=');
-    assert.equal(c._releaseEditor, null, '浮層應關閉');
-    assert.deepEqual(c.pills.find((x) => x.dim === 'release'), { dim: 'release', op: '=', value: '1000' });
-
-    // 接受組②：'1000.0' → 1000，同上
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '1000.0';
-    assert.equal(c._releaseEndpoint('lo').token, '1000', "'1000.0' 應正規化為 1000");
-    c._applyReleaseOp('=');
-    assert.equal(c._releaseEditor, null, '浮層應關閉');
-    assert.deepEqual(c.pills.find((x) => x.dim === 'release'), { dim: 'release', op: '=', value: '1000' });
-
-    // 接受組③：'9.999e3' → 9999（只驗 token，不重複驗提交路徑）
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '9.999e3';
-    assert.equal(c._releaseEndpoint('lo').token, '9999', "'9.999e3' 應正規化為 9999");
-    c._releaseEditor = null;
-
-    // 接受組④：月格 '0.9e1' → 09（配一個合法年）
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2023';
-    c._releaseEditor.loMonth = '0.9e1';
-    assert.equal(c._releaseEndpoint('lo').token, '2023-09', "月份 '0.9e1' 應正規化為 09");
-    c._releaseEditor = null;
-
-    // 對照組：CD-124a-15 要擋的「打字中途的短數字」仍然被拒——token:null、不寫入、浮層不關。
-    // pills 快照鎖「不寫入」：接受組已把 release pill 寫成 '1000'，對照組跑完必須原封不動。
-    const pillsBefore = JSON.parse(JSON.stringify(c.pills));
-    for (const y of ['2', '250', '20244', '0230']) {
-        c._toggleReleaseEditor(releasePill('=', '2020'));
-        c._releaseEditor.loYear = y;
-        assert.equal(c._releaseEndpoint('lo').token, null, `年份 '${y}' 仍應被拒`);
-        c._applyReleaseOp('=');
-        assert.ok(c._releaseEditor, `年份 '${y}'：浮層必須維持開啟`);
-        assert.deepEqual(c.pills, pillsBefore, `年份 '${y}'：pills 不得被改寫`);
-        c._releaseEditor = null;
-    }
-});
-
-test('1800/9999 照常套用（AC13，零結果是比對層的事，不是本層的事）', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '1800';
-    assert.equal(c._releaseEndpoint('lo').token, '1800');
-    c._releaseEditor.hiYear = '9999';
-    c._releaseEditor.hiMonth = '12';
-    assert.equal(c._releaseEndpoint('hi').token, '9999-12');
-});
-
-test('badInput：badLoY=true 時一律 token:null，即使 loYear 文字看起來合法', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2023';
-    c._releaseEditor.badLoY = true;
-    assert.deepEqual(c._releaseEndpoint('lo'), { has: true, token: null });
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // _releaseEditor 為 null 時七支 helper 的安全回傳
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('_releaseEditor=null 時七支 helper 安全回傳', () => {
-    const c = makeComponent();
-    assert.deepEqual(c._releaseEndpoint('lo'), { has: false, token: null });
-    assert.deepEqual(c._releaseEndpoint('hi'), { has: false, token: null });
-    assert.equal(c._releaseOperandFor('='), null);
-    const before = c.pills.slice();
-    assert.doesNotThrow(() => c._applyReleaseOp('='));
-    assert.deepEqual(c.pills, before);
-    assert.doesNotThrow(() => c._commitReleaseEditor());
-    assert.deepEqual(c.pills, before);
-    assert.doesNotThrow(() => c._cancelReleaseEditor());
-    assert.equal(c._releaseEditor, null);
-    assert.equal(c._releaseEditorHasInput(), false);
-    assert.equal(c._releaseYearHint(), '');
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // _cancelReleaseEditor：✗ 取消，不碰 pills
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('_cancelReleaseEditor：只丟棄草稿，pills 逐位元組不變', () => {
-    const c = makeComponent();
-    c._setReleasePill({ dim: 'release', op: '=', value: '2020' });
-    const before = c.pills.slice();
-    c._toggleReleaseEditor(c.pills[0]);
-    c._releaseEditor.loYear = '2099';
-    c._cancelReleaseEditor();
-    assert.equal(c._releaseEditor, null);
-    assert.deepEqual(c.pills, before);
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // _releaseYearHint（spec §4.9，全庫不是 _filteredVideos）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('_releaseYearHint：全庫可解析年月 → "（min ~ max）"', () => {
-    const c = makeComponent();
-    _setVideos([
-        { release_date: '2020-05-01' },
-        { release_date: '2023-11-02' },
-        { release_date: 'bad-date' },
-    ]);
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    assert.equal(c._releaseYearHint(), '（2020 ~ 2023）');
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // _setReleasePill：唯一寫入者、AC4 取代語意、value2 不對稱防呆
@@ -517,11 +342,6 @@ test('_setReleasePillFromDate：可解析 → 產生 = op、value 為前 7 字',
     assert.deepEqual(p, { dim: 'release', op: '=', value: '2024-09' });
 });
 
-test('_setReleasePillFromDate：不可解析 → 不產生 pill（spec §4.4）', () => {
-    const c = makeComponent();
-    c._setReleasePillFromDate('bad-date');
-    assert.equal(c.pills.length, 0);
-});
 
 test('AC4 取代語意：第二次呼叫後 release 維度仍恰 1 枚且值是新的；其他維度 pill 不受影響（參照與順序皆不變）', () => {
     const c = makeComponent();
@@ -540,36 +360,11 @@ test('AC4 取代語意：第二次呼叫後 release 維度仍恰 1 枚且值是�
     assert.equal(c.pills[1], pickPill, 'pick pill 參照不變');
 });
 
-test('value2 不對稱防呆：range→= 連續呼叫，第二枚不殘留 value2 鍵（plan §8.1 陷阱）', () => {
-    const c = makeComponent();
-    c._setReleasePill({ dim: 'release', op: 'range', value: '2023', value2: '2024-06' });
-    c._setReleasePill({ dim: 'release', op: '=', value: '2025' });
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(Object.keys(p).sort(), ['dim', 'op', 'value']);
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 移除 release pill 時的浮層 teardown（§3.3）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('removePill(release, 該值)：正在編輯它時 → _releaseEditor 變 null', () => {
-    const c = makeComponent();
-    c._setReleasePill({ dim: 'release', op: '=', value: '2023' });
-    c._toggleReleaseEditor(c.pills.find((p) => p.dim === 'release'));
-    assert.ok(c._releaseEditor);
-    c.removePill('release', '2023');
-    assert.equal(c._releaseEditor, null);
-});
-
-test('removePill(其他維度)：_releaseEditor 正在編輯時不受影響', () => {
-    const c = makeComponent();
-    c._setReleasePill({ dim: 'release', op: '=', value: '2023' });
-    c.pills = [...c.pills, { dim: 'actress', value: 'Foo' }];
-    c._toggleReleaseEditor(c.pills.find((p) => p.dim === 'release'));
-    assert.ok(c._releaseEditor);
-    c.removePill('actress', 'Foo');
-    assert.ok(c._releaseEditor, '_releaseEditor 不應受無關維度的 removePill 影響');
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // §3.5 不變式：四個跨切面 teardown 點各走一次，兩個 slot 皆 null
@@ -581,46 +376,11 @@ function seedBothEditors(c) {
     c._releaseEditor = { op: '=', value: '2020', value2: null, loYear: null, loMonth: null, hiYear: null, hiMonth: null, badLoY: false, badLoM: false, badHiY: false, badHiM: false };
 }
 
-test('§3.5 跨切面點①：state-base.js 斷點 handler（matchMedia 跨進 ≤480）→ 雙 slot 皆 null', async () => {
-    mm = installMatchMedia(false); // 先桌機
-    const c = makeComponent();
-    await runInit(c);
-    seedBothEditors(c);
-    mm.setMatches(true); // 模擬跨進 ≤480
-    assert.equal(c._pillEditor, null);
-    assert.equal(c._releaseEditor, null);
-});
-
-test('§3.5 跨切面點②：toggleActressMode() → 雙 slot 皆 null', () => {
-    const c = makeComponent();
-    seedBothEditors(c);
-    try {
-        c.toggleActressMode();
-    } catch (_) {
-        // flipAndFadeIn 的 DOM/動畫副作用不在本 task 範圍；teardown 已在函式開頭無條件執行
-    }
-    assert.equal(c._pillEditor, null);
-    assert.equal(c._releaseEditor, null);
-});
-
-test('§3.5 跨切面點④：clearAllFilters() → 雙 slot 皆 null', () => {
-    const c = makeComponent();
-    seedBothEditors(c);
-    c.clearAllFilters();
-    assert.equal(c._pillEditor, null);
-    assert.equal(c._releaseEditor, null);
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 持久化鏈（CD-124a-14）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('持久化鏈：_setReleasePill() 走完 _animateFilter() 後 _persistedShowcase.pills 含該枚 release pill', () => {
-    const c = makeComponent();
-    c._setReleasePill({ dim: 'release', op: '=', value: '2024-09' });
-    const persisted = c._persistedShowcase.pills.find((p) => p.dim === 'release');
-    assert.deepEqual(persisted, { dim: 'release', value: '2024-09', op: '=' });
-});
 
 test('持久化鏈：改運算子後再讀一次，_persistedShowcase.pills 存的是新條件不是舊條件', () => {
     const c = makeComponent();

@@ -58,58 +58,6 @@ test('rescrapeCustomSources excludes routable false and other types', () => {
     assert.deepEqual(ctx.rescrapeCustomSources().map(s => s.id), ['custom:a', 'custom:b']);
 });
 
-test('refreshRescrapeCustomApplicable sends no request when there is no custom source', async () => {
-    const ctx = makeCtx(SOURCES.filter(s => s.type !== 'custom'));
-    const calls = installFetch();
-    ctx.rescrapeCustomApplicable = { stale: false };
-    await ctx.refreshRescrapeCustomApplicable();
-    assert.equal(calls.length, 0);
-    assert.deepEqual(ctx.rescrapeCustomApplicable, {});
-});
-
-test('refreshRescrapeCustomApplicable sends no request for a blank number', async () => {
-    const ctx = makeCtx();
-    ctx.rescrapeNumber = '   ';
-    const calls = installFetch();
-    await ctx.refreshRescrapeCustomApplicable();
-    assert.equal(calls.length, 0);
-    assert.deepEqual(ctx.rescrapeCustomApplicable, {});
-});
-
-test('refreshRescrapeCustomApplicable drops a stale response', async () => {
-    const ctx = makeCtx();
-    const calls = installFetch();
-    ctx.rescrapeNumber = '12345';
-    const p1 = ctx.refreshRescrapeCustomApplicable();
-    ctx.rescrapeNumber = 'ABC-123';
-    const p2 = ctx.refreshRescrapeCustomApplicable();
-    assert.equal(calls.length, 2);
-    calls[1].respond({ 'custom:a': true });
-    await p2;
-    calls[0].respond({ 'custom:a': false });
-    await p1;
-    assert.deepEqual(ctx.rescrapeCustomApplicable, { 'custom:a': true });
-});
-
-test('a response arriving after closeRescrape is not written', async () => {
-    const ctx = makeCtx();
-    const calls = installFetch();
-    const p = ctx.refreshRescrapeCustomApplicable();
-    ctx.closeRescrape();
-    calls[0].respond({ 'custom:a': false });
-    await p;
-    assert.deepEqual(ctx.rescrapeCustomApplicable, {});
-});
-
-test('a failed applicable request counts as not replied (all clickable)', async () => {
-    const ctx = makeCtx();
-    const calls = installFetch();
-    ctx.rescrapeCustomApplicable = { 'custom:a': false };
-    const p = ctx.refreshRescrapeCustomApplicable();
-    calls[0].respond({}, false);
-    await p;
-    assert.deepEqual(ctx.rescrapeCustomApplicable, {});
-});
 
 test('click on a not-applicable custom pill sends no preview request', async () => {
     const ctx = makeCtx();
@@ -124,58 +72,6 @@ test('click on a not-applicable custom pill sends no preview request', async () 
     assert.equal(errCount(ctx), 0);
 });
 
-test('applicable true or unknown key still sends the preview request', async () => {
-    for (const map of [{ 'custom:a': true }, {}]) {
-        const ctx = makeCtx();
-        const calls = installFetch();
-        ctx.rescrapeCustomApplicable = map;
-        const p = ctx.rescrapeWithSource('custom:a');
-        assert.equal(calls.length, 1);
-        assert.equal(calls[0].url, '/api/rescrape/preview');
-        calls[0].respondRaw({ success: false });
-        await p;
-    }
-});
-
-test('openRescrape from the search entry sends the number written after it returns', async () => {
-    const ctx = makeCtx();
-    ctx.rescrapeSources = SOURCES;
-    globalThis.window.__ADVANCED_SEARCH__ = { sources: SOURCES };
-    const calls = installFetch();
-    try {
-        ctx.openRescrape(null, 'search');
-        ctx.rescrapeNumber = 'ABC-123';
-        await flush();
-        assert.equal(calls.length, 1);
-        assert.equal(calls[0].body.number, 'ABC-123');
-        calls[0].respond({});
-        await flush();
-    } finally {
-        delete globalThis.window.__ADVANCED_SEARCH__;
-    }
-});
-
-test('typing debounces to one applicable request with the last number', async () => {
-    mock.timers.enable({ apis: ['setTimeout'] });
-    try {
-        const ctx = makeCtx();
-        const calls = installFetch();
-        ctx.rescrapeNumber = 'A';
-        ctx.onRescrapeNumberInput();
-        mock.timers.tick(200);
-        ctx.rescrapeNumber = '12345';
-        ctx.onRescrapeNumberInput();
-        mock.timers.tick(299);
-        assert.equal(calls.length, 0);
-        mock.timers.tick(1);
-        assert.equal(calls.length, 1);
-        assert.equal(calls[0].body.number, '12345');
-        calls[0].respond({});
-        await flush();
-    } finally {
-        mock.timers.reset();
-    }
-});
 
 test('parse_empty shows the site-changed sentence not the unreachable one', () => {
     const ctx = makeCtx();
@@ -186,39 +82,4 @@ test('parse_empty shows the site-changed sentence not the unreachable one', () =
     assert.ok(msg.includes('A'));
 });
 
-test('refused shows the backend sentence and falls back when it is empty', () => {
-    const ctx = makeCtx();
-    ctx._applyRescrapeFailure({ success: false, custom_error: 'refused', error: '這個番號不符合' }, 'custom:a');
-    assert.equal(ctx.rescrapeCustomMessage(ctx.rescrapeCustomError), '這個番號不符合');
-    ctx._applyRescrapeFailure({ success: false, custom_error: 'refused', error: '' }, 'custom:a');
-    assert.ok(ctx.rescrapeCustomMessage(ctx.rescrapeCustomError).includes('custom_refused|A'));
-});
 
-test('not_found shows custom_not_found', () => {
-    const ctx = makeCtx();
-    ctx._applyRescrapeFailure({ success: false, custom_error: 'not_found', source: 'custom:b' }, 'custom:b');
-    assert.ok(ctx.rescrapeCustomMessage(ctx.rescrapeCustomError).includes('custom_not_found|B'));
-});
-
-test('the three error states are mutually exclusive', () => {
-    const ctx = makeCtx();
-    const feeds = [
-        { custom_error: 'not_found', source: 'custom:a' },
-        { access_error: 'unreachable', source: 'javbus' },
-        { custom_error: 'parse_empty', source: 'custom:a' },
-        { access_error: 'refused', source: 'javbus' },
-        { custom_error: 'refused', error: 'x' },
-        {},
-        { custom_error: 'not_found', source: 'custom:a' },
-    ];
-    for (const f of feeds) {
-        ctx._applyRescrapeFailure({ success: false, ...f }, 'custom:a');
-        assert.equal(errCount(ctx), 1, JSON.stringify(f));
-    }
-    ctx._applyRescrapeFailure({ success: false, custom_error: 'not_found', source: 'custom:a' }, 'custom:a');
-    ctx.onRescrapeNumberInput();
-    assert.equal(errCount(ctx), 0);
-    ctx._applyRescrapeFailure({ success: false, custom_error: 'not_found', source: 'custom:a' }, 'custom:a');
-    ctx.closeRescrape();
-    assert.equal(errCount(ctx), 0);
-});

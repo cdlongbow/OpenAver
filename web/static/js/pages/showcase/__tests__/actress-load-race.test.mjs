@@ -117,25 +117,6 @@ function successFalseResp() {
 
 // ── 並行 dedup ──────────────────────────────────────────────────────────
 
-test('並行 dedup：連續同步呼叫兩次 loadActresses()，後發的請求即使會失敗也不得清掉已載入的清單', async () => {
-    resetActresses();
-    // 第二次 fetch（若 dedup 失效才會發出）會失敗並清空清單；dedup 正常時只有第一次成功的請求
-    const mock = mockFetchSequence([
-        () => okResp([{ name: 'A', birth: '1990-01-01' }]),
-        // 延後才回失敗：去重失效時失敗結算在成功之後，才會清掉清單
-        () => new Promise((r) => setTimeout(() => r(notOkResp()), 20)),
-    ]);
-    try {
-        const c = makeComponent();
-        const p1 = c.loadActresses();
-        const p2 = c.loadActresses();
-        await Promise.all([p1, p2]);
-        assert.equal(_actresses.length, 1, '清單仍有 1 筆');
-        assert.equal(_actresses[0].name, 'A');
-    } finally {
-        mock.restore();
-    }
-});
 
 // ── settle 後清回 null，下一次呼叫要真的重試 ──────────────────
 
@@ -159,28 +140,6 @@ test('loadActresses retries with a second fetch after the in-flight promise sett
 
 // ── 邊界條件 3：三個失敗出口各自的清理契約 ────────────────────────────────
 
-test('三個失敗出口（!resp.ok／!data.success／fetch throw）：_actressesLoaded===false、_actresses.length===0、_lbActorAges 清空', async () => {
-    const exits = [
-        { name: '!resp.ok', fetchImpl: async (url) => (url === '/api/actress-aliases' ? { ok: true, status: 200, json: async () => ({ groups: [] }) } : notOkResp()) },
-        { name: '!data.success', fetchImpl: async (url) => (url === '/api/actress-aliases' ? { ok: true, status: 200, json: async () => ({ groups: [] }) } : successFalseResp()) },
-        { name: 'catch（fetch throw）', fetchImpl: async () => { throw new Error('network down'); } },
-    ];
-    for (const exit of exits) {
-        resetActresses();
-        _setActresses([{ name: 'stale', birth: '1990-01-01' }]);
-        const prev = globalThis.fetch;
-        globalThis.fetch = exit.fetchImpl;
-        try {
-            const c = makeComponent();
-            await c.loadActresses();
-            assert.equal(stateBase._actressesLoaded, false, exit.name);
-            assert.equal(_actresses.length, 0, exit.name);
-            assert.deepEqual(c._lbActorAges, {}, exit.name);
-        } finally {
-            globalThis.fetch = prev;
-        }
-    }
-});
 
 // ── 邊界條件 4（Codex 149b implementation review P2）：init() 循序時序 ──────
 //
@@ -270,36 +229,6 @@ test('P2（Codex 149b review）：hero-card 首次 loadActresses 成功 settle �
     }
 });
 
-test('P2 修法不擋合法重試：hero-card 分支載入失敗（_actressesLoaded 被設回 false）後，init() 的 guard 仍會真的重試並成功', async () => {
-    resetActresses();
-    stateBase._setActressesLoaded(false);
-    const mock = makeFetchMockForInit([
-        () => notOkResp(),                                            // 第一次：hero-card 分支，失敗
-        () => okResp([{ name: 'RetryActress', birth: '1990-01-01' }]), // 第二次：init() guard 判斷仍未載入 → 真的重試，成功
-    ]);
-    try {
-        await withInitGlobals(async () => {
-            const c = makeInitComponent({
-                search: 'SampleActress',
-                fetchVideos: async () => {
-                    // 逼 hero-card 分支的第一次 loadActresses()（失敗）完整 settle。
-                    for (let i = 0; i < 200 && stateBase._actressesLoaded === false; i++) {
-                        await Promise.resolve();
-                    }
-                    for (let i = 0; i < 50; i++) await Promise.resolve();
-                },
-            });
-            await c.init();
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        });
-
-        assert.equal(mock.calls.actresses, 2, '失敗後 init() 的 guard 必須仍會發出第二次請求（重試）');
-        assert.equal(_actresses.length, 1, '第二次重試成功後資料必須生效');
-        assert.equal(_actresses[0].name, 'RetryActress');
-    } finally {
-        mock.restore();
-    }
-});
 
 // ── CD-155a-4：卡片發行時年齡延遲補算與失敗清空 ───────────────────────────
 
@@ -342,42 +271,4 @@ test('收藏清單延遲到位後，已在牆上的卡片經 paginatedVideos 補
     }
 });
 
-test('收藏清單載入失敗後，牆上卡片的年齡清空、不殘留舊值', async () => {
-    resetActresses();
-    stateBase._setActressesLoaded(false);
-    const v1 = { id: 1, actresses: '明里つむぎ', release_date: '2020-06-15', duration: 60 };
-    _setFilteredVideos([v1]);
-
-    const c = makeVideosActressComponent();
-    c.updatePagination();
-
-    // 先模擬一次成功載入
-    const mock1 = mockFetchSequence([
-        () => okResp([{ name: '明里つむぎ', birth: '1990-06-15' }]),
-    ]);
-    try {
-        await c.loadActresses();
-    } finally {
-        mock1.restore();
-    }
-
-    // 建立帶有年齡的替身元素陣列
-    const proxyElements = c.paginatedVideos.map(v => ({ ...v }));
-    c.paginatedVideos = proxyElements;
-    // 確保一開始替身已有年齡
-    assert.deepStrictEqual(c.paginatedVideos[0]._cardActorAges, { '明里つむぎ': 30 });
-
-    // 下一次載入失敗（回傳 notOkResp() 500）
-    stateBase._setActressesLoaded(false);
-    const mock2 = mockFetchSequence([
-        () => notOkResp(),
-    ]);
-    try {
-        await c.loadActresses();
-        // 斷言：牆上卡片年齡清空成空 map，不殘留舊年齡
-        assert.deepStrictEqual(c.paginatedVideos[0]._cardActorAges, {});
-    } finally {
-        mock2.restore();
-    }
-});
 

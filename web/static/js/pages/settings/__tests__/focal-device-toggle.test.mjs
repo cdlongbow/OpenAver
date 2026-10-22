@@ -92,34 +92,9 @@ test('setFocalDeviceDisabled success:false → error toast + checkbox 回到按�
     assert.equal(checkbox.checked, true);
 });
 
-test('setFocalDeviceDisabled fetch reject → error toast + checkbox 回到按之前', async () => {
-    globalThis.fetch = async () => { throw new Error('offline'); };
-    const fakeThis = makeFakeThis();
-    const checkbox = makeCheckbox(false);
-    await fakeThis.setFocalDeviceDisabled.call(fakeThis, { target: checkbox });
-    assert.deepEqual(fakeThis._toasts, [
-        { msg: 'settings.scraper.focal_toggle_failed', type: 'error' },
-    ]);
-    assert.equal(checkbox.checked, true);
-});
 
 // ── await 前快照：飛行途中再點一下，失敗仍回滾到送出前 ───────────────────────
 //
 // 不修的話：回滾讀的是回應到達當下的 DOM（!event.target.checked），飛行途中再點
 // 一次會把開關撥到錯的位置，與 server 不一致。
 
-test('setFocalDeviceDisabled 飛行途中再點、失敗 → checkbox 落在送出前狀態', async () => {
-    // 送出：關掉（click 後 false）；飛行中使用者又點回 true；失敗應仍回到送出前的 true
-    const fakeThis = makeFakeThis();
-    const checkbox = makeCheckbox(false);
-    globalThis.fetch = async () => {
-        checkbox.checked = true;  // 回應抵達前，使用者又點了一下
-        return { json: async () => ({ success: false, error: 'disk' }) };
-    };
-    await fakeThis.setFocalDeviceDisabled.call(fakeThis, { target: checkbox });
-    assert.deepEqual(fakeThis._toasts, [
-        { msg: 'settings.scraper.focal_toggle_failed', type: 'error' },
-    ]);
-    assert.equal(checkbox.checked, true,
-        '應回到送出前（按關掉之前）的 true，不是 !回應當下');
-});

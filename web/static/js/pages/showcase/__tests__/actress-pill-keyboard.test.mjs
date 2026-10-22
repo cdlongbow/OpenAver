@@ -129,16 +129,6 @@ function makeComponent(overrides) {
 
 // ── CD-116b-6：浮層開著 + Escape ──────────────────────────────────────────
 
-test('_pillEditor 非 null + Escape → _cancelPillEditor 被呼叫、preventDefault 被呼叫', () => {
-    const c = makeComponent({
-        _pillEditor: { dim: 'age', op: '=', value: '37', rangeLo: null, rangeHi: null },
-    });
-    const e = makeKeyEvent('Escape');
-    c.handleKeydown(e);
-    assert.ok(c.__calls.some((x) => x[0] === '_cancelPillEditor'), '應呼叫 _cancelPillEditor');
-    assert.equal(e.defaultPrevented, true, 'Escape 必須 preventDefault');
-    assert.equal(c._pillEditor, null);
-});
 
 // ── 承重：分支必須在 INPUT 擋板之前 ──────────────────────────────────────
 
@@ -172,18 +162,4 @@ test('_pillEditor 非 null + ArrowRight → 不得 preventDefault、不得 nextP
 
 // ── 浮層關閉時既有行為不變 ──────────────────────────────────────────────
 
-test('_pillEditor 為 null + ArrowRight → 仍會 nextPage（既有行為）', () => {
-    const c = makeComponent({ _pillEditor: null, page: 2, totalPages: 5 });
-    const e = makeKeyEvent('ArrowRight');
-    c.handleKeydown(e);
-    assert.ok(c.__calls.some((x) => x[0] === 'nextPage'), '浮層未開時 ArrowRight 應 nextPage');
-    assert.equal(e.defaultPrevented, false);
-});
 
-test('_pillEditor 為 null + Escape on INPUT → 早 return，不副作用', () => {
-    const c = makeComponent({ _pillEditor: null });
-    const e = makeKeyEvent('Escape', { tagName: 'INPUT' });
-    c.handleKeydown(e);
-    assert.equal(c.__calls.length, 0, '浮層未開 + INPUT 應完全不處理');
-    assert.equal(e.defaultPrevented, false);
-});

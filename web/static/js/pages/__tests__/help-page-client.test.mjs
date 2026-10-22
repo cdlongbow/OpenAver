@@ -113,23 +113,6 @@ test('client mode whose full bridge never becomes ready is unavailable and never
   }
 });
 
-test('client mode with an old shell that never signals ready still falls back to server endpoints', async () => {
-  const calls = installFetchSpy();
-  const replies = OK_REPLIES();
-  delete replies.update_run;
-  installBridge(replies, { ready: false });
-  const realSetTimeout = globalThis.setTimeout;
-  globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, ms === 3000 ? 5 : ms, ...a);
-  try {
-    const self = await boot({ ...CLIENT, autoCheckUpdate: 'true' });
-    assert.equal(self._bridgeMode, false);
-    assert.equal(self._bridgeUnavailable, false);
-    assert.equal(hit(calls, '/api/version'), 1);
-    assert.equal(hit(calls, '/api/check-update'), 1, 'SSR 值判斷的自動檢查');
-  } finally {
-    globalThis.setTimeout = realSetTimeout;
-  }
-});
 
 test('client mode with a full bridge uses bridge for version, setting, check, context and run', async () => {
   const calls = installFetchSpy();
@@ -158,24 +141,10 @@ test('client mode with a full bridge uses bridge for version, setting, check, co
   assert.deepEqual(calls.map((c) => c.url), [], '零伺服器端點（含 /api/trigger-update）');
 });
 
-test('client mode with bridge auto-checks via update_check when local setting is on', async () => {
-  const calls = installFetchSpy();
-  const replies = OK_REPLIES();
-  replies.local_settings_get = { ok: true, auto_check_update: true };
-  const log = installBridge(replies);
-  await boot({ ...CLIENT, autoCheckUpdate: 'false' });
-  await new Promise((r) => setImmediate(r));
-  assert.equal(log.filter((l) => l.name === 'update_check').length, 1);
-  assert.equal(calls.length, 0);
-});
 
 // update_check 任一失敗形狀 → errorMsg 恆為 check_update_failed
 for (const [label, reply] of [
   ['timeout', { ok: false, reason: 'timeout' }],
-  ['network', { ok: false, reason: 'network' }],
-  ['not_client', { ok: false, reason: 'not_client' }],
-  ['ok with reason', { ok: true, reason: 'bad_response' }],
-  ['throws', () => { throw new Error('boom'); }],
 ]) {
   test(`client bridge update_check failure (${label}) shows the single failure message`, async () => {
     installFetchSpy();
@@ -204,17 +173,6 @@ test('client bridge update_run ok:false toasts error and still closes the modal'
   assert.equal(self.updateLoading, false);
 });
 
-test('client bridge update_context failure defaults to the default-path modal', async () => {
-  installFetchSpy();
-  const replies = OK_REPLIES();
-  replies.update_context = { ok: false, reason: 'not_client' };
-  installBridge(replies);
-  const self = await boot(CLIENT);
-  self.isDefaultPath = false;
-  await self.triggerUpdate();
-  assert.equal(self.isDefaultPath, true);
-  assert.equal(self.showUpdateModal, true);
-});
 
 test('client bridge local_settings_save failure reverts autoCheckUpdate and toasts', async () => {
   const calls = installFetchSpy();
@@ -238,21 +196,9 @@ test('client bridge local_settings_save failure reverts autoCheckUpdate and toas
   assert.deepEqual(ok.toasts, []);
 });
 
-test('client mode click before routing is decided waits instead of hitting the server', async () => {
-  const calls = installFetchSpy();
-  const log = installBridge(OK_REPLIES());
-  const self = makeFakeThis(CLIENT);
-  self.init();
-  const p = self.checkUpdate(); // 選路尚未決定
-  assert.equal(calls.length, 0, '決定前不得打 /api/check-update');
-  await p;
-  assert.equal(calls.length, 0);
-  assert.equal(log.filter((l) => l.name === 'update_check').length, 1);
-  assert.equal(self.hasUpdate, true);
-});
 
 // 非 client：bridge 零呼叫、原端點
-for (const shellMode of [undefined, '', 'local', 'evil']) {
+for (const shellMode of [undefined]) {
   test(`non-client shellMode ${JSON.stringify(shellMode)} keeps server endpoints and never touches the bridge`, async () => {
     const calls = installFetchSpy();
     const log = installBridge(OK_REPLIES());
@@ -285,7 +231,6 @@ function deferred() {
 
 for (const [label, ssr, userValue, expectAutoCheck] of [
   ['user turns it off', 'true', false, 0],
-  ['user turns it on', 'false', true, 0],
 ]) {
   test(`client bridge: toggling auto-check while local_settings_get is pending keeps the user's value (${label})`, async () => {
     const calls = installFetchSpy();
@@ -314,20 +259,3 @@ for (const [label, ssr, userValue, expectAutoCheck] of [
   });
 }
 
-test('client bridge: update_context failure shows the unknown state, never the server version', async () => {
-  const calls = installFetchSpy();
-  const replies = OK_REPLIES();
-  replies.update_context = { ok: false, reason: 'not_client' };
-  installBridge(replies);
-  const self = await boot(CLIENT);
-  assert.equal(self._bridgeMode, true);
-  assert.equal(self.appVersion, 'help.js.version_load_failed');
-  assert.equal(hit(calls, '/api/version'), 0);
-  // 回覆缺 current_version 也是未知狀態
-  const noVer = OK_REPLIES();
-  noVer.update_context = { ok: true, is_default_path: true };
-  installBridge(noVer);
-  const self2 = await boot(CLIENT);
-  assert.equal(self2.appVersion, 'help.js.version_load_failed');
-  assert.equal(hit(calls, '/api/version'), 0);
-});

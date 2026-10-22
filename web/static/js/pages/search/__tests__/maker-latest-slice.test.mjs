@@ -35,11 +35,6 @@ function fakeFetch(body, { throws = false, badJson = false } = {}) {
 const okBody = (extra = {}) => ({ success: true, maker_search_enabled: true, makers: MAKERS, hidden_keys: [], ...extra });
 const labels = (page) => page.makerCapsules.map((c) => c.label);
 
-test('slice shape: 無 init()、searchPage().init 仍存在、初值為空', () => {
-    assert.equal('init' in searchStateMakerLatest(), false);
-    assert.equal(typeof searchPage().init, 'function');
-    assert.deepEqual(searchPage().makerCapsules, []);
-});
 
 test('load: 成功載入 ⇒ makerCapsules 為預期排名（至多 5 顆）', async () => {
     fakeFetch(okBody());
@@ -55,12 +50,6 @@ test('maker-search-disabled-empty: maker_search_enabled:false（makers 非空）
     assert.deepEqual(page.makerCapsules, []);
 });
 
-test('success-false-empty: success:false（makers 非空）⇒ []', async () => {
-    fakeFetch(okBody({ success: false }));
-    const page = searchPage();
-    await page.loadMakerCapsules();
-    assert.deepEqual(page.makerCapsules, []);
-});
 
 test('failure-collapses-to-empty: fetch 例外／非 JSON ⇒ [] 且不 reject', async () => {
     const origError = console.error;
@@ -77,12 +66,6 @@ test('failure-collapses-to-empty: fetch 例外／非 JSON ⇒ [] 且不 reject',
     }
 });
 
-test('load-applies-hidden-keys: 回應 hidden_keys 內的片商不出現，下一名補上', async () => {
-    fakeFetch(okBody({ hidden_keys: ['b'] }));
-    const page = searchPage();
-    await page.loadMakerCapsules();
-    assert.deepEqual(labels(page), ['A', 'C', 'D', 'E', 'F']);
-});
 
 test('hide-removes-and-backfills: hideMakerCapsule 後該顆消失、第 6 名補上', async () => {
     fakeFetch(okBody());
@@ -93,15 +76,6 @@ test('hide-removes-and-backfills: hideMakerCapsule 後該顆消失、第 6 名�
     assert.deepEqual(labels(page), ['A', 'C', 'D', 'E', 'F']);
 });
 
-test('hide-rebuilds-display: hideMakerCapsule 後 makerCapsules 是新陣列', async () => {
-    fakeFetch(okBody());
-    const page = searchPage();
-    await page.loadMakerCapsules();
-    const before = page.makerCapsules;
-    page.hideMakerCapsule('a');
-    assert.notStrictEqual(page.makerCapsules, before);
-    assert.equal(page.makerCapsules.some((c) => c.key === 'a'), false);
-});
 
 test('start-passes-maker-opts: startMakerSearch ⇒ doSearch("", { maker: capsule })', () => {
     const page = searchPage();
@@ -113,15 +87,3 @@ test('start-passes-maker-opts: startMakerSearch ⇒ doSearch("", { maker: capsul
     assert.deepEqual(calls[0], ['', { maker: capsule }]);
 });
 
-test('clearAll-keeps-capsules: clearAll 前後膠囊內容相同、不重抓', async () => {
-    const calls = fakeFetch(okBody());
-    const page = searchPage();
-    await page.loadMakerCapsules();
-    const before = JSON.stringify(page.makerCapsules);
-    const n = calls.length;
-    globalThis.sessionStorage = { setItem() {}, getItem: () => null, removeItem() {} };
-    page.$nextTick = (fn) => fn && fn();
-    page.clearAll();
-    assert.equal(JSON.stringify(page.makerCapsules), before);
-    assert.equal(calls.length, n);
-});

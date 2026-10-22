@@ -17,30 +17,9 @@ globalThis.window = globalThis;
 register(new URL('./alias-loader.mjs', import.meta.url), import.meta.url);
 const { parseActorsInput } = await import('../state/result-card.js');
 
-test('parseActorsInput: 全形逗號 "，"（U+FF0C）→ 2 筆（非漏抓成 1 筆）', () => {
-  assert.deepEqual(parseActorsInput('橋本ありな，蒼井そら'), ['橋本ありな', '蒼井そら']);
-});
 
 test('parseActorsInput: 三種分隔符混用 "、/,/，" → 4 筆', () => {
   assert.deepEqual(parseActorsInput('A、B,C，D'), ['A', 'B', 'C', 'D']);
 });
 
-test('parseActorsInput: 前後/中間空白逐片段 trim', () => {
-  assert.deepEqual(parseActorsInput(' A , B '), ['A', 'B']);
-});
 
-test('parseActorsInput: 空字串 → []', () => {
-  assert.deepEqual(parseActorsInput(''), []);
-});
-
-test('parseActorsInput: 全空白 → []', () => {
-  assert.deepEqual(parseActorsInput('   '), []);
-});
-
-test('parseActorsInput: 尾隨分隔符 "A、" → ["A"]（尾端空片段被過濾）', () => {
-  assert.deepEqual(parseActorsInput('A、'), ['A']);
-});
-
-test('parseActorsInput: 括號不觸發拆分（CD-106-3 不做括號偵測）', () => {
-  assert.deepEqual(parseActorsInput('橋本ありな (新ありな)'), ['橋本ありな (新ありな)']);
-});

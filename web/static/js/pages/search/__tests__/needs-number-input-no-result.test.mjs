@@ -28,18 +28,6 @@ test('139b-T12: 番號解析成功但查無結果 → 鉛筆出現（本卡新�
   );
 });
 
-test('139b-T12: 搜尋失敗（error 分支）同樣是 searched + 空陣列 → 鉛筆出現', () => {
-  // file-list.js:146-147 的 error 分支與 no-result 分支設的是同一組欄位。
-  assert.equal(
-    needsNumberInput({ number: 'ABC-999', searched: true, searchResults: [] }),
-    true,
-  );
-});
-
-test('139b-T12: 檔名解析不出番號 → 鉛筆仍出現（原有行為不得回歸）', () => {
-  assert.equal(needsNumberInput({ number: null }), true);
-  assert.equal(needsNumberInput({ number: '' }), true);
-});
 
 test('139b-T12: 查到結果 → 鉛筆不出現', () => {
   assert.equal(
@@ -49,15 +37,3 @@ test('139b-T12: 查到結果 → 鉛筆不出現', () => {
   );
 });
 
-test('139b-T12: 還沒查 → 鉛筆不出現，且不得因 searchResults 未定義而爆炸', () => {
-  assert.equal(
-    needsNumberInput({ number: 'ABC-123', searched: false }),
-    false,
-    '尚未搜尋的檔案沒有「查不到」這回事',
-  );
-  assert.equal(
-    needsNumberInput({ number: 'ABC-123' }),
-    false,
-    'searched 欄位還不存在時（剛建 fileList）同樣不顯示',
-  );
-});

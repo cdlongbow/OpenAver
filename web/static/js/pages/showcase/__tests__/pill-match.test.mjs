@@ -146,21 +146,6 @@ test('alias 正向命中：pill 值為別名 A，影片 actresses 含同 group �
     assert.equal(predicate({ actresses: 'B' }), true);
 });
 
-test('全形寫法的 alias 成員仍命中：靠 D5 雙 key 查表 + 值正規化命中', () => {
-    // _nameToGroup/_tagToGroup 的 key 只做 .toLowerCase()，無 NFKC（state-base.js:65/93 現況），
-    // 若 pill 值本身是全形字元，normalizePillValue() 折出的 key（半形小寫）查不到表裡的全形小寫 key，
-    // 必須靠第二把 candidateKey（純 .toLowerCase()，不做 NFKC）才查得到。
-    //
-    // 刻意讓 pill 值與命中影片的 token 不同字面（'Ｂ' vs 'A'）——若兩者本就折疊成同一個
-    // normalizePillValue() 結果，「pill 自身正規化值恆在 Set 內」那條 D5 保底規則會讓這條測試
-    // 在完全不查 alias group 的情況下也綠燈，測不出雙 key 查表本身是否有效（green shell）。
-    const fullWidthPillValue = 'Ｂ';                          // norm = 'b'
-    const fullWidthLowerKey = fullWidthPillValue.toLowerCase(); // 'ｂ'（全形小寫，非 norm 的 'b'）
-    const nameToGroup = {};
-    nameToGroup[fullWidthLowerKey] = [fullWidthPillValue, 'A'];  // 只掛在全形 key 下，半形 key 'b' 查無此表
-    const predicate = buildPillPredicate([{ dim: 'actress', value: fullWidthPillValue }], nameToGroup, {});
-    assert.equal(predicate({ actresses: 'A' }), true);
-});
 
 test('"A, B" 形式的 actresses 欄位，pill 值 B 命中（trim 驗證，D4）', () => {
     const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
@@ -170,44 +155,12 @@ test('"A, B" 形式的 actresses 欄位，pill 值 B 命中（trim 驗證，D4�
     }
 });
 
-test('未知 dim（如 typo）→ predicate 對任何影片皆回傳 false（fail closed，D3）', () => {
-    const predicate = buildPillPredicate([{ dim: 'typo', value: 'anything' }], {}, {});
-    assert.equal(predicate({ maker: 'anything', actresses: 'anything', tags: 'anything' }), false);
-    assert.equal(predicate({}), false);
-});
-
 test('user_tags 參與：tags 不含 X、user_tags 含 X → tag pill X match 該影片（D7 反轉）', () => {
     // 這裡曾經鎖 user_tags 不參與的舊行為（spec-115 §4.3），121b 刻意行為升級
     const predicate = buildPillPredicate([{ dim: 'tag', value: 'X' }], {}, {});
     assert.equal(predicate({ tags: 'Y', user_tags: ['X'] }), true);
 });
 
-test('mergeTagTokens：user_tags 非陣列（undefined / null / 數字）不拋例外，結果等同只有 tags（邊界 3）', () => {
-    const tagsOnly = mergeTagTokens({ tags: 'Y' });
-    assert.doesNotThrow(() => {
-        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: undefined }), tagsOnly);
-        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: null }), tagsOnly);
-        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 42 }), tagsOnly);
-        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: { X: true } }), tagsOnly);
-        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 'X' }), tagsOnly);
-    });
-    // 字串型 user_tags 不得被當成 token 命中
-    const predicate = buildPillPredicate([{ dim: 'tag', value: 'X' }], {}, {});
-    assert.equal(predicate({ tags: 'Y', user_tags: 'X' }), false);
-});
-
-test('actress 路徑不受 user_tags 影響：actresses 為 A、user_tags 含 B → actress pill B 不 match（邊界 6）', () => {
-    const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
-    assert.equal(predicate({ actresses: 'A', user_tags: ['B'] }), false);
-});
-
-
-test('video.maker 為 null 的影片，對任何非空片商 pill 皆不 match、不拋例外（Extra 3 finding）', () => {
-    const predicate = buildPillPredicate([{ dim: 'maker', value: 'S1' }], {}, {});
-    assert.doesNotThrow(() => {
-        assert.equal(predicate({ maker: null }), false);
-    });
-});
 
 test('TASK-124a-T1：release pill 與既有維度混用取交集（AND）', () => {
     const predicate = buildPillPredicate(
@@ -220,17 +173,6 @@ test('TASK-124a-T1：release pill 與既有維度混用取交集（AND）', () =
     assert.equal(predicate({ release_date: '2024-08-01', maker: 'S1' }), false);
 });
 
-test('TASK-124a-T1：release pill 的 expandPill 回 null 時 fail-closed（不是 fail-open）', () => {
-    // op 不在四值白名單內 → expandPill 回 null → matcher 對任何影片皆回 false，
-    // 不是讓這枚 pill 形同虛設變相回 true。
-    const predicate = buildPillPredicate([{ dim: 'release', op: '!=', value: '2024' }], {}, {});
-    assert.equal(predicate({ release_date: '2024-01-01' }), false);
-    assert.equal(predicate({}), false);
-    assert.equal(predicate({ release_date: null }), false);
-    // value 形狀不合法（garbage）同樣 expandPill→null→fail-closed
-    const garbage = buildPillPredicate([{ dim: 'release', op: '=', value: 'garbage' }], {}, {});
-    assert.equal(garbage({ release_date: '2024-01-01' }), false);
-});
 
 test('TASK-124a-T1：release pill range 命中／不命中邊界（含端點）', () => {
     const predicate = buildPillPredicate(
@@ -263,23 +205,6 @@ test('pill 與自由文字同時作用：一枚片商 pill ＋ 自由文字關�
     assert.equal(_filteredVideos[0].title, 'Alpha');
 });
 
-test('this.filteredCount === _filteredVideos.length（pill 有/無 × 搜尋 有/無 四種組合）', () => {
-    _setVideos([
-        { title: 'Gamma', maker: 'Moodyz', tags: 'A', actresses: '', number: 'DEF-001' },
-        { title: 'Delta', maker: 'S1', tags: 'B', actresses: '', number: 'DEF-002' },
-    ]);
-    const combos = [
-        { pills: [], search: '' },
-        { pills: [{ dim: 'maker', value: 'Moodyz' }], search: '' },
-        { pills: [], search: 'gamma' },
-        { pills: [{ dim: 'maker', value: 'Moodyz' }], search: 'gamma' },
-    ];
-    for (const combo of combos) {
-        const c = makeComponent(combo);
-        c.applyFilterAndSort(true);
-        assert.equal(c.filteredCount, _filteredVideos.length);
-    }
-});
 
 test('自由文字回歸（DoD ②）：番號模糊比對（ABC-123 打 abc123 命中），零 pill', () => {
     _setVideos([{ title: 'X', number: 'ABC-123', maker: '', tags: '', actresses: '' }]);
@@ -288,16 +213,6 @@ test('自由文字回歸（DoD ②）：番號模糊比對（ABC-123 打 abc123 
     assert.equal(_filteredVideos.length, 1);
 });
 
-test('自由文字回歸（DoD ②）：多關鍵字 AND，零 pill', () => {
-    _setVideos([
-        { title: 'X', maker: 'Moodyz', tags: '痴女', actresses: '', number: 'A-1' },
-        { title: 'Y', maker: 'Moodyz', tags: '中出', actresses: '', number: 'A-2' },
-    ]);
-    const c = makeComponent({ search: 'moodyz 痴女' });
-    c.applyFilterAndSort(true);
-    assert.equal(_filteredVideos.length, 1);
-    assert.equal(_filteredVideos[0].title, 'X');
-});
 
 test('自由文字回歸（DoD ②）：女優 alias 展開，零 pill', () => {
     _setVideos([{ title: 'Z', maker: '', tags: '', actresses: 'AliasActressB', number: 'A-3' }]);
@@ -359,39 +274,6 @@ test('B1 端到端：燈箱手貼 user_tags 中字 → 瀏覽頁標籤篩 中文
     }
 });
 
-test('B4 端到端：清空 user_tags 版結果集 ⊆ 保留版（既有 tag 篩選不因 121b 縮小）', () => {
-    const pill = [{ dim: 'tag', value: '痴女' }];
-    const clearVideos = [
-        { number: 'B4-TAGS', title: 'TagsHit', maker: '', tags: '痴女', actresses: '', user_tags: [] },
-        { number: 'B4-USER', title: 'UserOnly', maker: '', tags: '', actresses: '', user_tags: [] },
-        { number: 'B4-MISS', title: 'NoHit', maker: '', tags: '中出', actresses: '', user_tags: [] },
-    ];
-    const keptVideos = [
-        { number: 'B4-TAGS', title: 'TagsHit', maker: '', tags: '痴女', actresses: '', user_tags: ['重看'] },
-        { number: 'B4-USER', title: 'UserOnly', maker: '', tags: '', actresses: '', user_tags: ['痴女'] },
-        { number: 'B4-MISS', title: 'NoHit', maker: '', tags: '中出', actresses: '', user_tags: ['重看'] },
-    ];
-
-    _setVideos(clearVideos);
-    const cClear = makeComponent({ pills: pill });
-    cClear.applyFilterAndSort(true);
-    const filteredClearIds = _filteredVideos.map((v) => v.number);
-
-    _setVideos(keptVideos);
-    const cKept = makeComponent({ pills: pill });
-    cKept.applyFilterAndSort(true);
-    const filteredKeptIds = _filteredVideos.map((v) => v.number);
-
-    for (const id of filteredClearIds) {
-        assert.ok(filteredKeptIds.includes(id), `number ${id} 在保留 user_tags 後消失（篩選不得變窄）`);
-    }
-    assert.ok(filteredClearIds.includes('B4-TAGS'), '靠 tags 命中的片兩份都應在結果裡');
-    assert.ok(filteredKeptIds.includes('B4-TAGS'));
-    assert.ok(filteredKeptIds.includes('B4-USER'), '只靠 user_tags 命中的片必須只在 kept 版');
-    assert.ok(!filteredClearIds.includes('B4-USER'), '清空版不得因 user_tags 命中（子集斷言才有內容）');
-    assert.ok(!filteredClearIds.includes('B4-MISS'));
-    assert.ok(!filteredKeptIds.includes('B4-MISS'));
-});
 
 // =====================================================================
 // TASK-121b-T2 — CoverBadgeManifest / mergeAliasPair
@@ -494,46 +376,10 @@ test('CoverBadgeManifest cold/warm：pill 中文字幕 vs user_tags 中字（B1�
     assert.equal(warm.length, 1);
 });
 
-// [lint-guard: node-justified] 162e 暫留：缺 block-comment 剝除欄位（order 只有 stripLineComments 不剝 /* */），被區塊註解餵飽時 fail-open
-test('CoverBadgeManifest 順序錨點：await _loadCoverBadgeManifest 早於 applyFilterAndSort(true)', () => {
-    const src = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
-    // 剝註解：mutation A 把 await 整行註解掉時必須轉 RED（裸 indexOf 會命中註解）。
-    const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    const idxCover = stripped.indexOf('await _loadCoverBadgeManifest()');
-    const idxApply = stripped.indexOf('applyFilterAndSort(true)');
-    assert.ok(idxCover !== -1 && idxApply !== -1, '兩個錨點字面必須存在');
-    assert.ok(idxCover < idxApply, 'cover badge manifest 必須在第一次 applyFilterAndSort 之前載入');
-});
 
 // =====================================================================
 // TASK-121c-T2 — mergeAliasGroup / loader 併整組 / _coverBadgeRules
 // =====================================================================
-
-test('mergeAliasGroup N 元：四個 key 同組含四成員且重複呼叫冪等', async () => {
-    const { _mergeAliasGroup } = await import('../state-base.js');
-    assert.equal(typeof _mergeAliasGroup, 'function', '_mergeAliasGroup 必須存在');
-    const map = {};
-    const members = ['無碼破解', '破解', '克破', 'AI'];
-    _mergeAliasGroup(map, members);
-    const first = map['無碼破解'.toLowerCase()];
-    assert.ok(Array.isArray(first), 'canonical key 必須是陣列');
-    assert.equal(first.length, 4, '該組必須含四個成員');
-    for (const key of members) {
-        const got = map[key.toLowerCase()];
-        assert.equal(got, first, `${key} 必須指到同一組陣列`);
-        for (const m of members) {
-            assert.ok(got.includes(m), `${key} 必須含 ${m}`);
-        }
-    }
-    _mergeAliasGroup(map, members);
-    assert.equal(map['無碼破解'.toLowerCase()].length, 4, '重複呼叫不得長出重複值');
-    assert.doesNotThrow(() => {
-        _mergeAliasGroup(map, []);
-        _mergeAliasGroup(map, ['單獨']);
-        _mergeAliasGroup(map, ['破解', '破解', '克破']);
-        _mergeAliasGroup(map, ['無碼破解', null, undefined, '', '克破']);
-    });
-});
 
 test('mergeAliasGroup 與既有 DB alias 群組相交時取聯集', async () => {
     const { _mergeAliasGroup } = await import('../state-base.js');

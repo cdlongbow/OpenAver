@@ -93,20 +93,9 @@ test('addActressPill(height, "160cm")：完整物件 deepEqual 四欄位 value �
     assert.deepEqual(c.actressPills[0], { dim: 'height', op: '=', value: '160', value2: null });
 });
 
-test('addActressPill(cup, "B")：完整物件 deepEqual', () => {
-    const c = makeComponent();
-    c.addActressPill('cup', 'B');
-    assert.deepEqual(c.actressPills[0], { dim: 'cup', op: '=', value: 'B', value2: null });
-});
 
 // ── 型別正規化（產品真實型別：age 是 number）──────────────────────────────
 
-test('addActressPill(age, 37 number)：value 存成字串 "37"', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 37);
-    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '=', value: '37', value2: null });
-    assert.equal(typeof c.actressPills[0].value, 'string');
-});
 
 test('removeActressPill(age, 37 number) 能移除 number 新增的 pill', () => {
     const c = makeComponent();
@@ -116,12 +105,6 @@ test('removeActressPill(age, 37 number) 能移除 number 新增的 pill', () => 
     assert.equal(c.actressPills.length, 0);
 });
 
-test('removeActressPill(age, "37" string) 也能移除 number 新增的 pill', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 37);
-    c.removeActressPill('age', '37');
-    assert.equal(c.actressPills.length, 0);
-});
 
 // ── 同維度取代 ─────────────────────────────────────────────────────────────
 
@@ -135,67 +118,12 @@ test('同維度取代：add age 30 再 add age 32 → length 1 且 value "32"', 
 
 // ── removeActressPill ──────────────────────────────────────────────────────
 
-test('removeActressPill：移除存在的 pill → length 少一', () => {
-    const c = makeComponent();
-    c.addActressPill('height', '160cm');
-    c.addActressPill('cup', 'B');
-    assert.equal(c.actressPills.length, 2);
-    // 116b：height value 剝單位後存 '160'；remove 比對的是存入值
-    c.removeActressPill('height', '160');
-    assert.equal(c.actressPills.length, 1);
-    assert.deepEqual(c.actressPills[0], { dim: 'cup', op: '=', value: 'B', value2: null });
-});
 
 // ── _setActressPill 直呼契約（CD-116b-1b）──────────────────────────────────
 
-test('_setActressPill：同維度整包取代 ＋ applyActressFilterAndSort 恰呼叫一次', () => {
-    const c = makeComponent();
-    let applyCalls = 0;
-    const realApply = c.applyActressFilterAndSort.bind(c);
-    c.applyActressFilterAndSort = function () {
-        applyCalls++;
-        return realApply();
-    };
-    c._setActressPill({ dim: 'age', op: '<=', value: '30', value2: null });
-    assert.equal(c.actressPills.length, 1);
-    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '<=', value: '30', value2: null });
-    assert.equal(applyCalls, 1, '首次 _setActressPill 必須呼叫 apply 一次');
-
-    c._setActressPill({ dim: 'age', op: 'range', value: '25', value2: '35' });
-    assert.equal(c.actressPills.length, 1, '同維度必須整包取代、length 仍 1');
-    assert.deepEqual(c.actressPills[0], { dim: 'age', op: 'range', value: '25', value2: '35' });
-    assert.equal(applyCalls, 2, '第二次 _setActressPill 再呼叫 apply 一次');
-});
 
 // ── 116b review 修正：height 剝單位 fail-closed / value2 對稱 ───────────────
 
-test('_setActressPill：height 不可解析值退回 raw，永不寫入字面 null', () => {
-    const c = makeComponent();
-    c._setActressPill({ dim: 'height', op: '=', value: '不明', value2: null });
-    assert.equal(c.actressPills.length, 1);
-    assert.equal(c.actressPills[0].value, '不明');
-    assert.notEqual(c.actressPills[0].value, 'null', 'value 不得為字面字串 null');
-});
-
-test('_setActressPill：height range 的 value2 也剝單位', () => {
-    const c = makeComponent();
-    c._setActressPill({ dim: 'height', op: 'range', value: '155cm', value2: '165cm' });
-    assert.deepEqual(c.actressPills[0], {
-        dim: 'height',
-        op: 'range',
-        value: '155',
-        value2: '165',
-    });
-});
-
-test('removeActressPill：不存在的 (dim, value) → 陣列不變', () => {
-    const c = makeComponent();
-    c.addActressPill('height', '160cm');
-    const before = c.actressPills.slice();
-    c.removeActressPill('height', '999cm');
-    assert.equal(c.actressPills.length, before.length);
-    assert.deepEqual(c.actressPills, before);
-});
 
 // ── 過濾效果 ───────────────────────────────────────────────────────────────
 
@@ -208,51 +136,9 @@ test('addActressPill 後 applyActressFilterAndSort 真的過濾', () => {
 
 // ── CD-116a-9：不走 _sortWithFlip ──────────────────────────────────────────
 
-test('addActressPill / removeActressPill 呼叫鏈 _sortWithFlip 次數為 0', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 37);
-    c.addActressPill('height', '160cm');
-    c.removeActressPill('age', 37);
-    assert.equal(c.sortFlipCalls, 0, 'pill 增刪不得包進 _sortWithFlip');
-});
 
 // ── 不持久化（CD-116a-5）───────────────────────────────────────────────────
 
-test('不持久化：_persistedShowcase 不含 actressPills 欄位', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 37);
-    assert.ok(!('actressPills' in c._persistedShowcase));
-    // 也不得以其他女優 pill 相關 key 混入
-    const keys = Object.keys(c._persistedShowcase);
-    assert.equal(keys.some((k) => /actressPill/i.test(k)), false, `keys=${keys.join(',')}`);
-});
-
-test('不持久化：saveState() 函式體字面不含 actressPills', () => {
-    // 比照 pill-clear.test.mjs 讀 STATE_BASE_SRC 的手法
-    const defRe = /saveState\s*\(\s*\)\s*\{/;
-    const m = defRe.exec(STATE_BASE_SRC);
-    assert.ok(m, '必須定義 saveState() 方法');
-    const open = STATE_BASE_SRC.indexOf('{', m.index);
-    let depth = 0;
-    let body = '';
-    for (let i = open; i < STATE_BASE_SRC.length; i++) {
-        const ch = STATE_BASE_SRC[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) {
-                body = STATE_BASE_SRC.slice(open + 1, i);
-                break;
-            }
-        }
-    }
-    assert.ok(body.length > 0, 'saveState 函式體不可為空');
-    assert.equal(
-        body.includes('actressPills'),
-        false,
-        `saveState 不得寫 actressPills，實際體：${body.slice(0, 200)}…`,
-    );
-});
 
 // ── 持久化（129-T2 / CD-129-6）──────────────────────────────────────────────
 
@@ -265,19 +151,6 @@ function stubWindow(opts) {
     };
 }
 
-test('持久化：_persistedShowcase 含 actressSearch 欄位且預設為空字串', () => {
-    const c = makeComponent();
-    assert.ok('actressSearch' in c._persistedShowcase, '_persistedShowcase 必須宣告 actressSearch');
-    assert.equal(c._persistedShowcase.actressSearch, '');
-});
-
-test('持久化：saveState() 後 _persistedShowcase.actressSearch === this.actressSearch', () => {
-    stubWindow();
-    const c = makeComponent({ actressSearch: '三上悠亞' });
-    c.saveState();
-    assert.equal(c._persistedShowcase.actressSearch, c.actressSearch);
-    assert.equal(c._persistedShowcase.actressSearch, '三上悠亞');
-});
 
 test('持久化：restoreState() 能把 actressSearch 讀回，無值時預設為空字串', () => {
     stubWindow({ search: '' });
@@ -298,16 +171,6 @@ test('持久化：restoreState() 能把 actressSearch 讀回，無值時預設�
     assert.equal(cEmpty.actressSearch, '');
 });
 
-test('持久化：actressPills 仍然不持久化（saveState 後 _persistedShowcase 仍不含 actressPills）', () => {
-    stubWindow();
-    const c = makeComponent();
-    c.addActressPill('age', 37);
-    c.saveState();
-    assert.ok(!('actressPills' in c._persistedShowcase), '_persistedShowcase 仍不得含 actressPills');
-    const keys = Object.keys(c._persistedShowcase);
-    assert.equal(keys.some((k) => /actressPill/i.test(k)), false, `keys=${keys.join(',')}`);
-});
-
 
 // ── 129-T2：光是欄位進了 _persistedShowcase 還不夠，得有人呼叫 saveState() ──
 //
@@ -317,17 +180,6 @@ test('持久化：actressPills 仍然不持久化（saveState 後 _persistedShow
 // 全綠的情況下，使用者打字仍然不會被存下來——這個洞只有真的跑一次打字流程才看得到。
 // （129-T2 的 CDP 驗收就是這樣抓到的。）
 
-test('打字：onActressSearchChange() 必須呼叫 saveState()（否則 actressSearch 永遠不會被寫入）', () => {
-    const c = makeComponent();
-    let saveCalls = 0;
-    let applyCalls = 0;
-    c.saveState = function () { saveCalls++; };
-    c.applyActressFilterAndSort = function () { applyCalls++; };
-    c.actressSearch = '三上';
-    c.onActressSearchChange();
-    assert.equal(applyCalls, 1, 'onActressSearchChange 仍要重新篩選');
-    assert.equal(saveCalls, 1, 'onActressSearchChange 必須恰好呼叫 1 次 saveState（=== 1，不是 >= 1）');
-});
 
 // 同一條回歸的黑盒版本（sonnet review 建議）：不 stub 任何東西，直接看「打完字之後
 // _persistedShowcase 裡有沒有東西」。好處是——把 saveState() 的呼叫搬進

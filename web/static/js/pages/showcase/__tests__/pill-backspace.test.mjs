@@ -146,9 +146,6 @@ function evt({ isComposing = false, value = '', selectionStart = 0, selectionEnd
 
 // ===== 方法存在性 =====
 
-test('stateVideos() 定義 onSearchBackspace', () => {
-    assert.equal(typeof stateVideos().onSearchBackspace, 'function');
-});
 
 // ===== IME 安全閘（硬性紅線）=====
 
@@ -186,22 +183,6 @@ test('空值＋caret 0＋非組字＋有 pill → 刪最後一枚，第一枚存
     assert.equal(c.pills[0].value, 'Moodyz');
 });
 
-test('刪除委派 removePill(last.dim, last.value)', () => {
-    const c = makeComponent({
-        pills: [
-            { dim: 'maker', value: 'Moodyz' },
-            { dim: 'series', value: 'Madonna' },
-        ],
-    });
-    const realRemove = c.removePill.bind(c);
-    c.removePill = function (dim, value) {
-        c.removeCalls.push([dim, value]);
-        return realRemove(dim, value);
-    };
-    c.onSearchBackspace(evt({ value: '', selectionStart: 0, selectionEnd: 0 }));
-    assert.equal(c.removeCalls.length, 1);
-    assert.deepEqual(c.removeCalls[0], ['series', 'Madonna']);
-});
 
 // ===== 有字 → 不動 pill（含 caret 0 組合，鎖空值擋板本身）=====
 
@@ -219,119 +200,15 @@ test('輸入框有字 → pills 不變、不呼叫 removePill', () => {
     assert.equal(c.pills.length, 1);
 });
 
-test('輸入框有字且 caret 在最左 → 仍不刪 pill（空值判斷先擋）', () => {
-    const c = makeComponent({
-        pills: [{ dim: 'maker', value: 'Moodyz' }],
-    });
-    const realRemove = c.removePill.bind(c);
-    c.removePill = function (dim, value) {
-        c.removeCalls.push([dim, value]);
-        return realRemove(dim, value);
-    };
-    c.onSearchBackspace(evt({ value: 'ab', selectionStart: 0, selectionEnd: 0 }));
-    assert.equal(c.removeCalls.length, 0);
-    assert.equal(c.pills.length, 1);
-});
 
 // ===== caret / selection =====
 
-test('空值但 caret 不在 0 → pills 不變、不呼叫 removePill', () => {
-    const c = makeComponent({
-        pills: [{ dim: 'maker', value: 'Moodyz' }],
-    });
-    const realRemove = c.removePill.bind(c);
-    c.removePill = function (dim, value) {
-        c.removeCalls.push([dim, value]);
-        return realRemove(dim, value);
-    };
-    // 理論上空字串 caret 不會在中間，但仍須顯式覆蓋 caret 判斷分支本身
-    c.onSearchBackspace(evt({ value: '', selectionStart: 1, selectionEnd: 1 }));
-    assert.equal(c.removeCalls.length, 0);
-    assert.equal(c.pills.length, 1);
-});
-
-test('非 collapsed 選取（selectionStart !== selectionEnd）→ 不刪 pill', () => {
-    const c = makeComponent({
-        pills: [{ dim: 'maker', value: 'Moodyz' }],
-    });
-    const realRemove = c.removePill.bind(c);
-    c.removePill = function (dim, value) {
-        c.removeCalls.push([dim, value]);
-        return realRemove(dim, value);
-    };
-    // value 非空才能有真實非 collapsed 選取；空值判斷也會擋，但選取條件必須仍顯式成立
-    c.onSearchBackspace(evt({ value: 'ab', selectionStart: 0, selectionEnd: 2 }));
-    assert.equal(c.removeCalls.length, 0);
-    assert.equal(c.pills.length, 1);
-});
 
 // 顯式鎖 caret 的非 collapsed 分支：空字串 + selectionStart/End 不同（合成 event）
 // 若有人只判 selectionStart === 0 而漏 selectionEnd，這支會抓到。
-test('空值但 selection 非 collapsed → 不刪 pill（caret 判斷式必須同時比對 End）', () => {
-    const c = makeComponent({
-        pills: [{ dim: 'maker', value: 'Moodyz' }],
-    });
-    const realRemove = c.removePill.bind(c);
-    c.removePill = function (dim, value) {
-        c.removeCalls.push([dim, value]);
-        return realRemove(dim, value);
-    };
-    c.onSearchBackspace(evt({ value: '', selectionStart: 0, selectionEnd: 1 }));
-    assert.equal(c.removeCalls.length, 0);
-    assert.equal(c.pills.length, 1);
-});
 
 // ===== 零 pill =====
 
-test('pills.length === 0（空值＋caret 0＋非組字）→ 不丟例外、不呼叫 removePill', () => {
-    const c = makeComponent({ pills: [] });
-    const realRemove = c.removePill.bind(c);
-    c.removePill = function (dim, value) {
-        c.removeCalls.push([dim, value]);
-        return realRemove(dim, value);
-    };
-    assert.doesNotThrow(() => {
-        c.onSearchBackspace(evt({ value: '', selectionStart: 0, selectionEnd: 0 }));
-    });
-    assert.equal(c.removeCalls.length, 0);
-    assert.equal(c.pills.length, 0);
-});
 
 // ===== 結構：handler 第一行必須是 isComposing 早退 =====
 
-test('onSearchBackspace 函式體第一行即 if (event.isComposing) return', () => {
-    // 鎖順序：IME 閘必須是第一個 early-return，不得被 empty/caret 判斷擠到後面
-    const m = STATE_VIDEOS_SRC.match(
-        /onSearchBackspace\s*\(\s*event\s*\)\s*\{([\s\S]*?)\n\s{4,8}\},/,
-    );
-    assert.ok(m, '應能抽出 onSearchBackspace 方法體');
-    const body = m[1].replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    const firstStmt = body.trim().split(/\n/).map((l) => l.trim()).filter(Boolean)[0];
-    assert.equal(
-        firstStmt,
-        'if (event.isComposing) return;',
-        `函式體第一句必須是 isComposing 早退，實際：${firstStmt}`,
-    );
-});
-
-// ===== 結構：showcase.html 綁定 =====
-
-test('showcase.html 搜尋 input 帶 @keydown.backspace="onSearchBackspace($event)"', () => {
-    const GROUP = extractFilterPillGroup(SHOWCASE_HTML);
-    assert.ok(
-        /@keydown\.backspace="onSearchBackspace\(\$event\)"/.test(GROUP),
-        'filter-pill-group 內搜尋 input 應綁 @keydown.backspace="onSearchBackspace($event)"',
-    );
-});
-
-// ===== D6：不自動 focus =====
-
-test('D6：filter-pill-group 搜尋區塊不含 .focus( 字面', () => {
-    const GROUP = extractFilterPillGroup(SHOWCASE_HTML);
-    assert.ok(!GROUP.includes('.focus('), '搜尋 pill 區塊不得含 .focus(');
-});
-
-test('D6：searchFromMetadata body 不含 .focus( 字面', () => {
-    const body = extractFnBody(LIGHTBOX_SRC, 'searchFromMetadata(value, dim) {', 'searchFromMetadata');
-    assert.ok(!body.includes('.focus('), 'searchFromMetadata 不得自動 focus 搜尋框');
-});

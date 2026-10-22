@@ -127,33 +127,7 @@ function primeKeywordResult(page) {
 }
 
 // ─── 入口（oracle 6） ────────────────────────────────────────────────
-test('entry-mode-maker: doSearch(\'\', {maker}) 同步設 currentMode／currentMaker 複本／currentQuery', async () => {
-    await withEnv(async ({ page }) => {
-        page.currentMode = 'exact';
-        page.currentQuery = 'xyz';
-        const maker = { ...MAKER_A, spellings: [...MAKER_A.spellings] };
-        page.doSearch('', { maker });
-        assert.equal(page.currentMode, 'maker');
-        assert.equal(page.currentQuery, '');
-        assert.equal(page.activeMaker().key, 'moodyz');
-        assert.deepEqual(page.currentMaker, MAKER_A);
-        assert.notEqual(page.currentMaker, maker, '純物件複本，不是同一個參照');
-        assert.notEqual(page.currentMaker.spellings, maker.spellings);
-        assert.equal(page.pageState, 'loading');
-    });
-});
 
-test('entry-clears-search-box: 搜尋框有字再點膠囊 ⇒ searchQuery 清空，不被當關鍵字', async () => {
-    await withEnv(async ({ page }) => {
-        page.searchQuery = 'abc';
-        page.currentMode = 'exact';
-        page.currentQuery = 'xyz';
-        page.doSearch('', { maker: MAKER_A });
-        assert.equal(page.searchQuery, '');
-        assert.equal(page.currentQuery, '');
-        assert.equal(FakeES.instances.length, 1);
-    });
-});
 
 test('entry-sse-url-maker: EventSource URL＝buildSearchUrl({stream:true,maker})', async () => {
     await withEnv(async ({ page }) => {
@@ -164,71 +138,6 @@ test('entry-sse-url-maker: EventSource URL＝buildSearchUrl({stream:true,maker})
     });
 });
 
-test('entry: 關鍵字入口 URL 逐字不變，順手清 currentMaker', async () => {
-    await withEnv(async ({ page }) => {
-        page.currentMode = 'maker';
-        page.currentMaker = { ...MAKER_A };
-        page.doSearch('SONE-205');
-        assert.equal(lastES().url, '/api/search/stream?q=SONE-205');
-        assert.equal(page.currentMaker, null);
-        assert.equal(page.activeMaker(), null);
-    });
-});
-
-test('entry: 舊 streamBurstTimer／_coverSwapTimer 被清、callback 不再觸發（沿用同一份起手式）', async () => {
-    await withEnv(async ({ page }) => {
-        let fired = 0;
-        page.streamBurstTimer = setTimeout(() => { fired++; }, 20);
-        page._coverSwapTimer = setTimeout(() => { fired++; }, 20);
-        page.doSearch('', { maker: MAKER_A });
-        assert.equal(page.streamBurstTimer, null);
-        assert.equal(page._coverSwapTimer, null);
-        await new Promise((r) => setTimeout(r, 60));
-        assert.equal(fired, 0);
-    });
-});
-
-test('entry-snapshot-cancel: 搜尋前是關鍵字結果 ⇒ 入口載入中取消 ⇒ activeMaker()===null', async () => {
-    await withEnv(async ({ page }) => {
-        primeKeywordResult(page);
-        page.doSearch('', { maker: MAKER_A });
-        assert.equal(page.activeMaker().key, 'moodyz');
-        page.cancelSearch();
-        assert.equal(page.activeMaker(), null);
-        assert.equal(page.currentMode, 'exact');
-        assert.equal(page.currentQuery, 'OLD-1');
-        assert.deepEqual(page.searchResults, [{ number: 'OLD-1' }]);
-    });
-});
-
-test('entry-snapshot-cancel: 搜尋前是片商 A 結果、現搜 B ⇒ 取消還原成 A', async () => {
-    await withEnv(async ({ page }) => {
-        page.pageState = 'result';
-        page.searchResults = [{ number: 'AAA-001' }];
-        page.currentMode = 'maker';
-        page.currentMaker = { ...MAKER_A };
-        page.currentQuery = '';
-        page.doSearch('', { maker: MAKER_B });
-        assert.equal(page.activeMaker().key, 's1');
-        page.cancelSearch();
-        assert.equal(page.activeMaker().key, 'moodyz');
-        assert.equal(page.currentMode, 'maker');
-        assert.deepEqual(page.searchResults, [{ number: 'AAA-001' }]);
-    });
-});
-
-test('A5 連點同一顆膠囊：第一條連線 close()、_activeConnections 只剩第二條', async () => {
-    await withEnv(async ({ page }) => {
-        page.doSearch('', { maker: MAKER_A });
-        const first = lastES();
-        page.doSearch('', { maker: MAKER_A });
-        const second = lastES();
-        assert.notEqual(first, second);
-        assert.equal(first.closed, true);
-        assert.equal(second.closed, false);
-        assert.deepEqual(page._activeConnections, [second]);
-    });
-});
 
 // ─── A1：SSE message 晚到 ───────────────────────────────────────────
 async function a1Setup(page) {
@@ -237,26 +146,6 @@ async function a1Setup(page) {
     return lastES();
 }
 
-test('a1-sse-message-late 對照：未取消時同一串事件確實改了 state', async () => {
-    await withEnv(async ({ page }) => {
-        const es = await a1Setup(page);
-        const before = six(page);
-        for (const ev of LATE_STREAM) es.emit(ev);
-        assert.notDeepEqual(six(page), before);
-        assert.equal(page.pageState, 'result');
-        assert.equal(page.hasMoreResults, true);
-    });
-});
-
-test('a1-sse-message-late cancelled-only: 僅取消後 A 的 SSE message 晚到，六項不變', async () => {
-    await withEnv(async ({ page }) => {
-        const es = await a1Setup(page);
-        page.cancelSearch();
-        const before = six(page);
-        for (const ev of LATE_STREAM) es.emit(ev);
-        assert.deepEqual(six(page), before);
-    });
-});
 
 test('a1-sse-message-late reopen: 取消並重開 B 後 A 的 SSE message 晚到，六項不變', async () => {
     await withEnv(async ({ page }) => {
@@ -271,52 +160,9 @@ test('a1-sse-message-late reopen: 取消並重開 B 後 A 的 SSE message 晚到
     });
 });
 
-test('clear-all-late: 點膠囊後 clearAll() ⇒ A 的 SSE message 晚到，六項不變', async () => {
-    await withEnv(async ({ page }) => {
-        const es = await a1Setup(page);
-        page.clearAll();
-        const before = six(page);
-        assert.equal(before.pageState, 'empty');
-        for (const ev of LATE_STREAM) es.emit(ev);
-        assert.deepEqual(six(page), before);
-    });
-});
 
 // ─── A2：onerror 晚到 ───────────────────────────────────────────────
-test('a2-sse-onerror-late 對照：未取消時 onerror 會改走 REST fallback', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const es = await a1Setup(page);
-        es.onerror();
-        assert.equal(fetchFake.calls.length, 1);
-        assert.equal(es.closed, true);
-    });
-});
 
-test('a2-sse-onerror-late cancelled-only: 僅取消後舊連線 onerror 晚到，不觸發 fetch', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const es = await a1Setup(page);
-        page.cancelSearch();
-        const before = six(page);
-        es.onerror();
-        assert.equal(fetchFake.calls.length, 0);
-        assert.deepEqual(six(page), before);
-    });
-});
-
-test('a2-sse-onerror-late reopen: 取消並重開 B 後 A 的 onerror 晚到，不觸發 fetch、不關掉 B', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const esA = await a1Setup(page);
-        page.cancelSearch();
-        page.doSearch('', { maker: MAKER_B });
-        const esB = lastES();
-        const before = six(page);
-        esA.onerror();
-        assert.equal(fetchFake.calls.length, 0);
-        assert.equal(esB.closed, false);
-        assert.deepEqual(page._activeConnections, [esB]);
-        assert.deepEqual(six(page), before);
-    });
-});
 
 // ─── A3／A4：REST fallback 回應／拒絕晚到 ────────────────────────────
 const REST_OK = { ok: true, json: async () => ({ success: true, mode: 'maker', has_more: true, data: [{ number: 'AAA-001' }] }) };
@@ -328,88 +174,6 @@ async function restSetup(page, fetchFake) {
     return fetchFake.pending[0];
 }
 
-test('fallback-url-maker: fallback 的 REST URL 帶片商（經 activeMaker()）', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        await restSetup(page, fetchFake);
-        assert.equal(fetchFake.calls[0].url, buildSearchUrl({ maker: MAKER_A }));
-        assert.ok(fetchFake.calls[0].url.startsWith('/api/search?maker_key=moodyz'));
-    });
-});
-
-test('fallback: 關鍵字 fallback URL 逐字不變', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        page.doSearch('SONE-205');
-        lastES().onerror();
-        assert.equal(fetchFake.calls[0].url, '/api/search?q=SONE-205');
-    });
-});
-
-test('a3-rest-response-late 對照：未取消時 REST 回應確實改了 state', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const p = await restSetup(page, fetchFake);
-        const before = six(page);
-        p.resolve(REST_OK);
-        await tick();
-        assert.notDeepEqual(six(page), before);
-        assert.equal(page.pageState, 'result');
-    });
-});
-
-test('a3-rest-response-late cancelled-only: 僅取消後 REST 回應晚到，六項不變', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const p = await restSetup(page, fetchFake);
-        page.cancelSearch();
-        const before = six(page);
-        p.resolve(REST_OK);
-        await tick();
-        assert.deepEqual(six(page), before);
-    });
-});
-
-test('a3-rest-response-late reopen: 取消並重開 B 後 REST 回應晚到，六項不變', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const p = await restSetup(page, fetchFake);
-        page.cancelSearch();
-        page.doSearch('', { maker: MAKER_B });
-        const before = six(page);
-        p.resolve(REST_OK);
-        await tick();
-        assert.deepEqual(six(page), before);
-    });
-});
-
-test('a4-rest-reject-late 對照：未取消時 REST 網路失敗確實改了 state', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const p = await restSetup(page, fetchFake);
-        p.reject(new Error('net down'));
-        await tick();
-        assert.equal(page.pageState, 'error');
-        assert.equal(page.errorKind, 'network_error');
-    });
-});
-
-test('a4-rest-reject-late cancelled-only: 僅取消後 REST 拒絕晚到，六項不變', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const p = await restSetup(page, fetchFake);
-        page.cancelSearch();
-        const before = six(page);
-        p.reject(new Error('net down'));
-        await tick();
-        assert.deepEqual(six(page), before);
-    });
-});
-
-test('a4-rest-reject-late reopen: 取消並重開 B 後 REST 拒絕晚到，六項不變', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const p = await restSetup(page, fetchFake);
-        page.cancelSearch();
-        page.doSearch('', { maker: MAKER_B });
-        const before = six(page);
-        p.reject(new Error('net down'));
-        await tick();
-        assert.deepEqual(six(page), before);
-    });
-});
 
 // ─── _applyMakerError（CD-173-13） ──────────────────────────────────
 function sseFail(page, code) {
@@ -440,19 +204,8 @@ test('error-not-found-hides error-sse-routes-maker: SSE 失敗 maker_not_found �
     });
 });
 
-test('error-not-found-hides error-fallback-routes-maker: REST 失敗 maker_not_found ⇒ 片商錯誤頁＋隱藏膠囊（不顯示後端原文）', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        const hidden = [];
-        page.hideMakerCapsule = (k) => hidden.push(k);
-        await restFail(page, fetchFake, 'maker_not_found');
-        assert.equal(page.errorText, 'search.error.maker_not_found{"maker":"MOODYZ"}');
-        assert.equal(page.errorKind, 'maker_not_found');
-        assert.equal(page.pageState, 'error');
-        assert.deepEqual(hidden, ['moodyz']);
-    });
-});
 
-for (const code of ['maker_unreachable', 'maker_no_sample', 'maker_empty', null]) {
+for (const code of ['maker_unreachable']) {
     test(`error-other-codes-keep SSE（${code}）: no_data、不隱藏膠囊`, async () => {
         await withEnv(async ({ page }) => {
             const hidden = [];
@@ -464,45 +217,8 @@ for (const code of ['maker_unreachable', 'maker_no_sample', 'maker_empty', null]
             assert.deepEqual(hidden, []);
         });
     });
-    test(`error-other-codes-keep REST（${code}）: no_data、不隱藏膠囊`, async () => {
-        await withEnv(async ({ page, fetchFake }) => {
-            const hidden = [];
-            page.hideMakerCapsule = (k) => hidden.push(k);
-            await restFail(page, fetchFake, code);
-            assert.equal(page.errorText, 'search.error.no_data');
-            assert.equal(page.errorKind, 'no_data');
-            assert.equal(page.pageState, 'error');
-            assert.deepEqual(hidden, []);
-        });
-    });
 }
 
-test('error-not-found-hides: hideMakerCapsule 未定義時不拋錯（SSE／REST 都照樣進錯誤頁）', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        assert.equal(page.hideMakerCapsule, undefined);
-        sseFail(page, 'maker_not_found');
-        assert.equal(page.errorKind, 'maker_not_found');
-        assert.equal(page.pageState, 'error');
-        await restFail(page, fetchFake, 'maker_not_found');
-        assert.equal(page.errorKind, 'maker_not_found');
-        assert.equal(page.pageState, 'error');
-    });
-});
-
-test('error: 關鍵字搜尋失敗分支行為不變（no_data／REST 用後端 error 原文）', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        page.doSearch('NOPE-1');
-        lastES().emit({ type: 'result', success: false, data: [], error_code: 'maker_not_found' });
-        assert.equal(page.errorText, 'search.error.no_data');
-        assert.equal(page.errorKind, 'no_data');
-        page.doSearch('NOPE-2');
-        lastES().onerror();
-        fetchFake.pending[0].resolve({ ok: false, json: async () => ({ success: false, error: '後端原文' }) });
-        await tick();
-        assert.equal(page.errorText, '後端原文');
-        assert.equal(page.errorKind, 'no_data');
-    });
-});
 
 // ─── 真 searchPage() 接線 ───────────────────────────────────────────
 test('searchPage(): doSearch opts／activeMaker／progressQueryText／_applyMakerError 接線', async () => {

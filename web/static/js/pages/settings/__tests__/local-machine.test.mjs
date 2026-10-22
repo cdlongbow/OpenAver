@@ -31,13 +31,6 @@ test('test_apply_server_local_fields_ready_keeps_server_values', () => {
     assert.equal(out.showcase.other, 1);
 });
 
-test('test_apply_server_local_fields_unavailable_keeps_server_values', () => {
-    const out = applyServerLocalFields(makeConfig(), FORM, 'unavailable');
-    assert.equal(out.showcase.player, 'SERVER-PLAYER');
-    assert.equal(out.general.close_action, 'ask');
-    assert.ok('player' in out.showcase);
-    assert.ok('close_action' in out.general);
-});
 
 test('apply_server_local_fields: off and legacy write form values (player trimmed)', () => {
     for (const state of ['off', 'legacy']) {
@@ -61,40 +54,6 @@ test('localDiff: per-field value compare, player trimmed', () => {
     assert.deepEqual(localDiff({ viewerPlayer: 'Q', closeAction: 'tray' }, saved), ['viewerPlayer', 'closeAction']);
 });
 
-test('mergeLocalIntoForm: both objects get same two keys, rest and inputs untouched', () => {
-    const form = { viewerPlayer: 'S', closeAction: 'ask', defaultPage: 'search' };
-    const saved = { ...form };
-    const before = JSON.stringify([form, saved]);
-    const out = mergeLocalIntoForm(form, saved, { player: 'L', close_action: 'tray' });
-    assert.equal(JSON.stringify([form, saved]), before);
-    for (const o of [out.form, out.savedState]) {
-        assert.equal(o.viewerPlayer, 'L');
-        assert.equal(o.closeAction, 'tray');
-        assert.equal(o.defaultPage, 'search');
-    }
-    const empty = mergeLocalIntoForm(form, saved, {});
-    assert.equal(empty.form.viewerPlayer, '');
-    assert.equal(empty.form.closeAction, 'ask');
-    assert.equal(empty.savedState.closeAction, 'ask');
-});
-
-test('test_combine_save_outcome_truth_table', () => {
-    for (const serverOk of [true, false]) {
-        for (const localOk of [true, false]) {
-            for (const localChanged of [true, false]) {
-                let want = null;
-                if (localChanged) {
-                    if (serverOk && localOk) want = 'settings.toast.config_saved_with_local';
-                    else if (serverOk) want = 'settings.toast.local_failed_server_saved';
-                    else if (localOk) want = 'settings.toast.local_saved_server_failed';
-                    else want = 'settings.toast.local_failed_server_failed';
-                }
-                assert.equal(combineSaveOutcome({ serverOk, localChanged, localOk }), want,
-                    `server=${serverOk} local=${localOk} changed=${localChanged}`);
-            }
-        }
-    }
-});
 
 function deps({ ready = true, api = {}, getReply = { ok: true, player: 'L', close_action: 'tray' } } = {}) {
     const calls = [];

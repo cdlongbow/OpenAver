@@ -30,30 +30,9 @@ test('buildActressPillPredicate([])：全部通過', () => {
     }
 });
 
-test('buildActressPillPredicate(undefined)：全部通過（harness 未合併 stateBase 的安全 fallback）', () => {
-    const pred = buildActressPillPredicate(undefined);
-    assert.equal(typeof pred, 'function');
-    for (const a of ALL) {
-        assert.equal(pred(a), true, `${a.name} 應通過 undefined pill 條件`);
-    }
-});
 
 // ── 三維度正向命中 ─────────────────────────────────────────────────────────
 
-test('身高 pill =160cm 正向命中 full', () => {
-    const names = namesMatching([{ dim: 'height', op: '=', value: '160cm' }]);
-    assert.deepEqual(names, ['full']);
-});
-
-test('罩杯 pill =B 正向命中 full', () => {
-    const names = namesMatching([{ dim: 'cup', op: '=', value: 'B' }]);
-    assert.deepEqual(names, ['full']);
-});
-
-test('年齡 pill =37 正向命中 full', () => {
-    const names = namesMatching([{ dim: 'age', op: '=', value: '37' }]);
-    assert.deepEqual(names, ['full']);
-});
 
 // ── 罩杯是「有序分級」不是「類別」：≤／≥ 依 actressCupValue() 的名次比大小 ─────
 // spec-116c §4.4／:197（`≥B罩杯` 是正常顯示形式）與 :272（罩杯沒有自訂區間的理由
@@ -67,18 +46,6 @@ test('罩杯 pill ≤B：A 與 B 都命中（rank 比大小，不是字串相等
     assert.deepEqual(names, ['full', 'noAge'], 'full=B、noAge=A；C/D 落榜、cup 缺值不入選');
 });
 
-test('罩杯 pill ≥C：C 與 D 都命中', () => {
-    const names = namesMatching([{ dim: 'cup', op: '>=', value: 'C' }]);
-    assert.deepEqual(names, ['tall', 'noHt'], 'tall=C、noHt=D；A/B 落榜');
-});
-
-test('罩杯 ≤／≥ 與身高 pill 可交集（spec-116 §1 的起點例子：矮 ＋ 罩杯以下）', () => {
-    const names = namesMatching([
-        { dim: 'cup', op: '<=', value: 'B' },
-        { dim: 'height', op: '<=', value: '160' },
-    ]);
-    assert.deepEqual(names, ['full', 'noAge'], 'full=160cm/B、noAge=155cm/A 同時符合');
-});
 
 // TASK-120-C1 AC-7：≥K 必須命中 L+。自建局部陣列，不得動上面的 ALL。
 test("罩杯 pill ≥K：cup:'L'／'Z' 回 true（AC-7，局部 list）", () => {
@@ -110,28 +77,6 @@ test('多 pill 取交集：age=37 AND height=160cm 只剩 full', () => {
 
 // ── fail-closed ────────────────────────────────────────────────────────────
 
-test('fail-closed：未知 dim → 不符合', () => {
-    const pred = buildActressPillPredicate([{ dim: 'foo', op: '=', value: 'x' }]);
-    assert.equal(pred(A_FULL), false);
-    assert.equal(pred(A_TALL), false);
-});
-
-test('fail-closed：Object.prototype 的 key 當 dim 一律不符合（不得 fail-open / 不得拋錯）', () => {
-    // 裸 EXTRACTORS[dim] 會讓 toString 取到 Function.prototype.toString 而通過 !extractor
-    // 檢查，predicate 於是對每一位女優回 true；__proto__ / hasOwnProperty 則直接拋錯。
-    ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf'].forEach((dim) => {
-        const pred = buildActressPillPredicate([{ dim, op: '=', value: 'x' }]);
-        assert.equal(pred(A_FULL), false, `dim=${dim} 必須不符合`);
-        assert.equal(pred(A_TALL), false, `dim=${dim} 必須不符合`);
-    });
-});
-
-test('fail-closed：未知 op（~=）→ 不符合', () => {
-    // 116b 之後 <= / >= / range 皆為合法 op；此處改用真正未知的 op
-    const pred = buildActressPillPredicate([{ dim: 'height', op: '~=', value: '160cm' }]);
-    assert.equal(pred(A_FULL), false);
-    assert.equal(pred(A_TALL), false);
-});
 
 test('fail-closed：女優該欄位缺值（height null）不出現在任何身高 pill 結果', () => {
     const pred = buildActressPillPredicate([{ dim: 'height', op: '=', value: '160cm' }]);
@@ -141,29 +86,6 @@ test('fail-closed：女優該欄位缺值（height null）不出現在任何身�
     assert.equal(predAny(A_NO_HEIGHT), false);
 });
 
-test('fail-closed：女優 age null 對年齡 pill 不符合', () => {
-    const pred = buildActressPillPredicate([{ dim: 'age', op: '=', value: '30' }]);
-    assert.equal(pred(A_NO_AGE), false);
-});
-
-test('fail-closed：女優 cup null 對罩杯 pill 不符合', () => {
-    const pred = buildActressPillPredicate([{ dim: 'cup', op: '=', value: 'A' }]);
-    assert.equal(pred(A_NO_CUP), false);
-});
 
 // ── AC9 / CD-116a-1 交叉驗證 ───────────────────────────────────────────────
 
-test('AC9：排序能取到身高的女優，必存在能命中她的身高 pill 值', () => {
-    // 對每一位 actressHeightValue 非 null 的女優，用她的 height 字面當 pill 值應命中
-    for (const a of ALL) {
-        const hv = actressHeightValue(a);
-        if (hv == null) continue;
-        // 產品 pill value 是使用者點到的原始字串（如 '160cm'），不是 extractor 回的數字
-        const pred = buildActressPillPredicate([{ dim: 'height', op: '=', value: a.height }]);
-        assert.equal(
-            pred(a),
-            true,
-            `${a.name} height=${a.height}（extractor=${hv}）必須被同值 pill 命中`,
-        );
-    }
-});

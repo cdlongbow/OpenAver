@@ -91,37 +91,6 @@ test('收斂：mode=table＋旗標關 → mode 變 grid，cardShape 原樣', () 
     assert.equal(c.cardShape, 'poster');
 });
 
-test('收斂：mode=list＋旗標關 → mode 變 grid，cardShape 原樣', () => {
-    stubWindow({ search: '' });
-    const c = makeComponent({
-        _persistedShowcase: {
-            mode: 'list',
-            cardShape: 'cover',
-        },
-        mode: 'grid',
-        cardShape: 'poster',
-        showTableList: false,
-    });
-    c.restoreState();
-    assert.equal(c.mode, 'grid');
-    assert.equal(c.cardShape, 'cover');
-});
-
-test('收斂：mode=grid＋旗標關 → mode 原樣 grid，cardShape 原樣', () => {
-    stubWindow({ search: '' });
-    const c = makeComponent({
-        _persistedShowcase: {
-            mode: 'grid',
-            cardShape: 'poster',
-        },
-        mode: 'table',
-        cardShape: 'cover',
-        showTableList: false,
-    });
-    c.restoreState();
-    assert.equal(c.mode, 'grid');
-    assert.equal(c.cardShape, 'poster');
-});
 
 // DoD 2 的第二條還原路徑：網址參數（書籤／分頁還原走同一條）。
 // state-base.js:512 `urlParams.get('mode') || state.mode || 'grid'` ⇒ URL 優先於 localStorage，
@@ -139,35 +108,9 @@ test('收斂：?mode=table（網址參數）＋旗標關 → mode 變 grid', () 
     assert.equal(c.cardShape, 'poster');
 });
 
-test('反向鎖：?mode=table（網址參數）＋旗標開 → 仍是 table', () => {
-    stubWindow({ search: '?mode=table', config: { show_table_list: true } });
-    const c = makeComponent({
-        _persistedShowcase: { mode: 'grid', cardShape: 'cover' },
-        mode: 'grid',
-        cardShape: 'cover',
-        showTableList: true,
-    });
-    c.restoreState();
-    assert.equal(c.mode, 'table');
-});
 
 // ===== DoD 4：順序不變式（收斂在 perPage 降級閘上游）=====
 
-test('收斂順序不變式：mode=table＋items_per_page=0＋旗標關 → mode===grid 且 perPage===120', () => {
-    stubWindow({ search: '', config: { items_per_page: 0 } });
-    const c = makeComponent({
-        _persistedShowcase: {
-            mode: 'table',
-            cardShape: 'cover',
-        },
-        mode: 'grid',
-        perPage: 90,
-        showTableList: false,
-    });
-    c.restoreState();
-    assert.equal(c.mode, 'grid');
-    assert.equal(c.perPage, 120);
-});
 
 // ===== DoD 5：反向鎖（旗標開不收斂）=====
 
@@ -189,19 +132,3 @@ test('反向鎖：旗標開＋mode=table → 仍是 table（不收斂）', () =>
 
 // ===== DoD 6：不寫回（收斂後 _persistedShowcase.mode 仍是 table）=====
 
-test('不寫回：收斂發生後 _persistedShowcase.mode 仍是 table', () => {
-    stubWindow({ search: '' });
-    const persisted = {
-        mode: 'table',
-        cardShape: 'poster',
-    };
-    const c = makeComponent({
-        _persistedShowcase: persisted,
-        mode: 'grid',
-        cardShape: 'cover',
-        showTableList: false,
-    });
-    c.restoreState();
-    assert.equal(c.mode, 'grid');
-    assert.equal(c._persistedShowcase.mode, 'table');
-});

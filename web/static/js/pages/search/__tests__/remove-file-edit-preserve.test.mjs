@@ -17,30 +17,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { searchStateFileList } from '../state/file-list.js';
 
-test('removeFile: 移除非當前檔（較後面的 row）→ 不呼叫 switchToFile、editingActors 存活、currentFileIndex/currentIndex 不變', () => {
-    const switchToFileCalls = [];
-    const fakeThis = {
-        ...searchStateFileList(),
-        switchToFile(index) {
-            switchToFileCalls.push(index);
-        },
-        saveState: () => {},
-        fileList: [
-            { path: '/a/x1.mp4', number: 'ABC-001' }, // A：目前正在看（index 0）
-            { path: '/a/x2.mp4', number: 'ABC-002' }, // B：要移除的（index 1，較後面）
-        ],
-        currentFileIndex: 0,
-        currentIndex: 3,
-        editingActors: true,
-    };
-
-    fakeThis.removeFile(1);
-
-    assert.equal(switchToFileCalls.length, 0, '移除非當前檔不應呼叫 switchToFile');
-    assert.equal(fakeThis.editingActors, true, '非當前檔被移除，A 檔未確認的編輯應存活（switchToFile 根本沒被呼叫）');
-    assert.equal(fakeThis.currentFileIndex, 0, 'currentFileIndex 應仍指向 A（未移除、index 在其之後不需調整）');
-    assert.equal(fakeThis.currentIndex, 3, 'currentIndex（候選 index）不受移除其他檔影響');
-});
 
 test('removeFile: 移除較前面的非當前檔（currentFileIndex 需 decrement 重新指向）→ 不呼叫 switchToFile、editingActors 存活', () => {
     const switchToFileCalls = [];

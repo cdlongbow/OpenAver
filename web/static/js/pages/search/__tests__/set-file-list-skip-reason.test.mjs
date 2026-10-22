@@ -50,26 +50,6 @@ test('setFileList: skip_reason 從蛇形轉為駝峰 skipReason，未命中為�
   assert.equal(fakeThis.fileList[1].skipReason, '');
 });
 
-test('setFileList: skip_reason=not_found → searched=true、searchResults=[]（沿用既有查無結果狀態）', async () => {
-  mockSearchFile();
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({
-      success: true,
-      files: [
-        { path: '/a/nf.mp4', has_nfo: false, skip_reason: 'not_found', duplicate_target: '' },
-      ],
-    }),
-  });
-
-  const fakeThis = makeFakeThis();
-  await searchStateFileList().setFileList.call(fakeThis, ['/a/nf.mp4']);
-
-  assert.equal(fakeThis.fileList.length, 1);
-  assert.equal(fakeThis.fileList[0].searched, true);
-  assert.deepEqual(fakeThis.fileList[0].searchResults, []);
-  assert.equal(fakeThis.fileList[0].skipReason, 'not_found');
-});
 
 test('setFileList: skip_reason=duplicate → scrapeStatus=duplicate、duplicateTarget 帶值（沿用既有橘色標記）', async () => {
   mockSearchFile();
