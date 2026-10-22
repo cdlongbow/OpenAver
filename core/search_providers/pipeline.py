@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import queue
+import re
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import NamedTuple
 
 from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked
@@ -77,7 +79,7 @@ def _enrich_one(provider, item: WorkItem, ref, delay):
     """回 (Enriched, None) 或 (None, 例外)。except Exception 的寬度是契約（BE-TEST-33）；
     BaseException（如 OutboundConnectionViolation）不得被吞。"""
     try:
-        enriched = provider.enrich(item, ref)
+        enriched = provider.enrich(item, item.origin or ref)
         if enriched is None or not enriched.card:
             raise ValueError(f"empty card: {item.number}")
         return enriched, None
@@ -250,3 +252,87 @@ def _emit_guard_cards(col: _Collector, verdict: GuardResult) -> None:
             col.put_ok(slot, card)
         else:
             col.put_failed(slot)
+
+
+# ---------------------------------------------------------------- 多 ref 歸併（CD-175d-4）
+DEFAULT_LIST_CHUNK = 30
+_DATE_RE = re.compile(r"(\d{4})\D+(\d{1,2})(?:\D+(\d{1,2}))?")
+
+
+class MergeResult(NamedTuple):
+    items: list[WorkItem]  # 每部以 replace 副本設 origin；單頁內 number.upper() 不重複
+    new_positions: list[int]  # 與 refs 等長：該 ref 累計消耗位置，或 -1（耗盡，之後不再呼叫）
+    exhausted: bool  # 全部 -1
+
+
+def _date_rank(date: str) -> int:
+    """日期轉可比大小的整數（'/' 與 '-' 同義）；缺日期／無法解析 ⇒ -1（新→舊排序時殿後）。"""
+    m = _DATE_RE.search(date or "")
+    if not m:
+        return -1
+    return int(m.group(1)) * 10000 + int(m.group(2)) * 100 + int(m.group(3) or 0)
+
+
+class _Lane:
+    """一個 ref 的惰性游標：只在已取回的片段用完且未耗盡時才補取下一塊（offset = 起點 + 已取）。"""
+
+    def __init__(self, ref, start: int):
+        self.ref = ref
+        self.start = start
+        self.buf: deque[WorkItem] = deque()
+        self.fetched = 0
+        self.consumed = 0
+        self.done = False  # 站方端已無更多（塊回空，或 has_next=False）
+
+    @property
+    def finished(self) -> bool:
+        return self.start < 0 or (self.done and not self.buf)
+
+    def head(self, provider, size: int) -> WorkItem | None:
+        if not self.buf and not self.done:
+            self._fill(provider, size)
+        return self.buf[0] if self.buf else None
+
+    def _fill(self, provider, size: int) -> None:
+        # 取塊例外原樣往外丟：不吞、不回部分（I-M6）
+        page = provider.list_entity(self.ref, Window(self.start + self.fetched, size))
+        self.fetched += len(page.items)
+        self.buf.extend(page.items)
+        if not page.items or not page.has_next:
+            self.done = True
+
+    def pop(self) -> WorkItem:
+        self.consumed += 1
+        return self.buf.popleft()
+
+
+def merge_windows(provider, refs, positions, limit) -> MergeResult:
+    """把 refs 各自的清單做惰性 k 路歸併，累計 limit 個唯一作品即停。
+
+    positions[i]＝該 ref 已消耗位置（第一頁全 0）或 -1（耗盡，不呼叫）。呼叫端保證 len(positions)==len(refs)。
+    不變式（驗證手段是 tests/unit/test_search_merge_windows.py）：
+      I-M1 單頁內 number.upper() 不重複；I-M2 依 (日期新→舊, ref 序, ref 內序) 單調、缺日期殿後；
+      I-M3 逐頁走 new_positions ＝ 一次取到底再依各頁消耗數切段、段內各自去重；
+      I-M4 -1 的 ref 不被呼叫；I-M5 每頁每 ref 的 list_entity ≤ ceil(limit/C)+1；
+      I-M6 任一 ref 取塊丟例外 ⇒ 整個呼叫丟，不回殘缺清單。
+    """
+    size = getattr(provider, "list_chunk", DEFAULT_LIST_CHUNK)
+    lanes = [_Lane(ref, pos) for ref, pos in zip(refs, positions, strict=True)]
+    live = [i for i, pos in enumerate(positions) if pos >= 0]
+    items: list[WorkItem] = []
+    seen: set[str] = set()
+    while len(items) < limit:
+        heads = {i: lanes[i].head(provider, size) for i in live}
+        live = [i for i in live if heads[i] is not None]
+        if not live:
+            break
+        pick = min(live, key=lambda i: (-_date_rank(heads[i].date), i))
+        item = lanes[pick].pop()
+        key = item.number.upper()
+        if key not in seen:
+            seen.add(key)
+            items.append(replace(item, origin=refs[pick]))
+    new_positions = []
+    for i, lane in enumerate(lanes):
+        new_positions.append(-1 if lane.finished else positions[i] + lane.consumed)
+    return MergeResult(items, new_positions, all(p < 0 for p in new_positions))

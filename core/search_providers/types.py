@@ -57,6 +57,7 @@ class WorkItem:
     actors: list[str] | None  # None＝列表沒給（要靠 enrich 補）；[]＝確定沒有
     source: str
     ref: object = None  # provider 內部用（例如 JavDB 的 movie id）
+    origin: EntityRef | None = None  # 多 ref 歸併時這部片來自哪個 ref；只由 merge_windows 設（CD-175d-5）
 
 
 @dataclass
