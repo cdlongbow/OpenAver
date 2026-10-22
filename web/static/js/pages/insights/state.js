@@ -1651,6 +1651,7 @@ export function libraryInsightsState() {
             const self = this;
             return {
                 getSel: () => self.sel,
+                goBrowseWith: (extra) => self.goBrowseWith(extra),
             };
         },
 
@@ -1667,6 +1668,7 @@ export function libraryInsightsState() {
             const self = this;
             return {
                 getSel: () => self.sel,
+                goBrowseWith: (extra) => self.goBrowseWith(extra),
             };
         },
 

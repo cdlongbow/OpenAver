@@ -9378,6 +9378,41 @@ const RULES = [
     pattern: /advanced_search_cta'\)"(?:(?!\) \}\})[\s\S])*?(?<![\w:-])x-show="!activeMaker\(\)"/,
     note: '[lint-guard 173-T13-cta-xshow] 進階搜尋 CTA 少了 x-show="!activeMaker()" → 片商搜尋失敗頁冒出「使用番號進階搜尋」按鈕，使用者被導去對片商無意義的入口',
   },
+  // ---- [177-T2] 三種圖可點（樹圖／導演系列長條／拉出標籤）接線 ----
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '_tagsCallbacks.goBrowseWith(', count: 1,
+    scope: { anchor: /export function initTagsChart\s*\(\s*containerEl\s*,\s*callbacks\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-tree] 使用者點標籤樹圖一格 → 游標與提示都像可點，點下去卻什麼都沒發生（initTagsChart 內樹圖 click 要呼叫 goBrowseWith 回呼）',
+  },
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '.goBrowseWith(', count: 1,
+    scope: { anchor: /export function initFieldBarChart\s*\(\s*containerEl\s*,\s*field\s*,\s*callbacks\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-bar] 使用者點導演／系列長條 → 游標是手形、提示說可在瀏覽頁查看，點下去卻沒反應（initFieldBarChart 內長條 click 要呼叫 goBrowseWith 回呼）',
+  },
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '_tagsCallbacks.goBrowseWith(', count: 1,
+    scope: { anchor: /export function updateTagsChart\s*\(\s*state\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-chip-forward] 使用者點上方拉出的高佔比標籤 → 沒有任何反應（updateTagsChart 內 chip 的 onPick 要轉給 _tagsCallbacks.goBrowseWith）',
+  },
+  {
+    file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: "onPick({ dim: 'tag', value: e[0] })", count: 1,
+    scope: { anchor: /export function renderPulledChips\s*\(\s*el\s*,\s*pulled\s*,\s*total\s*,\s*prefix\s*,\s*onPick\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[177-T2-chip] 使用者點上方拉出的高佔比標籤（看起來是連結）→ 沒有任何反應（renderPulledChips 內每顆按鈕 click 要呼叫 onPick）',
+  },
+  {
+    file: 'web/static/js/pages/insights/state.js', kind: 'required-string', pattern: 'goBrowseWith: (extra) => self.goBrowseWith(extra)', count: 2,
+    stripLineComments: true,
+    note: '[177-T2-callbacks] 使用者點樹圖或長條，游標與提示都像可點，點下去卻沒反應（_tagsCallbacks／_fieldCallbacks 各要提供 goBrowseWith）',
+  },
+  {
+    file: { dir: 'web/static/js/pages/insights', ext: ['.js'] }, kind: 'forbidden-string', pattern: /\.(innerHTML|insertAdjacentHTML)\b/,
+    stripLineComments: true,
+    note: '[177-T2-no-innerHTML] 分析頁 JS 不得用 innerHTML／insertAdjacentHTML：標籤、導演名稱來自外部刮削的 NFO，當 HTML 插入會執行其中的 script／載入外部圖',
+  },
 ];
 
 // ---- helpers ----

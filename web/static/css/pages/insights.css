@@ -775,6 +775,25 @@
     display: none;
 }
 
+.insights-container .tags-pulled .tags-pulled-chip {
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+.insights-container .tags-pulled .tags-pulled-chip:hover {
+    text-decoration: underline;
+}
+
+.insights-container .tags-pulled .tags-pulled-chip:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
 .insights-container .treemap-chart-wrap {
     flex: 1 1 auto;
     min-height: 360px;

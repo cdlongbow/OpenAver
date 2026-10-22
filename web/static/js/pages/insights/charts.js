@@ -1169,6 +1169,72 @@ function _isDimTheme() {
 }
 
 /**
+ * 樹圖點擊 params → 瀏覽頁條件；非樹圖格或無名稱回 null。
+ * @param {object} params
+ * @returns {{dim:'tag', value:string}|null}
+ */
+export function extraFromTreemapClick(params) {
+    if (!params || params.componentType !== 'series' || params.seriesType !== 'treemap') return null;
+    const name = params.data && params.data.name;
+    if (typeof name !== 'string' || !name) return null;
+    return { dim: 'tag', value: name };
+}
+
+/**
+ * 導演／系列長條點擊 params → 瀏覽頁條件；field 僅接受 director／series。
+ * @param {string} field
+ * @param {object} params
+ * @returns {{dim:string, value:string}|null}
+ */
+export function extraFromBarClick(field, params) {
+    if (field !== 'director' && field !== 'series') return null;
+    if (!params || typeof params.name !== 'string' || !params.name) return null;
+    return { dim: field, value: params.name };
+}
+
+/**
+ * 組 #tagsPulled：前綴文字＋每個標籤一顆按鈕＋「、」分隔；只用 createElement／textContent。
+ * @param {HTMLElement} el
+ * @param {Array<[string, number]>} pulled
+ * @param {number} total
+ * @param {string} prefix
+ * @param {(extra:{dim:'tag', value:string}) => void} onPick
+ */
+export function renderPulledChips(el, pulled, total, prefix, onPick) {
+    if (!el) return;
+    if (!pulled || !pulled.length || !total) {
+        el.replaceChildren();
+        return;
+    }
+    const nodes = [document.createTextNode(prefix)];
+    pulled.forEach(function (e, i) {
+        if (i > 0) nodes.push(document.createTextNode('、'));
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'tags-pulled-chip';
+        btn.title = tKey('insights.count_open_browse');
+        const pct = Math.round((e[1] / total) * 100);
+        btn.textContent = e[0] + ' ' + pct + '%';
+        btn.addEventListener('click', function () { onPick({ dim: 'tag', value: e[0] }); });
+        nodes.push(btn);
+    });
+    el.replaceChildren(...nodes);
+}
+
+/**
+ * 導演／系列長條 axis tooltip：名稱經 escapeHtml（renderMode html）。
+ * @param {Array<{name:string, value:number}>} params
+ * @returns {string}
+ */
+export function fieldBarTooltip(params) {
+    const p = Array.isArray(params) ? params[0] : params;
+    if (!p) return '';
+    const name = p.name;
+    return escapeHtml(name) + ' ' + (p.value || 0).toLocaleString('zh-Hant') +
+        '<br/>' + escapeHtml(tKey('insights.count_open_browse'));
+}
+
+/**
  * @param {HTMLElement} containerEl
  * @param {{ getSel: Function }} callbacks
  */
@@ -1191,6 +1257,13 @@ export function initTagsChart(containerEl, callbacks) {
     });
     ro.observe(containerEl);
     _observers.set('tags', ro);
+
+    chart.on('click', function (params) {
+        const extra = extraFromTreemapClick(params);
+        if (!extra) return;
+        if (typeof _tagsCallbacks.goBrowseWith !== 'function') return;
+        _tagsCallbacks.goBrowseWith(extra);
+    });
 }
 
 export function getTagsChart() {
@@ -1225,15 +1298,11 @@ export function updateTagsChart(state) {
 
     const pulledEl = document.getElementById('tagsPulled');
     if (pulledEl) {
-        if (agg.pulled.length && total) {
-            const prefix = tKey('insights.tags.almost_all');
-            const parts = agg.pulled.map(function (e) {
-                return e[0] + ' ' + Math.round((e[1] / total) * 100) + '%';
-            });
-            pulledEl.textContent = prefix + parts.join('、');
-        } else {
-            pulledEl.textContent = '';
-        }
+        renderPulledChips(pulledEl, agg.pulled, total, tKey('insights.tags.almost_all'), function (extra) {
+            if (_tagsCallbacks && typeof _tagsCallbacks.goBrowseWith === 'function') {
+                _tagsCallbacks.goBrowseWith(extra);
+            }
+        });
     }
 
     if (!agg.rest.length) {
@@ -1309,7 +1378,7 @@ export function updateTagsChart(state) {
                         name: escapeHtml(p.name),
                         count: (p.value || 0).toLocaleString('zh-Hant'),
                         pct: (p.data && p.data._pct) || '0%',
-                    });
+                    }) + '<br/>' + escapeHtml(tKey('insights.count_open_browse'));
                 },
             },
             series: [
@@ -1527,6 +1596,14 @@ export function initFieldBarChart(containerEl, field, callbacks) {
     });
     ro.observe(containerEl);
     _observers.set(field, ro);
+
+    chart.on('click', 'series', function (params) {
+        const extra = extraFromBarClick(field, params);
+        if (!extra) return;
+        const cbs = _fieldCallbacks.get(field);
+        if (!cbs || typeof cbs.goBrowseWith !== 'function') return;
+        _fieldCallbacks.get(field).goBrowseWith(extra);
+    });
 }
 
 /**
@@ -1601,6 +1678,7 @@ export function updateFieldBarChart(state, field) {
             trigger: 'axis',
             axisPointer: { type: 'shadow' },
             textStyle: { fontSize: 11 },
+            formatter: fieldBarTooltip,
         },
         xAxis: {
             type: 'value',
