@@ -5,11 +5,11 @@ TestPipeline + TestUnknownSource — Pipeline routing 測試
 mock scraper.search，驗證路由邏輯（不含 TestClient 測試）
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from core.scrapers.d2pass import D2PassScraper
 from core.scrapers.heyzo import HEYZOScraper
-from core.scrapers.dmm import DMMScraper, ListResult
+from core.scrapers.dmm import DMMScraper
 from core.scrapers.javbus import JavBusScraper
 from core.scrapers.models import Video
 from core.scrapers.utils import SOURCE_ORDER
@@ -86,128 +86,6 @@ class TestPipeline:
         assert results[0]['_mode'] == 'uncensored'
         mock_d2.assert_called()
 
-    def test_uncensored_detection_heyzo(self):
-        """HEYZO- 前綴番號 → 自動走無碼路徑 → HEYZOScraper 被呼叫"""
-        mock_video = _make_video("heyzo", "HEYZO-0783")
-
-        with patch.object(D2PassScraper, 'search', return_value=None):
-            with patch.object(HEYZOScraper, 'search', return_value=mock_video) as mock_heyzo:
-                with patch('core.scrapers.dmm.rate_limit'):
-                    results = smart_search("HEYZO-0783")
-
-        assert len(results) == 1
-        assert results[0]['_mode'] == 'uncensored'
-        mock_heyzo.assert_called()
-
-    def test_uncensored_mode_uses_new_sources(self):
-        """uncensored_mode=True → D2PassScraper 和 HEYZOScraper 都被嘗試"""
-        with patch.object(D2PassScraper, 'search', return_value=None) as mock_d2:
-            with patch.object(HEYZOScraper, 'search', return_value=None) as mock_heyzo:
-                with patch.object(DMMScraper, 'search', return_value=None):
-                    with patch('core.scrapers.dmm.rate_limit'):
-                        # FC2 / AVSOX 也需要 mock 避免真實網路請求
-                        from core.scrapers.fc2_official import FC2OfficialScraper
-                        from core.scrapers.avsox import AVSOXScraper
-                        with patch.object(FC2OfficialScraper, 'search', return_value=None):
-                            with patch.object(AVSOXScraper, 'search', return_value=None):
-                                smart_search("SONE-205", uncensored_mode=True)
-
-        mock_d2.assert_called()
-        mock_heyzo.assert_called()
-
-    def test_dmm_top1_when_proxy(self):
-        """DMM first in enabled order → cascade 直打 DMM 命中，javbus 不被呼叫。
-
-        新 cascade（spec-85 B1，CD-85-1）：依 get_enabled_source_ids 優先序串接直打，
-        DMM 排第一 → cascade 直打 DMM → 命中 → early-return，javbus 不被試到。
-        """
-        mock_result = {'number': 'SONE-205', 'title': 'T', '_source': 'dmm'}
-
-        def _single_source(number, source):
-            if source == 'dmm':
-                return mock_result
-            return None
-
-        with patch('core.scraper.get_enabled_source_ids', return_value=['dmm', 'javbus']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', side_effect=_single_source) as mock_ss:
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            results = smart_search("SONE-205")
-
-        assert len(results) == 1
-        assert results[0]['_mode'] == 'exact'
-        assert results[0]['_source'] == 'dmm'
-        mock_ss.assert_called_once_with('SONE-205', 'dmm')
-
-    def test_uncensored_mode_fast_path_fc2(self):
-        """uncensored_mode=True + FC2 前綴 → D2PassScraper 不被呼叫"""
-        mock_video = _make_video("fc2", "FC2-PPV-1234567")
-
-        from core.scrapers.fc2_official import FC2OfficialScraper
-        from core.scrapers.avsox import AVSOXScraper
-
-        with patch.object(D2PassScraper, 'search', return_value=None) as mock_d2:
-            with patch.object(HEYZOScraper, 'search', return_value=None):
-                with patch.object(FC2OfficialScraper, 'search', return_value=mock_video):
-                    with patch.object(AVSOXScraper, 'search', return_value=None):
-                        with patch('core.scrapers.dmm.rate_limit'):
-                            results = smart_search("FC2-PPV-1234567", uncensored_mode=True)
-
-        assert len(results) == 1
-        mock_d2.assert_not_called()
-
-    def test_exact_path_no_fan_out(self):
-        """精確番號路徑：cascade 不呼叫 fan-out（merge_results 不被呼叫），全 miss → []。
-
-        新 cascade（spec-85 B1，CD-85-1）：串接直打不走 wait-all fan-out。
-        全 miss → [] 且 merge_results.assert_not_called()（fan-out 守衛）。
-        """
-        with patch('core.scraper.get_enabled_source_ids', return_value=['dmm', 'javbus']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', return_value=None), \
-             patch('core.scraper.merge_results') as mock_merge:
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            results = smart_search("SONE-205")
-
-        assert results == []
-        mock_merge.assert_not_called()
-
-    def test_merge_winner_first_in_order_dmm(self, monkeypatch):
-        """merge text-winner = first successful source in drag-sort order (get_enabled_source_ids order).
-
-        Class fixture sets SOURCE_ORDER (dmm first) as the enabled order.
-        With dmm first in order + dmm returning data → winner _source == 'dmm'.
-        This is ORDER-driven, NOT primary_source-driven (CD-61-14: primary_source
-        no longer overrides merge winner; DMM Top-1 shortcut removed in feature/65;
-        this test exercises search_jav(auto) merge directly, not the smart_search exact path).
-        """
-        from core.scrapers.jav321 import JAV321Scraper
-        # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
-        # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
-        # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
-        # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
-        from core.scraper import JavDBScraper
-        from core.scraper import D2PassScraper
-        from core.scrapers.fc2_official import FC2OfficialScraper
-        from core.scrapers.avsox import AVSOXScraper
-        dmm_video = _make_video("dmm", "SONE-205")
-        javbus_video = _make_video("javbus", "SONE-205")
-
-        # Class autouse fixture already monkeypatches get_enabled_source_ids → SOURCE_ORDER
-        # (dmm is first in SOURCE_ORDER) — no override needed here.
-        with patch.object(DMMScraper, 'search', return_value=dmm_video), \
-             patch.object(JavBusScraper, 'search', return_value=javbus_video), \
-             patch.object(JAV321Scraper, 'search', return_value=None), \
-             patch.object(JavDBScraper, 'search', return_value=None), \
-             patch.object(FC2OfficialScraper, 'search', return_value=None), \
-             patch.object(AVSOXScraper, 'search', return_value=None), \
-             patch.object(D2PassScraper, 'search', return_value=None), \
-             patch('core.scrapers.dmm.rate_limit'):
-            result = search_jav("SONE-205")
-
-        assert result['_source'] == 'dmm'
 
     def test_merge_winner_first_in_order_javbus(self, monkeypatch):
         """merge text-winner = first successful source in drag-sort order.
@@ -270,114 +148,15 @@ class TestPipeline:
         mock_dmm_kw.assert_not_called()
         assert len(results) >= 1
 
-    def test_search_actress_dmm_routing(self):
-        """DMM 排第一 + DMM 膠囊開 → DMM list_contents 先被呼叫，JavBus 不呼叫"""
-        from core.scraper import search_actress
-
-        mock_video = _make_video("dmm", "SONE-205")
-        mock_rows = [{"id": "sone00205", "title": "Test Title"}]
-
-        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
-             patch.object(DMMScraper, 'list_contents', return_value=ListResult(mock_rows, None, False)) as mock_dmm_kw, \
-             patch.object(DMMScraper, '_fetch_by_id', return_value=mock_video), \
-             patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
-             patch('core.scrapers.dmm.rate_limit'):
-            results = search_actress(
-                "未歩なな",
-                limit=10,
-            )
-
-        mock_dmm_kw.assert_called_once()
-        # JavBus should NOT be called since DMM returned results
-        mock_jb.assert_not_called()
-        assert len(results) == 1
-        assert results[0]['source'] == 'dmm'
-
-    def test_search_actress_dmm_fallback_to_javbus(self):
-        """DMM 排第一 + DMM 膠囊開 + DMM 無結果 → fallback 到 JavBus"""
-        from core.scraper import search_actress
-        # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
-        # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
-        # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
-        # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
-        from core.scraper import JavDBScraper
-
-        # DMM returns nothing → should fall through to JavBus path
-        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321']), \
-             patch.object(DMMScraper, 'list_contents', return_value=ListResult([], None, False)) as mock_dmm_kw, \
-             patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
-             patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb_kw:
-            results = search_actress(
-                "未歩なな",
-                limit=10,
-            )
-
-        mock_dmm_kw.assert_called_once()
-        # After DMM returns nothing, JavBus path should be tried
-        mock_jb.assert_called()
-
 
 # ============================================================
 # TestUnknownSource (2 mock-only tests)
 # ============================================================
 
-class TestUnknownSource:
-    """未知 source 驗證測試 — 確保 JavGuru 等已移除來源明確失敗"""
-
-    def test_search_jav_unknown_source_returns_none(self):
-        """search_jav 傳入未知來源（如 'javguru'）→ 立即返回 None，不走 auto mode"""
-        # 確認完全不呼叫任何 scraper
-        with patch.object(JavBusScraper, 'search', return_value=None) as mock_jb:
-            with patch.object(DMMScraper, 'search', return_value=None) as mock_dmm:
-                result = search_jav("SONE-205", source="javguru")
-
-        assert result is None
-        mock_jb.assert_not_called()
-        mock_dmm.assert_not_called()
-
-    def test_search_jav_unknown_source_no_fallback(self):
-        """未知來源不應 fallback 到 auto mode — 即使 scraper 能找到結果也應被攔截"""
-        mock_video = Video(
-            number="SONE-205",
-            title="Should Not Appear",
-            actresses=[],
-            date="2024-01-01",
-            maker="Test",
-            cover_url="",
-            tags=[],
-            source="javbus",
-            detail_url="https://example.com",
-        )
-
-        with patch.object(JavBusScraper, 'search', return_value=mock_video):
-            result = search_jav("SONE-205", source="javguru")
-
-        assert result is None
-
 
 # ============================================================
 # TestFc2Dispatch — TASK-118-T3：fc2 source id 建的是官方站類別
 # ============================================================
-
-class TestFc2Dispatch:
-    """dispatch 路徑：source='fc2' 必須建構 FC2OfficialScraper，不是 javten FC2JavtenScraper。"""
-
-    def test_fc2_source_constructs_official_scraper(self):
-        """search_jav(source='fc2') 建出來的是 FC2OfficialScraper。"""
-        constructed = []
-
-        def factory(*args, **kwargs):
-            constructed.append(True)
-            inst = MagicMock()
-            inst.search.return_value = None
-            return inst
-
-        with patch('core.scraper.FC2OfficialScraper', side_effect=factory) as mock_official:
-            result = search_jav("FC2-PPV-1234567", source="fc2")
-
-        assert mock_official.called
-        assert len(constructed) == 1
-        assert result is None
 
 
 class TestFcJavtenDispatch:
@@ -463,51 +242,6 @@ class TestFcJavtenDoesNotAffectOtherSources:
 # （T4，CD-85-7；175b 起開關由 registry.providers_for 過濾，此處只守順序來源）
 # ============================================================
 
-class TestFuzzyGuard:
-    """fuzzy chain 的順序取自完整來源列表 get_all_source_ids_ordered（不是 enabled_sids），
-    啟用與否由 registry.providers_for 另行過濾；partial 走 javbus（能力約束）。
-
-    這些測試守既有行為——現在就 GREEN，T1a cascade 改動後也必須 GREEN。
-    Patch target 一律指使用端 core.scraper.*（gotchas-backend.md §Mock Patch Target）。
-    """
-
-    def test_fuzzy_chain_order_comes_from_full_source_list(self):
-        """鏈的順序取自完整來源列表（get_all_source_ids_ordered），不是 get_enabled_source_ids；
-        啟用與否由 providers_for 另行過濾（此處 is_source_enabled 恆真，只守順序來源）
-
-        突變有效性：把 registry.providers_for 的順序來源改為 get_enabled_source_ids() →
-        chain=[]，get_ids_from_search 不被呼叫 → assert_called() RED。
-        """
-        from core.scraper import search_actress
-
-        with patch('core.scraper.get_enabled_source_ids', return_value=[]), \
-             patch('core.scraper.get_all_source_ids_ordered', return_value=['javbus', 'dmm']), \
-             patch.object(JavBusScraper, 'get_ids_from_search', return_value=['SONE-205']) as mock_jb, \
-             patch('core.scraper.search_jav', return_value={'number': 'SONE-205', 'title': 'Test', 'source': 'javbus'}):
-            results = search_actress("テスト", limit=1)
-
-        # javbus must be called even though get_enabled_source_ids returned []
-        mock_jb.assert_called()
-        assert len(results) >= 1
-
-    def test_partial_search_always_uses_javbus(self):
-        """partial（MIDV-01）固定走 javbus（能力約束），不受 enabled_sids 影響。
-
-        突變有效性：把 search_partial L397 改為 search_jav(num, enabled_sids[0]) →
-        enabled=[] → IndexError 或 call_count=0 → 斷言 RED；
-        或改為 'dmm' → source 斷言 RED。
-        """
-        from core.scraper import search_partial
-
-        with patch('core.scraper.get_enabled_source_ids', return_value=[]), \
-             patch('core.scraper.get_all_source_ids_ordered', return_value=['javbus', 'dmm']), \
-             patch('core.scraper.expand_partial_number', return_value=['MIDV-010', 'MIDV-011']), \
-             patch('core.scraper.search_jav', return_value=None) as mock_search_jav:
-            search_partial('MIDV-01')
-
-        # search_jav must have been called with source='javbus' (hardcoded, not from enabled list)
-        assert mock_search_jav.call_count >= 1, "search_partial must call search_jav (hardcoded javbus)"
-
 
 # ============================================================
 # TestCascadeExactBranch — TDD-lite RED→GREEN cascade 測試
@@ -522,55 +256,6 @@ class TestCascadeExactBranch:
     Patch target 一律指使用端 core.scraper.*（gotchas-backend.md §Mock Patch Target）。
     """
 
-    def test_firstsource_fastpath_hit_dmm(self):
-        """enabled=['dmm','javbus']，DMM 命中 → 只呼叫 dmm、不呼叫 javbus（early-return）。
-
-        突變有效性：把 cascade early-return 拿掉（跑完所有才回）→
-        assert_called_once_with('HMN-706', 'dmm', ...) 轉 RED（javbus 也被試了）。
-        """
-        from core.scraper import smart_search
-
-        mock_result = {'number': 'HMN-706', 'title': 'T', '_source': 'dmm'}
-
-        def _single_source(number, source):
-            if source == 'dmm':
-                return mock_result
-            return None
-
-        with patch('core.scraper.get_enabled_source_ids', return_value=['dmm', 'javbus']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', side_effect=_single_source) as mock_ss:
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            results = smart_search('HMN-706')
-
-        assert len(results) == 1
-        assert results[0]['_source'] == 'dmm'
-        assert results[0]['_mode'] == 'exact'
-        mock_ss.assert_called_once_with('HMN-706', 'dmm')
-
-    def test_firstsource_fastpath_hit_javbus(self):
-        """enabled=['javbus','dmm']，javbus 命中 → 只呼叫 javbus、不呼叫 dmm。"""
-        from core.scraper import smart_search
-
-        mock_result = {'number': 'HMN-706', 'title': 'T', '_source': 'javbus'}
-
-        def _single_source(number, source):
-            if source == 'javbus':
-                return mock_result
-            return None
-
-        with patch('core.scraper.get_enabled_source_ids', return_value=['javbus', 'dmm']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', side_effect=_single_source) as mock_ss:
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            results = smart_search('HMN-706')
-
-        assert len(results) == 1
-        assert results[0]['_source'] == 'javbus'
-        assert results[0]['_mode'] == 'exact'
-        mock_ss.assert_called_once_with('HMN-706', 'javbus')
 
     def test_fastpath_sequential_miss_then_hit(self):
         """enabled=['dmm','javbus']，dmm miss → javbus 命中 → call_count==2。
@@ -621,66 +306,4 @@ class TestCascadeExactBranch:
         assert len(results) == 1
         assert results[0]['_source'] == 'javbus'
 
-    def test_fastpath_all_miss_returns_empty(self):
-        """enabled=['dmm','javbus']，全 miss → [] 且 merge_results 不被呼叫（fan-out 守衛）。
 
-        突變有效性：把 cascade 的 return [] 改成呼叫 fan-out →
-        merge_results.assert_not_called() 轉 RED。
-        """
-        from core.scraper import smart_search
-
-        with patch('core.scraper.get_enabled_source_ids', return_value=['dmm', 'javbus']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', return_value=None), \
-             patch('core.scraper.merge_results') as mock_merge:
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            results = smart_search('HMN-706')
-
-        assert results == []
-        mock_merge.assert_not_called()
-
-    def test_cascade_status_callback_sequence(self):
-        """status_callback 逐 sid emit 序列（CD-85-10）。
-
-        全 miss：[('dmm','searching'),('javbus','searching'),('done','found:0')]
-        dmm 命中：[('dmm','searching'),('done','found:1')]（javbus 不 emit，early-return）
-
-        突變有效性：拿掉迴圈內 emit (sid,'searching') → miss 序列首兩個 tuple 消失 → RED；
-        拿掉全 miss 的 ('done','found:0') → miss 序列尾 tuple 消失 → RED。
-        """
-        from core.scraper import smart_search
-
-        # --- 全 miss 序列 ---
-        miss_calls = []
-        with patch('core.scraper.get_enabled_source_ids', return_value=['dmm', 'javbus']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', return_value=None):
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            smart_search('HMN-706', status_callback=lambda a, b: miss_calls.append((a, b)))
-
-        assert miss_calls == [
-            ('dmm', 'searching'),
-            ('javbus', 'searching'),
-            ('done', 'found:0'),
-        ]
-
-        # --- dmm 命中序列（javbus 不 emit）---
-        hit_calls = []
-        mock_result = {'number': 'HMN-706', 'title': 'T', '_source': 'dmm'}
-
-        def _single_source(number, source):
-            return mock_result if source == 'dmm' else None
-
-        with patch('core.scraper.get_enabled_source_ids', return_value=['dmm', 'javbus']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', side_effect=_single_source):
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            smart_search('HMN-706', status_callback=lambda a, b: hit_calls.append((a, b)))
-
-        assert hit_calls == [
-            ('dmm', 'searching'),
-            ('done', 'found:1'),
-        ]

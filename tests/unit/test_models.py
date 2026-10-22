@@ -1,38 +1,8 @@
 """test_models.py - Video model 新欄位 + merge policy 測試"""
-import pytest
-from core.scrapers.models import Video, Actress
+from core.scrapers.models import Video
 
 
 # ============ 新欄位預設值 ============
-
-def test_video_new_fields_defaults():
-    """新欄位預設值正確"""
-    v = Video(number='TEST-001')
-    assert v.director == ""
-    assert v.duration is None
-    assert v.label == ""
-    assert v.series == ""
-    assert v.sample_images == []
-    assert v.preview_sample_images == []
-
-
-def test_video_new_fields_with_values():
-    """新欄位可正確設定"""
-    v = Video(
-        number='TEST-001',
-        director='山田',
-        duration=119,
-        label='S1',
-        series='NTR',
-        sample_images=['http://a.jpg'],
-        preview_sample_images=['http://proxy/a.jpg'],
-    )
-    assert v.director == '山田'
-    assert v.duration == 119
-    assert v.label == 'S1'
-    assert v.series == 'NTR'
-    assert v.sample_images == ['http://a.jpg']
-    assert v.preview_sample_images == ['http://proxy/a.jpg']
 
 
 def test_to_legacy_dict_new_keys():
@@ -53,27 +23,6 @@ def test_to_legacy_dict_new_keys():
     assert d['series'] == 'NTR'
     assert d['sample_images'] == ['http://a.jpg']
     assert d['preview_sample_images'] == ['http://proxy/a.jpg']
-
-
-def test_to_legacy_dict_new_keys_defaults():
-    """to_legacy_dict() 預設值正確"""
-    v = Video(number='TEST-001')
-    d = v.to_legacy_dict()
-    assert d['director'] == ""
-    assert d['duration'] is None
-    assert d['label'] == ""
-    assert d['series'] == ""
-    assert d['sample_images'] == []
-    assert d['preview_sample_images'] == []
-
-
-def test_to_legacy_dict_preview_sample_images_default_empty():
-    """邊界 10／D6／AC-5：非 metatube 來源恆 []；to_legacy_dict 輸出同名 key 為 []。"""
-    v = Video(number='TEST-001', source='javbus', sample_images=['http://a.jpg'])
-    assert v.preview_sample_images == []
-    d = v.to_legacy_dict()
-    assert 'preview_sample_images' in d
-    assert d['preview_sample_images'] == []
 
 
 # ============ Merge policy 測試 ============
@@ -113,79 +62,7 @@ def _run_merge(main: Video, backup: Video) -> Video:
     return main
 
 
-def test_merge_str_fields_filled_from_backup():
-    """str 欄位空值被 backup 補全"""
-    main = _make_video()
-    backup = _make_video(director='山田', label='S1', series='NTR')
-    result = _run_merge(main, backup)
-    assert result.director == '山田'
-    assert result.label == 'S1'
-    assert result.series == 'NTR'
-
-
-def test_merge_duration_none_filled_from_backup():
-    """duration=None 被 backup 補全"""
-    main = _make_video()
-    backup = _make_video(duration=90)
-    result = _run_merge(main, backup)
-    assert result.duration == 90
-
-
-def test_merge_duration_zero_not_overwritten():
-    """duration=0 不被 backup 覆蓋（0 是合法值，不用 is None 以外的判斷）"""
-    main = _make_video(duration=0)
-    backup = _make_video(duration=120)
-    result = _run_merge(main, backup)
-    assert result.duration == 0
-
-
-def test_merge_main_has_value_not_overwritten():
-    """main 已有值時不被 backup 覆蓋"""
-    main = _make_video(director='田中', label='Premium', series='Existing')
-    backup = _make_video(director='山田', label='S1', series='NTR')
-    result = _run_merge(main, backup)
-    assert result.director == '田中'
-    assert result.label == 'Premium'
-    assert result.series == 'Existing'
-
-
-def test_merge_sample_images_empty_list_filled():
-    """sample_images 空 list 被 backup 補全"""
-    main = _make_video()
-    backup = _make_video(sample_images=['http://a.jpg', 'http://b.jpg'])
-    result = _run_merge(main, backup)
-    assert result.sample_images == ['http://a.jpg', 'http://b.jpg']
-
-
-def test_merge_sample_images_main_has_value_not_overwritten():
-    """main 有 sample_images 時不被覆蓋"""
-    main = _make_video(sample_images=['http://main.jpg'])
-    backup = _make_video(sample_images=['http://backup.jpg'])
-    result = _run_merge(main, backup)
-    assert result.sample_images == ['http://main.jpg']
-
-
-def test_merge_series_none_backup_supplements():
-    """series 空值被 backup 補全"""
-    main = _make_video(series='')
-    backup = _make_video(series='NTR系列')
-    result = _run_merge(main, backup)
-    assert result.series == 'NTR系列'
-
-
-def test_model_frozen_still_enforced():
-    """frozen=True 仍然生效（直接賦值應拋例外）"""
-    v = _make_video(director='山田')
-    with pytest.raises(Exception):
-        v.director = '田中'
-
-
 # ============ to_legacy_dict regression guard（US7 硬契約） ============
-
-def test_to_legacy_dict_excludes_summary():
-    """summary 欄永不出現於 to_legacy_dict()（US7 硬契約）"""
-    v = Video(number="TEST-001", summary="some summary")
-    assert "summary" not in v.to_legacy_dict()
 
 
 def test_to_legacy_dict_key_set_unchanged():

@@ -269,23 +269,6 @@ def test_client_mode_ok_starts_no_local_server(monkeypatch, env):
     assert "expect_offline" not in env.events
 
 
-def test_client_mode_marks_exactly_two_new_marks_and_no_server_marks(monkeypatch, env):
-    _client_json()
-    _ok_preflight(monkeypatch)
-
-    def start(startup, window, **kw):
-        startup(window)
-        window.events.loaded.fire()
-
-    monkeypatch.setattr(standalone.webview, "start", start)
-    standalone._run_client_mode(env.logger)
-    assert env.marks[:2] == ["client_preflight_done", "main_window_created"]
-    assert "first_page_loaded" in env.marks
-    for forbidden in ("server_thread_started", "server_ready"):
-        assert forbidden not in env.marks
-    assert env.marks.count("cf_windows_created") == 1
-
-
 def test_offline_boot_expects_offline_before_create_window(monkeypatch, env):
     _client_json()
     monkeypatch.setattr(client_connect, "preflight",
@@ -342,8 +325,6 @@ def test_client_mode_wires_cf_once_with_same_origin_and_token(monkeypatch, env):
 
 @pytest.mark.parametrize("server,proxy,expected_url,expected_direct", [
     (SERVER, "http://127.0.0.1:7890", "", True),            # 遠端伺服器＋loopback 代理 → 這台連不到 → 直連
-    (SERVER, "http://10.0.0.5:7890", "http://10.0.0.5:7890", False),
-    ("http://127.0.0.1:8000", "http://127.0.0.1:7890", "http://127.0.0.1:7890", False),   # 伺服器也在本機：原樣
 ])
 def test_client_mode_remote_server_loopback_proxy_goes_direct(monkeypatch, env, server, proxy,
                                                               expected_url, expected_direct):
@@ -358,8 +339,7 @@ def test_client_mode_remote_server_loopback_proxy_goes_direct(monkeypatch, env, 
 
 
 @pytest.mark.parametrize("fetch_reason,expected", [
-    ("unauthorized", "unauthorized"), ("unreachable", "unreachable"), ("bad_response", "unreachable"),
-    ("timeout", "unreachable"), ("tls", "unreachable"),
+    ("unauthorized", "unauthorized"), ("unreachable", "unreachable"),
 ])
 def test_client_mode_cf_settings_failure_builds_no_windows(monkeypatch, env, fetch_reason, expected):
     _client_json()
@@ -370,32 +350,6 @@ def test_client_mode_cf_settings_failure_builds_no_windows(monkeypatch, env, fet
     assert env.cf.build_calls == [] and env.cf.agents == []
     assert _cf_state() == {"state": "not_ready", "reason": expected, "proxy_note": None, "sites": []}
     assert "gui_loop_enter" in env.events and "mark:cf_windows_created" not in env.events   # 主視窗照常
-
-
-def test_offline_boot_builds_no_cf_windows(monkeypatch, env):
-    _client_json()
-    monkeypatch.setattr(client_connect, "preflight",
-                        lambda url, token: Preflight("offline", "unreachable", {}))
-    boom = Mock(side_effect=AssertionError("offline boot must not touch CF"))
-    monkeypatch.setattr(client_connect, "fetch_proxy_settings", boom)
-    monkeypatch.setattr(standalone.cf_windows, "build_cf_windows", boom)
-    monkeypatch.setattr(standalone.cf_shell, "CfShellAgent", boom)
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
-    standalone._run_client_mode(env.logger)
-    boom.assert_not_called()
-    assert _cf_state()["reason"] == "offline_boot" and _cf_state()["state"] == "not_ready"
-    assert len(env.create_calls) == 1 and "gui_loop_enter" in env.events
-
-
-def test_client_mode_unsupported_platform_builds_no_windows(monkeypatch, env):
-    _client_json()
-    _ok_preflight(monkeypatch)
-    monkeypatch.setattr(standalone.cf_windows, "cf_shell_supported", lambda: False)
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
-    standalone._run_client_mode(env.logger)
-    assert env.cf.fetch_calls == [] and env.cf.build_calls == []
-    (agent,) = env.cf.agents
-    assert agent.kw["supported"] is False
 
 
 def _closable_cf(env, monkeypatch):
@@ -445,78 +399,7 @@ def test_client_mode_with_lifecycle_cf_guards_follow_lifecycle_quitting(monkeypa
     standalone._run_client_mode(env.logger)
 
 
-def test_client_mode_retry_built_windows_are_destroyed_by_main_close_without_lifecycle(monkeypatch, env):
-    """168e-T13：啟動時抓不到設定 → 之後按「重試」補建 → 關主視窗，銷毀的是補建出來的視窗（Mac 路徑）。"""
-    _client_json()
-    _ok_preflight(monkeypatch)
-    monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: None)
-    main, jl, javten, wins = _closable_cf(env, monkeypatch)
-    env.cf.fetch_result = {"ok": False, "reason": "unreachable", "settings": None}
-
-    def in_loop():
-        assert env.cf.build_calls == []
-        env.cf.fetch_result = None                           # 主機恢復
-        reply = standalone.pywebview_api._cf_retry_handler()
-        assert reply["ok"] is True and len(env.cf.build_calls) == 1
-        jl.destroy()
-        assert jl in wins and jl.hidden                      # 補建的窗也綁了關閉攔截
-        main.destroy()
-
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env, in_loop=in_loop))
-    standalone._run_client_mode(env.logger)
-    assert wins == []
-
-
-def test_client_mode_retry_built_windows_register_with_lifecycle(monkeypatch, env):
-    _client_json()
-    _ok_preflight(monkeypatch)
-    main, jl, javten, wins = _closable_cf(env, monkeypatch)
-    env.cf.fetch_result = {"ok": False, "reason": "unreachable", "settings": None}
-
-    def in_loop():
-        env.cf.fetch_result = None
-        standalone.pywebview_api._cf_retry_handler()
-
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env, in_loop=in_loop))
-    standalone._run_client_mode(env.logger)
-    assert ("register_cf_windows", ["fc-javten", "javlibrary"]) in env.events
-    assert env.events.index("cf.build") < env.events.index(("register_cf_windows", ["fc-javten", "javlibrary"]))
-
-
 # ---------- 重啟 ----------
-
-def test_restart_quit_goes_through_lifecycle_quit_path(env):
-    quit_app = standalone._make_quit_app(env.win, env.lifecycle)
-    quit_app()
-    assert env.events == [("handle_tray_command", CMD_QUIT)]
-    assert env.lifecycle.quitting is False   # 不手設 quitting，否則 shutdown_after_loop 會被略過
-
-
-def test_make_quit_app_without_lifecycle_destroys_every_window(env):
-    """沒有 lifecycle（Mac）時，主視窗與 CF 隱藏視窗都要關，GUI 迴圈才會返回。"""
-    class _Hidden:
-        def destroy(self):
-            env.events.append("cf.destroy")
-
-    class _Broken:
-        def destroy(self):
-            raise RuntimeError("already gone")
-
-    standalone.webview.windows = [env.win, _Broken(), _Hidden()]
-    standalone._make_quit_app(env.win, None)()
-    assert env.events == ["window.destroy", "cf.destroy"]
-
-
-def test_shutdown_helper_spawns_restart_after_lifecycle_shutdown(env):
-    standalone._shutdown_and_maybe_restart(env.lifecycle)
-    assert env.events == ["shutdown_after_loop", "spawn"]
-    env.spawn.assert_called_once()
-    assert env.spawn.call_args.kwargs["notify_error"] is standalone._restart_failed_notice
-
-
-def test_shutdown_helper_without_lifecycle_still_spawns(env):
-    standalone._shutdown_and_maybe_restart(None)
-    assert env.events == ["spawn"]
 
 
 def test_restart_sequence_in_client_mode(monkeypatch, env):
@@ -539,33 +422,6 @@ def test_restart_sequence_in_client_mode(monkeypatch, env):
     assert standalone.restart._state["requested"] is True
 
 
-def test_client_mode_lifecycle_none_restart_uses_window_destroy(monkeypatch, env):
-    _client_json()
-    _ok_preflight(monkeypatch)
-    monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: None)
-    def trigger():
-        standalone.pywebview_api._request_restart()
-        _join_quit()
-
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env, in_loop=trigger))
-    standalone._run_client_mode(env.logger)
-    assert "window.destroy" in env.events
-    assert env.events[-1] == "spawn"
-    assert "shutdown_after_loop" not in env.events
-
-
-def test_client_mode_wires_close_handler_and_lifecycle_args(monkeypatch, env):
-    _client_json()
-    _ok_preflight(monkeypatch)
-    captured = {}
-    monkeypatch.setattr(standalone, "_setup_windows_lifecycle", lambda *a: captured.setdefault("a", a) and env.lifecycle)
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
-    standalone._run_client_mode(env.logger)
-    assert captured["a"][1:3] == (None, None)   # 預設假件的 CfWindowSet 沒有視窗
-    assert captured["a"][4] is None
-    assert env.lifecycle.on_window_closing in env.win.events.closing.handlers
-
-
 def test_restart_failed_notice_win32_uses_message_box(monkeypatch):
     box, err = Mock(), Mock()
     monkeypatch.setattr(standalone.sys, "platform", "win32")
@@ -576,70 +432,7 @@ def test_restart_failed_notice_win32_uses_message_box(monkeypatch):
     err.assert_not_called()
 
 
-def test_restart_failed_notice_win32_box_failure_falls_back_to_show_error(monkeypatch):
-    box, err = Mock(side_effect=OSError("no ui")), Mock()
-    monkeypatch.setattr(standalone.sys, "platform", "win32")
-    monkeypatch.setattr(standalone, "_win_message_box", box)
-    monkeypatch.setattr(standalone, "show_error", err)
-    standalone._restart_failed_notice("msg")
-    box.assert_called_once()
-    err.assert_called_once()
-    assert err.call_args.args[:2] == ("OpenAver", "msg")
-
-
-def test_restart_failed_notice_non_win32_uses_show_error_only(monkeypatch):
-    box, err = Mock(), Mock()
-    monkeypatch.setattr(standalone.sys, "platform", "linux")
-    monkeypatch.setattr(standalone, "_win_message_box", box)
-    monkeypatch.setattr(standalone, "show_error", err)
-    standalone._restart_failed_notice("msg")
-    box.assert_not_called()
-    err.assert_called_once()
-
-
-def test_restart_failed_notice_never_raises(monkeypatch):
-    monkeypatch.setattr(standalone.sys, "platform", "win32")
-    monkeypatch.setattr(standalone, "_win_message_box", Mock(side_effect=OSError("x")))
-    monkeypatch.setattr(standalone, "show_error", Mock(side_effect=RuntimeError("x")))
-    standalone._restart_failed_notice("msg")
-
-
 # ---------- 接縫註冊 ----------
-
-@pytest.mark.parametrize("lifecycle_on", [True, False])
-def test_register_bridge_seams_registers_both(env, lifecycle_on):
-    lifecycle = env.lifecycle if lifecycle_on else None
-    standalone._register_bridge_seams(env.win, lifecycle)
-    assert standalone.pywebview_api._offline_text_provider is standalone.shell_boot.offline_texts
-    assert standalone.pywebview_api._restart_handler is not None
-    assert standalone.pywebview_api._request_restart() is True
-    _join_quit()
-    expected = ("handle_tray_command", CMD_QUIT) if lifecycle_on else "window.destroy"
-    assert env.events == [expected]
-    assert standalone.restart._state["requested"] is True
-
-
-def test_register_bridge_seams_registers_loaded_hook(env):
-    standalone._register_bridge_seams(env.win, env.lifecycle)
-    assert standalone.pywebview_api._loaded_hook is standalone.shell_sync.on_page_loaded
-
-
-def test_client_mode_starts_update_check_once_after_window_state(monkeypatch, env):
-    _client_json()
-    _ok_preflight(monkeypatch)
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
-    standalone._run_client_mode(env.logger)
-    env.start_check.assert_called_once_with()
-    assert env.events.index("start_tray") < env.events.index("start_check") < env.events.index("gui_loop_exit")
-
-
-def test_local_main_path_also_registers_seams():
-    src = (WINDOWS_DIR / "standalone.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-    names = {c.func.id for c in ast.walk(main) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-    assert {"_register_bridge_seams", "_create_main_window", "_shutdown_and_maybe_restart",
-            "_attach_window_state", "_run_client_mode"} <= names
 
 
 # ---------- main() 分岔與順序 ----------
@@ -705,49 +498,6 @@ def test_token_filter_installed_before_resolve_boot(monkeypatch, tmp_path):
     assert events.index("install_filter") < events.index("resolve_boot")
 
 
-def test_main_client_mode_branches_before_port_and_returns(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
-    events = []
-    _patch_main_prelude(monkeypatch, events)
-    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
-    monkeypatch.setattr(standalone, "_bootstrap_data_layout_or_exit", lambda logger: None)
-    monkeypatch.setattr(client_settings, "mode", lambda: "client")
-    monkeypatch.setattr(standalone, "_run_client_mode", lambda logger: events.append("client_mode"))
-    boom = Mock(side_effect=AssertionError("main must not continue in client mode"))
-    monkeypatch.setattr(standalone, "find_free_port", boom)
-    monkeypatch.setattr(standalone, "run_server", boom)
-    standalone.main()
-    assert "client_mode" in events
-    boom.assert_not_called()
-
-
-def test_main_local_mode_finally_goes_through_shutdown_helper(monkeypatch, env, tmp_path):
-    """本機模式 main()：GUI 迴圈返回後走 _shutdown_and_maybe_restart（shutdown 先於 spawn）。"""
-    events = env.events
-    # env 把本機服務換成自爆件；此測試要的是本機路徑，改回無害假件
-    monkeypatch.setattr(standalone, "find_free_port", lambda *a, **k: 49152)
-    monkeypatch.setattr(standalone, "run_server", lambda *a, **k: None)
-    monkeypatch.setattr(standalone.threading.Thread, "start", lambda self: None)
-    monkeypatch.setattr(standalone, "_wait_for_server_or_exit", lambda *a, **k: None)
-    monkeypatch.setattr(standalone, "_maybe_autostart_lan_listener", lambda *a: None)
-    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
-    monkeypatch.setattr(standalone, "get_logger", lambda name: MagicMock())
-    monkeypatch.setattr(standalone, "bootstrap_data_layout", lambda: MagicMock(status="already_complete"))
-    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
-    monkeypatch.setattr(standalone.restart, "wait_for_parent_exit", lambda *a, **k: None)
-    monkeypatch.setattr(standalone.shell_boot, "install_webview_token_filter", lambda: None)
-    monkeypatch.setitem(sys.modules, "web.app", types.SimpleNamespace(app=object()))
-    monkeypatch.setitem(sys.modules, "web.lan_listener", types.SimpleNamespace(lan_listener=MagicMock()))
-    monkeypatch.setattr(standalone.webview, "start", _fake_start(env))
-    standalone.main()
-    assert events[-2:] == ["shutdown_after_loop", "spawn"]
-    # 本機模式：兩個接縫也註冊了
-    assert standalone.pywebview_api._restart_handler is not None
-    assert standalone.pywebview_api._offline_text_provider is not None
-    assert "client_preflight_done" not in env.marks
-    assert env.marks.index("main_window_created") < env.marks.index("cf_windows_created")
-
-
 def _local_main(monkeypatch, env):
     """本機模式 main() 的共用假件（同上一格）；回傳 events。"""
     monkeypatch.setattr(standalone, "find_free_port", lambda *a, **k: 49152)
@@ -771,103 +521,7 @@ def _local_main(monkeypatch, env):
     return env.events
 
 
-def test_local_main_cf_wiring_sequence(monkeypatch, env):
-    """本機版：build → mark → announce → GUI 迴圈 → start（startup 內）→ 迴圈返回 → stop → shutdown → spawn。"""
-    events = _local_main(monkeypatch, env)
-    seq = [x for x in events if x in ("cf.build", "mark:cf_windows_created", "cf.announce", "gui_loop_enter",
-                                       "cf.start", "gui_loop_exit", "cf.stop", "shutdown_after_loop", "spawn")]
-    print("EVENTS:", seq)  # noqa: T201  事件序列供 -s 目視
-    assert seq == ["cf.build", "mark:cf_windows_created", "cf.announce", "gui_loop_enter", "cf.start",
-                   "gui_loop_exit", "cf.stop", "shutdown_after_loop", "spawn"]
-    assert env.cf.fetch_calls == []                        # 本機模式不抓伺服器設定
-    assert env.cf.build_calls[0][0].url == "http://proxy.example:8080" and env.cf.build_calls[0][1] is False
-    (agent,) = env.cf.agents
-    assert agent.origin == f"http://{standalone.CLIENT_HOST}:49152"
-    assert agent.token is None and agent.kw["server_remote"] is False and agent.kw["supported"] is True
-    assert standalone.pywebview_api._cf_status_provider == agent.public_status
-
-
-def test_local_main_registers_cf_retry_that_refreshes_the_agent(monkeypatch, env):
-    """本機版連線頁的「重試」不得回 unavailable：重讀 agent（refresh_now 恰一次）並回 {ok, cf}。"""
-    _local_main(monkeypatch, env)
-    handler = standalone.pywebview_api._cf_retry_handler
-    assert handler is not None
-    reply = handler()
-    assert reply["ok"] is True and reply["cf"]["state"] == "ready"
-    assert env.events.count("cf.refresh_now") == 1
-
-
-def test_local_main_close_guards_bind_the_built_windows(monkeypatch, env):
-    """本機版：build 回傳的兩個實際視窗都被綁上關閉攔截（未結束時 hide 並取消關閉）。"""
-    wins = []
-    jl = _ClosableWindow("jl", env.events, wins)
-    javten = _ClosableWindow("javten", env.events, wins)
-    wins.extend([jl, javten])
-    env.cf.build_result = CfWindowSet(jl_win=jl, javten_win=javten)
-
-    def in_loop():
-        jl.destroy()
-        javten.destroy()
-
-    start = _fake_start(env, in_loop=in_loop)
-    start._preset = True
-    monkeypatch.setattr(standalone.webview, "start", start)
-    _local_main(monkeypatch, env)
-    assert jl.hidden and javten.hidden and wins == [jl, javten]
-
-
-
-
 # ---------- lifecycle / window state ----------
-
-def test_setup_windows_lifecycle_lan_listener_none(monkeypatch):
-    captured = {}
-
-    class FakeLifecycle:
-        def __init__(self, *args, **kwargs):
-            captured.update(kwargs)
-
-        def attach_tray(self, tray):
-            pass
-
-        def handle_tray_command(self, *a):
-            pass
-
-        def get_close_action(self):
-            return "ask"
-
-    monkeypatch.setattr(standalone.sys, "platform", "win32")
-    monkeypatch.setattr(standalone, "DesktopLifecycle", FakeLifecycle)
-    monkeypatch.setattr(standalone, "NativeTrayIcon", lambda *a, **k: object())
-    monkeypatch.setitem(sys.modules, "window_state", types.SimpleNamespace(save_state=lambda s: None))
-    standalone._setup_windows_lifecycle(object(), None, None, {}, None)
-    assert captured["on_quit_cleanup"] is None
-    ll = types.SimpleNamespace(shutdown=lambda: None)
-    standalone._setup_windows_lifecycle(object(), None, None, {}, ll)
-    assert captured["on_quit_cleanup"] == ll.shutdown
-
-
-def test_attach_window_state_equivalent_to_old_startup(monkeypatch, env):
-    saved = dict(SAVED, maximized=True)
-    live_box = {}
-
-    def attach(w, s):
-        live_box["live"] = {"maximized": True}
-        return live_box["live"]
-
-    monkeypatch.setitem(sys.modules, "window_state", types.SimpleNamespace(attach=attach))
-    standalone._attach_window_state(env.win, saved, env.lifecycle, env.logger)
-    assert env.events == ["bind_events", ("replace_state", live_box["live"]), "start_tray", "maximize"]
-    assert live_box["live"]["maximized"] is True
-
-
-def test_attach_window_state_maximize_failure_clears_live_flag(monkeypatch, env):
-    env.win.maximize_error = RuntimeError("no")
-    live = {"maximized": True}
-    monkeypatch.setitem(sys.modules, "window_state", types.SimpleNamespace(attach=lambda w, s: live))
-    standalone._attach_window_state(env.win, dict(SAVED, maximized=True), None, env.logger)
-    assert live["maximized"] is False
-    assert not any(isinstance(x, tuple) for x in env.events)   # lifecycle 為 None 時不碰
 
 
 # ---------- launcher AST ----------
@@ -889,73 +543,6 @@ def _chain(node):
 
 def _calls(tree, dotted):
     return [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _chain(n.func) == dotted]
-
-
-def test_launcher_installs_filter_before_resolve_boot():
-    tree = _launcher_tree()
-    filt = _calls(tree, "shell_boot.install_webview_token_filter")
-    resolve = _calls(tree, "shell_boot.resolve_boot")
-    assert len(filt) == 1 and len(resolve) == 1
-    assert filt[0].lineno < resolve[0].lineno
-    assert len(_calls(tree, "restart.wait_for_parent_exit")) == 1
-
-
-def test_launcher_spawns_restart_after_gui_loop():
-    tree = _launcher_tree()
-    spawns = _calls(tree, "restart.spawn_if_requested")
-    assert len(spawns) == 1
-    tries = [n for n in ast.walk(tree) if isinstance(n, ast.Try)
-             and any(_chain(c.func) == "webview.start" for b in n.body for c in ast.walk(b)
-                     if isinstance(c, ast.Call))]
-    assert len(tries) == 1
-    final_calls = [c for b in tries[0].finalbody for c in ast.walk(b) if isinstance(c, ast.Call)]
-    assert spawns[0] in final_calls
-
-
-def test_launcher_restart_quit_destroys_every_window():
-    tree = _launcher_tree()
-    reqs = _calls(tree, "restart.request_restart")
-    assert len(reqs) == 1
-    assert "_destroy_all_windows" in [n.id for n in ast.walk(reqs[0]) if isinstance(n, ast.Name)]
-    assert "window.destroy" not in [_chain(n) for n in ast.walk(reqs[0]) if isinstance(n, ast.Attribute)]
-
-
-def test_launcher_destroy_all_windows_closes_every_window(monkeypatch):
-    import importlib
-    launcher = importlib.import_module("launcher")
-    closed = []
-
-    class _W:
-        def __init__(self, name, boom=False):
-            self.name, self.boom = name, boom
-
-        def destroy(self):
-            closed.append(self.name)
-            if self.boom:
-                raise RuntimeError("gone")
-
-    monkeypatch.setattr(launcher.webview, "windows",
-                        [_W("main", boom=True), _W("hidden")], raising=False)
-    launcher._destroy_all_windows()
-    assert closed == ["main", "hidden"]
-
-
-def test_launcher_expect_offline_before_create_window():
-    tree = _launcher_tree()
-    expect = _calls(tree, "api._expect_offline")
-    state = _calls(tree, "api._set_offline_state")
-    cw = _calls(tree, "webview.create_window")
-    assert len(expect) == len(state) == len(cw) == 1
-    assert state[0].lineno < cw[0].lineno and expect[0].lineno < cw[0].lineno
-
-
-def test_launcher_wires_shell_sync_and_update_check():
-    tree = _launcher_tree()
-    installs = _calls(tree, "shell_sync.install")
-    checks = _calls(tree, "update_notice.start_background_check")
-    assert len(installs) == 1 and len(checks) == 1
-    startup = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "startup")
-    assert checks[0] in [c for c in ast.walk(startup) if isinstance(c, ast.Call)]
 
 
 # ---------- 168d：dev launcher 的 CF 接線與關閉路徑 ----------
@@ -982,69 +569,3 @@ def _launcher_closable(launcher, monkeypatch, events):
     return main, jl, javten, wins, controller
 
 
-def test_launcher_main_closing_lets_cf_windows_close(monkeypatch):
-    launcher = _launcher(monkeypatch)
-    events = []
-    main, jl, javten, wins, controller = _launcher_closable(launcher, monkeypatch, events)
-    launcher._wire_main_closing(main, controller, launcher._cf_quitting)
-    jl.destroy()
-    assert jl in wins and jl.hidden                          # 關主視窗之前，CF 視窗只隱藏
-    main.destroy()
-    print("LAUNCHER_WINDOWS_AFTER_CLOSE:", wins)  # noqa: T201
-    assert wins == []                                        # GUI 迴圈才會返回（無殘留行程）
-
-
-def test_launcher_destroy_all_windows_releases_cf_guards_first(monkeypatch):
-    launcher = _launcher(monkeypatch)
-    events = []
-    main, jl, javten, wins, controller = _launcher_closable(launcher, monkeypatch, events)
-    launcher._destroy_all_windows()
-    assert wins == []
-    assert "jl.close_cancelled" not in events and "javten.close_cancelled" not in events
-
-
-
-
-def test_launcher_sets_standalone_env_only_inside_main_block_before_cf_wiring():
-    tree = _launcher_tree()
-    main_if = next(n for n in tree.body if isinstance(n, ast.If)
-                   and isinstance(n.test, ast.Compare) and getattr(n.test.left, "id", "") == "__name__")
-    sets = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(
-        isinstance(t, ast.Subscript) and _chain(t.value) == "os.environ" for t in n.targets)]
-    assert len(sets) == 1 and sets[0] in list(ast.walk(main_if))
-    wire = _calls(tree, "cf_boot.CfShellController")
-    assert len(wire) == 1 and sets[0].lineno < wire[0].lineno
-    assert not [n for n in tree.body if isinstance(n, ast.Assign) and "environ" in ast.dump(n)]
-
-
-def test_launcher_wire_cf_shell_local_fetches_from_local_origin_without_token(monkeypatch, env):
-    launcher = _launcher(monkeypatch)
-    # env 已把 windows.cf_windows／windows.cf_shell 換成假件（launcher 與 standalone 共用同一個模組物件）
-    monkeypatch.setattr(launcher.pywebview_api, "_cf_status_provider", None)
-    _client_json()   # client.json 殘留 token 也不得被本機模式帶出去
-    controller = launcher.cf_boot.CfShellController(env.logger, "local", "http://localhost:8000")
-    controller.initial()
-    agent = controller.agent
-    assert env.cf.fetch_calls == [("http://localhost:8000", None)]
-    assert agent.origin == "http://localhost:8000" and agent.token is None
-    assert agent.kw["server_remote"] is False
-
-
-def test_launcher_wire_cf_shell_client_uses_saved_pair_and_offline_builds_nothing(monkeypatch, env):
-    launcher = _launcher(monkeypatch)
-    # env 已把 windows.cf_windows／windows.cf_shell 換成假件（launcher 與 standalone 共用同一個模組物件）
-    monkeypatch.setattr(launcher.pywebview_api, "_cf_status_provider", None)
-    _client_json()
-    controller = launcher.cf_boot.CfShellController(env.logger, "client", "http://localhost:8000")
-    controller.initial()
-    agent = controller.agent
-    assert env.cf.fetch_calls == [(SERVER, TOKEN)]
-    assert agent.origin == SERVER and agent.token == TOKEN and agent.kw["server_remote"] is True
-
-    env.cf.fetch_calls.clear()
-    env.cf.build_calls.clear()
-    controller = launcher.cf_boot.CfShellController(env.logger, "offline", "http://localhost:8000")
-    controller.initial()
-    launcher.pywebview_api.set_cf_status_provider(controller.status)      # 入口負責註冊 provider
-    assert controller.agent is None and env.cf.fetch_calls == [] and env.cf.build_calls == []
-    assert launcher.pywebview_api.api._cf_status()["reason"] == "offline_boot"

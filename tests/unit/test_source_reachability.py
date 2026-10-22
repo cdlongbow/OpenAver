@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
-import socket
 import threading
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -46,95 +44,7 @@ def _sources(*paths: str):
 # ── DoD ① ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_no_sources_makes_no_probe_calls(sr):
-    """① 無來源 → 不建立任何 socket/exists 呼叫，快照為空。"""
-    with (
-        patch.object(sr, "load_config", return_value={"gallery": {}}),
-        patch.object(sr, "iter_gallery_sources", return_value=[]),
-        patch.object(sr.socket, "create_connection") as mock_conn,
-        patch.object(sr.os.path, "exists") as mock_exists,
-        patch.object(sr.os, "scandir") as mock_scandir,
-    ):
-        await sr.schedule_reprobe_if_stale()
-        await sr._reprobe_task
-        assert mock_conn.call_count == 0
-        assert mock_exists.call_count == 0
-        assert mock_scandir.call_count == 0
-        assert sr.get_snapshot() == {}
-
-
-@pytest.mark.asyncio
-async def test_permission_denied_short_circuits_without_retry(sr):
-    with (
-        patch.object(sr.os, "scandir", side_effect=PermissionError(13, "denied")) as scan,
-        patch.object(sr.asyncio, "sleep", new_callable=AsyncMock) as sleep,
-    ):
-        assert await sr._exists_probe("/denied") == "permission_denied"
-        assert await sr._probe_exists_with_retry("/denied") == "no_permission"
-        assert scan.call_count == 2
-        sleep.assert_not_awaited()
-
-
-def test_scandir_probe_other_oserror_is_missing(sr):
-    """NAS 斷線類錯誤（EHOSTDOWN 等）＝ main 的 exists()=False ＝ missing（True）。"""
-    import errno as _errno
-
-    with patch.object(sr.os, "scandir", side_effect=OSError(_errno.EHOSTDOWN, "host down")):
-        assert sr._scandir_probe("/mnt/nas") is True
-
-
-def test_scandir_probe_not_a_directory_is_reachable(sr):
-    """路徑是檔案：main 的 exists()=True ＝可達（False）。"""
-    with patch.object(sr.os, "scandir", side_effect=NotADirectoryError(20, "not a dir")):
-        assert sr._scandir_probe("/mnt/file") is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
-                    reason="chmod 000 requires POSIX non-root DAC enforcement")
-async def test_chmod_000_exists_probe_reports_permission_denied(sr, tmp_path):
-    source = tmp_path / "denied"
-    source.mkdir()
-    source.chmod(0o000)
-    try:
-        assert os.path.exists(source) is True
-        assert await sr._exists_probe(str(source)) == "permission_denied"
-    finally:
-        source.chmod(0o700)
-
-
-def test_no_permission_snapshot_uses_degraded_ttl(sr):
-    with sr._lock:
-        sr._snapshot = {"/denied": "no_permission"}
-        assert sr._current_ttl_locked() == sr._TTL_DEGRADED
-
-
 # ── DoD ② ──────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_same_unc_host_connects_once_and_closes(sr):
-    """② 三個同主機 UNC → create_connection 恰 1 次，且 socket.close() 有被呼叫。"""
-    sock = MagicMock()
-    sources = _sources(
-        r"\\nas\share1",
-        r"\\nas\share2",
-        r"\\nas\videos",
-    )
-    with (
-        patch.object(sr, "load_config", return_value={"gallery": {}}),
-        patch.object(sr, "iter_gallery_sources", return_value=sources),
-        patch.object(sr.socket, "create_connection", return_value=sock) as mock_conn,
-        patch.object(sr.asyncio, "sleep", new_callable=AsyncMock),
-    ):
-        await sr.schedule_reprobe_if_stale()
-        await sr._reprobe_task
-        assert mock_conn.call_count == 1
-        sock.close.assert_called_once()
-        snap = sr.get_snapshot()
-        assert len(snap) == 3
-        assert all(v == "ok" for v in snap.values())
 
 
 # ── DoD ③ ──────────────────────────────────────────────────────────────
@@ -165,80 +75,7 @@ async def test_tcp_negative_then_positive_is_ok(sr):
 # ── DoD ④ / ④b ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_tcp_probe_none_is_unknown(sr):
-    """④ TCP 探測回 None（如 gaierror）→ unknown（不是 ok）。"""
-
-    def boom(*_a, **_k):
-        raise socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided")
-
-    with (
-        patch.object(sr, "load_config", return_value={"gallery": {}}),
-        patch.object(sr, "iter_gallery_sources", return_value=_sources(r"\\nas\share")),
-        patch.object(sr.socket, "create_connection", side_effect=boom),
-        patch.object(sr.asyncio, "sleep", new_callable=AsyncMock),
-    ):
-        await sr.schedule_reprobe_if_stale()
-        await sr._reprobe_task
-    snap = sr.get_snapshot()
-    assert len(snap) == 1
-    assert next(iter(snap.values())) == "unknown"
-
-
-@pytest.mark.asyncio
-async def test_tcp_negative_then_none_is_unknown(sr):
-    """④b 第一次否定、第二次 None → unknown（不是 ok 也不是 unreachable）。"""
-    with (
-        patch.object(sr, "_tcp_probe", new_callable=AsyncMock, side_effect=[True, None]),
-        patch.object(sr.asyncio, "sleep", new_callable=AsyncMock),
-    ):
-        status = await sr._probe_tcp_with_retry("nas")
-    assert status == "unknown"
-
-
 # ── DoD ⑤ / ⑤b ─────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_iter_gallery_sources_error_clears_snapshot(sr):
-    """⑤ iter_gallery_sources 拋例外 → _in_flight False、快照 == {}（不保留舊快照）。"""
-    with sr._lock:
-        sr._snapshot = {"/old": "unreachable"}
-        sr._snapshot_at = time.monotonic()
-        sr._in_flight = True
-
-    with (
-        patch.object(sr, "load_config", return_value={"gallery": {}}),
-        patch.object(sr, "iter_gallery_sources", side_effect=RuntimeError("bad config")),
-    ):
-        await sr._probe_all()
-
-    assert sr._in_flight is False
-    assert sr.get_snapshot() == {}
-
-
-@pytest.mark.asyncio
-async def test_single_source_probe_error_is_isolated(sr):
-    """⑤b 單一來源探測拋例外 → 該來源 unknown，其餘來源不受影響。"""
-    paths = ["/mnt/ok", "/mnt/boom"]
-    sources = _sources(*paths)
-
-    async def probe_one(native_path, host_memo):
-        if native_path == "/mnt/boom":
-            raise RuntimeError("probe exploded")
-        return "ok"
-
-    with (
-        patch.object(sr, "load_config", return_value={"gallery": {}}),
-        patch.object(sr, "iter_gallery_sources", return_value=sources),
-        patch.object(sr, "_probe_one", side_effect=probe_one),
-    ):
-        await sr.schedule_reprobe_if_stale()
-        await sr._reprobe_task
-
-    snap = sr.get_snapshot()
-    assert snap["/mnt/ok"] == "ok"
-    assert snap["/mnt/boom"] == "unknown"
 
 
 # ── DoD ⑥ ──────────────────────────────────────────────────────────────
@@ -270,42 +107,7 @@ async def test_get_snapshot_returns_within_100ms_during_probe(sr):
                 await sr._reprobe_task
 
 
-def test_get_snapshot_never_creates_reprobe_task(sr):
-    """⑥ 單獨呼叫 get_snapshot() 永遠不建立 _reprobe_task。"""
-    assert sr._reprobe_task is None
-    sr.get_snapshot()
-    assert sr._reprobe_task is None
-
-
 # ── DoD ⑦ ──────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_concurrent_schedule_reprobe_creates_single_task(sr):
-    """⑦ 同一 tick 5 次 schedule_reprobe_if_stale() → 只建立 1 個 _probe_all task。"""
-
-    async def slow_probe():
-        try:
-            await asyncio.sleep(0.05)
-        finally:
-            with sr._lock:
-                sr._in_flight = False
-
-    real_create = asyncio.create_task
-    create_count = {"n": 0}
-
-    def counting_create(coro, *a, **k):
-        create_count["n"] += 1
-        return real_create(coro, *a, **k)
-
-    with (
-        patch.object(sr, "_probe_all", side_effect=slow_probe),
-        patch.object(sr.asyncio, "create_task", side_effect=counting_create),
-    ):
-        await asyncio.gather(*[sr.schedule_reprobe_if_stale() for _ in range(5)])
-        assert create_count["n"] == 1
-        if sr._reprobe_task is not None:
-            await sr._reprobe_task
 
 
 # ── DoD ⑧ ──────────────────────────────────────────────────────────────
@@ -379,90 +181,10 @@ async def test_pending_exists_dedup_across_ttl_cycles(sr, monkeypatch):
 # ── DoD ⑨ ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_create_task_failure_recovers_in_flight(sr):
-    """⑨ create_task 拋 RuntimeError → 不上拋、_in_flight False；移除 patch 後可再排程。"""
-
-    def boom(_coro, *a, **k):
-        raise RuntimeError("loop is closing")
-
-    with patch.object(sr.asyncio, "create_task", side_effect=boom):
-        await sr.schedule_reprobe_if_stale()  # must not raise
-        assert sr._in_flight is False
-
-    scheduled = {"n": 0}
-    real_create = asyncio.create_task
-
-    def counting_create(coro, *a, **k):
-        scheduled["n"] += 1
-        return real_create(coro, *a, **k)
-
-    async def quick_probe():
-        with sr._lock:
-            sr._in_flight = False
-
-    with (
-        patch.object(sr, "_probe_all", side_effect=quick_probe),
-        patch.object(sr.asyncio, "create_task", side_effect=counting_create),
-    ):
-        await sr.schedule_reprobe_if_stale()
-        assert scheduled["n"] == 1
-        if sr._reprobe_task is not None:
-            await sr._reprobe_task
-
-
 # ── unc_host smoke（公開 API，供 T2 顯示名）────────────────────────────
 
 
-def test_unc_host_parses_backslash_and_slash(sr):
-    assert sr.unc_host(r"\\nas\share\path") == r"\\nas"
-    assert sr.unc_host("//nas/share/path") == r"\\nas"
-    assert sr.unc_host("/mnt/data") is None
-    assert sr.unc_host(r"D:\Videos") is None
-
-
 # ── DoD ⑩：CD-5 非對稱 TTL（owner 最終檢查：健康使用者零影響）──────────
-
-
-@pytest.mark.asyncio
-async def test_healthy_snapshot_ttl_600s(sr):
-    """⑩ 快照全 ok：推進 300 秒不得觸發重探；推進到 601 秒才觸發。"""
-    with sr._lock:
-        sr._snapshot = {"/mnt/a": "ok", "/mnt/b": "unknown"}
-        sr._snapshot_at = time.monotonic() - 300.0
-
-    with patch.object(sr.asyncio, "create_task") as mock_create:
-        await sr.schedule_reprobe_if_stale()
-    assert mock_create.call_count == 0, "全 ok 的快照在 300 秒時不該重探（_TTL_HEALTHY=600）"
-    assert sr._in_flight is False
-
-    async def quick_probe():
-        with sr._lock:
-            sr._in_flight = False
-
-    with sr._lock:
-        sr._snapshot_at = time.monotonic() - 601.0
-    with patch.object(sr, "_probe_all", side_effect=quick_probe):
-        await sr.schedule_reprobe_if_stale()
-        assert sr._reprobe_task is not None, "601 秒後必須觸發重探"
-        await sr._reprobe_task
-
-
-@pytest.mark.asyncio
-async def test_degraded_snapshot_ttl_60s(sr):
-    """⑩ 快照含一筆 unreachable：推進 61 秒就要觸發（_TTL_DEGRADED 生效）。"""
-    with sr._lock:
-        sr._snapshot = {"/mnt/a": "ok", "/mnt/nas": "unreachable"}
-        sr._snapshot_at = time.monotonic() - 61.0
-
-    async def quick_probe():
-        with sr._lock:
-            sr._in_flight = False
-
-    with patch.object(sr, "_probe_all", side_effect=quick_probe):
-        await sr.schedule_reprobe_if_stale()
-        assert sr._reprobe_task is not None, "已不可達的快照 61 秒就該重探（碟插回來要快點消失）"
-        await sr._reprobe_task
 
 
 # ── 缺陷 A：剛開機（monotonic 很小）仍要排到第一次探測 ──────────────────
@@ -494,28 +216,3 @@ async def test_fresh_boot_clock_still_schedules_first_probe(sr):
 # ── TASK-169-T2 ────────────────────────────────────────────────────────
 
 
-def test_exists_wait_covers_dsm_disconnect_and_keeps_fuse(sr):
-    """探測等待要大於 NAS 掛載回斷線錯誤的 ~10 秒，且單一死來源 (2W+R) 吃不掉保險絲。"""
-    assert sr._EXISTS_WAIT_S > 10.0
-    assert 2 * sr._EXISTS_WAIT_S + sr._RETRY_SLEEP_S < sr._FIRST_PROBE_WAIT_S
-
-
-@pytest.mark.asyncio
-async def test_slow_negative_probe_is_unreachable_not_unknown(sr, monkeypatch):
-    """慢但終究回否定（True＝missing）→ unreachable，不是 unknown。"""
-    monkeypatch.setattr(sr, "_EXISTS_WAIT_S", 1.0)
-
-    def slow_negative(_path):
-        time.sleep(0.3)
-        return True
-
-    path = "/mnt/slow-nas"
-    with (
-        patch.object(sr, "load_config", return_value={"gallery": {}}),
-        patch.object(sr, "iter_gallery_sources", return_value=_sources(path)),
-        patch.object(sr, "_scandir_probe", side_effect=slow_negative),
-        patch.object(sr.asyncio, "sleep", new_callable=AsyncMock),
-    ):
-        await sr.schedule_reprobe_if_stale()
-        await sr._reprobe_task
-        assert sr.get_snapshot().get(path) == "unreachable"

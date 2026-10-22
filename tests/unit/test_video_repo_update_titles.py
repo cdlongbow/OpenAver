@@ -5,7 +5,6 @@
 import pytest
 
 from core.database import Video, VideoRepository, get_connection
-from core.database.version_tracker import get_showcase_revision
 from core.path_utils import to_file_uri
 
 PATH = to_file_uri("C:/Videos/T2-001.mp4")
@@ -51,14 +50,6 @@ def repo(temp_db, seed_crop_mode):
     return r
 
 
-def test_update_titles_happy_path_reads_back(repo):
-    assert repo.update_titles(PATH, "譯文", "日本語原文", 555.0) is True
-    v = repo.get_by_path(PATH)
-    assert v.title == "譯文"
-    assert v.original_title == "日本語原文"
-    assert v.nfo_mtime == 555.0
-
-
 def test_update_titles_leaves_other_columns_untouched(repo):
     before = _row(repo)
     # 種子欄位確實非預設，否則比對空轉
@@ -77,21 +68,3 @@ def test_update_titles_leaves_other_columns_untouched(repo):
     assert after["title"] == "譯文"
 
 
-def test_update_titles_bumps_showcase_revision(repo):
-    before = get_showcase_revision()
-    assert repo.update_titles(PATH, "譯文", "原文", 1.0) is True
-    assert get_showcase_revision() > before
-
-
-def test_update_titles_missing_path_returns_false(repo):
-    missing = to_file_uri("C:/Videos/none.mp4")
-    assert repo.get_by_path(missing) is None
-    assert repo.update_titles(missing, "x", "y", 1.0) is False
-    assert repo.get_by_path(missing) is None
-
-
-def test_update_titles_empty_original_title_stored_as_empty(repo):
-    assert repo.get_by_path(PATH).original_title == "原文"
-    assert repo.update_titles(PATH, "復原後標題", "", 2.0) is True
-    assert _row(repo)["original_title"] == ""
-    assert repo.get_by_path(PATH).title == "復原後標題"

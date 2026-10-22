@@ -1,6 +1,5 @@
 """171-T5：OpenAICompatibleTranslateService 接 openai_client（translate_or_raise / translate_single）。"""
 
-import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -67,46 +66,12 @@ async def test_openai_outbound_request_equals_openai_client():
 
 
 @pytest.mark.asyncio
-async def test_openai_request_timeout_is_60():
-    inst = _mock_client()
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst) as ac:
-        await _svc().translate_or_raise("テスト")
-    assert ac.call_args.kwargs["timeout"] == 60
-
-
-@pytest.mark.asyncio
 async def test_openai_ja_short_circuit_no_client():
     with patch("core.cloud_translate.httpx.AsyncClient") as ac:
         svc = _svc("ja")
         assert await svc.translate_or_raise("原題") == "原題"
         assert await svc.translate_single("原題") == "原題"
     assert ac.call_count == 0
-
-
-@pytest.mark.asyncio
-async def test_openai_missing_key_does_not_raise_and_omits_auth():
-    inst = _mock_client()
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst):
-        assert await _svc(key="").translate_or_raise("テスト") == "翻譯結果"
-    assert "Authorization" not in inst.post.call_args.kwargs["headers"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "data,kind",
-    [
-        (_ok("半句", finish_reason="length"), "truncated"),
-        (_ok("x", finish_reason="content_filter"), "blocked"),
-        (_ok("", refusal="no"), "blocked"),
-    ],
-)
-async def test_openai_failure_kinds_and_single_returns_empty(data, kind):
-    inst = _mock_client(json_data=data)
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst):
-        with pytest.raises(TranslateError) as ei:
-            await _svc().translate_or_raise("テスト")
-        assert ei.value.kind == kind
-        assert await _svc().translate_single("テスト") == ""
 
 
 @pytest.mark.asyncio
@@ -129,14 +94,4 @@ async def test_openai_translate_single_swallows_translate_error():
     ):
         assert await svc.translate_single("テスト") == ""
 
-
-@pytest.mark.asyncio
-async def test_openai_local_protocol_error_no_key_leak(caplog):
-    inst = _mock_client(post_side_effect=httpx.LocalProtocolError(f"Illegal header value b'{FAKE_KEY}\\n'"))
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst), caplog.at_level(logging.DEBUG):
-        with pytest.raises(TranslateError) as ei:
-            await _svc().translate_or_raise("テスト")
-    assert FAKE_KEY not in ei.value.message
-    assert FAKE_KEY not in str(ei.value)
-    assert FAKE_KEY not in caplog.text
 

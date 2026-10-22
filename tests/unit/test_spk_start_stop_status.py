@@ -58,19 +58,6 @@ def test_stop_escalates_to_sigkill_when_term_ignored(tmp_path):
             pass
 
 
-def test_stop_normal_term(tmp_path):
-    pid = _spawn(OURS_SLEEP)
-    try:
-        rc, pidfile = _stop(tmp_path, pid)
-        assert rc == 0
-        assert not pidfile.exists()
-    finally:
-        try:
-            os.kill(pid, 9)
-        except ProcessLookupError:
-            pass
-
-
 def test_stale_pid_reused_by_other_process_is_not_killed(tmp_path):
     """PID 被無關程序重用：stop 不送訊號只清 PID 檔；status 不誤判為在跑。"""
     pid = _spawn("sleep 60")

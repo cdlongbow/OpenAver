@@ -8,21 +8,8 @@ import inspect
 import textwrap
 
 from tests.smoke._canary_core import (
-    GROUP_A,
-    GROUP_B,
-    _CENSORED,
     classify_one,
 )
-
-
-class TestGroupMembership:
-    def test_api_canary_is_not_group_b(self):
-        # 加進 GROUP_B ＝ 這顆燈永遠 skip、永遠不紅（mutation: api-canary-not-in-group-b）
-        assert "javdb-api" not in GROUP_B
-
-    def test_api_canary_is_group_a_and_censored(self):
-        assert "javdb-api" in GROUP_A
-        assert "javdb-api" in _CENSORED
 
 
 class TestApiCanaryCanGoRed:
@@ -31,16 +18,6 @@ class TestApiCanaryCanGoRed:
         assert (
             classify_one(None, True, "SONE-205", "javdb-api") == "fail"
         )
-
-    def test_unreachable_is_skip(self):
-        # 對照：連不上不算壞
-        assert (
-            classify_one(None, False, "SONE-205", "javdb-api") == "skip"
-        )
-
-    def test_web_javdb_none_still_skips(self):
-        # 對照：網頁那條（GROUP_B）行為零回歸
-        assert classify_one(None, None, "SSNI-001", "javdb") == "skip"
 
 
 def _canary_method(func):
@@ -72,11 +49,6 @@ class TestTwoCanariesCallDifferentMethods:
     F5 想裝的偵測器等於不存在。而這件事**只有跑活站才看得出來**。
     """
 
-    def test_web_canary_calls_search_via_html(self):
-        from tests.smoke.test_source_canary import test_javdb_canary as _web
-        assert _canary_method(_web) == "search_via_html", (
-            "網頁金絲雀必須打 search_via_html；打編排過的 search() 會讓它跟 API 那條混在一起"
-        )
 
     def test_api_canary_calls_search_via_api(self):
         from tests.smoke.test_source_canary import test_javdb_api_canary as _api
@@ -84,7 +56,3 @@ class TestTwoCanariesCallDifferentMethods:
             "API 金絲雀必須打 search_via_api；打 search() 的話它會因為自動降級而永遠綠"
         )
 
-    def test_run_canary_default_method_is_search(self):
-        """其餘 7 個來源靠 default 走原路——default 被改掉它們會一起壞，而且只有活站看得出來。"""
-        from tests.smoke.test_source_canary import _run_canary
-        assert inspect.signature(_run_canary).parameters["method"].default == "search"

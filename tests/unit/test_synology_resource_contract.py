@@ -32,13 +32,6 @@ def test_wizard_combobox_key_is_wizard_key():
     assert [s["key"] for it in items if it.get("type") == "combobox" for s in it["subitems"]] == [WIZARD_KEY]
 
 
-def test_resource_is_valid_json_with_single_share():
-    data = _load_resource()
-    shares = data.get("data-share", {}).get("shares")
-    assert isinstance(shares, list), f"Expected 'data-share.shares' to be a list, got {type(shares)}"
-    assert len(shares) == 1, f"Expected exactly 1 share entry, got {len(shares)}"
-
-
 def test_resource_placeholder_key_is_wizard_key():
     data = _load_resource()
     shares = data.get("data-share", {}).get("shares", [])

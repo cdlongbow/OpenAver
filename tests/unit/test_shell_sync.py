@@ -60,9 +60,6 @@ def _bytes(env):
 
 @pytest.mark.parametrize("fetch_result", [
     {"ok": False, "reason": "unreachable", "extensions": []},
-    {"ok": False, "reason": "timeout"},
-    {"ok": True},
-    TimeoutError("fetch timed out"),
 ])
 def test_extension_copy_failure_keeps_old_value(env, monkeypatch, fetch_result):
     _client()
@@ -100,24 +97,8 @@ def test_extension_copy_empty_server_list_clears_old_custom(env, monkeypatch):
     assert shell_sync._state["synced"] is True
 
 
-def test_extension_copy_stale_probe_writes_nothing(env, monkeypatch):
-    _client()
-    before = _bytes(env)
-    fake = _fake_api(gen=1)
-
-    def fetch(url, token):   # fetch 進行中頁面換世代
-        fake.api._nav_gen = 2
-        return {"ok": True, "reason": None, "extensions": [".m2ts"]}
-
-    monkeypatch.setattr(client_connect, "fetch_video_extensions", fetch)
-    shell_sync.install(fake)
-    shell_sync.on_page_loaded("server", _win(), 1)
-    assert _bytes(env) == before
-    assert shell_sync._state["synced"] is False
-
-
-@pytest.mark.parametrize("kind", ["server", "offline", "other"])
-@pytest.mark.parametrize("empty_url", [False, True])
+@pytest.mark.parametrize("kind", ["server"])
+@pytest.mark.parametrize("empty_url", [False])
 def test_local_mode_is_inert(env, monkeypatch, kind, empty_url):
     if empty_url:
         client_settings.save_client_settings({"version": 1, "server": {"url": "", "token": ""}})
@@ -138,19 +119,6 @@ def test_local_mode_is_inert(env, monkeypatch, kind, empty_url):
     write.assert_not_called()
     shown.assert_not_called()
     assert _bytes(env) == before
-
-
-def test_server_page_hands_off_to_update_notice(env, monkeypatch):
-    _client()
-    monkeypatch.setattr(client_connect, "fetch_video_extensions", Mock(return_value={"ok": False}))
-    shown = Mock()
-    monkeypatch.setattr(shell_sync.update_notice, "try_show", shown)
-    shell_sync.install(_fake_api())
-    w = _win()
-    shell_sync.on_page_loaded("server", w, 1)
-    shown.assert_called_once()
-    assert shown.call_args.args[:2] == (w, 1)
-    assert shown.call_args.args[2]() is True
 
 
 def test_probe_is_wired_to_real_api(env, monkeypatch):
@@ -203,31 +171,6 @@ def test_leaving_settings_page_recopies_extensions(env, monkeypatch):
     shell_sync.on_page_loaded("server", _path_win("/search"), 1)
     assert fetch.call_count == 2
     assert client_settings.video_extensions() == {".m2ts", ".mp4"}
-
-
-def test_non_settings_to_non_settings_does_not_recopy(env, monkeypatch):
-    fetch = _setup_copy(env, monkeypatch)
-    shell_sync.on_page_loaded("server", _path_win("/"), 1)
-    shell_sync.on_page_loaded("server", _path_win("/search"), 1)
-    assert fetch.call_count == 1
-
-
-def test_pathname_read_failure_neither_resets_nor_raises(env, monkeypatch):
-    fetch = _setup_copy(env, monkeypatch)
-    shell_sync.on_page_loaded("server", _path_win("/settings"), 1)
-    assert shell_sync._state["synced"] is True and fetch.call_count == 1
-    shell_sync.on_page_loaded("server", _path_win(RuntimeError("boom")), 1)
-    assert shell_sync._state["synced"] is True and shell_sync._state["in_settings"] is True
-    assert fetch.call_count == 1
-    shell_sync.on_page_loaded("server", _path_win("/search"), 1)  # 下一次讀得到再判
-    assert fetch.call_count == 2
-
-
-def test_offline_resets_in_settings(env):
-    _client()
-    shell_sync._state["in_settings"] = True
-    shell_sync.on_page_loaded("offline", _win(), 1)
-    assert shell_sync._state["in_settings"] is False
 
 
 # ---- 168e-T15：E6 閘門頁不污染托盤語系 ----

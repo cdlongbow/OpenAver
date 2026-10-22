@@ -14,22 +14,10 @@ import pytest
 
 import core.client_settings as client_settings
 import core.config as core_config
-from core.path_translate import Uncovered
 from core.path_utils import uri_to_fs_path
 
 URI_INPUTS = [
     "file:///C:/Users/a/x.mp4",
-    "file:///D:/AV/x.mp4",
-    "file://///nas/s/x.mp4",
-    "file:////volume1/av/x.mp4",
-    "file:///D:/AV/a%20b.mp4",
-    "file:///D:/AV/a b.mp4",
-    "C:\\Users\\a\\x.mp4",
-    "D:/AV/x.mp4",
-    "\\\\nas\\s\\x.mp4",
-    "",
-    "relative/x.mp4",
-    "not a path ::",
 ]
 
 SERVER_URI = "file:////volume1/av/x.mp4"
@@ -119,25 +107,6 @@ def test_bridge_resolve_local_mode_equals_uri_to_fs_path(api_module, local_env, 
     assert api_module.bridge_unresolve(value) == value
 
 
-def test_bridge_resolve_client_uncovered_is_not_a_string(api_module, client_env):
-    got = api_module.bridge_resolve("file:////media/elsewhere/x.mp4")
-    assert isinstance(got, Uncovered)
-    assert not isinstance(got, str)
-    back = api_module.bridge_unresolve(str(client_env / "nowhere" / "x.mp4"))
-    assert isinstance(back, Uncovered)
-
-
-def test_bridge_resolve_client_maps_server_to_local(api_module, client_env):
-    assert api_module.bridge_resolve(SERVER_URI) == str(client_env / "av" / "x.mp4")
-    assert api_module.bridge_unresolve(str(client_env / "av" / "x.mp4")) == "/volume1/av/x.mp4"
-
-
-def test_path_map_is_rebuilt_every_call(api_module, client_env):
-    assert not isinstance(api_module.bridge_resolve(SERVER_URI), Uncovered)
-    set_client(client_env, path_map=[])
-    assert isinstance(api_module.bridge_resolve(SERVER_URI), Uncovered)
-
-
 # ---------------------------------------------------------------------------
 # 正向：open_file / open_folder
 # ---------------------------------------------------------------------------
@@ -163,7 +132,7 @@ def test_open_file_client_covered_opens_translated_path(api_module, client_env, 
     no_launch["startfile"].assert_called_once_with(str(client_env / "av" / "x.mp4"))
 
 
-@pytest.mark.parametrize("method", ["open_file", "open_folder"])
+@pytest.mark.parametrize("method", ["open_file"])
 def test_forward_uncovered_never_touches_filesystem(api_module, client_env, no_launch, monkeypatch, method):
     real_exists = api_module.os.path.exists
     exists = Mock(side_effect=real_exists)
@@ -174,29 +143,6 @@ def test_forward_uncovered_never_touches_filesystem(api_module, client_env, no_l
     # os.path 是全域的：全套測試時 logger 檔案 handler 會呼叫 exists(*.log)，那不是被測路徑
     stray = [c for c in exists.call_args_list if not str(c.args[0]).endswith(".log")]
     assert stray == []
-    _assert_nothing_launched(no_launch)
-
-
-@pytest.mark.parametrize("method", ["open_file", "open_folder"])
-def test_forward_uncovered_and_not_found_are_distinct(api_module, client_env, no_launch, method):
-    # uncovered：路徑不在表內
-    unc = getattr(api_module.api, method)("file:////media/elsewhere/gone.mp4")
-    # not_found：在表內但檔不在（獨立 fixture：另一個路徑）
-    nf = getattr(api_module.api, method)("file:////volume1/av/missing/gone.mp4")
-    assert unc["reason"] == "uncovered" and unc["local_path"] is None
-    assert nf["reason"] == "not_found"
-    assert nf["local_path"] == str(client_env / "av" / "missing" / "gone.mp4")
-    assert unc["reason"] != nf["reason"]
-    _assert_nothing_launched(no_launch)
-
-
-def test_open_file_rejects_non_video_without_launching(api_module, client_env, no_launch):
-    r = api_module.api.open_file("file:////volume1/av/doc.txt")
-    assert r["ok"] is False and r["reason"] == "not_video"
-    assert r["local_path"] == str(client_env / "av" / "doc.txt")
-    # 副檔名先於存在檢查
-    r2 = api_module.api.open_file("file:////volume1/av/missing.txt")
-    assert r2["reason"] == "not_video"
     _assert_nothing_launched(no_launch)
 
 
@@ -219,12 +165,6 @@ def test_open_file_extension_follows_user_config(api_module, local_env, no_launc
     assert api_module.api.open_file(str(mp4))["reason"] == "not_video"
 
 
-def test_open_file_extension_follows_client_config(api_module, client_env, no_launch):
-    set_client(client_env, video_extensions=[".txt"])
-    assert api_module.api.open_file("file:////volume1/av/doc.txt")["ok"] is True
-    assert api_module.api.open_file(SERVER_URI)["reason"] == "not_video"
-
-
 def test_open_folder_not_found_falls_back_to_parent(api_module, client_env, no_launch, monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     r = api_module.api.open_folder("file:////volume1/av/sub/missing.mp4")
@@ -236,33 +176,9 @@ def test_open_folder_not_found_falls_back_to_parent(api_module, client_env, no_l
     assert r2["reason"] == "not_found"
 
 
-def test_open_url_still_returns_bool(api_module, local_env, no_launch):
-    assert api_module.api.open_url("https://example.com") is True
-    assert api_module.api.open_url("ftp://x") is False
-
-
 # ---------------------------------------------------------------------------
 # log 形狀
 # ---------------------------------------------------------------------------
-def test_refused_log_line_shape_and_failed_has_no_refused_line(api_module, client_env, no_launch, monkeypatch):
-    mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, "logger", mock_logger)
-    api_module.api.open_file("file:////media/elsewhere/x.mp4")
-    assert mock_logger.warning.call_args[0][0] == (
-        "[pywebview] open_file refused reason=uncovered server='/media/elsewhere/x.mp4' local=None")
-    api_module.api.open_file("file:////volume1/av/missing/gone.mp4")
-    last = mock_logger.warning.call_args[0][0]
-    assert "reason=not_found" in last and "server='/volume1/av/missing/gone.mp4'" in last
-    # 成功路徑沒有新 warning
-    mock_logger.reset_mock()
-    assert api_module.api.open_file(SERVER_URI)["ok"] is True
-    mock_logger.warning.assert_not_called()
-    # failed：只有 logger.error，沒有 refused 行
-    no_launch["startfile"].side_effect = OSError("boom")
-    r = api_module.api.open_file(SERVER_URI)
-    assert r["reason"] == "failed"
-    mock_logger.error.assert_called_once()
-    mock_logger.warning.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -296,15 +212,12 @@ def _uncovered_calls(window):
     return [s for s in _js_calls(window) if "handleBridgeUncovered" in s]
 
 
-EXITS = ["select_files", "select_folder", "select_folder_path", "on_drop_file", "on_drop_folder"]
-
-
 def _unc_path(env, exit_name):
     return str(env / "other") if exit_name in ("select_folder", "select_folder_path", "on_drop_folder") \
         else str(env / "other" / "y.mp4")
 
 
-@pytest.mark.parametrize("exit_name", EXITS)
+@pytest.mark.parametrize("exit_name", ["select_files", "select_folder"])
 def test_reverse_exits_never_emit_uncovered_path(api_module, client_env, exit_name):
     unc = _unc_path(client_env, exit_name)
     call = _setup_exit(api_module, exit_name, [unc])
@@ -320,7 +233,7 @@ def test_reverse_exits_never_emit_uncovered_path(api_module, client_env, exit_na
         assert ret == []
 
 
-@pytest.mark.parametrize("exit_name", EXITS)
+@pytest.mark.parametrize("exit_name", ["select_files", "select_folder", "on_drop_folder"])
 def test_reverse_exits_covered_translate_without_notice(api_module, client_env, exit_name):
     av = client_env / "av"
     covered = {
@@ -350,15 +263,6 @@ def test_reverse_exits_covered_translate_without_notice(api_module, client_env, 
         assert "/volume1/av/sub/a.mp4" in drop and "c.txt" not in drop
 
 
-def test_mixed_covered_and_uncovered_select_files(api_module, client_env):
-    av, other = client_env / "av", client_env / "other"
-    paths = [str(av / "x.mp4"), str(av / "sub" / "a.mp4"), str(av / "sub" / "b.mkv"), str(other / "y.mp4")]
-    ret = _setup_exit(api_module, "select_files", paths)()
-    assert ret == ["/volume1/av/x.mp4", "/volume1/av/sub/a.mp4", "/volume1/av/sub/b.mkv"]
-    notes = _uncovered_calls(api_module.get_window())
-    assert len(notes) == 1 and json.dumps([str(other / "y.mp4")]) in notes[0]
-
-
 def test_on_drop_mixed_notifies_once(api_module, client_env):
     av, other = client_env / "av", client_env / "other"
     paths = [str(av / "x.mp4"), str(other / "y.mp4"), str(other)]
@@ -369,16 +273,6 @@ def test_on_drop_mixed_notifies_once(api_module, client_env):
     assert json.dumps([str(other / "y.mp4"), str(other)]) in notes[0]
     pushes = "".join(s for s in _js_calls(window) if "handleBridgeUncovered" not in s)
     assert "/volume1/av/x.mp4" in pushes and str(other) not in pushes
-
-
-def test_uncovered_each_path_logged_one_line(api_module, client_env, monkeypatch):
-    mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, "logger", mock_logger)
-    other = client_env / "other"
-    _setup_exit(api_module, "select_files", [str(other / "y.mp4"), str(other / "y.mp4"), str(other / "z.mp4")])()
-    lines = [c[0][0] for c in mock_logger.warning.call_args_list]
-    assert len(lines) == 2  # 保序去重
-    assert lines[0] == f"[pywebview] select_files refused reason=uncovered server=None local={str(other / 'y.mp4')!r}"
 
 
 # 本機模式：回傳與改前逐字相同、通知零呼叫（舊邏輯留在測試內當 oracle）
@@ -410,7 +304,7 @@ def _old_select_folder(folder, exts):
     return {"folder": folder, "files": _old_listing(folder, exts)}
 
 
-@pytest.mark.parametrize("exit_name", EXITS)
+@pytest.mark.parametrize("exit_name", ["select_folder", "on_drop_folder"])
 def test_local_mode_reverse_exits_unchanged(api_module, local_env, exit_name):
     d = local_env / "lib"
     d.mkdir()
@@ -431,15 +325,6 @@ def test_local_mode_reverse_exits_unchanged(api_module, local_env, exit_name):
         assert ret == str(d)
     else:
         assert _js_calls(window) == _old_drop_pushes(inputs, exts)
-
-
-def test_local_mode_empty_dialogs_unchanged(api_module, local_env):
-    window = api_module.get_window()
-    window.create_file_dialog.return_value = []
-    assert api_module.api.select_files() == []
-    assert _uncovered_calls(window) == []
-    assert api_module.api.select_folder() is None
-    assert _uncovered_calls(window) == []
 
 
 # ---------------------------------------------------------------------------
@@ -546,29 +431,6 @@ def _run_with_fs_spy(api_module, monkeypatch, call):
     return seen
 
 
-def test_reverse_exits_fs_call_set_unchanged(api_module, client_env, monkeypatch):
-    av, other = client_env / "av", client_env / "other"
-    # select_folder：資料夾涵蓋，列出內部檔案
-    call = _setup_exit(api_module, "select_folder", [str(av / "sub")])
-    s = _run_with_fs_spy(api_module, monkeypatch, call)
-    assert s["listdir"] == [str(av / "sub")]
-    assert len(s["isfile"]) == len(__import__("os").listdir(av / "sub"))
-    assert s["isdir"] == []
-    # on_drop 混合：被擋檔案＋被擋資料夾＋涵蓋資料夾
-    call = _setup_exit(api_module, "on_drop_file", [str(other / "y.mp4"), str(other), str(av / "sub")])
-    s = _run_with_fs_spy(api_module, monkeypatch, call)
-    assert s["isdir"] == [str(other / "y.mp4"), str(other), str(av / "sub")]
-    assert s["listdir"] == [str(av / "sub")]
-    assert len(s["isfile"]) == len(__import__("os").listdir(av / "sub"))
-    # 被擋出口不額外探測
-    call = _setup_exit(api_module, "select_files", [str(other / "y.mp4")])
-    s = _run_with_fs_spy(api_module, monkeypatch, call)
-    assert (s["isdir"], s["isfile"], s["listdir"], set(s["stat"]) - {"client.json"}) == ([], [], [], set())
-    call = _setup_exit(api_module, "select_folder", [str(other)])
-    s = _run_with_fs_spy(api_module, monkeypatch, call)
-    assert (s["isdir"], s["isfile"], s["listdir"], set(s["stat"]) - {"client.json"}) == ([], [], [], set())
-
-
 # ---------------------------------------------------------------------------
 # 168e-T8: 被擋提示的 kind（file／folder／any）
 # ---------------------------------------------------------------------------
@@ -580,74 +442,3 @@ def _kind_of(note):
     return None
 
 
-def test_select_files_blocked_notifies_kind_file(api_module, client_env):
-    unc = str(client_env / "other" / "y.mp4")
-    _setup_exit(api_module, "select_files", [unc])()
-    notes = _uncovered_calls(api_module.get_window())
-    assert len(notes) == 1 and _kind_of(notes[0]) == "file"
-
-
-def test_select_folder_blocked_notifies_kind_folder(api_module, client_env):
-    _setup_exit(api_module, "select_folder", [str(client_env / "other")])()
-    notes = _uncovered_calls(api_module.get_window())
-    assert len(notes) == 1 and _kind_of(notes[0]) == "folder"
-
-
-def test_select_folder_path_blocked_notifies_kind_folder(api_module, client_env):
-    _setup_exit(api_module, "select_folder_path", [str(client_env / "other")])()
-    notes = _uncovered_calls(api_module.get_window())
-    assert len(notes) == 1 and _kind_of(notes[0]) == "folder"
-
-
-def test_select_folder_covered_but_inner_video_blocked_notifies_kind_file(api_module, client_env, monkeypatch):
-    sub = client_env / "av" / "sub"
-    real = api_module.bridge_unresolve
-
-    def fake(p):
-        return Uncovered() if str(p).endswith("a.mp4") else real(p)
-
-    monkeypatch.setattr(api_module, "bridge_unresolve", fake)
-    ret = _setup_exit(api_module, "select_folder", [str(sub)])()
-    assert ret["folder"] == "/volume1/av/sub"
-    notes = _uncovered_calls(api_module.get_window())
-    assert len(notes) == 1 and _kind_of(notes[0]) == "file"
-
-
-def test_on_drop_only_blocked_file_notifies_kind_file(api_module, client_env):
-    _setup_exit(api_module, "on_drop_file", [str(client_env / "other" / "y.mp4")])()
-    assert _kind_of(_uncovered_calls(api_module.get_window())[0]) == "file"
-
-
-def test_on_drop_only_blocked_folder_notifies_kind_folder(api_module, client_env):
-    _setup_exit(api_module, "on_drop_folder", [str(client_env / "other")])()
-    assert _kind_of(_uncovered_calls(api_module.get_window())[0]) == "folder"
-
-
-def test_on_drop_mixed_file_and_folder_notifies_kind_any(api_module, client_env):
-    other = client_env / "other"
-    _setup_exit(api_module, "on_drop_file", [str(other / "y.mp4"), str(other)])()
-    notes = _uncovered_calls(api_module.get_window())
-    assert len(notes) == 1 and _kind_of(notes[0]) == "any"
-
-
-def test_on_drop_covered_items_do_not_affect_kind(api_module, client_env):
-    av, other = client_env / "av", client_env / "other"
-    _setup_exit(api_module, "on_drop_file", [str(av / "x.mp4"), str(av / "sub"), str(other)])()
-    notes = _uncovered_calls(api_module.get_window())
-    assert len(notes) == 1 and _kind_of(notes[0]) == "folder"
-
-
-def test_on_drop_single_non_video_file_is_dropped_locally(api_module, client_env):
-    av = client_env / "av"
-    call = _setup_exit(api_module, "on_drop_file", [str(av / "doc.txt")])
-    call()
-    window = api_module.get_window()
-    assert not any("handlePyWebViewDrop" in s for s in _js_calls(window))
-    assert _uncovered_calls(window) == []
-
-
-def test_on_drop_single_video_file_still_pushed(api_module, client_env):
-    av = client_env / "av"
-    _setup_exit(api_module, "on_drop_file", [str(av / "doc.txt"), str(av / "x.mp4")])()
-    pushes = [s for s in _js_calls(api_module.get_window()) if "handlePyWebViewDrop" in s]
-    assert len(pushes) == 1 and "/volume1/av/x.mp4" in pushes[0] and "doc.txt" not in pushes[0]

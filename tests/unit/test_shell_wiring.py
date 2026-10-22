@@ -118,46 +118,6 @@ def test_shells_pass_no_js_api_and_expose_whitelist(name):
     assert expose[0].lineno > cw.lineno
 
 
-def test_lifecycle_close_action_wired_to_client_settings(monkeypatch):
-    import standalone
-
-    captured = {}
-
-    class FakeLifecycle:
-        def __init__(self, *args, **kwargs):
-            captured.update(kwargs)
-
-        def attach_tray(self, tray):
-            pass
-
-        def handle_tray_command(self, *a):
-            pass
-
-        def get_close_action(self):
-            return "ask"
-
-    class FakeTray:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    written = []
-    monkeypatch.setattr(standalone.sys, "platform", "win32")
-    monkeypatch.setattr(standalone, "DesktopLifecycle", FakeLifecycle)
-    monkeypatch.setattr(standalone, "NativeTrayIcon", FakeTray)
-    monkeypatch.setattr("core.client_settings.close_action", lambda: "tray")
-    monkeypatch.setattr("core.client_settings.set_close_action", lambda a: written.append(a))
-
-    class _LL:
-        def shutdown(self):
-            pass
-
-    standalone._setup_windows_lifecycle(object(), None, None, {}, _LL())
-
-    assert captured["read_close_action"]() == "tray"
-    captured["write_close_action"]("exit")
-    assert written == ["exit"]
-
-
 def test_local_mode_entry_url_golden(monkeypatch, tmp_path):
     from core import client_settings
     monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))

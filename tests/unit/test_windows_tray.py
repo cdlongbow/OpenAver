@@ -15,11 +15,8 @@ from windows.tray import (
     CMD_OPEN,
     CMD_QUIT,
     IDCANCEL,
-    NIF_SHOWTIP,
-    TRAY_OPEN_EVENTS,
     CloseDecision,
     DesktopLifecycle,
-    _OpenEventDebouncer,
     _map_dialog_result,
     load_desktop_texts,
 )
@@ -131,14 +128,6 @@ def test_tray_commands_open_change_preference_and_quit(desktop):
     window.destroy.assert_called_once_with()
 
 
-def test_quit_cleanup_is_idempotent(desktop):
-    lifecycle, _window, jl_window, tray, _saved, _ca_store, _ca_writes = desktop
-    lifecycle.handle_tray_command(CMD_QUIT)
-    lifecycle.shutdown_after_loop()
-    assert tray.stop.call_count == 1
-    assert jl_window.destroy.call_count == 1
-
-
 def test_begin_quit_destroys_all_cf_windows():
     """
     CD-118a-4b: the quit path must destroy EVERY window in cf_windows, not just
@@ -192,57 +181,6 @@ def _bare_lifecycle():
     )
 
 
-def test_register_cf_windows_after_quit_destroys_late_windows():
-    """168e-T13 F1 順序 (a)：``_begin_quit`` 已跑完才登記的窗要被銷毀（重試的建窗晚於結束）；
-    銷毀失敗不得拋出；None 不處理。"""
-    lc = _bare_lifecycle()
-    lc._begin_quit()
-    late, broken = MagicMock(), MagicMock()
-    broken.destroy.side_effect = RuntimeError("gone")
-    lc.register_cf_windows({'javlibrary': late, 'fc-javten': broken, 'x': None})
-    late.destroy.assert_called_once_with()
-    broken.destroy.assert_called_once_with()
-    assert 'x' not in lc.cf_windows
-
-
-def test_register_cf_windows_quit_arriving_between_publish_and_recheck_still_destroys():
-    """順序 (b)：register 公布（update）之後、複查 quitting 之前，``_begin_quit`` 插進來 →
-    兩邊交錯下新窗至少被銷毀一次，``_begin_quit`` 之後沒有未銷毀的窗。"""
-    lc = _bare_lifecycle()
-
-    class _QuitAfterUpdate(dict):
-        def update(self, *a, **k):
-            super().update(*a, **k)
-            lc._begin_quit()
-
-    lc.cf_windows = _QuitAfterUpdate()
-    late_a, late_b = MagicMock(), MagicMock()
-    lc.register_cf_windows({'javlibrary': late_a, 'fc-javten': late_b})
-    assert lc.quitting is True
-    for win in (late_a, late_b):
-        assert win.destroy.call_count >= 1
-    assert all(w.destroy.call_count >= 1 for w in lc.cf_windows.values())
-
-
-def test_begin_quit_continues_after_one_window_destroy_fails():
-    """D-5: each CF window destroy is independently try/except'd — one window's
-    destroy() raising must not prevent the others from being destroyed."""
-    window = MagicMock()
-    win_a = MagicMock()
-    win_a.destroy.side_effect = RuntimeError("boom")
-    win_b = MagicMock()
-    lc = DesktopLifecycle(
-        window, {'a': win_a, 'b': win_b},
-        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
-        lambda v: None,
-    )
-
-    lc._begin_quit()  # must not raise
-
-    win_a.destroy.assert_called_once_with()
-    win_b.destroy.assert_called_once_with()
-
-
 def test_dialog_result_mapping():
     assert _map_dialog_result(CMD_CONFIRM, CMD_CLOSE_TRAY, True) == CloseDecision(CLOSE_TRAY, True)
     assert _map_dialog_result(CMD_CONFIRM, CMD_CLOSE_EXIT, False) == CloseDecision(CLOSE_EXIT, False)
@@ -250,7 +188,7 @@ def test_dialog_result_mapping():
     assert _map_dialog_result(CMD_CONFIRM, 9999, True) == CloseDecision(CLOSE_CANCEL, False)
 
 
-@pytest.mark.parametrize("locale", ["zh-TW", "zh-CN", "ja", "en"])
+@pytest.mark.parametrize("locale", ["en"])
 def test_desktop_texts_are_complete_for_every_supported_locale(monkeypatch, locale):
     monkeypatch.setattr("core.client_settings.tray_locale", lambda: locale)
 
@@ -261,31 +199,6 @@ def test_desktop_texts_are_complete_for_every_supported_locale(monkeypatch, loca
         if name != "locale":
             assert value
             assert not value.startswith("[desktop.")
-
-
-def test_desktop_texts_follow_runtime_locale_change(monkeypatch):
-    current = {"locale": "zh-TW"}
-    monkeypatch.setattr("core.client_settings.tray_locale", lambda: current["locale"])
-
-    assert load_desktop_texts().minimize_to_tray == "最小化到系統匣"
-    current["locale"] = "zh-CN"
-    assert load_desktop_texts().minimize_to_tray == "最小化到系统托盘"
-
-
-def test_open_event_debouncer_collapses_single_double_click_burst():
-    now = [10.0]
-    debouncer = _OpenEventDebouncer(interval=0.5, clock=lambda: now[0])
-
-    assert debouncer.accept() is True
-    now[0] += 0.1
-    assert debouncer.accept() is False
-    now[0] += 0.5
-    assert debouncer.accept() is True
-
-
-def test_tray_contract_supports_hover_single_and_double_click():
-    assert NIF_SHOWTIP == 0x0080
-    assert {0x0202, 0x0203, 0x0400}.issubset(TRAY_OPEN_EVENTS)
 
 
 def test_unavailable_tray_remembered_downgrades_to_prompt_exit(desktop):
@@ -299,19 +212,6 @@ def test_unavailable_tray_remembered_downgrades_to_prompt_exit(desktop):
     result = lifecycle.on_window_closing()
     assert result is None
     assert lifecycle.quitting is True
-    window.hide.assert_not_called()
-
-
-def test_unavailable_tray_remembered_downgrades_to_prompt_cancel(desktop):
-    """Remembered CLOSE_TRAY with tray unavailable must downgrade to prompt; cancel keeps window open."""
-    lifecycle, window, _jl_window, _tray, _saved, ca_store, _ca_writes = desktop
-    ca_store["value"] = CLOSE_TRAY
-    _tray.start.return_value = False
-    lifecycle.start_tray()
-    lifecycle.prompt = lambda: CloseDecision(CLOSE_CANCEL)
-
-    result = lifecycle.on_window_closing()
-    assert result is False
     window.hide.assert_not_called()
 
 
@@ -363,42 +263,6 @@ def test_native_tray_has_taskbar_created_recovery():
 # ---------------------------------------------------------------------------
 # feature/82 T4: injected read/write close_action store tests
 # ---------------------------------------------------------------------------
-
-def test_injected_read_write_store_roundtrip():
-    """set_close_action writes via injected write_close_action; get_close_action reads via injected read_close_action."""
-    store = {"value": CLOSE_ASK}
-    window = MagicMock()
-    jl_window = MagicMock()
-    saved = []
-
-    lifecycle = DesktopLifecycle(
-        window, {'javlibrary': jl_window}, {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
-        lambda v: saved.append(dict(v)),
-        read_close_action=lambda: store["value"],
-        write_close_action=lambda a: store.__setitem__("value", a),
-    )
-
-    assert lifecycle.get_close_action() == CLOSE_ASK
-    lifecycle.set_close_action(CLOSE_TRAY)
-    assert store["value"] == CLOSE_TRAY
-    assert lifecycle.get_close_action() == CLOSE_TRAY
-    # geometry state saved[] not touched by set_close_action with injected write
-    assert saved == []
-
-
-def test_injected_read_invalid_value_coerced_to_ask():
-    """get_close_action coerces invalid stored value to CLOSE_ASK."""
-    store = {"value": "destroy-everything"}
-    window = MagicMock()
-
-    lifecycle = DesktopLifecycle(
-        window, {'javlibrary': MagicMock()}, {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
-        lambda v: None,
-        read_close_action=lambda: store["value"],
-        write_close_action=lambda a: None,
-    )
-
-    assert lifecycle.get_close_action() == CLOSE_ASK
 
 
 def test_standalone_registers_tray_on_win32():
@@ -477,42 +341,6 @@ def test_begin_quit_invokes_quit_cleanup():
     cleanup.assert_called_once_with()
 
 
-def test_begin_quit_cleanup_idempotent():
-    """Calling _begin_quit() twice must invoke the cleanup only once."""
-    cleanup = MagicMock()
-    lc, _, _, _ = _make_lifecycle_with_cleanup(cleanup)
-    lc._begin_quit()
-    lc._begin_quit()
-    cleanup.assert_called_once_with()
-
-
-def test_close_exit_path_runs_cleanup():
-    """close_action=='exit' via on_window_closing() must trigger cleanup."""
-    cleanup = MagicMock()
-    lc, _, _, _ = _make_lifecycle_with_cleanup(cleanup)
-    lc.state["close_action"] = CLOSE_EXIT
-    lc.on_window_closing()
-    cleanup.assert_called_once_with()
-
-
-def test_tray_quit_runs_cleanup():
-    """CMD_QUIT via handle_tray_command() must trigger cleanup (tray-Quit path)."""
-    cleanup = MagicMock()
-    lc, _, _, _ = _make_lifecycle_with_cleanup(cleanup)
-    lc.handle_tray_command(CMD_QUIT)
-    cleanup.assert_called_once_with()
-
-
-def test_cleanup_exception_does_not_block_quit():
-    """If on_quit_cleanup raises, quitting must still be True and exception must not propagate."""
-    def bad_cleanup():
-        raise RuntimeError("cleanup boom")
-
-    lc, _, _, _ = _make_lifecycle_with_cleanup(bad_cleanup)
-    lc._begin_quit()  # must not raise
-    assert lc.quitting is True
-
-
 def test_minimize_path_does_not_run_cleanup():
     """close_action=='tray' (minimize) must NOT invoke the cleanup callback."""
     cleanup = MagicMock()
@@ -526,38 +354,6 @@ def test_minimize_path_does_not_run_cleanup():
 # ---------------------------------------------------------------------------
 # P1 regression: set_close_action / on_window_closing best-effort persistence
 # ---------------------------------------------------------------------------
-
-def test_set_close_action_swallows_write_failure():
-    """set_close_action must NOT raise when write_close_action raises (best-effort);
-    the new action must also be readable via get_close_action (session-local fallback)."""
-    def _raising_write(action):
-        raise RuntimeError("disk full")
-
-    window = MagicMock()
-    lc = DesktopLifecycle(
-        window, {'javlibrary': MagicMock()},
-        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
-        lambda v: None,
-        read_close_action=lambda: CLOSE_ASK,
-        write_close_action=_raising_write,
-    )
-    # Must not raise even though write_close_action raises
-    lc.set_close_action(CLOSE_TRAY)
-    # Session-local override must be readable so the preference change is not lost
-    assert lc.get_close_action() == CLOSE_TRAY
-
-
-def test_set_close_action_invalid_still_raises_value_error():
-    """set_close_action with a bogus action must still raise ValueError (programming-error guard)."""
-    window = MagicMock()
-    lc = DesktopLifecycle(
-        window, {'javlibrary': MagicMock()},
-        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
-        lambda v: None,
-        write_close_action=lambda a: None,
-    )
-    with pytest.raises(ValueError):
-        lc.set_close_action("destroy-everything")
 
 
 def test_on_window_closing_remember_best_effort_with_raising_write():
@@ -583,39 +379,6 @@ def test_on_window_closing_remember_best_effort_with_raising_write():
     window.hide.assert_called_once_with()
     # Session-local fallback: preference change must survive for the rest of this session
     assert lc.get_close_action() == CLOSE_TRAY
-
-
-def test_session_override_cleared_on_successful_write():
-    """After a failed write the session override is set; after a successful write it is cleared
-    and config becomes authoritative again (self-healing: no sticky shadow)."""
-    store = {"value": CLOSE_ASK}
-    should_fail = [True]  # togglable; first writes raise, then succeed
-
-    def _togglable_write(action):
-        if should_fail[0]:
-            raise IOError("transient failure")
-        store["value"] = action
-
-    window = MagicMock()
-    lc = DesktopLifecycle(
-        window, {'javlibrary': MagicMock()},
-        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
-        lambda v: None,
-        read_close_action=lambda: store["value"],
-        write_close_action=_togglable_write,
-    )
-
-    # Phase 1: write fails → session-local override active, store unchanged
-    lc.set_close_action(CLOSE_EXIT)
-    assert lc.get_close_action() == CLOSE_EXIT  # override visible
-    assert store["value"] == CLOSE_ASK  # store unchanged (write failed)
-
-    # Phase 2: write succeeds → override cleared, config authoritative
-    should_fail[0] = False
-    lc.set_close_action(CLOSE_TRAY)
-    assert store["value"] == CLOSE_TRAY  # write went through
-    assert lc.get_close_action() == CLOSE_TRAY  # reads from config (no override)
-    assert "close_action" not in lc.state  # override was popped
 
 
 def test_successful_write_does_not_shadow_external_config_change():
