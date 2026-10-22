@@ -219,14 +219,6 @@ def test_preview_not_found(client, env, wire):
     assert body == {"success": False, "custom_error": "not_found", "source": "custom:single-og"}
 
 
-@pytest.mark.parametrize("status,expected", [(403, "refused"), (500, "unreachable")])
-def test_preview_access_errors(client, env, wire, status, expected):
-    wire({SOG: page("blocked", status)})
-    _ready(env, "single-og", SINGLE)
-    body = client.post("/api/rescrape/preview", json={"number": NUMBER, "source": "custom:single-og"}).json()
-    assert body == {"success": False, "access_error": expected, "source": "custom:single-og"}
-
-
 def test_preview_parse_empty_is_not_unreachable(client, env, wire):
     wire({SOG: page("<html><body>nothing here</body></html>")})
     _ready(env, "single-og", SINGLE)

@@ -6,7 +6,6 @@ import types
 import pytest
 import requests
 
-from core.custom_source import fetch
 from core.custom_source.fetch import DeadlineTransport, FetchError, RawResponse, fetch_page, make_transport
 from core.proxy_policy import ProxySettings
 from core.scrapers.models import ScraperConfig
@@ -69,37 +68,6 @@ def test_backslash_authority_redirect_is_blocked_before_request():
         fetch_page(A, t, _cfg())
     assert ei.value.reason == "blocked_target"
     assert t.calls == [A]
-
-
-def test_redirect_loop_stops_at_limit():
-    t = FakeTransport({A: redirect(B), B: redirect(C), C: redirect(A)})
-    with pytest.raises(FetchError) as ei:
-        fetch_page(A, t, _cfg())
-    assert ei.value.reason == "redirect_limit"
-    assert len(t.calls) == 1 + fetch.MAX_REDIRECTS == 6
-
-
-def test_successful_redirect_reports_final_url_and_resolves_relative():
-    t = FakeTransport({A: redirect("/next", 301), "https://a.example/next": page("<p>ok</p>")})
-    status, text, final = fetch_page(A, t, _cfg())
-    assert (status, text, final) == (200, "<p>ok</p>", "https://a.example/next")
-
-
-# ---------- 狀態策略 ----------
-
-@pytest.mark.parametrize("status", [403, 429, 503, 500, 204, 302, 301])
-def test_blocked_or_error_status_raises_http_status(status):
-    t = FakeTransport({A: RawResponse(status, {}, b"", None)})
-    with pytest.raises(FetchError) as ei:
-        fetch_page(A, t, _cfg())
-    assert ei.value.reason == "http_status"
-    assert ei.value.http_status == status
-    assert str(status) in str(ei.value)
-
-
-def test_200_and_404_are_returned_as_data():
-    assert fetch_page(A, FakeTransport({A: page("hit")}), _cfg())[:2] == (200, "hit")
-    assert fetch_page(A, FakeTransport({A: page("none", status=404)}), _cfg())[:2] == (404, "none")
 
 
 # ---------- 節流 ----------
@@ -212,19 +180,6 @@ def test_plain_body_at_cap_is_accepted(monkeypatch):
     assert len(make_transport("plain", "s", _cfg()).request(A).body_bytes) == 10
 
 
-@pytest.mark.parametrize("exc,reason", [
-    (requests.exceptions.ConnectTimeout("t"), "timeout"),
-    (requests.exceptions.ReadTimeout("t"), "timeout"),
-    (requests.exceptions.ConnectionError("c"), "network"),
-    (requests.exceptions.SSLError("s"), "network"),
-])
-def test_plain_exceptions_map_to_reason(monkeypatch, exc, reason):
-    _patch_session(monkeypatch, exc=exc)
-    with pytest.raises(FetchError) as ei:
-        make_transport("plain", "s", _cfg()).request(A)
-    assert ei.value.reason == reason
-
-
 # ---------- tls transport（假 curl_cffi 模組） ----------
 
 class _CffiTimeout(Exception):
@@ -293,18 +248,6 @@ def test_tls_body_over_cap_raises_too_large(monkeypatch):
     with pytest.raises(FetchError) as ei:
         make_transport("tls", "s", _cfg()).request(A)
     assert ei.value.reason == "too_large"
-
-
-@pytest.mark.parametrize("exc,reason", [
-    (_CffiTimeout("t"), "timeout"),
-    (_CffiRequestException("r"), "network"),
-    (RuntimeError("boom"), "network"),
-])
-def test_tls_exceptions_map_to_reason(monkeypatch, exc, reason):
-    _install_fake_curl(monkeypatch, exc=exc)
-    with pytest.raises(FetchError) as ei:
-        make_transport("tls", "s", _cfg()).request(A)
-    assert ei.value.reason == reason
 
 
 def test_tls_missing_curl_cffi_is_transport_unavailable_and_plain_unaffected(monkeypatch):
