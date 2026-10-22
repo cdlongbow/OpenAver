@@ -170,10 +170,13 @@ def _official_number(scraper, content_id: str, fact: Facts | None) -> str:
 
 def _shallow_video(scraper, row: dict, content_id: str, number: str) -> Video:
     """列表一列 → shallow Video（詳情失敗時卡片就是它，所以番號用官方值）。
-    女優去括號舊名；title／封面／片商名為 null 皆當空字串，不讓一列壞資料丟掉整頁。"""
+    女優去括號舊名；title／封面／片商名為 null 皆當空字串，不讓一列壞資料丟掉整頁。
+    日期取列表已要的 deliveryStartAt（切掉 T 之後；缺值或非字串 → ""）：多代號歸併（merge_windows）靠它排新→舊。"""
+    delivery = row.get("deliveryStartAt")
     return Video(
         number=number,
         title=row.get("title") or "",
+        date=delivery.split("T")[0] if isinstance(delivery, str) else "",
         actresses=[
             Actress(name=_actress_main_name(a["name"]))
             for a in row.get("actresses") or []

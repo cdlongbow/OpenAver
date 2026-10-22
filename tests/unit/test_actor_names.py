@@ -377,3 +377,46 @@ def test_javdb_alt_names_returns_fresh_list(monkeypatch):
     first = p.alt_names(Kind.ACTOR, "三上悠亞")
     first.append("污染")
     assert p.alt_names(Kind.ACTOR, "三上悠亞") == ["三上悠亜", "鬼头桃菜"]
+
+
+# =====================================================================
+# 175d 收尾（branch review P2）：DMM 清單列的日期 ⇒ 多代號歸併依新→舊
+# 輸入是測試內自己構造的 row dict，不碰傳輸。
+# =====================================================================
+from types import SimpleNamespace  # noqa: E402
+
+from core.search_providers.dmm import _row_item, _shallow_video  # noqa: E402
+from core.search_providers.pipeline import merge_windows  # noqa: E402
+from core.search_providers.types import Page  # noqa: E402
+
+_DMM_SCRAPER = SimpleNamespace(source_name="dmm", _content_id_to_number=lambda cid: cid.upper())
+
+
+@pytest.mark.parametrize(
+    "row,expected",
+    [
+        ({"deliveryStartAt": "2026-10-16"}, "2026-10-16"),
+        ({"deliveryStartAt": "2026-10-16T00:00:00"}, "2026-10-16"),
+        ({}, ""),
+        ({"deliveryStartAt": None}, ""),
+        ({"deliveryStartAt": 20261016}, ""),
+    ],
+)
+def test_dmm_shallow_video_date_from_delivery_start_at(row, expected):
+    assert _shallow_video(_DMM_SCRAPER, row, "cid1", "CID1").date == expected
+
+
+def test_dmm_two_actor_refs_merge_newest_first():
+    rows = {
+        "old": [{"id": "old1", "deliveryStartAt": "2026-01-01T00:00:00"}, {"id": "old2", "deliveryStartAt": "2025-12-01"}],
+        "new": [{"id": "new1", "deliveryStartAt": "2026-10-16"}, {"id": "new2", "deliveryStartAt": "2026-09-01"}],
+    }
+
+    class _Dmm:
+        def list_entity(self, ref, w):
+            items = [_row_item(_DMM_SCRAPER, r, None) for r in rows[ref.id]]
+            return Page(items[w.offset : w.offset + w.limit], has_next=False)
+
+    refs = [EntityRef(Kind.ACTOR, "old", "舊"), EntityRef(Kind.ACTOR, "new", "新")]
+    got = merge_windows(_Dmm(), refs, [0, 0], 3)
+    assert [i.number for i in got.items] == ["NEW1", "NEW2", "OLD1"]
