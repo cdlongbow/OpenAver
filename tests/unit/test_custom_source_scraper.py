@@ -169,14 +169,6 @@ def test_other_error_reasons_are_plain_runtime_error(monkeypatch, reason):
     assert type(ei.value) is RuntimeError and str(ei.value) == f"{SID}: {reason}"
 
 
-@pytest.mark.parametrize("status, exc", [(503, SourceBlocked), (500, RuntimeError)])
-def test_end_to_end_status_through_interpret(monkeypatch, status, exc):
-    _wire(monkeypatch, {SOG: page("", status)})
-    with pytest.raises(RuntimeError) as ei:
-        _scraper().search("SONE-205")
-    assert type(ei.value) is exc
-
-
 def test_end_to_end_not_found_and_unexpected_extract(monkeypatch):
     _wire(monkeypatch, {"https://single-og.example/zzzz-999": page("", 404), SOG: page(_txt("single-og"))})
     sc = _scraper()

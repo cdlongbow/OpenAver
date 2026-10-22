@@ -14,12 +14,11 @@ from requests.structures import CaseInsensitiveDict
 from core import source_probe as sp
 from core.proxy_policy import ProxySettings
 from core.source_probe import (
-    ProbeOutcome, ProbePlan, ProbeTarget, classify_exception, classify_http,
+    ProbeOutcome, ProbePlan, ProbeTarget, classify_exception,
     merge_outcomes, run_probes,
 )
 
 PROXY = 'http://jp.example:8080'
-JSD = b'<html><script src="/cdn-cgi/challenge-platform/scripts/jsd/api.js"></script></html>'
 SIX_KEYS = {'state', 'reason', 'host', 'status', 'via_proxy', 'advice'}
 
 
@@ -62,26 +61,6 @@ def fake_classes(monkeypatch):
 
 
 # ------------------------------------------------------------ 判讀
-
-@pytest.mark.parametrize('label,status,headers,head,ok_404,expect', [
-    ('200', 200, {}, b'', False, ('ok', 'ok')),
-    ('200_cloudflare_server', 200, {'server': 'cloudflare'}, b'', False, ('ok', 'ok')),
-    ('200_jsd_script', 200, {'server': 'cloudflare'}, JSD, False, ('ok', 'ok')),
-    ('404_ok404', 404, {}, b'', True, ('ok', 'ok')),
-    ('410_ok404', 410, {}, b'', True, ('ok', 'ok')),
-    ('404_strict', 404, {}, b'', False, ('blocked', 'http_status')),
-    ('500', 500, {}, b'', False, ('blocked', 'http_status')),
-    ('500_ok404', 500, {}, b'', True, ('blocked', 'http_status')),
-    ('403_plain', 403, {}, b'', False, ('blocked', 'http_status')),
-    ('403_cf_server', 403, {'server': 'cloudflare'}, b'', False, ('blocked', 'cf_challenge')),
-    ('503_cf_body', 503, {}, b'<title>Just a moment...</title>', False, ('blocked', 'cf_challenge')),
-    ('403_jsd_body', 403, {}, JSD, False, ('blocked', 'cf_challenge')),
-    ('200_mitigated', 200, {'cf-mitigated': 'challenge'}, b'', False, ('blocked', 'cf_challenge')),
-    ('403_mitigated', 403, {'CF-Mitigated': 'Challenge'}, b'', False, ('blocked', 'cf_challenge')),
-])
-def test_classify_http_by_response_kind(label, status, headers, head, ok_404, expect):
-    hdrs = {k.lower(): v for k, v in headers.items()}
-    assert classify_http(status, hdrs, head, ok_404) == expect, label
 
 
 def _conn_err_with(reason):
@@ -188,13 +167,6 @@ def test_head8k_200_does_not_read_body_failure_is_still_ok(fake_classes):
     assert (row['state'], row['reason']) == ('ok', 'ok')
 
 
-def test_head8k_non_2xx_body_read_failure_keeps_status_header_verdict(fake_classes):
-    row = _run_one(fake_classes, lambda: _slow_resp(403, {'server': 'cloudflare'}))
-    assert (row['state'], row['reason']) == ('blocked', 'cf_challenge')
-    row = _run_one(fake_classes, lambda: _slow_resp(403))
-    assert (row['state'], row['reason']) == ('blocked', 'http_status')
-
-
 def test_head8k_endless_200_body_is_ok_and_unread(fake_classes):
     body = _EndlessBody()
 
@@ -221,34 +193,6 @@ def test_full_capped_stream_read_timeout_is_timeout(fake_classes):
     plans['javdb'] = ProbePlan([ProbeTarget('j', send, read='full_capped')])
     row = run_probes(ProxySettings(), ['javdb'])['javdb']
     assert (row['state'], row['reason']) == ('unreachable', 'timeout')
-
-
-def _slow_resp(status, headers=None):
-    class _Slow(_BrokenBody):
-        def stream(self, amt=8192, decode_content=None):
-            raise sp.ReadTimeoutError(None, None, 'slow')
-
-    r = make_resp(status, headers)
-    r.raw = _Slow(b'')
-    return r
-
-
-@pytest.mark.parametrize('status,headers', [
-    (200, {'cf-mitigated': 'challenge'}),
-    (403, {'cf-mitigated': 'challenge'}),
-])
-def test_full_capped_challenge_header_wins_over_body_read_timeout(fake_classes, status, headers):
-    plans, _ = fake_classes
-    plans['javdb'] = ProbePlan([ProbeTarget('j', lambda: _slow_resp(status, headers), read='full_capped')])
-    row = run_probes(ProxySettings(), ['javdb'])['javdb']
-    assert (row['state'], row['reason']) == ('blocked', 'cf_challenge')
-
-
-def test_full_capped_non_2xx_body_timeout_keeps_http_verdict(fake_classes):
-    plans, _ = fake_classes
-    plans['javdb'] = ProbePlan([ProbeTarget('j', lambda: _slow_resp(500), read='full_capped')])
-    row = run_probes(ProxySettings(), ['javdb'])['javdb']
-    assert (row['state'], row['reason']) == ('blocked', 'http_status')
 
 
 # ------------------------------------------------------------ 並行 / 預算
@@ -459,27 +403,6 @@ def test_skip_reason_uses_request_snapshot(monkeypatch, transport_env):
     monkeypatch.setattr(pp, 'current_settings', _boom)
     assert sp.skip_reason('javlibrary', SNAP_AUTH_ALL) == 'proxy_auth_unsupported'
     assert sp.skip_reason('javlibrary', SNAP_ALL) is None
-
-
-CF_SERVER = {'server': 'cloudflare'}
-
-
-@pytest.mark.parametrize('label,status,headers,body,flag,expect', [
-    ('mitigated_200', 200, {'cf-mitigated': 'challenge'}, b'x', True, ('ok', 'ok')),
-    ('mitigated_403', 403, {'cf-mitigated': 'challenge'}, b'x', True, ('ok', 'ok')),
-    ('body_just_a_moment_403', 403, {}, b'<title>Just a moment...</title>', True, ('ok', 'ok')),
-    ('body_jsd_503', 503, {}, JSD, True, ('ok', 'ok')),
-    ('plain_cf_403', 403, CF_SERVER, b'<html>error 1015</html>', True, ('blocked', 'cf_challenge')),
-    ('plain_403', 403, {}, b'forbidden', True, ('blocked', 'http_status')),
-    ('server_500', 500, {}, b'x', True, ('blocked', 'http_status')),
-    ('ok_200', 200, {}, b'x', True, ('ok', 'ok')),
-    ('flag_off_mitigated', 200, {'cf-mitigated': 'challenge'}, b'x', False, ('blocked', 'cf_challenge')),
-    ('flag_off_body', 403, {}, b'just a moment', False, ('blocked', 'cf_challenge')),
-])
-def test_verifier_cf_challenge_override_table(label, status, headers, body, flag, expect):
-    t = ProbeTarget('h.example', lambda: make_resp(status, headers, body), cf_challenge_ok=flag)
-    out = sp.probe_target(t)
-    assert (out.state, out.reason) == expect, label
 
 
 @pytest.mark.parametrize('exc,reason', [

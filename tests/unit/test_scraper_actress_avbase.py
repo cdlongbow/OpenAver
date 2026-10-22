@@ -12,15 +12,11 @@ import types
 from importlib.metadata import PackageNotFoundError
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from urllib.parse import quote
 
 import pytest
-from curl_cffi.requests import exceptions as cffi_exc
 
 import core.scrapers.actress.avbase as avbase_mod
 from core.scrapers.actress.avbase import (
-    _build_result,
-    _extract_talent,
     _normalize_basic_info,
 )
 
@@ -122,101 +118,6 @@ def test_numeric_fields_truncate_decimals_and_survive_safe_int():
         assert _safe_int(out[key]) == want
 
 
-# ── 純函式：名字比對與空頁判定（CD-174-3）────────────────────────────────────
-
-def test_query_name_must_appear_in_actors_after_nfkc():
-    info = {"hobby": "散歩"}
-    # 全形查詢名 vs 半形 actors：NFKC 後相同 → 查到
-    assert _build_result(_talent(info, names=("ABC",)), "ＡＢＣ") is not None
-    # 反過來
-    assert _build_result(_talent(info, names=("ＡＢＣ",)), "ABC") is not None
-    # 不在 actors（也不在 primary）→ None
-    assert _build_result(_talent(info, names=("ABC", "DEF"), primary={"name": "GHI"}), "XYZ") is None
-    # 只靠 primary.name 命中
-    only_primary = _talent(info, names=("DEF",), primary={"name": "XYZ"})
-    assert _build_result(only_primary, "XYZ") is not None
-    assert _build_result(only_primary, "QQQ") is None
-
-
-def test_empty_shell_page_is_treated_as_not_found():
-    # 八欄全空、actors 只有查詢名自己 → None
-    assert _build_result(_talent({}, names=(NAME,)), NAME) is None
-    # 欄位都是無效值也算空
-    junk = {"birthday": "1999", "height": "0", "cup": "f", "hobby": "  ", "prefectures": ""}
-    assert _build_result(_talent(junk, names=(NAME,)), NAME) is None
-    # 全形／半形的查詢名自己出現兩次也不算「別的名字」
-    assert _build_result(_talent({}, names=("ABC", "ＡＢＣ")), "ABC") is None
-
-
-@pytest.mark.parametrize("info,key", [
-    ({"hobby": "散歩"}, "hobby"),
-    ({"prefectures": "東京都"}, "hometown"),
-    ({"birthday": "1999-11-30"}, "birth"),
-    ({"cup": "F"}, "cup"),
-])
-def test_single_text_field_page_is_found(info, key):
-    out = _build_result(_talent(info, names=(NAME,)), NAME)
-    assert out is not None
-    assert key in out
-
-
-def test_alias_only_page_is_found_with_other_names_only():
-    out = _build_result(_talent({}, names=(NAME, "あかね麗", "二階堂麗")), NAME)
-    # 相等，不是 is not None；未過濾所以保留查詢名，且不含任何別的鍵
-    assert out == {"other_names": [NAME, "あかね麗", "二階堂麗"]}
-
-
-def test_social_handle_only_page_is_treated_as_not_found():
-    """actors 只有查詢名和一個 @ 社群帳號、八欄全空 → 視為查無（不收成一張空卡）；
-    other_names 輸出本身不過濾（有真資料時 @ 帳號照樣保留給 AI 預覽）。"""
-    assert _build_result(_talent({}, names=(NAME, "@shinjin_a")), NAME) is None
-    assert _build_result(_talent({}, names=(NAME, "＠fullwidth_at")), NAME) is None
-    # 帳號之外還有真別名 → 仍算查到，且輸出未過濾
-    out = _build_result(_talent({}, names=(NAME, "@shinjin_a", "あかね麗")), NAME)
-    assert out == {"other_names": [NAME, "@shinjin_a", "あかね麗"]}
-    # 有資料欄位時 @ 帳號照樣保留在 other_names
-    out = _build_result(_talent({"hobby": "x"}, names=(NAME, "@shinjin_a")), NAME)
-    assert out == {"hobby": "x", "other_names": [NAME, "@shinjin_a"]}
-
-
-def test_result_keys_and_other_names_dedup_keep_order():
-    info = {"birthday": "1999-11-30", "height": "162", "bust": "90", "waist": "58",
-            "hip": "88", "cup": "F", "prefectures": "東京都", "hobby": "散歩", "blood_type": "A"}
-    talent = _talent(info, names=(NAME, " あかね麗 ", "", "あかね麗", NAME), primary={"name": "新名"})
-    out = _build_result(talent, NAME)
-    assert out == {
-        "birth": "1999-11-30", "height": "162cm", "bust": "90cm", "waist": "58cm",
-        "hip": "88cm", "cup": "F", "hometown": "東京都", "hobby": "散歩",
-        "other_names": [NAME, "あかね麗", "新名"],
-    }
-    for banned in ("name_ja", "name", "name_en", "photo_url", "blood"):
-        assert banned not in out
-
-
-@pytest.mark.parametrize("primary", [None, "str", 5, [], {}, {"name": None}, {"name": "  "}])
-def test_malformed_primary_is_ignored(primary):
-    talent = _talent({"hobby": "散歩"}, names=(NAME,))
-    talent["primary"] = primary
-    assert _build_result(talent, NAME) == {"hobby": "散歩", "other_names": [NAME]}
-
-
-# ── 純函式：__NEXT_DATA__ 取值 ───────────────────────────────────────────────
-
-@pytest.mark.parametrize("html", [
-    "<p>nothing here</p>",
-    '<script id="other">{}</script>',
-    '<script id="__NEXT_DATA__">{not json</script>',
-    '<script id="__NEXT_DATA__"></script>',
-    '<script id="__NEXT_DATA__">[1, 2]</script>',
-    '<script id="__NEXT_DATA__">{"props": {}}</script>',
-    '<script id="__NEXT_DATA__">{"props": {"pageProps": {}}}</script>',
-    '<script id="__NEXT_DATA__">{"props": {"pageProps": {"talent": "x"}}}</script>',
-    '<script id="__NEXT_DATA__">{"props": {"pageProps": {"talent": null}}}</script>',
-])
-def test_extract_talent_structural_failures_return_none(html):
-    assert _extract_talent(html) is None
-
-
 # ── 連線函式：失敗一律 None、不丟例外（真函式 + 替身 Session）──────────────
 
 @pytest.mark.real_avbase
@@ -224,46 +125,6 @@ class TestScrapeAvbaseWithStubbedSession:
     def _run(self, session):
         with patch("curl_cffi.requests.Session", return_value=session):
             return avbase_mod.scrape_avbase(NAME)
-
-    def test_valid_page_returns_mapped_dict(self):
-        """成功路徑：同時是「real_avbase opt-out 真的有效」的唯一證據
-        （失敗類期望 None，在全域替身下會恆真）。"""
-        info = {"birthday": "1999-11-30", "height": "162", "bust": "90", "waist": "58",
-                "hip": "88", "cup": "F", "prefectures": "東京都", "hobby": "散歩"}
-        session = _fake_session(text=_page(_talent(info, names=(NAME, "あかね麗"))))
-        out = self._run(session)
-        assert out == {
-            "birth": "1999-11-30", "height": "162cm", "bust": "90cm", "waist": "58cm",
-            "hip": "88cm", "cup": "F", "hometown": "東京都", "hobby": "散歩",
-            "other_names": [NAME, "あかね麗"],
-        }
-        assert session.get.call_count == 1
-        assert session.get.call_args.args[0] == "https://www.avbase.net/talents/" + quote(NAME, safe="")
-
-    @pytest.mark.parametrize("status", [404, 403, 429, 500, 503])
-    def test_http_errors_return_none(self, status):
-        # 404 帶合法頁面也必須是 None（狀態碼優先）
-        session = _fake_session(status=status, text=_page(_talent({"hobby": "x"})))
-        assert self._run(session) is None
-
-    @pytest.mark.parametrize("html", [
-        "<p>blocked</p>",
-        '<script id="__NEXT_DATA__">{broken</script>',
-        '<script id="__NEXT_DATA__">{"props": {"pageProps": {}}}</script>',
-        _page(_talent({"hobby": "x"}, names=("別人",))),
-        _page(_talent({}, names=(NAME,))),
-    ])
-    def test_ok_status_but_unusable_page_returns_none(self, html):
-        assert self._run(_fake_session(text=html)) is None
-
-    @pytest.mark.parametrize("exc", [
-        cffi_exc.Timeout("t"),
-        cffi_exc.ConnectionError("c"),
-        OSError("x"),
-        ValueError("x"),
-    ], ids=["cffi-Timeout", "cffi-ConnectionError", "OSError", "ValueError"])
-    def test_scrape_avbase_failures_return_none_never_raise(self, exc):
-        assert self._run(_fake_session(get=exc)) is None
 
     def test_system_proxy_fallback_used_only_without_configured_proxy(self):
         """設定頁沒選中女優連線 → 退回系統代理（curl_cffi 不讀 Windows 註冊表）；

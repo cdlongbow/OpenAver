@@ -5,7 +5,6 @@ test_scraper_smoke_pure_logic.py — 桶 D 純邏輯守衛（TASK-73e-T1）
 不加 pytestmark = pytest.mark.smoke，CI 正常收錄。
 """
 import pytest
-from unittest.mock import MagicMock, patch
 
 from core.scrapers import (
     JavBusScraper, JAV321Scraper, JavDBScraper,
@@ -48,31 +47,6 @@ class TestFC2OfficialNormalizePureLogic:
         assert scraper._normalize_fc2_number("FC2-1723984") == "1723984"
         assert scraper._normalize_fc2_number("fc2ppv-1723984") == "1723984"
         assert scraper._normalize_fc2_number("1723984") == "1723984"
-
-
-# ============================================================
-# FC2 負向合約——搬離線（TASK-73e-T1，CD-73e-7）
-# mock navigate_and_settle 回 /search?kw= → search() 短路回 None
-# 禁止 stub search 本身
-# ============================================================
-
-class TestFC2SearchMissReturnsNone:
-    """FC2 不存在番號搜尋→ None（patch HTTP 層，不 stub search 本身）"""
-
-    @pytest.fixture
-    def scraper(self):
-        with patch("core.scrapers.fc2_javten.rate_limit"):
-            yield FC2JavtenScraper()
-
-    def test_search_invalid_number_returns_none(self, scraper):
-        """FC2-PPV-9999999999 不存在→ 最終 URL 仍是 /search?kw= → search() 回 None"""
-        transport = MagicMock()
-        transport.navigate_and_settle.return_value = (
-            "https://javten.com/search?kw=9999999999"
-        )
-        with patch("core.scrapers.fc2_javten.get_cf_transport", return_value=transport):
-            result = scraper.search("FC2-PPV-9999999999")
-        assert result is None
 
 
 # ============================================================

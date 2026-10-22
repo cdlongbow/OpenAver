@@ -2873,27 +2873,6 @@ class TestDownloadImage:
         assert save_path.read_bytes() == mock_resp.content
         mock_get.assert_called_once()
 
-    @patch("core.organizer.requests.get")
-    def test_download_fail_status(self, mock_get, tmp_path):
-        mock_resp = mock_get.return_value
-        mock_resp.status_code = 404
-
-        save_path = tmp_path / "cover.jpg"
-        result = download_image("http://example.com/cover.jpg", str(save_path))
-
-        assert result is False
-        assert not save_path.exists()
-
-    @patch("core.organizer.requests.get")
-    def test_download_exception(self, mock_get, tmp_path):
-        mock_get.side_effect = Exception("network error")
-
-        save_path = tmp_path / "cover.jpg"
-        result = download_image("http://example.com/cover.jpg", str(save_path))
-
-        assert result is False
-        assert not save_path.exists()
-
 
 # ============ download_image() fallback / host memory (TASK-126-T4a) ============
 

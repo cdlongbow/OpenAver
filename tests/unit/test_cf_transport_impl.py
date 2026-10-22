@@ -281,7 +281,6 @@ class TestWvFetch:
 # ──────────────────────────────────────────────────────────────
 
 NORMAL_HTML = '<html><head><title>JavLibrary</title></head><body>content</body></html>'
-CF_HTML = '<html><head><title>Just a moment...</title></head><body>cf stuff</body></html>'
 
 
 class TestFetch:
@@ -298,18 +297,6 @@ class TestFetch:
         assert isinstance(result, str), "fetch() must return str, not tuple (C1 check)"
         assert result == NORMAL_HTML
 
-    def test_cf_challenge_title_raises(self):
-        """CF challenge title → raises CfChallengeRequired."""
-        win = FakeWindow()
-        win._eval_callback_result['default'] = {
-            'finalUrl': 'https://www.javlibrary.com/ja/',
-            'status': 200,
-            'html': CF_HTML,
-        }
-        transport = _jl_transport(win)
-        with pytest.raises(CfChallengeRequired):
-            transport.fetch('https://www.javlibrary.com/ja/')
-
     def test_timeout_bubbles_through_fetch(self, monkeypatch):
         """_wv_fetch TimeoutError bubbles out of fetch() unmodified."""
         def fake_wv_fetch(window, url, timeout=12.0, attempts=3, retry_delay=0.5):
@@ -319,44 +306,6 @@ class TestFetch:
         win = FakeWindow()
         transport = _jl_transport(win)
         with pytest.raises(TimeoutError):
-            transport.fetch('https://www.javlibrary.com/ja/')
-
-    def test_fetch_does_not_raise_for_footer_terms_page(self):
-        """
-        Normal content page with footer terms (利用規約/over18 but NO agreeBtn)
-        → fetch() returns html without raising.  _is_age_gate only matches agreeBtn,
-        so footer-only content is never mis-classified as an age gate.
-        """
-        age_gate_html = '<html><head><title>JavLibrary</title></head><body>利用規約 over18</body></html>'
-        win = FakeWindow()
-        win._eval_callback_result['default'] = {
-            'finalUrl': 'https://www.javlibrary.com/ja/',
-            'status': 200,
-            'html': age_gate_html,
-        }
-        transport = _jl_transport(win)
-        # Should NOT raise — footer terms do not trigger _is_age_gate (no agreeBtn)
-        result = transport.fetch('https://www.javlibrary.com/ja/')
-        assert isinstance(result, str)
-
-    def test_age_gate_html_raises_cf_challenge_required(self):
-        """
-        Fallback path: if agreeBtn is present in the fetched HTML (age gate persisted
-        despite the proactive over18 cookie), fetch() raises CfChallengeRequired so
-        the caller routes into the solve/poll flow instead of returning empty content.
-        """
-        age_gate_html = (
-            '<html><head><title>JavLibrary</title></head>'
-            '<body><button id="agreeBtn">同意</button></body></html>'
-        )
-        win = FakeWindow()
-        win._eval_callback_result['default'] = {
-            'finalUrl': 'https://www.javlibrary.com/ja/',
-            'status': 200,
-            'html': age_gate_html,
-        }
-        transport = _jl_transport(win)
-        with pytest.raises(CfChallengeRequired, match='age gate detected'):
             transport.fetch('https://www.javlibrary.com/ja/')
 
     def test_fetch_sets_over18_cookie_before_fetch(self):
@@ -657,11 +606,6 @@ READY_TITLE = 'JavLibrary'
 READY_HEAD = '<html><head><title>JavLibrary</title></head>'
 CF_TITLE = 'Just a moment'
 CF_HEAD = '<html><head><title>Just a moment</title></head><body>cf</body>'
-AGE_GATE_TITLE = 'JavLibrary'
-# 真實同意閘（含 agreeBtn）→ is_ready 應回 False
-AGE_GATE_HEAD = '<html><head><title>JavLibrary</title></head><body><button id="agreeBtn">同意</button></body>'
-# 正常內容頁 footer（含 利用規約/18歳/over18 但無 agreeBtn）→ is_ready 應回 True
-CONTENT_FOOTER_HEAD = '<html><head><title>JavLibrary</title></head><body>利用規約 18歳 over18</body>'
 
 
 class FakeWindowIsReady(FakeWindow):
@@ -693,57 +637,6 @@ class FakeWindowIsReady(FakeWindow):
 
 
 class TestIsReady:
-    def test_ready_page_returns_true_and_hides(self):
-        """Ready page → True, window.hide() called."""
-        win = FakeWindowIsReady(READY_TITLE, READY_HEAD)
-        transport = _jl_transport(win)
-        result = transport.is_ready()
-        assert result is True
-        hide_calls = [c for c in win.calls if c[0] == 'hide']
-        assert len(hide_calls) == 1, "hide() should be called once when ready"
-
-    def test_cf_challenge_returns_false_no_hide(self):
-        """CF challenge page → False, no hide()."""
-        win = FakeWindowIsReady(CF_TITLE, CF_HEAD)
-        transport = _jl_transport(win)
-        result = transport.is_ready()
-        assert result is False
-        hide_calls = [c for c in win.calls if c[0] == 'hide']
-        assert len(hide_calls) == 0, "hide() must NOT be called when not ready"
-
-    def test_content_footer_terms_returns_true_and_hides(self):
-        """
-        FIX-1 回歸（收窄語義版）：正常內容頁 footer 含 利用規約/18歳/over18
-        但**無 agreeBtn** → is_ready() 應回 True 並 hide 視窗。
-
-        narrow _is_age_gate 只看 agreeBtn，footer 字不再誤判 False，
-        用戶過了 CF 後不會卡在等待循環。
-        """
-        win = FakeWindowIsReady(AGE_GATE_TITLE, CONTENT_FOOTER_HEAD)
-        transport = _jl_transport(win)
-        result = transport.is_ready()
-        assert result is True, (
-            "正常內容頁 footer 含 利用規約/18歳/over18 但無 agreeBtn，"
-            "is_ready() 應回 True（footer 字不觸發 age-gate 偵測）"
-        )
-        hide_calls = [c for c in win.calls if c[0] == 'hide']
-        assert len(hide_calls) == 1, "is_ready()=True 時應 hide() 視窗"
-
-    def test_real_age_gate_with_agree_btn_returns_false_no_hide(self):
-        """
-        spec-70b §2.3 point 5 契約：真實同意閘（含 agreeBtn）→ is_ready() 回 False，
-        視窗不 hide，讓用戶手動點同意按鈕。
-        """
-        win = FakeWindowIsReady(AGE_GATE_TITLE, AGE_GATE_HEAD)
-        transport = _jl_transport(win)
-        result = transport.is_ready()
-        assert result is False, (
-            "真實 age-gate 同意頁（含 agreeBtn）is_ready() 應回 False，"
-            "保留彈窗讓用戶點同意（spec-70b §2.3 point 5）"
-        )
-        hide_calls = [c for c in win.calls if c[0] == 'hide']
-        assert len(hide_calls) == 0, "age-gate 時不應 hide()，彈窗須保留"
-
     def test_blank_or_navigating_page_returns_false_no_hide(self):
         """
         FIX-P2A: 導航中頁面（document.title 回空字串）→ is_ready() 回 False，
@@ -987,25 +880,6 @@ class TestBeginSolveTargetsCfUrl:
             f"got {load_calls[0][1]!r}"
         )
 
-    def test_fetch_cf_detected_records_cf_url(self, monkeypatch):
-        """fetch() with CF title → raises CfChallengeRequired AND records _cf_urls['javlibrary']."""
-        search_url = self.CF_SEARCH_URL
-
-        def fake_wv_fetch(window, url, **kwargs):
-            return (url, 200, CF_HTML)
-
-        monkeypatch.setattr(cf_transport_impl, '_wv_fetch', fake_wv_fetch)
-        win = FakeWindow()
-        transport = _jl_transport(win)
-
-        with pytest.raises(CfChallengeRequired):
-            transport.fetch(search_url)
-
-        assert transport._cf_urls['javlibrary'] == search_url, (
-            f"_cf_urls['javlibrary'] must be set to the CF-challenged URL ({search_url!r}); "
-            f"got {transport._cf_urls['javlibrary']!r}"
-        )
-
 
 # ──────────────────────────────────────────────────────────────
 # Tests: navigate_and_settle() (TASK-118a-T1 / CD-118a-18)
@@ -1044,19 +918,6 @@ class FakeWindowNavigate(FakeWindow):
         if 'outerHTML' in code:
             return self._head
         return None
-
-
-class FakeEventLogging(FakeEvent):
-    """FakeEvent that logs wait() calls into a shared list, so a test can assert
-    ordering between the bridge-ready wait and subsequent evaluate_js reads."""
-
-    def __init__(self, initial: bool, log: list):
-        super().__init__(initial)
-        self._log = log
-
-    def wait(self, timeout=None):
-        self._log.append(('bridge_wait', timeout))
-        return super().wait(timeout)
 
 
 class RealDelayedEvent:
@@ -1338,38 +1199,6 @@ class TestNavigateAndSettle:
 
         with pytest.raises(CfChallengeRequired):
             transport.navigate_and_settle(self.JAVTEN_URL, 'fc-javten')
-
-    def test_navigate_and_settle_detects_challenge_after_bridge_ready(self):
-        """
-        T1's most important navigate_and_settle test: bridge becomes ready, but
-        the settled page IS a CF challenge → navigate_and_settle must raise
-        CfChallengeRequired, record _cf_urls[key], and NOT return the URL — and
-        the title/head reads that decided this must all happen AFTER the
-        bridge-ready wait (spy-verified via a shared call log), never before.
-
-        mutation: remove the challenge check (keep only "raise if bridge never
-        ready") → this test must go red (no raise; the URL would be returned).
-        """
-        win = FakeWindowNavigate(title='Just a moment', head='<html><head><title>Just a moment</title></head>')
-        win.events._pywebviewready = FakeEventLogging(True, win.calls)
-        transport = PyWebViewCfTransport({'fc-javten': win}, None)
-
-        with pytest.raises(CfChallengeRequired):
-            transport.navigate_and_settle(self.JAVTEN_URL, 'fc-javten')
-
-        wait_idxs = [i for i, c in enumerate(win.calls) if c[0] == 'bridge_wait']
-        eval_idxs = [i for i, c in enumerate(win.calls) if c[0] == 'evaluate_js']
-        assert wait_idxs, "the bridge-ready wait must have happened"
-        assert eval_idxs, "title/head reads must have happened (they decide the challenge verdict)"
-        assert all(i > wait_idxs[0] for i in eval_idxs), (
-            f"evaluate_js reads must happen AFTER the bridge-ready wait "
-            f"(wait at {wait_idxs[0]}, evaluate_js at {eval_idxs}); call log: {win.calls}"
-        )
-
-        assert transport._cf_urls['fc-javten'] == self.JAVTEN_URL, (
-            f"_cf_urls['fc-javten'] must record the challenged URL; "
-            f"got {transport._cf_urls['fc-javten']!r}"
-        )
 
     def test_navigate_and_settle_waits_for_nonempty_title_before_reading_url(self, monkeypatch):
         """

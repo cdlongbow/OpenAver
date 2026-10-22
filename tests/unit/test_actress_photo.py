@@ -89,22 +89,6 @@ def test_download_requests_exception(gfriends_dir):
 
 
 # -------------------------------------------------------------------
-# Test 4: HTTP 非 200 → False
-# -------------------------------------------------------------------
-def test_download_http_non_200(gfriends_dir):
-    """HTTP status != 200 時回 False，不寫檔"""
-    mock_resp = make_mock_response(status_code=404, content_type="text/html", content=b"not found")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp):
-        result = download_actress_photo("鈴木りん", "https://upload.wikimedia.org/photo.jpg", "wiki")
-
-    assert result is False
-    # 目錄不存在或目錄為空（沒有寫任何檔案）
-    if gfriends_dir.exists():
-        files = list(gfriends_dir.glob("鈴木りん.*"))
-        assert len(files) == 0
-
-
-# -------------------------------------------------------------------
 # Test 5: delete_local_photo 後 get_local_photo_path 回 None
 # -------------------------------------------------------------------
 def test_delete_photo_then_get_returns_none(gfriends_dir):

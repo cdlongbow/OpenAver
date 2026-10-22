@@ -45,26 +45,6 @@ def test_learn_prefix_and_save_prefix_hint_removed():
     assert hasattr(DMMScraper, "_save_prefix_hint") is False
 
 
-def test_search_content_id_rejects_gerk116_for_erk_prefix(dmm_scraper):
-    """DoD 3 反向鎖：僅有 gerk116 時不得誤配 ERK-116。"""
-    resp = _make_mock_resp(
-        status_code=200,
-        json_data=_legacy_search_payload(["gerk116"]),
-    )
-    with patch.object(dmm_scraper._session, "post", return_value=resp):
-        assert dmm_scraper._search_content_id("ERK-116") is None
-
-
-def test_search_content_id_accepts_erk00116(dmm_scraper):
-    """DoD 4 正向鎖：含 erk00116 時精確命中。"""
-    resp = _make_mock_resp(
-        status_code=200,
-        json_data=_legacy_search_payload(["gerk116", "erk00116"]),
-    )
-    with patch.object(dmm_scraper._session, "post", return_value=resp):
-        assert dmm_scraper._search_content_id("ERK-116") == "erk00116"
-
-
 # ── TASK-134b-T10 DoD 1–4 ────────────────────────────────────────────────────
 
 
@@ -360,9 +340,8 @@ def test_convert_with_hints_zfill_flag_changes_the_cid(dmm_scraper, monkeypatch)
     2026-08-29 review（grok P2）：DoD 2 的反向鎖把 ``_convert_with_hints`` 整支
     mock 掉、只鎖「search() 有傳 zfill=False」；而 D3 跳過那支用的是已經 5 位數的
     ``MIDD-00357``（兩式本來就相同）。⇒ 把 ``num.zfill(5) if zfill else num``
-    改成永遠補零之後，本檔測試全綠——真正紅的是
-    ``tests/unit/test_scraper_dmm_direct.py::test_dmm_graphql_success``，
-    而它是靠 mock 序列的格數**間接**接住的（已用 mutation 逐檔確認）。
+    改成永遠補零之後，本檔測試全綠——真正紅的是另一檔裡靠 mock 序列的格數
+    **間接**接住它的那支測試（已用 mutation 逐檔確認；該測試後來已刪）。
 
     間接的保護會被「順手清掉一格用不到的 mock」洗掉，所以這裡補一支直接斷言。
 

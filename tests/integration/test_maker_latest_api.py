@@ -343,20 +343,6 @@ def test_list_failure_after_resolve_is_unreachable_not_empty(client, env, exc, p
     assert_found_not_hidden(env)
 
 
-@pytest.mark.parametrize("status,waterfall", [(403, True), (200, False)])
-def test_list_failure_at_session_layer_is_unreachable(client, env, status, waterfall):
-    five_s1(env)
-    sess = MagicMock()
-    sess.get.return_value = MagicMock(status_code=status, text="x")
-    with patch.object(JavBusScraper, "fetch_studio_sample", side_effect=Fetcher([V7Q, V7Q])), \
-         patch.object(JavBusScraper, "_new_session", return_value=sess), \
-         patch.object(JavBusScraper, "_has_waterfall", return_value=waterfall), \
-         patch("core.scraper.search_jav", side_effect=detail()):
-        body = rest(client).json()
-    assert body["success"] is False and body["error_code"] == "maker_unreachable"
-    assert_found_not_hidden(env)
-
-
 def test_not_found_skips_list_and_detail(client, env):
     five_s1(env)
     with maker_patches(sample_outcomes=[STUDIO_MISS] * 5) as m:

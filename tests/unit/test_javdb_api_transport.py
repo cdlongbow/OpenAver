@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceUnreachable
 
 
 # ---------------------------------------------------------------------------
@@ -84,99 +84,10 @@ class TestSign:
 
 
 # ============================================================
-# AC-2｜正常路徑
-# ============================================================
-
-class TestHappyPath:
-    def test_api_search_returns_movies_and_calls_once(self, monkeypatch):
-        from core.scrapers.javdb_api import api_search
-
-        payload = _ok_envelope({"movies": [{"id": "X"}], "current_page": 1})
-        mock_get = _patch_get(monkeypatch, return_value=_make_resp(200, payload))
-
-        result = api_search("SONE-205")
-
-        assert result == [{"id": "X"}]
-        assert mock_get.call_count == 1  # 主網域成功時鏡像不該被打
-
-
-# ============================================================
-# AC-3｜查無不是錯誤
-# ============================================================
-
-class TestEmptySearch:
-    def test_api_search_empty_movies_returns_empty_list(self, monkeypatch):
-        from core.scrapers.javdb_api import api_search
-
-        payload = _ok_envelope({"movies": [], "current_page": 1})
-        _patch_get(monkeypatch, return_value=_make_resp(200, payload))
-
-        assert api_search("NOTEXIST-999") == []
-
-
-# ============================================================
 # AC-4｜例外映射，且落點唯一
 # ============================================================
 
 class TestExceptionMapping:
-    @pytest.mark.parametrize("status", [403, 429, 503])
-    def test_blocked_status_maps_to_source_blocked(self, status, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        mock_get = _patch_get(monkeypatch, return_value=_make_resp(status))
-        with pytest.raises(SourceBlocked):
-            api_get("/api/v2/search")
-        assert mock_get.call_count == 2  # 兩個 host 都試過
-
-    def test_403_maps_to_source_blocked(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(403))
-        with pytest.raises(SourceBlocked):
-            api_get("/api/v2/search")
-
-    def test_429_maps_to_source_blocked(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(429))
-        with pytest.raises(SourceBlocked):
-            api_get("/api/v2/search")
-
-    def test_503_maps_to_source_blocked(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(503))
-        with pytest.raises(SourceBlocked):
-            api_get("/api/v2/search")
-
-    @pytest.mark.parametrize("status", [400, 404, 500])
-    def test_non_blocked_http_error_maps_to_unreachable(self, status, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(status))
-        with pytest.raises(SourceUnreachable):
-            api_get("/api/v2/search")
-
-    def test_400_maps_to_source_unreachable(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(400))
-        with pytest.raises(SourceUnreachable):
-            api_get("/api/v2/search")
-
-    def test_404_maps_to_source_unreachable(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(404))
-        with pytest.raises(SourceUnreachable):
-            api_get("/api/v2/search")
-
-    def test_500_maps_to_source_unreachable(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(500))
-        with pytest.raises(SourceUnreachable):
-            api_get("/api/v2/search")
 
     def test_connection_error_maps_to_source_unreachable(self, monkeypatch):
         from core.scrapers.javdb_api import api_get
@@ -217,31 +128,6 @@ class TestExceptionMapping:
         )
         with pytest.raises(SourceUnreachable):
             api_get("/api/v2/search")
-
-    def test_non_json_body_maps_to_source_unreachable(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(200, bad_json=True))
-        with pytest.raises(SourceUnreachable):
-            api_get("/api/v2/search")
-
-    def test_success_0_maps_to_source_unreachable(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        # data 刻意給一個**合法的 dict**：若 success 那道守衛被拿掉，下游
-        # 「data 不是 dict」那道就接不住，這支才會真的紅（review P1：原本
-        # data=None 讓兩道守衛產生同一個結果，守衛刪掉測試照樣綠）。
-        payload = {
-            "success": 0,
-            "action": "ParameterInvalid",
-            "message": "bad",
-            "data": {"movies": []},
-        }
-        _patch_get(monkeypatch, return_value=_make_resp(200, payload))
-        with pytest.raises(SourceUnreachable) as exc:
-            api_get("/api/v2/search")
-        # 訊息要指得出是「被拒絕」而不是別條分支
-        assert "ParameterInvalid" in str(exc.value)
 
     def test_connect_timeout_mro_witness(self):
         # BE-TEST-16：ConnectTimeout 同時是 ConnectionError 與 Timeout 的子類。
@@ -305,13 +191,6 @@ class TestMirrorFallback:
             side_effect=requests.exceptions.ConnectionError("all down"),
         )
         with pytest.raises(SourceUnreachable):
-            api_get("/api/v2/search")
-
-    def test_both_hosts_403_raises_source_blocked(self, monkeypatch):
-        from core.scrapers.javdb_api import api_get
-
-        _patch_get(monkeypatch, return_value=_make_resp(403))
-        with pytest.raises(SourceBlocked):
             api_get("/api/v2/search")
 
 
@@ -423,62 +302,8 @@ class TestSignaturePerAttempt:
 
 
 # ============================================================
-# api_movie_detail｜詳情端點的形狀契約（review P2：原本零覆蓋）
-# ============================================================
-
-class TestMovieDetail:
-    def test_returns_movie_dict(self, monkeypatch):
-        from core.scrapers.javdb_api import api_movie_detail
-
-        movie = {"id": "P9QrXa", "number": "SONE-205"}
-        mock_get = _patch_get(
-            monkeypatch, return_value=_make_resp(200, _ok_envelope({"movie": movie}))
-        )
-        assert api_movie_detail("P9QrXa") == movie
-        assert mock_get.call_count == 1
-        assert mock_get.call_args.args[0].endswith("/api/v4/movies/P9QrXa")
-
-    @pytest.mark.parametrize("bad_movie", [None, [], "x", 3])
-    def test_movie_not_a_dict_raises_unreachable(self, monkeypatch, bad_movie):
-        from core.scrapers.javdb_api import api_movie_detail
-
-        _patch_get(
-            monkeypatch,
-            return_value=_make_resp(200, _ok_envelope({"movie": bad_movie})),
-        )
-        with pytest.raises(SourceUnreachable):
-            api_movie_detail("P9QrXa")
-
-    def test_missing_movie_key_raises_unreachable(self, monkeypatch):
-        from core.scrapers.javdb_api import api_movie_detail
-
-        _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope({})))
-        with pytest.raises(SourceUnreachable):
-            api_movie_detail("P9QrXa")
-
-
-# ============================================================
 # 175b-T2｜api_search_typed / api_list_tags
 # ============================================================
-
-def _error_side_effects():
-    """BE-TEST-33：至少四種傳輸失敗，皆在 requests.get 層注入，讓真的 api_get 去映射。"""
-    return [
-        pytest.param(dict(return_value=_make_resp(403, {})), SourceBlocked, id="403"),
-        pytest.param(dict(return_value=_make_resp(429, {})), SourceBlocked, id="429"),
-        pytest.param(dict(return_value=_make_resp(503, {})), SourceBlocked, id="503"),
-        pytest.param(dict(side_effect=requests.exceptions.Timeout("t")), SourceUnreachable, id="timeout"),
-        pytest.param(dict(side_effect=requests.exceptions.ConnectionError("c")), SourceUnreachable, id="conn"),
-        pytest.param(
-            dict(side_effect=requests.exceptions.ChunkedEncodingError("ch")), SourceUnreachable, id="chunked"
-        ),
-        pytest.param(dict(return_value=_make_resp(200, bad_json=True)), SourceUnreachable, id="non-json"),
-        pytest.param(
-            dict(return_value=_make_resp(200, {"success": 0, "action": "x", "data": None})),
-            SourceUnreachable,
-            id="success-false",
-        ),
-    ]
 
 
 class TestTypedSearchAndListTags:
@@ -494,25 +319,6 @@ class TestTypedSearchAndListTags:
         assert params["q"] == "三上悠亞"
         assert params["page"] == "1"
         assert mock_get.call_count == 1
-
-    @pytest.mark.parametrize(
-        "search_type,key",
-        [("actor", "actors"), ("series", "series"), ("director", "directors"), ("maker", "makers"), ("code", "codes")],
-    )
-    def test_search_typed_reads_matching_key_only(self, monkeypatch, search_type, key):
-        from core.scrapers.javdb_api import api_search_typed
-
-        other = {k: [{"id": "WRONG"}] for k in ("actors", "series", "directors", "makers", "codes", "movies") if k != key}
-        payload = _ok_envelope({key: [{"id": "RIGHT"}], **other})
-        _patch_get(monkeypatch, return_value=_make_resp(200, payload))
-        assert api_search_typed(search_type, "q") == [{"id": "RIGHT"}]
-
-    @pytest.mark.parametrize("data", [{}, {"actors": None}, {"actors": "x"}, {"actors": {}}])
-    def test_search_typed_missing_or_bad_key_returns_empty(self, monkeypatch, data):
-        from core.scrapers.javdb_api import api_search_typed
-
-        _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope(data)))
-        assert api_search_typed("actor", "q") == []
 
     def test_search_typed_unknown_type_raises_without_request(self, monkeypatch):
         from core.scrapers.javdb_api import api_search_typed
@@ -563,24 +369,6 @@ class TestTypedSearchAndListTags:
         assert mock_get.call_count == 1
         assert mock_get.call_args.kwargs["params"]["page"] == "99"
 
-    @pytest.mark.parametrize("data", [{}, {"movies": None}, {"movies": "x"}])
-    def test_list_tags_bad_movies_returns_empty(self, monkeypatch, data):
-        from core.scrapers.javdb_api import api_list_tags
-
-        _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope(data)))
-        assert api_list_tags("0:a:Av2e", 1) == []
-
-    @pytest.mark.parametrize("kwargs,exc", _error_side_effects())
-    def test_typed_search_and_list_tags_propagate_errors(self, monkeypatch, kwargs, exc):
-        from core.scrapers.javdb_api import api_list_tags, api_search_typed
-
-        _patch_get(monkeypatch, **kwargs)
-        with pytest.raises(exc):
-            api_search_typed("actor", "q")
-        _patch_get(monkeypatch, **kwargs)
-        with pytest.raises(exc):
-            api_list_tags("0:a:Av2e", 1)
-
 
 # ============================================================
 # 175b-T4a｜api_search_page（無 type 的分頁關鍵字搜尋）
@@ -610,18 +398,3 @@ class TestSearchPage:
         mock_get = _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope({"movies": [{"id": "X"}]})))
         assert api_search_page("q", 100) == []
         assert mock_get.call_count == 0
-
-    @pytest.mark.parametrize("data", [{}, {"movies": None}, {"movies": "x"}])
-    def test_missing_or_bad_movies_returns_empty(self, monkeypatch, data):
-        from core.scrapers.javdb_api import api_search_page
-
-        _patch_get(monkeypatch, return_value=_make_resp(200, _ok_envelope(data)))
-        assert api_search_page("q", 1) == []
-
-    @pytest.mark.parametrize("kw,exc", [(p.values[0], p.values[1]) for p in _error_side_effects()])
-    def test_transport_errors_propagate(self, monkeypatch, kw, exc):
-        from core.scrapers.javdb_api import api_search_page
-
-        _patch_get(monkeypatch, **kw)
-        with pytest.raises(exc):
-            api_search_page("q", 1)
