@@ -523,8 +523,7 @@ class TestMeaningfulTextFilter:
     def test_wiki_other_names_only_wins_c1(self):
         """Codex PR #23 P2: Wiki's `other_names` (別名/芸名 row) must count as
         meaningful text. `wiki_ja._parse_wiki_ja_html` explicitly allows alias-only
-        infoboxes to return a dict (rather than None) — see test_bieimei_only_infobox_returns_dict_not_none
-        in test_scraper_actress_wiki_ja.py. If orchestrator's _MEANINGFUL_TEXT_FIELDS
+        infoboxes to return a dict (rather than None). If orchestrator's _MEANINGFUL_TEXT_FIELDS
         omits `other_names`, an alias-only wiki result is silently dropped from the
         C1 cascade even though the parser deliberately preserved it for Phase 43
         alias ingestion.
