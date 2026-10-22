@@ -332,6 +332,7 @@ export function searchStateSearchFlow() {
                     }
                     this.$nextTick(() => { this.isStreaming = false; });
                     this.hasMoreResults = data.has_more || false;
+                    this.currentCursor = data.cursor ?? null;  // 175d：「載入更多」此刻已可點，token 要和 hasMoreResults 同時到位（branch review P2）
                     this.actressProfile = data.actress_profile || null;
                     if (this.actressProfile) this._heroCardImageError = false;  // A6-1 fix: actressProfile 到達，重新嘗試載入
                     // A7-Prod: result-complete 不拆 Hero placeholder — 最終命運由 result 事件決定
