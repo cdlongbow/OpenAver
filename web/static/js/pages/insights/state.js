@@ -68,6 +68,16 @@ import {
 } from './charts.js';
 import { applyCellFocal } from '../../shared/focal-cell.js';
 import { applyHandoff, normalizeExtraPill } from '../../shared/showcase-handoff.js';
+import { toastState } from '../../shared/state-toast.js';
+import { classifyFavoriteResponse, buildFavoriteEntry, mergeFavorite } from './favorite-sync.js';
+
+// TASK-177-T3b：收藏回應分類 → [提示 type, 既有 i18n key]（零新增 key）
+const FAVORITE_TOAST = {
+    added: ['success', 'showcase.actress.addSuccess'],
+    already: ['info', 'showcase.actress.addDuplicate'],
+    not_found: ['error', 'showcase.actress.addNotFound'],
+    failed: ['error', 'showcase.actress.addTimeout'],
+};
 
 // goBrowse／goBrowseWith 共用：寫入 showcase_state 成功才同步導向瀏覽頁；失敗＝不導航。
 function writeHandoffAndNavigate(sel, extra) {
@@ -257,6 +267,10 @@ export function libraryInsightsState() {
         // @error 直接改寫 DOM textContent 的寫法（會把 x-if 錨點一併砍掉，
         // Alpine 之後永遠無法再插回新內容）。女優格與女優榜共用同一份。
         photoFailed: {},
+        // TASK-177-T3b／CD-177-5：收藏請求進行中的名字表（鍵＝captured name、值 true）
+        favoriteBusy: {},
+
+        ...toastState(),
 
         // 模板 @load / $watch 呼叫（同 showcase 揭露慣例）
         applyCellFocal,
@@ -264,6 +278,46 @@ export function libraryInsightsState() {
         markPhotoFailed(name) {
             if (!name) return;
             this.photoFailed[name] = true;
+        },
+
+        isFavoriteActress(name) {
+            const favs = this.snapshot && this.snapshot.actressFavorites;
+            return !!(favs && favs[name]);
+        },
+
+        favoriteBusyFor(name) {
+            return !!this.favoriteBusy[name];
+        },
+
+        // TASK-177-T3b：收藏焦點女優。寫入一律用點擊當下的 name，不再讀 this.sel.actress。
+        async addFocusedFavorite() {
+            const name = this.sel && this.sel.actress;
+            if (!name || !this.snapshot) return;
+            if (this.favoriteBusyFor(name)) return;
+            if (this.isFavoriteActress(name)) return;
+            this.favoriteBusy[name] = true;
+            let kind = 'failed';
+            let data = null;
+            try {
+                const res = await fetch('/api/actresses/favorite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
+                try { data = await res.json(); } catch (e) { data = null; }
+                kind = classifyFavoriteResponse(res.status, data);
+            } catch (e) {
+                kind = 'failed';
+            } finally {
+                delete this.favoriteBusy[name];
+            }
+            if (kind === 'added' || kind === 'already') {
+                this.snapshot.actressFavorites = mergeFavorite(this.snapshot.actressFavorites, name, buildFavoriteEntry(data.actress));
+                this.photoFailed[name] = false;
+                this.redrawAge(); // I-4：年齡圖命令式重繪
+            }
+            const [type, key] = FAVORITE_TOAST[kind];
+            this.showToast(window.t(key), type);
         },
 
         recomputeScopedCount() {
