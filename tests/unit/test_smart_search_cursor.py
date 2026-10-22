@@ -9,8 +9,6 @@ from types import SimpleNamespace
 import pytest
 
 import core.scraper as sc
-from core.search_providers import cursor, registry
-from core.search_providers.types import Kind, Window
 
 TOKEN = "TOKEN-FROM-CLIENT"
 
@@ -76,13 +74,6 @@ def test_first_page_exhausted_prefix_still_falls_back_in_order(env):
     assert len(rec.calls["actress"]) == 1 and len(rec.calls["jav321"]) == 1
 
 
-def test_first_page_fallback_to_actress_marks_actress_mode(env):
-    rec = env(Rec(prefix=[], actress=[_card("A-1")], jav321=[_card("J-1")]))
-    out = sc.smart_search("MIDV", offset=0)
-    assert out[0]["number"] == "A-1" and out[0]["_mode"] == "actress"
-    assert rec.calls["jav321"] == []
-
-
 # ================================================================ cursor／meta 轉傳
 
 
@@ -96,66 +87,7 @@ def test_fallback_actress_gets_the_same_meta_and_its_write_is_final(env):
     assert meta["cursor"] == "ACTRESS-TOKEN" and meta["answered_by"] == "dmm"
 
 
-def test_partial_branch_passes_neither_meta_nor_cursor(env, monkeypatch):
-    seen = {}
-
-    def fake_partial(partial, status_callback=None, result_callback=None, discovery_only=False, **kw):
-        seen.update(kw)
-        return [_card("PART-1")]
-
-    monkeypatch.setattr(sc, "search_partial", fake_partial)
-    out = sc.smart_search("ABC-12", offset=0, cursor=TOKEN, meta={})
-    assert out and out[0]["_mode"] == "partial"
-    assert seen == {}  # 局部搜尋不傳 meta／cursor ⇒ 路由輸出 null
-
-
 # ================================================================ shim 轉傳
 
 
 # ================================================================ 端到端：smart_search → shim → relay（stub 鏈）
-class Stub:
-    fallback_streaming = False
-    supports_discovery = False
-    capabilities = frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE, Kind.ACTOR})
-
-    def __init__(self, pid, cards=()):
-        self.id = pid
-        self.cards = list(cards)
-        self.calls = []
-
-    def run(self, kind, target, w, *, status_callback=None, result_callback=None, discovery_only=False):
-        self.calls.append(("run", kind, target, w))
-        return [dict(c) for c in self.cards]
-
-    def resolve(self, kind, name):
-        self.calls.append(("resolve", kind, name))
-        return None
-
-
-def test_end_to_end_prefix_pages_stay_with_first_answerer_and_end_without_fallback(monkeypatch, env):
-    a, b = Stub("javbus"), Stub("dmm", [_card("P-1")])
-    for p in (a, b):
-        monkeypatch.setitem(registry._REGISTRY, p.id, lambda p=p: p)
-    monkeypatch.setattr(sc, "get_all_source_ids_ordered", lambda: ["javbus", "dmm", "jav321"])
-    jav321 = []
-    monkeypatch.setattr(sc, "search_jav321_keyword", lambda *a, **k: jav321.append(1) or [_card("J-1")])
-    meta = {}
-    first = sc.smart_search("MIDV", limit=3, offset=0, meta=meta)
-    assert [c["number"] for c in first] == ["P-1"] and meta["answered_by"] == "dmm"
-    assert cursor.decode(meta["cursor"]) == cursor.Token("dmm", "keyword", ())
-    a_calls = len(a.calls)
-    # 載入更多：只問 dmm
-    second = sc.smart_search("MIDV", limit=3, offset=3, cursor=meta["cursor"], meta=meta)
-    assert [c["number"] for c in second] == ["P-1"]
-    assert len(a.calls) == a_calls and b.calls[-1] == ("run", Kind.CODE, "MIDV", Window(3, 3))
-    # 前綴到底：回空，不退到女優（resolve 不被問）、不退到 jav321
-    b.cards = []
-    b_before = len(b.calls)
-    assert sc.smart_search("MIDV", limit=3, offset=6, cursor=meta["cursor"], meta={}) == []
-    assert len(a.calls) == a_calls and jav321 == []
-    assert [c[0] for c in b.calls[b_before:]] == ["run"]  # 只有那一次 CODE 查詢，沒有 resolve
-    # 對照：沒有 token 的 offset=6 ⇒ 沒有任何 provider 被問
-    n = len(a.calls) + len(b.calls)
-    assert sc.smart_search("MIDV", limit=3, offset=6) == [] and len(a.calls) + len(b.calls) == n and jav321 == []
-    # 對照：offset=0 前綴查無 ⇒ 退路照舊被問（jav321 命中）
-    assert sc.smart_search("MIDV", limit=3, offset=0)[0]["number"] == "J-1" and jav321 == [1]

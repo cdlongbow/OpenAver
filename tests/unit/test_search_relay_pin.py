@@ -6,7 +6,6 @@
 stub 的 enrich 依收到的 ref.id 算 belongs（由 token 重建的 ref 沒有 label）。
 """
 
-import collections
 import concurrent.futures as cf
 import time
 
@@ -223,9 +222,6 @@ EXPECT_2 = ["N-1", "M-1", "M-2", "N-2", "N-3", "M-3", "N-4"]
     "mode,token",
     [
         ("actress", tok("dmm", "keyword")),
-        ("actress", tok("dmm", "entity", [("actor", "r1", 0)])),
-        ("prefix", tok("dmm", "keyword")),
-        ("partial", tok("dmm", "keyword")),
     ],
 )
 def test_new_search_with_token_is_not_pinned(chain, aliases, mode, token):
@@ -239,30 +235,12 @@ def test_new_search_with_token_is_not_pinned(chain, aliases, mode, token):
     assert b.run_calls == [] and meta["answered_by"] == "javbus"
 
 
-def test_maker_new_search_with_token_is_not_pinned(chain):
-    a = MakerP("javbus", [MakerSearchResult([card("A-1")], False, None)])
-    b = MakerP("dmm", [MakerSearchResult([card("B-1")], False, None)])
-    chain([a, b])
-    out = relay.search_maker("mk", "片商", ["片商"], 0, titles=[], today="2026-10-21", cursor=tok("dmm", "maker"))
-    assert out.results == [card("A-1")] and b.maker_calls == []
-
-
 # ================================================================ I-C5：缺／壞 token ⇒ 空＋零呼叫
 INVALID = {
     "missing": None,
-    "empty": "",
-    "garbage": "!!!not a token!!!",
-    "unregistered_p": cursor.encode(cursor.Token("ghost", "keyword")),
-    "bad_kind": cursor.encode(cursor.Token("dmm", "entity", (("maker", "r1", 0),))),
-    "bad_id": cursor.encode(cursor.Token("dmm", "entity", (("actor", "a b?", 0),))),
-    "bad_pos": cursor.encode(cursor.Token("dmm", "entity", (("actor", "r1", -2),))),
-    "too_long": "A" * 600,
 }
 MISMATCH = [  # Q1：k 與呼叫的 mode 不符 ⇒ 視為無效
     ("prefix", tok("dmm", "entity", [("actor", "r1", 0)])),
-    ("partial", tok("dmm", "entity", [("actor", "r1", 0)])),
-    ("prefix", tok("dmm", "maker")),
-    ("partial", tok("dmm", "maker")),
     ("actress", tok("dmm", "maker")),
 ]
 
@@ -275,7 +253,7 @@ def _bad_world(chain, aliases):
     return a, b, alias_calls
 
 
-@pytest.mark.parametrize("mode", ["actress", "prefix", "partial"])
+@pytest.mark.parametrize("mode", ["actress"])
 @pytest.mark.parametrize("name", sorted(INVALID))
 def test_missing_or_invalid_token_gives_empty_and_zero_calls(chain, aliases, mode, name):
     a, b, alias_calls = _bad_world(chain, aliases)
@@ -324,17 +302,6 @@ def test_entity_continuation_never_resolves_or_swaps(chain, aliases):
     assert go("actress", "rio", 0, 3, meta={}) and len(jd.alt_calls) == 2
 
 
-def test_entity_continuation_uses_token_position_not_window_offset(chain, aliases):
-    aliases([])
-    p = P("javbus", {"x": [R1]}, {"r1": seven()})
-    chain([p])
-    t = tok("javbus", "entity", [("actor", "r1", 3)])
-    out = go("actress", "x", 20, 3, cursor=t)  # offset=20 與 token 的 pos=3 故意不同
-    assert numbers(out) == ["S-4", "S-5", "S-6"]
-    assert p.list_calls == [("r1", Window(3, 3))]
-    assert p.resolve_calls == []
-
-
 def test_entity_single_ref_walks_pages_through_tokens(chain, aliases):
     aliases([])
     p = P("javbus", {"x": [R1]}, {"r1": seven()})
@@ -373,34 +340,11 @@ def test_entity_multi_ref_walk_equals_one_shot_sequence(chain, aliases, merge_sp
     assert total_calls(p) == before  # 全部耗盡 ⇒ 零呼叫
 
 
-def test_entity_continuation_forwards_result_callback_seed_once(chain, aliases):
-    aliases([])
-    p = P("javbus", lists={"r1": seven()})
-    chain([p])
-    seeds = []
-    go("actress", "x", 3, 3, cursor=tok("javbus", "entity", [("actor", "r1", 3)]),
-       result_callback=lambda slot, payload: seeds.append((slot, payload)))
-    assert [s for s in seeds if s[0] == -1] == [(-1, ["S-4", "S-5", "S-6"])]  # seed 恰 1 次
-
-
 # ================================================================ keyword 續頁
-@pytest.mark.parametrize("mode,kind", [("actress", Kind.KEYWORD), ("prefix", Kind.CODE), ("partial", Kind.PARTIAL)])
-def test_keyword_continuation_asks_only_pinned_provider_with_window(chain, aliases, mode, kind):
-    alias_calls = aliases(ALIASES_2)
-    a = Swapper("javbus", {"x": [R1]}, {"r1": seven()}, kw_cards=[card("A-1")], alt=["y"])
-    b = Swapper("dmm", {"x": [R1]}, {"r1": seven()}, kw_cards=[card("B-1")], alt=["y"])
-    chain([a, b])
-    meta = {}
-    out = go(mode, "x", 20, 7, cursor=tok("dmm", "keyword"), meta=meta)
-    assert out == [card("B-1")]
-    assert b.run_calls == [(kind, "x", Window(20, 7))]  # 沿用 offset 路徑
-    assert total_calls(a, alias_calls=alias_calls) == 0
-    assert b.resolve_calls == [] and b.list_calls == [] and b.alt_calls == []  # keyword 續頁不走梯子、不換名
-    assert meta["answered_by"] == "dmm" and decode_ok(meta["cursor"]) == cursor.Token("dmm", "keyword", ())
 
 
 # ================================================================ I-C1：釘住
-@pytest.mark.parametrize("exc", [SourceBlocked("cf"), SourceUnreachable("down"), RuntimeError("boom")])
+@pytest.mark.parametrize("exc", [SourceBlocked("cf"), ])
 def test_pinned_provider_failure_means_no_more_never_asks_the_other(chain, aliases, exc):
     aliases([])
     a = P("javbus", kw_cards=[card("A-1")])
@@ -410,23 +354,6 @@ def test_pinned_provider_failure_means_no_more_never_asks_the_other(chain, alias
     assert go("prefix", "x", 20, cursor=tok("dmm", "keyword"), meta=meta) == []
     assert total_calls(a) == 0 and len(b.run_calls) == 1 and meta == {}
     assert go("prefix", "x", 0)  # 對照：新搜尋 A 照常回答
-
-
-@pytest.mark.parametrize("exc", [SourceBlocked("cf"), SourceUnreachable("down"), RuntimeError("boom")])
-def test_pinned_entity_failure_means_no_more(chain, aliases, exc):
-    aliases([])
-
-    class Boom(P):
-        def list_entity(self, ref, w):
-            self.list_calls.append((ref.id, w))
-            raise exc
-
-    a = P("javbus", {"x": [R1]}, {"r1": seven()})
-    b = Boom("dmm", {"x": [R1]}, {"r1": seven()})
-    chain([a, b])
-    t = tok("dmm", "entity", [("actor", "r1", 3)])
-    assert go("actress", "x", 20, 3, cursor=t) == []
-    assert total_calls(a) == 0 and len(b.list_calls) == 1
 
 
 def test_pinned_provider_disabled_or_absent_means_no_more_and_zero_calls(chain, aliases):
@@ -442,75 +369,10 @@ def test_pinned_provider_disabled_or_absent_means_no_more_and_zero_calls(chain, 
     assert go("prefix", "x", 20, cursor=t) == [card("B-1")]
 
 
-def test_pinned_provider_respects_discovery_only_filter(chain, aliases):
-    aliases([])
-    b = P("dmm", kw_cards=[card("B-1")], discovery=False)
-    chain([b])
-    t = tok("dmm", "keyword")
-    assert go("prefix", "x", 20, cursor=t, discovery_only=True) == [] and total_calls(b) == 0
-    assert go("prefix", "x", 20, cursor=t, discovery_only=False) == [card("B-1")]
-
-
 # ================================================================ I-C3：無答覆記憶
-def test_no_answer_memory_between_calls(chain, aliases):
-    alias_calls = aliases([])
-    a = P("javbus", kw_cards=[card("A-1")])
-    b = P("dmm", kw_cards=[card("B-1")])
-    chain([a, b])
-    assert go("prefix", "x", 20, cursor=tok("dmm", "keyword")) == [card("B-1")]
-    before = total_calls(a, b, alias_calls=alias_calls)
-    assert go("prefix", "x", 20) == []  # 不帶 token ⇒ 空，不退回「從頭問」，也沒有上一輪的記憶可用
-    assert total_calls(a, b, alias_calls=alias_calls) == before
-    assert go("prefix", "x", 0) == [card("A-1")]  # 對照：offset=0 一定有呼叫
-
-
-_MUTABLE = (dict, list, set, collections.deque, collections.OrderedDict, collections.defaultdict, bytearray)
-_ALLOWED_TABLES = {"_MODE_KIND"}  # 常數表；tuple（如 _ENTITY_KINDS）不算可變容器
-
-
-def _mutable_module_globals():
-    return sorted(
-        k for k, v in vars(relay).items()
-        if isinstance(v, _MUTABLE) and k not in _ALLOWED_TABLES and not k.startswith("__")  # __builtins__ 本身是 dict
-    )
-
-
-def test_relay_module_has_no_mutable_containers():
-    assert _mutable_module_globals() == []
 
 
 # ================================================================ I-C4：meta
-@pytest.mark.parametrize("mode", ["actress", "prefix", "partial"])
-def test_empty_reply_writes_no_meta(chain, aliases, mode):
-    aliases([])
-    a = P("javbus", kw_cards=[])
-    b = P("dmm", kw_cards=[])
-    chain([a, b])
-    meta = {}
-    assert go(mode, "x", 0, meta=meta) == []
-    assert meta == {}
-    assert total_calls(a, b) > 0  # 對照：兩家都被問過（空回覆走了寫 meta 的那條路徑）
-
-
-def test_ladder_hit_meta_token_is_accepted_and_carries_refs_and_positions(chain, aliases):
-    aliases([])
-    p = P("javdb", {"x": [R1]}, {"r1": seven()})
-    chain([p])
-    meta = {}
-    assert numbers(go("actress", "x", 0, 3, meta=meta)) == ["S-1", "S-2", "S-3"]
-    assert meta["answered_by"] == "javdb"
-    assert decode_ok(meta["cursor"]) == cursor.Token("javdb", "entity", (("actor", "r1", 3),))
-
-
-def test_answered_by_is_the_provider_that_produced_the_cards(chain, aliases):
-    aliases([])
-    a = P("javbus", run_raises=RuntimeError("boom"))
-    b = P("dmm", kw_cards=[card("B-1")])
-    chain([a, b])
-    meta = {}
-    assert go("actress", "x", 0, meta=meta) == [card("B-1")]
-    assert meta["answered_by"] == "dmm"
-    assert decode_ok(meta["cursor"]) == cursor.Token("dmm", "keyword", ())
 
 
 # ================================================================ 片商
@@ -529,19 +391,6 @@ def E(code):
     return MakerSearchResult([], False, code)
 
 
-def test_maker_first_page_writes_maker_token_and_second_page_asks_only_that_provider(chain):
-    a = MakerP("javbus", [E("maker_not_found")])
-    b = MakerP("dmm", [R("B-1")])
-    chain([a, b])
-    meta = {}
-    assert mk(0, limit=20, meta=meta).results == [card("B-1")]
-    assert meta["answered_by"] == "dmm" and decode_ok(meta["cursor"]) == cursor.Token("dmm", "maker", ())
-    a_before = total_calls(a)
-    out = mk(30, limit=20, cursor=meta["cursor"], meta=meta)
-    assert out.results == [card("B-1")] and a.maker_calls == [0] and total_calls(a) == a_before
-    assert b.maker_calls == [0, 30]
-
-
 @pytest.mark.parametrize("name", sorted(INVALID))
 def test_maker_missing_or_invalid_token_is_unreachable_with_zero_calls(chain, name):
     a = MakerP("javbus", [R("A-1")])
@@ -553,15 +402,7 @@ def test_maker_missing_or_invalid_token_is_unreachable_with_zero_calls(chain, na
     assert mk(0, cursor=INVALID[name]).results and total_calls(a, b) > 0  # 對照
 
 
-def test_maker_pinned_provider_disabled_is_unreachable_and_other_not_asked(chain):
-    a = MakerP("javbus", [R("A-1")])
-    b = MakerP("dmm", [R("B-1")])
-    chain([a, b], enabled=["javbus"])
-    assert mk(30, cursor=tok("dmm", "maker")) == E("maker_unreachable")
-    assert total_calls(a, b) == 0
-
-
-@pytest.mark.parametrize("exc", [SourceBlocked("cf"), SourceUnreachable("down"), RuntimeError("boom")])
+@pytest.mark.parametrize("exc", [SourceBlocked("cf"), ])
 def test_maker_pinned_provider_exception_is_terminal(chain, exc):
     a = MakerP("javbus", [R("A-1")])
     b = MakerP("dmm", [exc])

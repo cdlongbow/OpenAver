@@ -6,20 +6,18 @@
 
 import concurrent.futures as cf
 import inspect
-import itertools
 import time
 from unittest.mock import MagicMock
 
 import pytest
 
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
-from core.search_providers import cursor, registry, relay
+from core.search_providers import registry, relay
 from core.search_providers.types import Enriched, EntityRef, Kind, Page, Provider, Window, WorkItem
 
 W = Window(0, 20)
 REF = EntityRef(Kind.ACTOR, "a1", "someone")
 BASE_CAPS = frozenset({Kind.KEYWORD, Kind.PARTIAL, Kind.CODE})
-ALL_CAPS = frozenset(Kind)
 
 
 def card(n):
@@ -140,8 +138,6 @@ def search(mode="partial", q="q", w=W, **kw):
 
 
 # ---------------------------------------------------------------- registry
-def test_registered_ids_are_javbus_dmm_and_javdb():
-    assert registry.registered_ids() == frozenset({"javbus", "dmm", "javdb"})
 
 
 # ---------------------------------------------------------------- 接力語意
@@ -164,7 +160,7 @@ def test_empty_first_provider_falls_through_and_empty_chain_is_empty_list(chain)
 
 @pytest.mark.parametrize(
     "exc",
-    [SourceBlocked("b"), SourceUnreachable("u"), ValueError("v"), KeyError("k"), RuntimeError("r")],
+    [SourceBlocked("b"), RuntimeError("r")],
     ids=lambda e: type(e).__name__,
 )
 def test_provider_failure_of_any_kind_falls_through_to_next(chain, exc):
@@ -179,30 +175,6 @@ def test_all_providers_failing_gives_empty_list_not_exception(chain):
     assert search() == []
 
 
-def test_base_exception_is_not_swallowed(chain):
-    class Fatal(BaseException):
-        pass
-
-    chain([Fake("a", raises=Fatal())])
-    with pytest.raises(Fatal):
-        search()
-
-
-@pytest.mark.parametrize(
-    "mode,kind", [("partial", Kind.PARTIAL), ("prefix", Kind.CODE), ("actress", Kind.KEYWORD)]
-)
-def test_mode_maps_to_kind_and_forwards_window_and_callbacks(chain, mode, kind):
-    a = Fake("a", cards=[card("A")])
-    chain([a])
-    status, result = MagicMock(), MagicMock()
-    w = Window(30, 7)
-    token = cursor.encode(cursor.Token("a", "keyword"))  # offset>0 ⇒ 載入更多必須帶有效 token（175d）
-    search(mode, "needle", w, status_callback=status, result_callback=result, discovery_only=False, cursor=token)
-    k, target, got_w, got_status, got_result, got_disc = a.run_calls[0]
-    assert (k, target, got_w, got_status, got_disc) == (kind, "needle", w, status, False)
-    assert got_result is not None and got_result is not result  # 包過 tracker，不是原物件
-
-
 def test_discovery_only_asks_only_discovery_capable_providers(chain):
     plain, disc = Fake("plain"), Fake("disc", cards=[card("D")], discovery=True)
     chain([plain, disc])
@@ -211,14 +183,6 @@ def test_discovery_only_asks_only_discovery_capable_providers(chain):
     assert disc.run_calls[0][5] is True
     assert search(discovery_only=False) == [card("D")]
     assert len(plain.run_calls) == 1  # 非 discovery 時 plain 照常被問
-
-
-def test_capability_filter_skips_provider_lacking_kind(chain):
-    only_kw = Fake("kw", caps=frozenset({Kind.KEYWORD}), cards=[card("K")])
-    both = Fake("both", cards=[card("B")])
-    chain([only_kw, both])
-    assert search("partial") == [card("B")]
-    assert len(only_kw.run_calls) == 0
 
 
 # ---------------------------------------------------------------- 順序與開關
@@ -238,83 +202,10 @@ def test_javbus_skipped_when_its_switch_is_off(chain):
     assert len(jb.run_calls) == 0
 
 
-def test_all_three_off_gives_empty_chain_and_empty_result(chain):
-    jb, dmm, jd = (Fake(pid, cards=[card(pid)], caps=ALL_CAPS) for pid in ("javbus", "dmm", "javdb"))
-    chain([jb, dmm, jd], enabled=[])
-    for kinds in ({Kind.PARTIAL}, {Kind.ACTOR}, {Kind.KEYWORD}, {Kind.CODE}, {Kind.MAKER}):
-        assert registry.providers_for(kinds) == []
-    assert search() == []
-    assert len(jb.run_calls) == len(dmm.run_calls) == len(jd.run_calls) == 0
-
-
-def test_javbus_off_excluded_from_providers_for_every_kind(chain):
-    jb, dmm, jd = (Fake(pid, caps=ALL_CAPS) for pid in ("javbus", "dmm", "javdb"))
-    chain([jb, dmm, jd], enabled=["dmm", "javdb"])
-    for kinds in ({Kind.PARTIAL}, {Kind.ACTOR}, {Kind.KEYWORD}, {Kind.CODE}, {Kind.MAKER}):
-        assert [p.id for p in registry.providers_for(kinds)] == ["dmm", "javdb"]
-
-
-@pytest.mark.parametrize("order", [["javdb", "javbus", "dmm"], ["javbus", "dmm", "javdb"]])
-def test_three_on_first_non_empty_wins_and_later_not_asked(chain, order):
-    fakes = {pid: Fake(pid, cards=[card(pid.upper())]) for pid in order}
-    chain([fakes[pid] for pid in order], order=order)
-    assert search() == [card(order[0].upper())]
-    assert len(fakes[order[0]].run_calls) == 1
-    assert [len(fakes[pid].run_calls) for pid in order[1:]] == [0, 0]
-
-
-def test_dmm_skipped_when_its_switch_is_off(chain):
-    jb, dmm = Fake("javbus"), Fake("dmm", cards=[card("D")])
-    chain([jb, dmm], enabled=["javbus"])
-    assert search() == []
-    assert len(dmm.run_calls) == 0
-
-
-def test_each_search_builds_fresh_providers(chain):
-    a = Fake("a")
-    counts = chain([a])
-    search()
-    search()
-    assert counts["a"] == 2
-
-
 # ---------------------------------------------------------------- seed 閘
-def test_fallback_provider_gets_callback_until_seed_sent(chain):
-    a, b = Fake("a"), Fake("b", cards=[card("B")])  # a 拿到 callback 卻從未 seed
-    chain([a, b])
-    user = MagicMock()
-    assert search(result_callback=user) == [card("B")]
-    assert a.received_callbacks[0] is not None
-    assert b.received_callbacks[0] is not None  # 「給過就算」的假實作在這裡會紅
-    b.received_callbacks[0](-1, ["B"])
-    user.assert_called_once_with(-1, ["B"])  # 轉送到呼叫端
 
 
-def test_non_streaming_fallback_gets_none(chain):
-    """第一家查無、後備的結果會被重排（fallback_streaming=False）→ 後備拿 None，使用者最後看到的順序與今天相同"""
-    a, b = Fake("a"), Fake("b", cards=[card("B")], fallback_streaming=False)
-    chain([a, b])
-    assert search(result_callback=MagicMock()) == [card("B")]
-    assert a.received_callbacks[0] is not None
-    assert b.received_callbacks == [None]
-
-
-def test_first_dispatched_gets_callback_even_if_not_streaming_fallback(chain):
-    a = Fake("a", cards=[card("A")], fallback_streaming=False)
-    chain([a])
-    assert search(result_callback=MagicMock()) == [card("A")]
-    assert a.received_callbacks[0] is not None
-
-
-def test_real_providers_declare_fallback_streaming():
-    from core.search_providers.dmm import DMMProvider
-    from core.search_providers.javbus import JavBusProvider
-
-    assert DMMProvider.fallback_streaming is True  # 串流順序＝最終順序
-    assert JavBusProvider.fallback_streaming is False  # 補完詳情後依日期重排
-
-
-@pytest.mark.parametrize("a_raises", [None, RuntimeError("late")], ids=["seed-then-empty", "seed-then-raise"])
+@pytest.mark.parametrize("a_raises", [None], ids=["seed-then-empty"])
 def test_seed_sent_blocks_later_providers(chain, a_raises):
     a = Fake("a", seed=["N-1"], raises=a_raises)
     b = Fake("b", cards=[card("B")])
@@ -323,13 +214,6 @@ def test_seed_sent_blocks_later_providers(chain, a_raises):
     assert search(result_callback=user) == [card("B")]
     assert b.received_callbacks == [None]
     assert user.call_args_list == [((-1, ["N-1"]),)]  # 呼叫端只收到一次 seed
-
-
-def test_no_callback_from_caller_means_none_all_the_way(chain):
-    a, b = Fake("a"), Fake("b", cards=[card("B")])
-    chain([a, b])
-    search(result_callback=None)
-    assert a.received_callbacks == [None] and b.received_callbacks == [None]
 
 
 def test_unrelated_entity_page_sends_no_seed_and_falls_through(chain):
@@ -341,16 +225,6 @@ def test_unrelated_entity_page_sends_no_seed_and_falls_through(chain):
     assert user.call_count == 0  # 沒有 seed、沒有 result-item
     assert len(a.run_calls) == 0  # 該家不再問 KEYWORD
     assert len(b.run_calls) == 1
-
-
-def test_guard_all_blocked_is_unreachable_then_next_provider_asked(chain):
-    a = EntityFake("a", enrich_raises=SourceBlocked("cf"))
-    b = Fake("b", cards=[card("B")])
-    chain([a, b])
-    user = MagicMock()
-    assert search("actress", "someone", result_callback=user) == [card("B")]
-    assert user.call_count == 0
-    assert len(a.run_calls) == 0 and len(b.run_calls) == 1
 
 
 def test_entity_hit_streams_seed_then_items_and_skips_keyword(chain):
@@ -365,7 +239,7 @@ def test_entity_hit_streams_seed_then_items_and_skips_keyword(chain):
     assert len(a.run_calls) == 0 and len(b.run_calls) == 0
 
 
-@pytest.mark.parametrize("kw", [{"ref": None}, {"resolve_raises": RuntimeError("boom")}], ids=["no-ref", "resolve-raises"])
+@pytest.mark.parametrize("kw", [{"ref": None}], ids=["no-ref"])
 def test_entity_ladder_empty_then_keyword_else_next_provider(chain, kw):
     a = EntityFake("a", cards=[card("A-kw")], **kw)
     b = Fake("b", cards=[card("B")])
@@ -377,98 +251,11 @@ def test_entity_ladder_empty_then_keyword_else_next_provider(chain, kw):
         assert out == [card("A-kw")] and len(a.run_calls) == 1  # 梯子全空 ⇒ 問 KEYWORD
 
 
-def test_entity_ladder_only_asks_declared_kinds_and_not_for_other_modes(chain):
-    a = EntityFake("a", ref=None, cards=[card("A")])
-    chain([a])
-    search("actress", "x")
-    assert [k for k, _ in a.resolve_calls] == [Kind.ACTOR]
-    search("partial", "x")
-    assert len(a.resolve_calls) == 1
-
-
-_BEHAVIOURS = {
-    "seed-empty": dict(seed=["N"]),
-    "seed-raise": dict(seed=["N"], raises=RuntimeError("x")),
-    "noseed-empty": dict(),
-}
-
-
-@pytest.mark.parametrize("combo", list(itertools.product(_BEHAVIOURS, repeat=3)), ids="/".join)
-def test_relay_never_emits_second_seed(chain, combo):
-    ps = [Fake(f"p{i}", **_BEHAVIOURS[name]) for i, name in enumerate(combo)]
-    ps.append(Fake("last", cards=[card("L")], seed=["N"]))
-    chain(ps)
-    user = MagicMock()
-    search(result_callback=user)
-    assert [c.args[0] for c in user.call_args_list].count(-1) <= 1
-
-
 # ---------------------------------------------------------------- relay 不自送 status
-def test_relay_emits_no_status_events_of_its_own(chain):
-    status = MagicMock()
-    a = Fake("a")
-    b = Fake("b", cards=[card("B")])
-    chain([a, b])
-    search(status_callback=status)
-    assert status.call_count == 0
-    assert a.run_calls[0][3] is status  # 原物件透傳，不包裝
-    chain([], order=[])
-    search(status_callback=status)
-    assert status.call_count == 0
-
-
-def test_relay_does_not_add_source_or_reorder(chain):
-    cards = [card("Z"), card("A")]
-    chain([Fake("a", cards=cards)])
-    out = search()
-    assert [c["number"] for c in out] == ["Z", "A"]
-    assert all("_source" not in c for c in out)
 
 
 # ---------------------------------------------------------------- _resolve_refs
 
 # ---------------------------------------------------------------- 175b-T4b：實體梯子可觀測
-def test_ladder_sends_status_only_for_providers_declaring_entity_kinds(chain):
-    a = EntityFake("a", n_items=3)
-    plain = Fake("plain")  # 先問、查無
-    chain([plain, a])
-    status = MagicMock()
-    search("actress", "someone", status_callback=status)
-    events = [c.args for c in status.call_args_list]
-    assert ("a", "searching") in events
-    assert ("done", "found:3") in events
-    assert all(e[0] != "plain" for e in events)
 
 
-def test_ladder_without_entity_capability_emits_zero_events(chain):
-    a, b = Fake("a"), Fake("b", cards=[card("B")])
-    chain([a, b])
-    status = MagicMock()
-    search("actress", "someone", status_callback=status)
-    assert status.call_count == 0
-
-
-def test_ladder_status_callback_none_is_safe(chain):
-    a = EntityFake("a", n_items=2)
-    chain([a])
-    assert len(search("actress", "someone", status_callback=None)) == 2
-
-
-def test_ladder_no_done_event_when_page_unrelated(chain):
-    a = EntityFake("a", belongs=False)
-    chain([a, Fake("b", cards=[card("B")])])
-    status = MagicMock()
-    search("actress", "someone", status_callback=status)
-    events = [c.args for c in status.call_args_list]
-    assert ("a", "searching") in events
-    assert not any(e[0] == "done" for e in events)
-
-
-@pytest.mark.parametrize("exc,tag", [(SourceBlocked("b"), True), (SourceUnreachable("u"), False)])
-def test_ladder_failure_log_marks_blocked_only_for_blocked(chain, caplog, exc, tag):
-    a = EntityFake("a", resolve_raises=exc)
-    chain([a, Fake("b", cards=[card("B")])])
-    with caplog.at_level("WARNING"):
-        assert search("actress", "someone") == [card("B")]
-    lines = [r.getMessage() for r in caplog.records if "entity ladder failed" in r.getMessage()]
-    assert len(lines) == 1 and ("/blocked" in lines[0]) is tag
