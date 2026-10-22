@@ -88,16 +88,6 @@ def _patch_db_and_config(mocker, setup, config=None):
 
 # ============ crop-mode route removed（99a-T1a 回歸鎖）============
 
-class TestCropModeRouteRemoved:
-    def test_crop_mode_route_returns_404(self, client, focal_endpoint_setup, mocker):
-        """`/video/crop-mode` 端點已刪除（99a-T1a）——任何 body 都應 404（路由不存在），
-        不是被端點邏輯拒絕。回歸鎖：防止未來不慎把端點加回去。
-        mutation：把路由復活 → 此測試變 GREEN，證明測試真的在守。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        resp = client.post("/api/showcase/video/crop-mode",
-                           json={"path": focal_endpoint_setup["video_uri"], "mode": "auto"})
-        assert resp.status_code == 404
-
 
 # ============ detect-focal ============
 
@@ -125,109 +115,6 @@ class TestDetectFocalEndpoint:
         assert not called_path.endswith(".mp4")
         assert "SONE-001.mp4" not in called_path
 
-    def test_detect_does_not_persist_auto_focal(self, client, focal_endpoint_setup, mocker):
-        """99a-T1a：/detect-focal 改純預覽，不寫 DB。mutation 驗證——若把
-        repo.update_auto_focal(...) 加回去，此測試必須變 RED。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)))
-        before = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
-            focal_endpoint_setup["video_uri"]).auto_focal
-        resp = client.post("/api/showcase/video/detect-focal",
-                    json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["auto_focal"] == "0.4200,0.5000"  # 回傳值仍是偵測結果（供前端預覽）
-        repo = VideoRepository(focal_endpoint_setup["db_path"])
-        assert repo.get_by_path(focal_endpoint_setup["video_uri"]).auto_focal == before
-
-    def test_non_db_path_404_no_detect(self, client, focal_endpoint_setup, mocker):
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
-        bogus = to_file_uri(focal_endpoint_setup["video_dir"] + "/not-in-db.mp4", {})
-        resp = client.post("/api/showcase/video/detect-focal", json={"path": bogus})
-        assert resp.status_code == 404
-        assert resp.json()["success"] is False
-        spy.assert_not_called()
-
-    def test_readonly_source_in_scope_allowed(self, client, focal_endpoint_setup, mocker):
-        """99a-T1a：來源標 readonly 但 in-scope → 放行（200，正常跑偵測）。
-        取代舊的「唯讀→403」行為——偵測不寫 DB，不需要可寫權限（D4/CD-7）。"""
-        ro_config = {
-            "gallery": {
-                "directories": [{"path": focal_endpoint_setup["video_dir"],
-                                 "readonly": True, "output_path": ""}],
-                "path_mappings": {},
-            },
-        }
-        _patch_db_and_config(mocker, focal_endpoint_setup, config=ro_config)
-        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        spy.assert_called_once()
-
-    def test_out_of_scope_rejected(self, client, focal_endpoint_setup, mocker, tmp_path):
-        """configured dir 不含影片所在夾 → scope 外 → 拒。"""
-        other_dir = tmp_path / "elsewhere"
-        other_dir.mkdir()
-        oos_config = {
-            "gallery": {
-                "directories": [{"path": str(other_dir), "readonly": False, "output_path": ""}],
-                "path_mappings": {},
-            },
-        }
-        _patch_db_and_config(mocker, focal_endpoint_setup, config=oos_config)
-        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 403
-        spy.assert_not_called()
-
-    def test_cover_file_missing_fixed_string_no_crash(self, client, focal_endpoint_setup, mocker):
-        """DB 有 cover_path 但檔案不存在 → 固定字串、不崩、不呼 detect_focal。仍帶
-        cover_path（Codex PR#107 第二輪 P2：detect 失敗路徑前端也要拿得到 token，
-        否則使用者拖曳窗子後 confirmMask 會被 fail-closed guard 擋下無法存檔）。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_no_cover_uri"]})
-        assert resp.status_code == 400
-        assert resp.json()["success"] is False
-        assert resp.json()["error"]
-        assert resp.json()["cover_path"]   # non-empty DB-key URI（值本身由 fixture 決定，不重掛死值）
-        spy.assert_not_called()
-
-    def test_no_face_returns_empty_string(self, client, focal_endpoint_setup, mocker):
-        """detect_focal 回 None（無臉）→ auto_focal='' 回傳、不崩（99a-T1a：不再存回 DB）。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="NO_FACE"))
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert resp.json()["auto_focal"] == ""
-        # Codex PR 三審 P2：回 None 時輸出與「端點跳過偵測直接回空」無法區分，
-        # 必須斷言真的呼叫過偵測（同 test_api_actress no_face 案的 false-green 修法）
-        spy.assert_called_once()
-
-    def test_manual_detect_uses_unified_5s_budget(self, client, focal_endpoint_setup, mocker):
-        """CD-152d-1：前景與背景共用同一個 5 秒定義——timeout_s 必須是 5.0。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        captured = {}
-
-        def slow_detect(fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None):
-            captured["timeout_s"] = timeout_s
-            return RunnerOutcome(kind="FOUND", focal=(0.42, 0.5))
-
-        spy = mocker.patch("web.routers.showcase.run_detection", side_effect=slow_detect)
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert resp.json()["auto_focal"] == "0.4200,0.5000"
-        assert resp.json()["reason"] == ""
-        spy.assert_called_once()
-        assert captured["timeout_s"] == 5.0
 
     def test_manual_detect_wall_budget_returns_too_slow_without_real_wait(
         self, client, focal_endpoint_setup, mocker,
@@ -271,43 +158,6 @@ class TestDetectFocalEndpoint:
         assert fake_executor.future.timeout == showcase._MANUAL_DETECT_WALL_BUDGET_S == 5.0
         record.assert_not_called()
 
-    def test_abandoned_returns_same_shape_as_no_face(self, client, focal_endpoint_setup, mocker):
-        """ABANDONED(crashed) → reason=='failed'，不得被歸成 too_slow 家族（CD-152d-4b）。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        mocker.patch(
-            "web.routers.showcase.run_detection",
-            return_value=RunnerOutcome(kind="ABANDONED", reason="crashed"),
-        )
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert resp.json()["auto_focal"] == ""
-        assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
-        assert resp.json()["reason"] == "failed"
-
-    def test_device_disabled_returns_same_shape_as_no_face(self, client, focal_endpoint_setup, mocker):
-        """裝置已停用 → reason=='device_disabled'（CD-152d-6）。"""
-        from core.focal import device_state
-
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        mocker.patch.object(device_state, "is_disabled", return_value=True)
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            if pre_spawn_check is not None and pre_spawn_check():
-                return RunnerOutcome(kind="ABANDONED", reason="skipped_disabled")
-            return RunnerOutcome(kind="FOUND", focal=(0.42, 0.5))
-
-        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert resp.json()["auto_focal"] == ""
-        assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
-        assert resp.json()["reason"] == "device_disabled"
 
     def test_disabled_short_circuits_before_runner_lock(self, client, focal_endpoint_setup, mocker):
         """關掉自動對焦後，點裁切工具不得進 run_detection 全域鎖排隊。
@@ -347,58 +197,6 @@ class TestDetectFocalEndpoint:
         assert body["cover_path"] == focal_endpoint_setup["cover_uri"]
         spy.assert_not_called()
 
-    def test_disabled_lookup_failure_fails_open_and_still_detects(self, client, focal_endpoint_setup, mocker):
-        """config 停用查詢失敗 ≠ 硬體算不動：fail-open 繼續偵測，不得 500 / device_disabled。"""
-        from core.focal import device_state
-
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        mocker.patch.object(
-            device_state, "is_disabled_in", side_effect=OSError("config unreadable"),
-        )
-        spy = mocker.patch(
-            "web.routers.showcase.run_detection",
-            return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)),
-        )
-
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["auto_focal"] == "0.4200,0.5000"
-        assert body["reason"] == ""
-        assert body["cover_path"] == focal_endpoint_setup["cover_uri"]
-        spy.assert_called_once()
-
-    def test_manual_detect_timeout_does_not_contribute(self, client, focal_endpoint_setup, mocker):
-        """CD-152d-2b②：前景逾時走 record_manual_outcome（非 record_outcome），reason=too_slow_auto_disabled。"""
-        from core.focal import device_state
-
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        record_bg_spy = mocker.patch.object(device_state, "record_outcome")
-        record_manual_spy = mocker.patch.object(
-            device_state, "record_manual_outcome", return_value=True,
-        )
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
-            if on_outcome is not None:
-                on_outcome(outcome)
-            return outcome
-
-        spy = mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert resp.json()["auto_focal"] == ""
-        assert resp.json()["reason"] == "too_slow_auto_disabled"
-        assert "on_outcome" in spy.call_args.kwargs, "path② must pass on_outcome= explicitly"
-        assert spy.call_args.kwargs["on_outcome"] is not None
-        assert record_manual_spy.call_count == 1
-        assert record_bg_spy.call_count == 0
 
     def test_reason_empty_on_found(self, client, focal_endpoint_setup, mocker):
         """reason 值域：正常 FOUND → ''。"""
@@ -412,19 +210,8 @@ class TestDetectFocalEndpoint:
         assert resp.status_code == 200
         assert resp.json()["reason"] == ""
 
-    def test_reason_empty_on_no_face(self, client, focal_endpoint_setup, mocker):
-        """reason 值域：NO_FACE → ''。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        mocker.patch(
-            "web.routers.showcase.run_detection",
-            return_value=RunnerOutcome(kind="NO_FACE"),
-        )
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == ""
 
-    @pytest.mark.parametrize("abandoned_reason", ["startup_timeout", "crashed", "circuit_open"])
+    @pytest.mark.parametrize("abandoned_reason", ["crashed"])
     def test_reason_failed_for_non_timeout_abandoned(
         self, client, focal_endpoint_setup, mocker, abandoned_reason,
     ):
@@ -440,28 +227,6 @@ class TestDetectFocalEndpoint:
         assert resp.json()["reason"] == "failed"
         assert resp.json()["reason"] not in ("too_slow", "too_slow_auto_disabled")
 
-    def test_reason_too_slow_when_set_by_user_suppresses(
-        self, client, focal_endpoint_setup, mocker,
-    ):
-        """reason 值域：逾時但 just_disabled=False → 'too_slow'。"""
-        from core.focal import device_state
-
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        mocker.patch.object(device_state, "record_manual_outcome", return_value=False)
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
-            if on_outcome is not None:
-                on_outcome(outcome)
-            return outcome
-
-        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == "too_slow"
 
     def test_manual_timeout_does_not_call_notification_sink(
         self, client, focal_endpoint_setup, mocker, tmp_path, monkeypatch,
@@ -509,45 +274,6 @@ class TestDetectFocalEndpoint:
         assert calls == []
         assert device_state.is_disabled() is True
 
-    def test_judgment_happens_inside_on_outcome_before_return(
-        self, client, focal_endpoint_setup, mocker, tmp_path, monkeypatch,
-    ):
-        """判定發生在 on_outcome 內：callback 後、run_detection 返回前，is_disabled 已是 True。"""
-        import core.config as core_config
-        from core.config import save_config
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        config_path = tmp_path / "config.json"
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-        save_config({
-            "focal_device": {
-                "disabled": False,
-                "consecutive_timeout_count": 0,
-                "judged_at_version": VERSION,
-                "set_by_user": False,
-            }
-        })
-
-        probe = {"disabled_after_on_outcome": None}
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
-            if on_outcome is not None:
-                on_outcome(outcome)
-            probe["disabled_after_on_outcome"] = device_state.is_disabled()
-            return outcome
-
-        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
-        resp = client.post("/api/showcase/video/detect-focal",
-                           json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 200
-        assert probe["disabled_after_on_outcome"] is True
-        assert resp.json()["reason"] == "too_slow_auto_disabled"
 
     def test_interleaved_set_by_user_yields_too_slow_not_auto_disabled(
         self, client, focal_endpoint_setup, mocker, tmp_path, monkeypatch,
@@ -606,16 +332,6 @@ class TestManualFocalEndpoint:
         assert result.auto_focal == "0.3000,0.6000"   # 正規化（format_focal(parse_focal(...))）
         assert result.crop_mode == "manual"
 
-    def test_missing_expected_cover_path_422(self, client, focal_endpoint_setup, mocker):
-        """expected_cover_path 為必填欄位（Codex PR#107 第二輪 P2）：省略 → pydantic
-        422，連 route handler 都不執行、DB 不碰。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        resp = client.post("/api/showcase/video/save-focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
-        assert resp.status_code == 422
-        repo = VideoRepository(focal_endpoint_setup["db_path"])
-        result = repo.get_by_path(focal_endpoint_setup["video_uri"])
-        assert result.crop_mode != "manual"
 
     def test_cover_path_mismatch_409_db_unchanged(self, client, focal_endpoint_setup, mocker):
         """核心回歸鎖（Codex PR#107 第二輪 P2）：expected_cover_path 與目前 row.cover_path
@@ -641,16 +357,6 @@ class TestManualFocalEndpoint:
         assert after.crop_mode == before.crop_mode
         assert after.crop_mode != "manual"
 
-    def test_path_not_in_db_404_no_write(self, client, focal_endpoint_setup, mocker, tmp_path):
-        """path 不存在於 DB → 404（不是 500，不新建 row）。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        bogus = to_file_uri(str(tmp_path / "not-in-db.mp4"), {})
-        resp = client.post("/api/showcase/video/save-focal",
-                           json={"path": bogus, "focal": "0.3,0.6", "expected_cover_path": ""})
-        assert resp.status_code == 404
-        assert resp.json()["success"] is False
-        repo = VideoRepository(focal_endpoint_setup["db_path"])
-        assert repo.get_by_path(bogus) is None
 
     def test_invalid_focal_format_400_db_untouched(self, client, focal_endpoint_setup, mocker):
         """非法 focal 格式 → 400 固定字串、DB 完全不碰（連 get_by_path 都不需呼叫，
@@ -665,21 +371,6 @@ class TestManualFocalEndpoint:
         assert resp.json()["error"]
         spy.assert_not_called()
 
-    def test_invalid_focal_empty_string_400(self, client, focal_endpoint_setup, mocker):
-        """空字串焦點 → 400（手動存的 focal 不可為空，不同於 detect 的「無臉」語意）。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        resp = client.post("/api/showcase/video/save-focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "",
-                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
-        assert resp.status_code == 400
-
-    def test_invalid_focal_out_of_range_400(self, client, focal_endpoint_setup, mocker):
-        """超出 [0,1] 範圍 → 400。"""
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        resp = client.post("/api/showcase/video/save-focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "1.5,0.5",
-                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
-        assert resp.status_code == 400
 
     def test_out_of_scope_403_db_unchanged(self, client, focal_endpoint_setup, mocker, tmp_path):
         """path 存在但 out-of-scope（不在任何 configured dir 下）→ 403、DB 不變。

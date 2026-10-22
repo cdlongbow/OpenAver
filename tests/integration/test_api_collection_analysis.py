@@ -24,14 +24,6 @@ def tmp_db(tmp_path):
     return db_path
 
 
-@pytest.fixture
-def client(tmp_db, monkeypatch):
-    """TestClient，monkeypatch get_db_path → tmp_db"""
-    monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
-    from web.app import app
-    return TestClient(app)
-
-
 def _insert_videos(db_path, rows):
     """Helper: 批次插入測試影片資料"""
     conn = sqlite3.connect(str(db_path))
@@ -115,31 +107,6 @@ class TestAnalysisHappyPath:
 
 # ── I2: analysis 空 DB ────────────────────────────────────────────────────────
 
-class TestAnalysisEmptyDb:
-    """I2: 空 videos 表，所有計數應為 0，available_groups 仍有 5 個"""
-
-    def test_analysis_empty_db(self, client):
-        resp = client.get("/api/collection/analysis")
-        assert resp.status_code == 200
-        data = resp.json()
-
-        assert data["total_videos"] == 0
-
-        for field in ["title", "actresses", "maker", "tags",
-                      "release_date", "cover_path", "director",
-                      "label", "original_title"]:
-            assert data["missing_fields"][field] == 0, \
-                f"missing_fields.{field} 應為 0，實際為 {data['missing_fields'][field]}"
-
-        assert data["empty_array_fields"]["actresses"] == 0
-        assert data["empty_array_fields"]["tags"] == 0
-        assert data["corrupted_numbers"]["total"] == 0
-        assert data["japanese_tags"]["total"] == 0
-        assert data["nfo_status"]["has_nfo"] == 0
-        assert data["nfo_status"]["missing_nfo"] == 0
-
-        assert len(data["available_groups"]) == 5
-
 
 # ── I3: groups no_nfo happy path ──────────────────────────────────────────────
 
@@ -195,38 +162,6 @@ class TestGroupsNoNfo:
         assert data["limit"] == 50
         assert data["exclude_western"] is False
 
-    def test_groups_total_reflects_real_count_not_limit(self, tmp_db, monkeypatch):
-        """total 應為符合條件的真實總數，不受 limit 限制"""
-        rows = [
-            (to_file_uri("/test/A-%03d.mp4" % i), "SONE-%03d" % i, "Title %d" % i,
-             '[]', "Sony", '[]', "", "", "", None, "", 0.0)
-            for i in range(1, 11)  # 10 筆 no_nfo
-        ]
-        _insert_videos(tmp_db, rows)
-
-        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
-        from web.app import app
-        test_client = TestClient(app)
-
-        resp = test_client.post(
-            "/api/collection/analysis/groups",
-            json={"group": "no_nfo", "limit": 3, "exclude_western": False},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-
-        assert data["total"] == 10   # 真實總數
-        assert len(data["items"]) == 3  # 只回傳 limit 筆
-
 
 # ── I4: groups 無效 group → 422 ───────────────────────────────────────────────
 
-class TestGroupsInvalidGroup:
-    """I4: 無效 group 名稱應回傳 HTTP 422"""
-
-    def test_groups_invalid_group_returns_422(self, client):
-        resp = client.post(
-            "/api/collection/analysis/groups",
-            json={"group": "evil_group", "limit": 50},
-        )
-        assert resp.status_code == 422

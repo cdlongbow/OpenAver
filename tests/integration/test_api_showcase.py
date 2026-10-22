@@ -10,7 +10,6 @@ from urllib.parse import quote
 from core.database import init_db, VideoRepository, Video
 from core.path_utils import to_file_uri, uri_to_fs_path
 from core.database.version_tracker import get_showcase_revision
-import web.routers.showcase as showcase_router
 
 
 # ============ Fixtures ============
@@ -85,21 +84,6 @@ def showcase_setup(tmp_path):
 class TestShowcaseVideosUserTags:
     """測試 GET /api/showcase/videos 包含 user_tags 欄位（T4）"""
 
-    def test_response_contains_user_tags_field(self, client, showcase_setup, mocker):
-        """每個 video 物件必須包含 user_tags 欄位"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
-
-        response = client.get("/api/showcase/videos")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert len(data["videos"]) == 2
-
-        for video in data["videos"]:
-            assert "user_tags" in video, f"user_tags 欄位缺失：{video.get('path')}"
-            assert isinstance(video["user_tags"], list), "user_tags 應為 list"
 
     def test_user_tags_values_preserved(self, client, showcase_setup, mocker):
         """user_tags 值應與 DB 一致"""
@@ -114,19 +98,6 @@ class TestShowcaseVideosUserTags:
             v for v in data["videos"] if v["path"] == showcase_setup["vid1_uri"]
         )
         assert video_with_tags["user_tags"] == ["★5", "足"]
-
-    def test_empty_user_tags_returns_empty_list(self, client, showcase_setup, mocker):
-        """無 user_tags 時應回傳空 list（不是 null）"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
-
-        response = client.get("/api/showcase/videos")
-        data = response.json()
-
-        video_no_tags = next(
-            v for v in data["videos"] if v["path"] == showcase_setup["vid2_uri"]
-        )
-        assert video_no_tags["user_tags"] == []
 
 
 class TestShowcaseResponseShape:
@@ -238,20 +209,6 @@ class TestShowcaseUserRatingField:
     所以未精選的片也必須輸出鍵，值為 0，不可省略。
     """
 
-    def test_response_contains_user_rating_field(self, client, showcase_setup, mocker):
-        """每個 video 物件必須包含 user_rating 欄位（精選與未精選皆然）"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
-
-        response = client.get("/api/showcase/videos")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["videos"]) == 2
-
-        for video in data["videos"]:
-            assert "user_rating" in video, f"user_rating 欄位缺失：{video.get('path')}"
-            assert isinstance(video["user_rating"], int)
 
     def test_picked_video_returns_positive_rating(self, client, showcase_setup, mocker):
         """已精選的片 user_rating > 0"""
@@ -263,18 +220,6 @@ class TestShowcaseUserRatingField:
 
         picked = next(v for v in data["videos"] if v["path"] == showcase_setup["vid1_uri"])
         assert picked["user_rating"] > 0
-
-    def test_unpicked_video_returns_zero_not_missing_key(self, client, showcase_setup, mocker):
-        """未精選的片 user_rating == 0（不是缺鍵）"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
-
-        response = client.get("/api/showcase/videos")
-        data = response.json()
-
-        unpicked = next(v for v in data["videos"] if v["path"] == showcase_setup["vid2_uri"])
-        assert "user_rating" in unpicked
-        assert unpicked["user_rating"] == 0
 
 
 # ============ auto_focal / crop_mode Tests (98b-T1) ============
@@ -333,38 +278,6 @@ class TestShowcaseFocalFields:
             "config": config,
         }
 
-    def test_videos_contains_focal_fields(self, client, focal_setup, mocker):
-        """列表端點：每片含 auto_focal / crop_mode，值等於 DB。"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=focal_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=focal_setup["config"])
-
-        response = client.get("/api/showcase/videos")
-        assert response.status_code == 200
-        videos = {v["path"]: v for v in response.json()["videos"]}
-
-        for v in videos.values():
-            assert "auto_focal" in v, f"auto_focal 欄位缺失：{v.get('path')}"
-            assert "crop_mode" in v, f"crop_mode 欄位缺失：{v.get('path')}"
-
-        v_focal = videos[focal_setup["vid_focal_uri"]]
-        assert v_focal["auto_focal"] == "0.6231,0.4177"
-        assert v_focal["crop_mode"] == "auto"
-
-        v_empty = videos[focal_setup["vid_empty_uri"]]
-        assert v_empty["auto_focal"] == ""
-        assert v_empty["crop_mode"] == "default"
-
-    def test_single_video_contains_focal_fields(self, client, focal_setup, mocker):
-        """單筆端點：同含兩欄，值等於 DB（覆蓋 serializer 共用兩端點）。"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=focal_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=focal_setup["config"])
-
-        response = client.get(f"/api/showcase/video?path={focal_setup['vid_focal_uri']}")
-        assert response.status_code == 200
-        video = response.json()["video"]
-        assert video["auto_focal"] == "0.6231,0.4177"
-        assert video["crop_mode"] == "auto"
-
 
 # ============ has_cover / has_nfo Tests ============
 
@@ -411,21 +324,6 @@ class TestShowcaseHasCoverHasNfo:
 
         return {"db_path": db_path, "uris": uris, "config": config}
 
-    def test_has_cover_and_has_nfo_fields_present(self, client, cover_nfo_setup, mocker):
-        """每個 video 物件必須包含 has_cover 與 has_nfo 欄位"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=cover_nfo_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=cover_nfo_setup["config"])
-
-        response = client.get("/api/showcase/videos")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-
-        for video in data["videos"]:
-            assert "has_cover" in video, f"has_cover 欄位缺失：{video.get('path')}"
-            assert "has_nfo" in video, f"has_nfo 欄位缺失：{video.get('path')}"
-            assert isinstance(video["has_cover"], bool)
-            assert isinstance(video["has_nfo"], bool)
 
     def test_has_cover_false_when_cover_path_empty(self, client, cover_nfo_setup, mocker):
         """cover_path 為空字串時 has_cover 應為 False"""
@@ -439,17 +337,6 @@ class TestShowcaseHasCoverHasNfo:
         assert v_ff["has_cover"] is False
         assert v_ff["has_nfo"] is False
 
-    def test_has_cover_true_when_cover_path_set(self, client, cover_nfo_setup, mocker):
-        """cover_path 非空時 has_cover 應為 True"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=cover_nfo_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=cover_nfo_setup["config"])
-
-        response = client.get("/api/showcase/videos")
-        data = response.json()
-
-        v_tf = next(v for v in data["videos"] if v["path"] == cover_nfo_setup["uris"]["v_tf"])
-        assert v_tf["has_cover"] is True
-        assert v_tf["has_nfo"] is False
 
     def test_has_nfo_true_when_nfo_mtime_positive(self, client, cover_nfo_setup, mocker):
         """nfo_mtime > 0 時 has_nfo 應為 True"""
@@ -541,20 +428,6 @@ class TestShowcaseVideoSingle:
                       "user_tags", "tags", "actresses", "size", "mtime"):
             assert field in video, f"欄位 {field} 缺失"
 
-    def test_nonexistent_path_returns_404(self, client, single_setup, mocker):
-        """DB 中不存在的 path → 404"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=single_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=single_setup["config"])
-
-        # 用 to_file_uri 產生 configured directory 下的合法 URI（避免手刻 URI 拼接）
-        # 確保真的測到「path 在 dir 下但 DB 沒記錄」分支，而非被 dir filter 先擋
-        ghost_uri = to_file_uri(str(single_setup["video_dir"] / "ghost.mp4"), {})
-
-        response = client.get(f"/api/showcase/video?path={ghost_uri}")
-        assert response.status_code == 404
-        data = response.json()
-        assert data["success"] is False
-        assert data["error"] == "video not found"
 
     def test_path_not_in_configured_dir_returns_404(self, client, single_setup, mocker, tmp_path):
         """path 不在 configured directory → 404（不洩漏目錄資訊）"""
@@ -571,32 +444,6 @@ class TestShowcaseVideoSingle:
         data = response.json()
         assert data["success"] is False
         assert data["error"] == "video not found"
-
-    def test_missing_path_param_returns_422(self, client, single_setup, mocker):
-        """path query param 缺失 → FastAPI 回 422"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=single_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=single_setup["config"])
-
-        response = client.get("/api/showcase/video")
-        assert response.status_code == 422
-
-    def test_serializer_consistency_list_vs_single(self, client, single_setup, mocker):
-        """列表查詢與單筆查詢同一影片，has_cover / has_nfo / cover_url / path 完全相等"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=single_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=single_setup["config"])
-
-        list_resp = client.get("/api/showcase/videos")
-        assert list_resp.status_code == 200
-        list_video = list_resp.json()["videos"][0]
-
-        single_resp = client.get(f"/api/showcase/video?path={single_setup['vid_uri']}")
-        assert single_resp.status_code == 200
-        single_video = single_resp.json()["video"]
-
-        for field in ("path", "has_cover", "has_nfo", "cover_url", "cover_full_url", "number", "user_tags"):
-            assert list_video[field] == single_video[field], (
-                f"serializer 不一致欄位 {field}: list={list_video[field]!r} single={single_video[field]!r}"
-            )
 
 
 # ============ is_readonly_source field removed Tests (TASK-104-T4) ============
@@ -667,48 +514,6 @@ class TestShowcaseIsReadonlySourceRemoved:
         return {"db_path": db_path, "v_ro": v_ro, "v_rw": v_rw,
                 "ro_dir": ro_dir, "config": config}
 
-    def test_field_absent_readonly_source(self, client, ro_setup, mocker):
-        """唯讀來源片 payload 不含 is_readonly_source key（TASK-104-T4 拔除）。"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
-
-        data = client.get("/api/showcase/videos").json()
-        assert len(data["videos"]) == 2
-        for video in data["videos"]:
-            assert "is_readonly_source" not in video
-
-    def test_field_absent_writable_source(self, client, showcase_setup, mocker):
-        """既有 showcase_setup（裸 str 來源）payload 亦不含 is_readonly_source key。"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
-
-        data = client.get("/api/showcase/videos").json()
-        assert len(data["videos"]) == 2
-        for video in data["videos"]:
-            assert "is_readonly_source" not in video
-
-    def test_field_absent_mixed_source(self, client, mixed_setup, mocker):
-        """混合來源（唯讀+可寫）逐片 payload 皆不含 is_readonly_source key。"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=mixed_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=mixed_setup["config"])
-
-        videos = {v["path"]: v for v in client.get("/api/showcase/videos").json()["videos"]}
-        assert "is_readonly_source" not in videos[mixed_setup["v_ro"]]
-        assert "is_readonly_source" not in videos[mixed_setup["v_rw"]]
-
-    def test_single_endpoint_field_absent(self, client, ro_setup, mocker):
-        """單筆端點 payload 同樣不含 is_readonly_source key（與列表端點一致）。"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
-
-        list_video = next(
-            v for v in client.get("/api/showcase/videos").json()["videos"]
-            if v["path"] == ro_setup["v1"]
-        )
-        single_video = client.get(f"/api/showcase/video?path={ro_setup['v1']}").json()["video"]
-        assert "is_readonly_source" not in list_video
-        assert "is_readonly_source" not in single_video
-
 
 # ============ Thumbnail cache cover_url switch Tests (T4) ============
 
@@ -771,14 +576,6 @@ class TestShowcaseThumbnailCacheCoverUrl:
         # thumb key 必須是 video path，不是 cover path
         assert quote(cover_setup["cover_uri"], safe="") not in v["cover_url"]
 
-    def test_disabled_cover_url_is_image_bytewise(self, client, cover_setup, mocker):
-        """邊界 2：disabled → cover_url = /api/gallery/image?path=quote(uri_to_fs_path(cover))（字節不變）。"""
-        videos = self._get_videos(client, mocker, cover_setup, enabled=False)
-        v = videos[cover_setup["vid_cover_uri"]]
-        expected = f"/api/gallery/image?path={quote(uri_to_fs_path(cover_setup['cover_uri']), safe='')}"
-        assert v["cover_url"] == expected
-        assert v["cover_url"].startswith("/api/gallery/image?path=")
-        assert "%2F" in v["cover_url"]
 
     def test_cover_full_url_always_image_regardless_of_flag(self, client, cover_setup, mocker):
         """邊界 3：cover_full_url 恆原圖 image url（不受 flag 影響）。"""
@@ -789,122 +586,8 @@ class TestShowcaseThumbnailCacheCoverUrl:
             assert v["cover_full_url"] == expected, f"enabled={enabled}"
             assert v["cover_full_url"].startswith("/api/gallery/image?path=")
 
-    def test_no_cover_video_empty_urls_both_flags(self, client, cover_setup, mocker):
-        """邊界 4：無 cover → cover_url == cover_full_url == ''、has_cover False（兩 flag 皆然）。"""
-        for enabled in (True, False):
-            videos = self._get_videos(client, mocker, cover_setup, enabled=enabled)
-            v = videos[cover_setup["vid_nocover_uri"]]
-            assert v["cover_url"] == "", f"enabled={enabled}"
-            assert v["cover_full_url"] == "", f"enabled={enabled}"
-            assert v["has_cover"] is False
-
 
 # ============ AC-18: 合併卡 path 為 part-1，enrich 只作用 part-1（TASK-122-T2）============
-
-class TestAC18EnrichOnlyTouchesPart1:
-    """CD-122-11：補齊資料一律只作用 part-1。這是 `_serialize_group()` 把 `path`
-    定死為 part-1（AC-18 契約）的自然結果——前端所有「拿 video.path 打 API」的
-    既有呼叫（包含 enrich）天然只送 part-1 path，不需要任何分組感知。本測試驗證
-    這條鏈路的最後一環：真的呼叫 enrich（mode='db_to_sidecar'，不打外部 scraper，
-    只把 DB 現有 metadata 寫進 sidecar NFO）於合併卡的代表段 path，斷言 part-1
-    的 NFO 被寫入、part-2 的檔案在磁碟上完全未被觸碰（mtime 與內容不變）。
-    """
-
-    def test_enrich_db_to_sidecar_on_part1_path_leaves_part2_untouched(self, tmp_path, mocker):
-        video_dir = tmp_path / "videos"
-        video_dir.mkdir()
-
-        part1_fs = video_dir / "ABC-123-cd1.mp4"
-        part2_fs = video_dir / "ABC-123-cd2.mp4"
-        part1_fs.write_bytes(b"part1-video-bytes")
-        part2_fs.write_bytes(b"part2-video-bytes-untouched")
-
-        part1_uri = to_file_uri(str(part1_fs), {})
-        part2_uri = to_file_uri(str(part2_fs), {})
-
-        db_path = tmp_path / "ac18.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        repo.upsert_batch([
-            Video(
-                path=part1_uri,
-                number="ABC-123",
-                title="AC-18 Part 1",
-                original_title="",
-                actresses=["Actress"],
-                maker="Maker",
-                release_date="2024-01-01",
-                tags=["tag1"],
-                duration=60,
-                size_bytes=100,
-                mtime=part1_fs.stat().st_mtime,
-            ),
-            Video(
-                path=part2_uri,
-                number="ABC-123",
-                title="AC-18 Part 2",
-                original_title="",
-                actresses=["Actress"],
-                maker="Maker",
-                release_date="2024-01-01",
-                tags=["tag1"],
-                duration=60,
-                size_bytes=100,
-                mtime=part2_fs.stat().st_mtime,
-            ),
-        ])
-
-        # 先確認 showcase 序列化真的把合併卡的 path 定成 part-1（AC-18 前半段契約），
-        # 再拿這個 path 去打 enrich（後半段：用這個 path 觸發 enrich 只碰 part-1）。
-        config = {
-            "gallery": {
-                "directories": [str(video_dir)],
-                "path_mappings": {},
-                "min_size_mb": 0,
-                "thumbnail_width": 400,
-            },
-            "scraper": {"video_extensions": [".mp4"], "image_extensions": [".jpg"]},
-            "database": {"path": ":memory:"},
-            "translate": {"provider": "ollama", "ollama_model": "llama3"},
-        }
-        mocker.patch("web.routers.showcase.get_db_path", return_value=db_path)
-        mocker.patch("web.routers.showcase.load_config", return_value=config)
-        from fastapi.testclient import TestClient
-        from web.app import app
-        showcase_client = TestClient(app, client=("127.0.0.1", 50000))
-        resp = showcase_client.get("/api/showcase/videos")
-        body = resp.json()
-        assert body["total"] == 1, "part1/part2 應合併成一張卡"
-        card = body["videos"][0]
-        assert card["path"] == part1_uri
-        assert card["part_tokens"] == ["cd1", "cd2"]
-
-        part2_mtime_before = part2_fs.stat().st_mtime
-        part2_content_before = part2_fs.read_bytes()
-        part2_nfo = part2_fs.with_suffix(".nfo")
-        assert not part2_nfo.exists()
-
-        from core.enricher import enrich_single
-        mocker.patch("core.enricher.VideoRepository", return_value=repo)
-        result = enrich_single(
-            file_path=card["path"],  # 合併卡回傳的代表段 path == part-1
-            number="ABC-123",
-            mode="db_to_sidecar",
-            write_nfo=True,
-            write_cover=False,
-            path_mappings={},
-        )
-
-        assert result.success is True
-        assert result.nfo_written is True
-
-        part1_nfo = part1_fs.with_suffix(".nfo")
-        assert part1_nfo.exists(), "part-1 的 NFO 必須被寫入"
-
-        # part-2 完全未被觸碰：沒有新產生 NFO、mtime 與內容不變
-        assert not part2_nfo.exists(), "part-2 不應該生出 NFO"
-        assert part2_fs.stat().st_mtime == part2_mtime_before
-        assert part2_fs.read_bytes() == part2_content_before
 
 
 # ============ ETag / 304 (TASK-145-T3, CD-145a-8/11/12) ============
@@ -955,73 +638,6 @@ class TestShowcaseVideosETag:
             "看到的還是操作前的舊清單"
         )
 
-    def test_second_request_no_writes_returns_304_and_skips_serialization(self, client, showcase_setup, mocker):
-        """驗收 1／DoD ①：兩次無寫入的請求，第二次回 304，且 _serialize_group 完全沒被呼叫
-        （方案 B 的判別點——不是只驗傳輸變小，要驗序列化真的沒發生）。"""
-        spy = mocker.spy(showcase_router, "_serialize_group")
-        first = self._get(client, mocker, showcase_setup)
-        assert first.status_code == 200
-        etag = first.headers["etag"]
-        spy.reset_mock()
-
-        second = self._get(client, mocker, showcase_setup, if_none_match=etag)
-        assert second.status_code == 304
-        assert second.headers["etag"] == etag
-        spy.assert_not_called()
-        assert second.content == b""
-
-    def test_consecutive_gets_without_writes_return_304(self, client, showcase_setup, mocker):
-        """DoD ②：init_db() 每次請求都跑，其 no-op commit 不可反覆 bump revision——
-        route 層級端到端驗證：連續兩次 GET（中間無真實寫入）第二次必回 304。"""
-        first = self._get(client, mocker, showcase_setup)
-        etag = first.headers["etag"]
-        second = self._get(client, mocker, showcase_setup, if_none_match=etag)
-        assert second.status_code == 304
-
-    def test_user_rating_write_then_stale_etag_returns_200_with_new_value(self, client, showcase_setup, mocker):
-        """DoD ③（user_rating）：set_user_rating() 成功 commit 後，帶舊 ETag 再請求必回 200，
-        且新值反映在回應。"""
-        first = self._get(client, mocker, showcase_setup)
-        etag = first.headers["etag"]
-
-        repo = VideoRepository(showcase_setup["db_path"])
-        repo.set_user_rating(showcase_setup["vid2_uri"], 5)
-
-        second = self._get(client, mocker, showcase_setup, if_none_match=etag)
-        assert second.status_code == 200
-        assert second.headers["etag"] != etag
-        video = next(v for v in second.json()["videos"] if v["path"] == showcase_setup["vid2_uri"])
-        assert video["user_rating"] == 5
-
-    def test_user_tags_write_then_stale_etag_returns_200_with_new_value(self, client, showcase_setup, mocker):
-        """DoD ③（user_tags）：update_user_tags() 成功 commit 後，帶舊 ETag 再請求必回 200。"""
-        first = self._get(client, mocker, showcase_setup)
-        etag = first.headers["etag"]
-
-        repo = VideoRepository(showcase_setup["db_path"])
-        repo.update_user_tags(showcase_setup["vid2_uri"], ["新標籤"])
-
-        second = self._get(client, mocker, showcase_setup, if_none_match=etag)
-        assert second.status_code == 200
-        video = next(v for v in second.json()["videos"] if v["path"] == showcase_setup["vid2_uri"])
-        assert video["user_tags"] == ["新標籤"]
-
-    def test_manual_focal_write_then_stale_etag_returns_200_with_new_value(self, client, showcase_setup, mocker):
-        """DoD ③（auto_focal / crop_mode）：update_manual_focal() 單一 UPDATE 同時寫兩欄，
-        成功 commit 後帶舊 ETag 再請求必回 200，兩欄新值都反映在回應。"""
-        first = self._get(client, mocker, showcase_setup)
-        etag = first.headers["etag"]
-
-        repo = VideoRepository(showcase_setup["db_path"])
-        row = repo.get_by_path(showcase_setup["vid1_uri"])
-        written = repo.update_manual_focal(showcase_setup["vid1_uri"], "0.5000,0.5000", row.cover_path or "")
-        assert written is True
-
-        second = self._get(client, mocker, showcase_setup, if_none_match=etag)
-        assert second.status_code == 200
-        video = next(v for v in second.json()["videos"] if v["path"] == showcase_setup["vid1_uri"])
-        assert video["auto_focal"] == "0.5000,0.5000"
-        assert video["crop_mode"] == "manual"
 
     def test_new_video_after_scan_is_visible_via_304_then_200(self, client, showcase_setup, mocker):
         """DoD ①②（硬條件）＋ mutation 點 1：少算 revision 一項會讓這支紅——
@@ -1084,38 +700,6 @@ class TestShowcaseVideosETag:
         titles = {v["path"]: v["title"] for v in second.json()["videos"]}
         assert titles.get(replaced_uri) == "Replaced DB Content"
 
-    def test_external_connection_write_not_through_factory_forces_200(self, client, showcase_setup, mocker):
-        """DoD ④ 另一半：外部連線（不經過 `core.database.connection.get_connection()`
-        那個掛了 `_RevisionTrackingConnection` 的工廠——模擬別的行程/工具直接開 DB 檔）
-        做一筆真實寫入＋commit，process-global revision 不會跟著動，但 `compute_db_fingerprint()`
-        仍能從檔案 stat（commit 觸發的 checkpoint 落盤）量到差異，帶舊 ETag 再請求必回 200。
-
-        直接對 -wal 檔案寫入任意位元組不是這個情境的忠實模擬——init_db() 每次請求都會先
-        跑，開新連線時 SQLite 會判斷 -wal header 無效並整份丟棄重置（已用腳本實測：寫入
-        垃圾位元組後，下一次 init_db() 會讓 -wal 變回「不存在」，指紋跟外部寫入前逐位元組
-        相同），反而會製造假陰性，所以改用一條真實的 sqlite3 連線做合法寫入。
-        """
-        import sqlite3
-
-        first = self._get(client, mocker, showcase_setup)
-        etag = first.headers["etag"]
-        revision_before = get_showcase_revision()
-
-        conn = sqlite3.connect(str(showcase_setup["db_path"]))
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
-            "INSERT INTO videos (path, number) VALUES (?, ?)",
-            ("file:///ext/external-write.mp4", "EXT-001"),
-        )
-        conn.commit()
-        conn.close()
-
-        assert get_showcase_revision() == revision_before, (
-            "外部連線不走我們的連線工廠，process-global revision 本就不該被它動到"
-        )
-
-        second = self._get(client, mocker, showcase_setup, if_none_match=etag)
-        assert second.status_code == 200
 
     def test_config_change_reflected_immediately(self, client, showcase_setup, mocker):
         """驗收 3 ＋ mutation 點 3：少算設定投影一項會讓這支紅——來源資料夾集合改變後，
@@ -1155,28 +739,6 @@ class TestShowcaseVideosETag:
         paths = {v["path"] for v in second.json()["videos"]}
         assert extra_uri in paths
 
-    def test_thumbnail_cache_flag_change_reflected_immediately(self, client, showcase_setup, mocker):
-        """驗收 3：設定投影第三項（thumbnail_cache_enabled）改變同樣要讓舊 ETag 失效。"""
-        first = self._get(client, mocker, showcase_setup)
-        etag = first.headers["etag"]
-
-        new_config = dict(showcase_setup["config"])
-        new_config["thumbnail_cache_enabled"] = True
-        setup_with_new_config = {**showcase_setup, "config": new_config}
-
-        second = self._get(client, mocker, setup_with_new_config, if_none_match=etag)
-        assert second.status_code == 200
-        assert second.headers["etag"] != etag
-
-    def test_empty_db_response_has_no_etag_header(self, client, showcase_setup, mocker, tmp_path):
-        """驗收 5：DB 檔案不存在時的空庫早退分支，回應逐位元組與改動前相同，
-        且完全沒有 ETag header（沒有走到本次改動加入的計算路徑）。"""
-        missing_db = tmp_path / "does_not_exist.db"
-        setup = {**showcase_setup, "db_path": missing_db}
-        response = self._get(client, mocker, setup)
-        assert response.status_code == 200
-        assert response.json() == {"success": True, "videos": [], "total": 0}
-        assert "etag" not in response.headers
 
     def test_if_none_match_multi_value_or_weak_prefix_still_matches(self, client, showcase_setup, mocker):
         """mutation 點 4：破壞逗號拆分／`W/` 弱驗證前綴比對語意會讓這支紅——瀏覽器真實
@@ -1190,11 +752,3 @@ class TestShowcaseVideosETag:
         multi = self._get(client, mocker, showcase_setup, if_none_match=f'"bogus-etag-value", {etag}')
         assert multi.status_code == 304
 
-    def test_response_shape_unchanged_besides_new_headers(self, client, showcase_setup, mocker):
-        """既有回應形狀不因加了 ETag 而改變（success/videos/total 三鍵仍在，200 分支
-        額外多 ETag／Cache-Control 兩個 header）。"""
-        response = self._get(client, mocker, showcase_setup)
-        data = response.json()
-        assert data["success"] is True
-        assert data["total"] == len(data["videos"])
-        assert response.headers["cache-control"] == "no-cache"

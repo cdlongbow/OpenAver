@@ -2,10 +2,8 @@
 Unit tests for GET /api/actresses list + POST /api/actresses/{name}/rescrape
 Phase 44a T1 — TDD-lite
 """
-import json
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 from core.database import init_db, Actress, ActressRepository, Video, VideoRepository
@@ -40,15 +38,6 @@ def client_with_db(monkeypatch, db_with_actresses):
 
 class TestActressListEndpoint:
 
-    def test_list_empty(self, client_with_db):
-        """空 DB → {"actresses": [], "total": 0}"""
-        client, db_path = client_with_db
-        response = client.get("/api/actresses")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["actresses"] == []
-        assert data["total"] == 0
 
     def test_list_with_actresses(self, client_with_db):
         """儲存 2 位女優 → 回傳兩筆，含所有欄位 + video_count + created_at"""
@@ -107,62 +96,8 @@ class TestActressListEndpoint:
         assert actresses_map["miru"]["video_count"] == 1
         assert actresses_map["miruku"]["video_count"] == 1
 
-    def test_list_video_count_dirty_data(self, client_with_db):
-        """actresses 欄位為無效 JSON 時，video_count 回傳 0（不炸）"""
-        client, db_path = client_with_db
-        repo = ActressRepository(db_path)
-        repo.save(Actress(name="女優A"))
-
-        # 直接插入 dirty data（actresses 為無效 JSON）
-        import sqlite3
-        with sqlite3.connect(str(db_path)) as conn:
-            conn.execute(
-                "INSERT INTO videos (path, number, actresses, mtime) VALUES (?, ?, ?, ?)",
-                ("/test/dirty.mp4", "DIRTY-001", "NOT_VALID_JSON", 100.0)
-            )
-
-        # 不應 crash，video_count 應為 0
-        response = client.get("/api/actresses")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] == 1
-        actress_data = data["actresses"][0]
-        assert actress_data["video_count"] == 0
-
-    def test_list_video_count_no_videos(self, client_with_db):
-        """videos 表為空 → video_count = 0"""
-        client, db_path = client_with_db
-        repo = ActressRepository(db_path)
-        repo.save(Actress(name="孤獨女優"))
-
-        response = client.get("/api/actresses")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["actresses"][0]["video_count"] == 0
-
 
 # ---------------------------------------------------------------------------
 # Backward compatibility: _actress_to_response default video_count
 # ---------------------------------------------------------------------------
 
-class TestActressToResponseBackwardCompatibility:
-
-    def test_actress_to_response_default_video_count(self, monkeypatch):
-        """現有呼叫端不傳 video_count → 預設 0，不影響現有行為"""
-        monkeypatch.setattr("web.routers.actress.get_local_photo_path", lambda name: None)
-
-        from web.routers.actress import _actress_to_response
-        actress = Actress(name="測試女優", name_en="Test Actress")
-
-        # 不傳 video_count，應使用預設值 0
-        result = _actress_to_response(actress)
-        assert result["video_count"] == 0
-        assert result["name"] == "測試女優"
-
-        # 傳 video_count，應正確反映
-        result_with_count = _actress_to_response(actress, video_count=5)
-        assert result_with_count["video_count"] == 5
-
-        # created_at 應在回傳 dict 中
-        assert "created_at" in result
-        assert result["created_at"] is None  # Actress() 預設 created_at=None

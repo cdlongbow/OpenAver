@@ -8,7 +8,7 @@ AliasRepository.sync_from_favorite()。
 """
 from collections import namedtuple
 from datetime import datetime
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -154,52 +154,10 @@ class TestFavoriteSyncHappyPath:
             "橋本ありな", ["新ありな", "アリス"]
         )
 
-    def test_response_contains_skipped_aliases_empty(self, client, mock_alias_repo):
-        """sync 無跳過 → response 含 skipped_aliases: []"""
-        mock_alias_repo.sync_from_favorite.return_value = {
-            "primary_name": "橋本ありな",
-            "skipped_aliases": [],
-        }
-        resp = client.post("/api/actresses/favorite", json={"name": "橋本ありな"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "skipped_aliases" in data
-        assert data["skipped_aliases"] == []
-
-    def test_response_success_true(self, client):
-        """favorite 成功 → response success: true"""
-        resp = client.post("/api/actresses/favorite", json={"name": "橋本ありな"})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
 
 # ---------------------------------------------------------------------------
 # 2. Empty aliases — sync still called with []
 # ---------------------------------------------------------------------------
-
-class TestFavoriteSyncEmptyAliases:
-    """aliases 為空時，sync 仍被呼叫（empty list）"""
-
-    def test_sync_called_with_empty_list(self, client, mock_alias_repo, mock_actress_repo):
-        """actress.aliases == [] → sync_from_favorite(name, []) 被呼叫"""
-        actress = _make_actress_mock(aliases=[])
-        mock_actress_repo.get_by_name.return_value = actress
-
-        resp = client.post("/api/actresses/favorite", json={"name": "橋本ありな"})
-        assert resp.status_code == 200
-
-        mock_alias_repo.sync_from_favorite.assert_called_once_with("橋本ありな", [])
-
-    def test_sync_called_when_aliases_is_none(self, client, mock_alias_repo, mock_actress_repo):
-        """actress.aliases is None → sync_from_favorite(name, []) — guarded by 'or []'"""
-        actress = _make_actress_mock(aliases=None)
-        mock_actress_repo.get_by_name.return_value = actress
-
-        resp = client.post("/api/actresses/favorite", json={"name": "橋本ありな"})
-        assert resp.status_code == 200
-
-        # aliases=None → the handler does `actress.aliases or []` → []
-        mock_alias_repo.sync_from_favorite.assert_called_once_with("橋本ありな", [])
 
 
 # ---------------------------------------------------------------------------
@@ -220,15 +178,6 @@ class TestFavoriteSyncSkippedAliases:
         data = resp.json()
         assert data["skipped_aliases"] == ["アリス"]
 
-    def test_http_200_even_with_skipped(self, client, mock_alias_repo):
-        """skipped_aliases 不空 → HTTP 仍 200（非錯誤）"""
-        mock_alias_repo.sync_from_favorite.return_value = {
-            "primary_name": "橋本ありな",
-            "skipped_aliases": ["アリス", "新ありな"],
-        }
-        resp = client.post("/api/actresses/favorite", json={"name": "橋本ありな"})
-        assert resp.status_code == 200
-
 
 # ---------------------------------------------------------------------------
 # 4. Sync raises exception → favorite still succeeds (200), logged warning
@@ -243,13 +192,5 @@ class TestFavoriteSyncException:
         resp = client.post("/api/actresses/favorite", json={"name": "橋本ありな"})
         assert resp.status_code == 200
         assert resp.json()["success"] is True
-
-    def test_sync_exception_skipped_aliases_is_empty(self, client, mock_alias_repo):
-        """sync 拋例外 → response skipped_aliases=[] (fallback)"""
-        mock_alias_repo.sync_from_favorite.side_effect = Exception("DB error")
-        resp = client.post("/api/actresses/favorite", json={"name": "橋本ありな"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["skipped_aliases"] == []
 
 

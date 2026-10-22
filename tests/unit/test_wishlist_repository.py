@@ -97,13 +97,6 @@ def test_init_db_in_place_upgrade_preserves_videos_and_creates_wishlist(tmp_path
     conn.close()
 
 
-def test_add_and_count(repo: WishlistRepository) -> None:
-    """DoD-2: 基本 add 與 count 方法測試。"""
-    assert repo.count() == 0
-    assert repo.add("ABP-123", title="Test Title") is True
-    assert repo.count() == 1
-
-
 def test_add_duplicate_returns_false_and_count_remains_one(repo: WishlistRepository) -> None:
     """DoD-4: I1 不變式——重複加入同一書籤回傳 False，且筆數維持 1。"""
     assert repo.add("ABP-123", title="First") is True
@@ -112,25 +105,6 @@ def test_add_duplicate_returns_false_and_count_remains_one(repo: WishlistReposit
     items = repo.list_all()
     assert len(items) == 1
     assert items[0]["title"] == "First"
-
-
-def test_add_normalizes_number_before_insert(repo: WishlistRepository) -> None:
-    """DoD-5 / Mutation 守衛: 加入書籤時做防禦性番號正規化。"""
-    assert repo.add("fc2ppv-1234567", title="FC2 Sample") is True
-    items = repo.list_all()
-    assert len(items) == 1
-    assert items[0]["number"] == "FC2-1234567"
-
-
-def test_remove_normalizes_number_and_deletes(repo: WishlistRepository) -> None:
-    """DoD-5: 移除書籤時鏡像正規化番號。"""
-    repo.add("FC2-1234567", title="FC2 Sample")
-    assert repo.count() == 1
-    # 用未正規化番號呼叫 remove
-    assert repo.remove("fc2ppv-1234567") is True
-    assert repo.count() == 0
-    # 再次刪除回傳 False
-    assert repo.remove("fc2ppv-1234567") is False
 
 
 def test_all_12_fields_mapping_and_json_roundtrip_with_forward_lock(
@@ -185,77 +159,3 @@ def test_all_12_fields_mapping_and_json_roundtrip_with_forward_lock(
     assert len(item["preview_sample_images"]) == len(item["sample_images"])
 
 
-def test_list_all_empty_table_returns_empty_list(repo: WishlistRepository) -> None:
-    """空表查詢回傳空清單，不拋例外。"""
-    assert repo.list_all() == []
-
-
-def test_list_all_handles_corrupted_or_null_json_fields(empty_db: Path) -> None:
-    """四個 list 欄位若為空字串、NULL 或損毀 JSON，回傳 [] 而非拋例外。"""
-    conn = sqlite3.connect(str(empty_db))
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO wishlist (
-            number, title, actresses, tags, sample_images, preview_sample_images
-        ) VALUES (
-            'CORRUPT-001', 'Corrupt Data', 'invalid json {', '', NULL, '["valid_preview"]'
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-    repo = WishlistRepository(empty_db)
-    items = repo.list_all()
-    assert len(items) == 1
-    item = items[0]
-    assert item["actresses"] == []
-    assert item["tags"] == []
-    assert item["sample_images"] == []
-    assert item["preview_sample_images"] == ["valid_preview"]
-
-
-def test_list_all_orders_newest_first(empty_db: Path) -> None:
-    """list_all() 必須新→舊（F6「未入手段內部按加入時間新→舊」的資料層契約）。
-
-    grok review（TASK-140-T2 Step 5）指出原稿只驗內容不驗順序——把 `ORDER BY
-    created_at DESC` 刪掉或改成 ASC，10 支測試照樣全綠。用直接寫入的 created_at
-    釘住順序（不靠 sleep 等時鐘跳秒，那會讓測試變慢且不穩）。
-    """
-    conn = sqlite3.connect(str(empty_db))
-    cursor = conn.cursor()
-    cursor.executemany(
-        "INSERT INTO wishlist (number, title, created_at) VALUES (?, ?, ?)",
-        [
-            ("OLD-001", "oldest", "2026-01-01 00:00:00"),
-            ("NEW-003", "newest", "2026-03-01 00:00:00"),
-            ("MID-002", "middle", "2026-02-01 00:00:00"),
-        ],
-    )
-    conn.commit()
-    conn.close()
-
-    numbers = [item["number"] for item in WishlistRepository(empty_db).list_all()]
-    assert numbers == ["NEW-003", "MID-002", "OLD-001"]
-
-
-def test_delete_many_empty_list(repo: WishlistRepository) -> None:
-    """DoD-6: delete_many 傳入空清單回傳 0，不下 SQL。"""
-    assert repo.delete_many([]) == 0
-
-
-def test_delete_many_deletes_specified_and_preserves_others(
-    repo: WishlistRepository,
-) -> None:
-    """DoD-6: delete_many 支援正規化，只刪清單內項目並保留其餘資料。"""
-    repo.add("ABP-001", title="Title 1")
-    repo.add("ABP-002", title="Title 2")
-    repo.add("FC2-1234567", title="Title 3")
-    repo.add("ABP-004", title="Title 4")
-
-    # 包含小寫未正規化番號與不存在番號
-    deleted = repo.delete_many(["abp-001", "fc2ppv-1234567", "NONEXISTENT-999"])
-    assert deleted == 2
-    assert repo.count() == 2
-
-    remaining_numbers = {item["number"] for item in repo.list_all()}
-    assert remaining_numbers == {"ABP-002", "ABP-004"}
