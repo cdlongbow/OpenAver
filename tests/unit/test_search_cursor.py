@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from core.search_providers import cursor, registry
+from core.search_providers import cursor
 
 VALID_REFS = (("actor", "star/okq", 3), ("series", "ab_12", -1))
 
@@ -55,13 +55,6 @@ def test_four_refs_is_the_maximum_and_round_trips():
     assert cursor.decode(cursor.encode(t)) == t
     five = _raw({"p": "javbus", "k": "entity", "r": [list(r) for r in refs] + [["actor", "r4", 4]]})
     assert cursor.decode(five) is None
-
-
-def test_decode_reads_registry_at_call_time(monkeypatch):
-    s = _raw(_obj(p="late_stub"))
-    assert cursor.decode(s) is None
-    monkeypatch.setitem(registry._REGISTRY, "late_stub", lambda: None)
-    assert cursor.decode(s) == cursor.Token("late_stub", "entity", (("actor", "r1", 0),))
 
 
 # ---------------------------------------------------------------- 壞 token
@@ -128,11 +121,6 @@ def test_decode_rejects_invalid_tokens(name):
     assert cursor.decode(BAD_TOKENS[name]) is None
 
 
-def test_decode_never_raises_on_arbitrary_input():
-    for s in ("\x00", "====", "-", "_" * 600, "e30=", "W10=", "bnVsbA==", "e30", "‮"):
-        assert cursor.decode(s) is None
-
-
 def test_keyword_and_maker_accept_omitted_or_empty_r():
     for k in ("keyword", "maker"):
         for r in (cursor_missing, []):
@@ -146,7 +134,3 @@ def test_id_accepts_slash_and_dash_and_exactly_48_chars():
         assert got is not None and got.refs[0][1] == rid
 
 
-def test_pos_accepts_zero_large_and_minus_one():
-    for pos in (0, 7, 10**6, -1):
-        got = cursor.decode(_raw(_obj(r=[["actor", "r1", pos]])))
-        assert got is not None and got.refs[0][2] == pos

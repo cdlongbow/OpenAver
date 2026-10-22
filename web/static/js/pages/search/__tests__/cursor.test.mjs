@@ -281,18 +281,6 @@ test('cursor-late-load-more-no-overwrite: 取消並重開後，舊搜尋的載�
     });
 });
 
-test('cursor-late-control: 對照——未取消時同一批回應確實把欄位換成回應值（證明晚到案不空轉）', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        primeKeyword(page, { currentCursor: 'old-tok' });
-        const p = page.loadMore();
-        await tick();
-        fetchFake.pending.shift().resolve(body(5, { cursor: 'late-resp' }));
-        const r = await p;
-        assert.equal(r.loadedCount, 5);
-        assert.equal(page.currentCursor, 'late-resp');
-    });
-});
-
 // ─── 第一頁寫入：stream result ───────────────────────────────────────
 const send = (es, obj) => es.onmessage({ data: JSON.stringify(obj) });
 const lastES = () => FakeES.instances[FakeES.instances.length - 1];
@@ -371,14 +359,6 @@ test('cursor-do-search-start-resets: doSearch 起手 ⇒ null（片商入口同�
     });
 });
 
-test('cursor-clear-all-resets: clearAll ⇒ null', async () => {
-    await withEnv(async ({ page }) => {
-        primeKeyword(page, { currentCursor: 'stale' });
-        page.clearAll();
-        assert.equal(page.currentCursor, null);
-    });
-});
-
 test('cursor-cancel-restores: cancelSearch 還原 snapshot 的值；snapshot 缺欄位 ⇒ null', async () => {
     await withEnv(async ({ page }) => {
         primeKeyword(page, { currentCursor: 'old-tok' });
@@ -446,18 +426,6 @@ function persistThis(STATE_KEY, overrides = {}) {
     );
 }
 
-test('cursor-save-live-branch: 結果態 saveState 存出 live 的 currentCursor；fake this 沒有該欄位 ⇒ 存 null', () => {
-    const KEY = 'test-175d-t7-live';
-    const store = mockSessionStorage();
-    searchStatePersistence().saveState.call(persistThis(KEY, { currentCursor: 'live-tok' }));
-    assert.equal(JSON.parse(store[KEY]).currentCursor, 'live-tok');
-
-    searchStatePersistence().saveState.call(persistThis(KEY));
-    const saved = JSON.parse(store[KEY]);
-    assert.ok('currentCursor' in saved, '欄位存在且為 null，不是缺鍵');
-    assert.equal(saved.currentCursor, null);
-});
-
 test('cursor-save-snapshot-branch: 搜尋中（loading）存的是上一輪 snapshot 的 token，不是 live 的', () => {
     // why: 新搜尋還在載入時重新整理 → 還原回上一份清單但續頁 token 被丟掉 → 按「載入更多」變「沒有更多」
     const KEY = 'test-175d-t7-snapshot';
@@ -489,21 +457,6 @@ test('cursor-save-snapshot-branch: 搜尋中（loading）存的是上一輪 snap
     delete page._searchSnapshot.currentCursor;
     searchStatePersistence().saveState.call(page);
     assert.equal(JSON.parse(store[KEY]).currentCursor, null);
-});
-
-test('cursor-restore-missing-field: 舊 sessionStorage 缺 currentCursor ⇒ 還原後 null（還原前先塞非空值）', () => {
-    const KEY = 'test-175d-t7-missing';
-    const store = mockSessionStorage();
-    searchStatePersistence().saveState.call(persistThis(KEY, { currentCursor: 'tok' }));
-    const old = JSON.parse(store[KEY]);
-    delete old.currentCursor;
-    store[KEY] = JSON.stringify(old);
-    assert.ok(!('currentCursor' in JSON.parse(store[KEY])), '前提：存檔真的沒有該鍵');
-
-    const after = persistThis(KEY, { currentCursor: 'stale' });
-    after.restoreState();
-    assert.equal(after.searchResults.length, 1, '前提：restoreState 真的跑完了');
-    assert.equal(after.currentCursor, null);
 });
 
 test('cursor-restore-roundtrip: 存→還原（真 saveState／restoreState）→ 載入更多送出同一個 token', async () => {

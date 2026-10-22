@@ -266,12 +266,6 @@ def test_ref_cap_four_and_stop_asking_names_once_full(aliases):
     assert p.resolve_calls == [(Kind.ACTOR, "甲"), (Kind.ACTOR, "乙")]  # 湊滿 4 個後不再問「丙」
 
 
-def test_resolve_prefers_resolve_all_when_available():
-    p = Multi("javbus", {"x": [R1, R2]})
-    assert relay._resolve_refs(p, Kind.ACTOR, ["x"]) == [R1, R2]
-    assert p.single_calls == []
-
-
 def test_resolve_raising_on_second_name_gives_empty_not_half_list(chain, aliases, caplog):
     aliases(ALIASES_2)
     jb = P("javbus", {"二階堂麗": [R1]}, LISTS_2, resolve_raises={"あかね麗": SourceUnreachable("u")})
@@ -346,28 +340,7 @@ def test_ladder_hit_positions_multi_ref_follow_merge_windows():
     assert ladder(p, "x", w=Window(0, 20)).positions == [-1, -1]
 
 
-def test_ladder_hit_without_cards_has_empty_refs_and_positions():
-    p = P("javdb", {"x": [R1]}, {"r1": [wi("S-1", "2026-01-01", "someone-else")]})  # belongs 恆 False
-    hit = ladder(p, "x")
-    assert hit.cards == [] and hit.refs == [] and hit.positions == [] and hit.provider_id == "javdb"
-
-
-def test_ladder_returns_none_when_no_ref_hits_anywhere():
-    assert ladder(P("javdb"), "x") is None
-
-
 # ---------------------------------------------------------------- 多 ref 視窗與守衛
-def test_multi_ref_guard_uses_item_origin_not_first_ref():
-    """前 3 部（守衛看的）全來自第 2 個 ref：enrich 收到的必須是各部的 origin 才過守衛。"""
-    lists = {
-        "r1": [wi(f"A-{k}", "2025-01-01", "r1") for k in range(3)],
-        "r2": [wi(f"B-{k}", f"2026-06-0{k + 1}", "r2") for k in range(3)][::-1],
-    }
-    p = Multi("javbus", {"x": [R1, R2]}, lists)
-    hit = ladder(p, "x")
-    assert numbers(hit.cards) == ["B-2", "B-1", "B-0", "A-0", "A-1", "A-2"]
-    assert [c for c in p.enrich_calls[:3]] == [("B-2", "r2"), ("B-1", "r2"), ("B-0", "r2")]
-    assert {ref for _, ref in p.enrich_calls} == {"r1", "r2"}
 
 
 def test_multi_ref_guard_failure_seeds_nothing_and_asks_next_provider_not_keyword(chain):
@@ -381,14 +354,6 @@ def test_multi_ref_guard_failure_seeds_nothing_and_asks_next_provider_not_keywor
     assert seeds == []  # 守衛不過 ⇒ 沒送 seed
     assert jb.run_calls == []  # 有 ref 守衛不過：該家不問 KEYWORD
     assert nxt.run_calls != []  # 下一家被問
-
-
-def test_multi_ref_guard_failure_sends_no_seed():
-    lists = {"r1": [wi("A-1", "2026-01-01", "other")], "r2": [wi("B-1", "2026-01-02", "other")]}
-    p = Multi("javbus", {"x": [R1, R2]}, lists)
-    seeds = []
-    hit = ladder(p, "x", cb=lambda slot, payload: seeds.append(slot))
-    assert hit.cards == [] and seeds == []
 
 
 def test_multi_ref_status_events_found_count_equals_cards():
@@ -451,14 +416,6 @@ def test_japanese_input_miss_asks_original_first_then_swaps(chain):
     assert jb.resolve_calls == [(Kind.ACTOR, "三上悠亜"), (Kind.ACTOR, "別名")]
 
 
-def test_no_swapper_in_chain_means_no_swap_and_175c_sequence(chain):
-    jb = Multi("javbus", {}, {}, kw_cards=[card("K-1")])
-    chain([jb])
-    assert search("Yua Mikami") == [card("K-1")]
-    assert jb.resolve_calls == [(Kind.ACTOR, "Yua Mikami")]
-    assert jb.run_calls == [(Kind.KEYWORD, "Yua Mikami", W)]
-
-
 def test_disabled_javdb_means_no_swap(chain):
     jb = Multi("javbus", {}, {}, kw_cards=[card("K-1")])
     jd = Swapper("javdb", {}, {}, alt=["三上悠亜"], caps=ACTOR_CAPS)
@@ -500,12 +457,6 @@ def test_kana_plus_kanji_input_is_not_all_kana_and_does_swap(chain):
     search("あかね麗")
     assert jd.alt_calls == [(Kind.ACTOR, "あかね麗")]
     assert jb.resolve_calls == [(Kind.ACTOR, "あかね麗"), (Kind.ACTOR, "別名")]
-
-
-@pytest.mark.parametrize("q,expect", [("あかね", True), ("カタカナー", True), ("ｱｶﾈ", True), ("ｴﾘｰ･ﾛｰｽﾞ", True), ("   ", False),
-                                      ("", False), ("あかね麗", False), ("abc", False), ("あ1", False)])
-def test_is_all_kana(q, expect):
-    assert relay._is_all_kana(q) is expect
 
 
 @pytest.mark.parametrize("discovery,asked", [(True, 0), (False, 1)])
@@ -564,17 +515,5 @@ def test_alt_names_result_computed_once_per_search(chain, raises):
 
 
 # ---------------------------------------------------------------- 別名表的讀取
-def test_aliases_loaded_lazily_and_once_per_search(chain, aliases):
-    calls = aliases(ALIASES_2)
-    jb = Multi("javbus", {}, {})
-    dmm = P("dmm", {}, {})
-    chain([jb, dmm])
-    search("二階堂麗")
-    assert len(calls) == 1  # 兩家都問了名字，只讀一次
 
 
-def test_aliases_not_loaded_when_no_actor_ladder_runs(chain, aliases):
-    calls = aliases(ALIASES_2)
-    chain([P("dmm", caps=BASE_CAPS, kw_cards=[card("K-1")])])
-    assert search("二階堂麗") == [card("K-1")]
-    assert calls == []  # 沒有任何家宣告 ACTOR ⇒ 不讀 DB

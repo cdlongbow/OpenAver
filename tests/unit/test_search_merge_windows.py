@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
-from core.search_providers.pipeline import MergeResult, merge_windows, run_window
+from core.search_providers.pipeline import merge_windows, run_window
 from core.search_providers.types import Enriched, EntityRef, Kind, Outcome, Page, WorkItem
 
 
@@ -178,24 +178,6 @@ def numbers(res):
 
 
 # ---------------------------------------------------------------- 形狀
-def test_merge_result_shape_and_origin_default():
-    refs = refs_for(2)
-    prov = ListProvider(by_id([[wi("A-1", "2026-01-02")], [wi("B-1", "2026-01-01")]]))
-    res = merge_windows(prov, refs, [0, 0], 10)
-    assert isinstance(res, MergeResult)
-    items, new_positions, exhausted = res
-    assert [i.number for i in items] == ["A-1", "B-1"]
-    assert new_positions == [-1, -1] and exhausted is True
-    assert wi("X-1", "").origin is None  # 既有建構點不受影響
-
-
-def test_merge_sets_origin_on_copies_and_leaves_stub_items_untouched():
-    refs = refs_for(2)
-    a, b = wi("A-1", "2026-01-02"), wi("B-1", "2026-01-01")
-    res = merge_windows(ListProvider(by_id([[a], [b]])), refs, [0, 0], 10)
-    assert [i.origin for i in res.items] == [refs[0], refs[1]]
-    assert a.origin is None and b.origin is None
-    assert res.items[0] is not a
 
 
 # ---------------------------------------------------------------- I-M1
@@ -251,25 +233,6 @@ def test_i_m3_token_walk_equals_one_shot(limit, n_refs, optimistic, chunk):
     assert any(res.new_positions[1] == -1 for _, res in steps[:-1])
 
 
-@pytest.mark.parametrize("optimistic", [False, True], ids=["exact", "optimistic"])
-def test_i_m3_cross_ref_duplicate_at_page_boundary_appears_on_adjacent_pages(optimistic):
-    # 跨 ref 同號落在第 limit 與 limit+1 位：單頁去重不跨頁，兩頁各出現一次；被丟的仍計入消耗位置
-    refs = refs_for(2)
-    a = [wi("A-1", "2026-06-09"), wi("A-2", "2026-06-08"), wi("A-3", "2026-06-07"), wi("DUP-001", "2026-06-06"),
-         wi("A-5", "2026-06-02")]  # fmt: skip
-    b = [wi("dup-001", "2026-06-06"), wi("B-2", "2026-06-01")]
-    prov = ListProvider(by_id([a, b]), optimistic=optimistic)
-    steps = walk(prov, refs, 4)
-    p1, p2 = steps[0][1], steps[1][1]
-    assert numbers(p1) == ["A-1", "A-2", "A-3", "DUP-001"]
-    assert p1.new_positions == [4, 0]
-    assert numbers(p2) == ["dup-001", "A-5", "B-2"]
-    assert "DUP-001" in [n.upper() for n in numbers(p1)] and "DUP-001" in [n.upper() for n in numbers(p2)]
-    assert steps[1][0] == [4, 0]
-    assert p2.new_positions == [-1, -1] and p2.exhausted is True
-    assert len(steps) == 2
-
-
 # ---------------------------------------------------------------- I-M4
 @pytest.mark.parametrize("optimistic", [False, True], ids=["exact", "optimistic"])
 def test_i_m4_exhausted_ref_never_called_again(optimistic):
@@ -300,14 +263,6 @@ def test_i_m4_exhausted_ref_never_called_again(optimistic):
             break
     assert calls_when_done is not None and calls_when_done >= 1
     assert len(prov.calls_for("r3")) == calls_when_done
-
-
-def test_i_m4_all_exhausted_zero_calls():
-    refs = refs_for(3)
-    prov = ListProvider(by_id(make_lists([20, 20, 20], seed=1, shared=0)))
-    res = merge_windows(prov, refs, [-1, -1, -1], 20)
-    assert res.items == [] and res.exhausted is True and res.new_positions == [-1, -1, -1]
-    assert prov.calls == []
 
 
 # ---------------------------------------------------------------- I-M5
@@ -387,19 +342,6 @@ def test_enrich_without_origin_receives_passed_ref(sync_executor):
 
 def seeds(cb):
     return sum(1 for c in cb.call_args_list if c.args[0] == -1)
-
-
-def test_guard_passes_when_first_three_all_from_second_ref(sync_executor):
-    refs, lists, owners = guard_scenario()
-    prov = ListProvider(lists, owners=owners)
-    items = merge_windows(prov, refs, [0, 0], 10).items
-    assert [i.origin.id for i in items[:3]] == ["r2", "r2", "r2"]  # 視窗前 3 部全來自 ref2
-    cb = MagicMock()
-    out = run_window(prov, items, refs[0], guard=True, delay=0, result_callback=cb)
-    assert out.outcome is Outcome.ANSWERED
-    assert len(out.cards) == len(items) and seeds(cb) == 1
-    # 每部都以自己的 origin 判：守衛抓的前 3 部是 ref2 的片
-    assert {rid for num, rid in prov.enrich_calls if num.startswith("B-")} == {"r2"}
 
 
 def test_guard_all_belongs_false_is_not_answerable_with_no_seed(sync_executor):

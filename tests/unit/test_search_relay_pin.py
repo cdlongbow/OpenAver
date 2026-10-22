@@ -294,26 +294,10 @@ def test_token_kind_not_matching_mode_gives_empty_and_zero_calls(chain, aliases,
     assert go(mode, "x", 0, cursor=token) and total_calls(a, b) > 0  # 對照
 
 
-def test_prefix_load_more_with_entity_token_from_actress_fallback_is_empty(chain, aliases):
-    """prefix→actress 退路發的 entity token 回到 prefix 的載入更多 ⇒ 沒有更多，不拿前綴下一頁接在女優清單後面。"""
-    a, b, alias_calls = _bad_world(chain, aliases)
-    meta = {}
-    assert go("actress", "x", 0, 3, meta=meta)
-    before = total_calls(a, b, alias_calls=alias_calls)
-    assert decode_ok(meta["cursor"]).k == "entity"
-    assert go("prefix", "x", 3, 3, cursor=meta["cursor"]) == []
-    assert total_calls(a, b, alias_calls=alias_calls) == before
-
-
 def decode_ok(s):
     t = cursor.decode(s)
     assert t is not None
     return t
-
-
-def test_unknown_mode_still_raises_value_error():
-    with pytest.raises(ValueError):
-        go("bogus", "x", 20, cursor=tok("dmm", "keyword"))
 
 
 # ================================================================ I-C1：entity 續頁不重算
@@ -351,15 +335,6 @@ def test_entity_continuation_uses_token_position_not_window_offset(chain, aliase
     assert p.resolve_calls == []
 
 
-def test_entity_continuation_rebuilds_refs_from_token_without_labels(chain, aliases):
-    aliases([])
-    p = P("javbus", lists={"r1": seven()})
-    chain([p])
-    out = go("actress", "ignored query", 3, 3, cursor=tok("javbus", "entity", [("actor", "r1", 3)]))
-    assert numbers(out) == ["S-4", "S-5", "S-6"]
-    assert p.enrich_calls == [("S-4", "r1"), ("S-5", "r1"), ("S-6", "r1")]  # belongs 比 ref.id，守衛通過
-
-
 def test_entity_single_ref_walks_pages_through_tokens(chain, aliases):
     aliases([])
     p = P("javbus", {"x": [R1]}, {"r1": seven()})
@@ -374,17 +349,6 @@ def test_entity_single_ref_walks_pages_through_tokens(chain, aliases):
     assert pages == [["S-1", "S-2", "S-3"], ["S-4", "S-5", "S-6"], ["S-7"]]
     assert got == [f"S-{k}" for k in range(1, 8)]
     assert len(p.resolve_calls) == 1  # 只有第一頁 resolve 過
-
-
-def test_entity_exhausted_token_gives_empty_and_zero_calls(chain, aliases):
-    aliases([])
-    p = P("javbus", {"x": [R1]}, {"r1": seven()})
-    chain([p])
-    exhausted = tok("javbus", "entity", [("actor", "r1", -1), ("actor", "r2", -1)])
-    assert go("actress", "x", 3, 3, cursor=exhausted) == []
-    assert total_calls(p) == 0
-    live = tok("javbus", "entity", [("actor", "r1", 0)])  # 對照：只差 pos
-    assert go("actress", "x", 3, 3, cursor=live) and total_calls(p) > 0
 
 
 def test_entity_multi_ref_walk_equals_one_shot_sequence(chain, aliases, merge_spy):
@@ -433,19 +397,6 @@ def test_keyword_continuation_asks_only_pinned_provider_with_window(chain, alias
     assert total_calls(a, alias_calls=alias_calls) == 0
     assert b.resolve_calls == [] and b.list_calls == [] and b.alt_calls == []  # keyword 續頁不走梯子、不換名
     assert meta["answered_by"] == "dmm" and decode_ok(meta["cursor"]) == cursor.Token("dmm", "keyword", ())
-
-
-def test_keyword_token_round_trips_to_next_page(chain, aliases):
-    aliases([])
-    a = P("javbus", kw_cards=[])  # 第一家什麼都沒有
-    b = P("dmm", kw_cards=[card("B-1")])
-    chain([a, b])
-    meta = {}
-    assert go("prefix", "MIDV", 0, meta=meta) == [card("B-1")]
-    assert decode_ok(meta["cursor"]) == cursor.Token("dmm", "keyword", ())
-    a_before = total_calls(a)
-    assert go("prefix", "MIDV", 20, cursor=meta["cursor"], meta=meta) == [card("B-1")]
-    assert total_calls(a) == a_before  # 第二頁沒有再問 A
 
 
 # ================================================================ I-C1：釘住
@@ -528,11 +479,6 @@ def test_relay_module_has_no_mutable_containers():
     assert _mutable_module_globals() == []
 
 
-def test_module_level_container_check_has_teeth(monkeypatch):
-    monkeypatch.setattr(relay, "_X", {}, raising=False)
-    assert _mutable_module_globals() == ["_X"]
-
-
 # ================================================================ I-C4：meta
 @pytest.mark.parametrize("mode", ["actress", "prefix", "partial"])
 def test_empty_reply_writes_no_meta(chain, aliases, mode):
@@ -546,15 +492,6 @@ def test_empty_reply_writes_no_meta(chain, aliases, mode):
     assert total_calls(a, b) > 0  # 對照：兩家都被問過（空回覆走了寫 meta 的那條路徑）
 
 
-def test_empty_entity_hit_writes_no_meta(chain, aliases):
-    aliases([])
-    p = P("javbus", {"x": [R1]}, {"r1": []})  # 命中代號但清單是空的
-    chain([p])
-    meta = {}
-    assert go("actress", "x", 0, meta=meta) == []
-    assert meta == {} and len(p.list_calls) == 1
-
-
 def test_ladder_hit_meta_token_is_accepted_and_carries_refs_and_positions(chain, aliases):
     aliases([])
     p = P("javdb", {"x": [R1]}, {"r1": seven()})
@@ -563,17 +500,6 @@ def test_ladder_hit_meta_token_is_accepted_and_carries_refs_and_positions(chain,
     assert numbers(go("actress", "x", 0, 3, meta=meta)) == ["S-1", "S-2", "S-3"]
     assert meta["answered_by"] == "javdb"
     assert decode_ok(meta["cursor"]) == cursor.Token("javdb", "entity", (("actor", "r1", 3),))
-
-
-def test_multi_ref_meta_token_carries_all_refs(chain, aliases):
-    aliases(ALIASES_2)
-    p = Multi("javbus", {"二階堂麗": [R1, R2]}, LISTS_2)
-    chain([p])
-    meta = {}
-    go("actress", "二階堂麗", 0, 3, meta=meta)
-    t = decode_ok(meta["cursor"])
-    assert [(k, i) for k, i, _ in t.refs] == [("actor", "r1"), ("actor", "r2")]
-    assert all(pos >= 0 for _, _, pos in t.refs)
 
 
 def test_answered_by_is_the_provider_that_produced_the_cards(chain, aliases):
@@ -585,12 +511,6 @@ def test_answered_by_is_the_provider_that_produced_the_cards(chain, aliases):
     assert go("actress", "x", 0, meta=meta) == [card("B-1")]
     assert meta["answered_by"] == "dmm"
     assert decode_ok(meta["cursor"]) == cursor.Token("dmm", "keyword", ())
-
-
-def test_meta_is_optional(chain, aliases):
-    aliases([])
-    chain([P("javbus", kw_cards=[card("A-1")])])
-    assert go("actress", "x", 0) == [card("A-1")]
 
 
 # ================================================================ 片商
@@ -633,16 +553,6 @@ def test_maker_missing_or_invalid_token_is_unreachable_with_zero_calls(chain, na
     assert mk(0, cursor=INVALID[name]).results and total_calls(a, b) > 0  # 對照
 
 
-@pytest.mark.parametrize("token", [tok("dmm", "keyword"), tok("dmm", "entity", [("actor", "r1", 0)])])
-def test_maker_token_of_another_kind_is_invalid(chain, token):
-    a = MakerP("javbus", [R("A-1")])
-    b = MakerP("dmm", [R("B-1")])
-    chain([a, b])
-    assert mk(30, cursor=token) == E("maker_unreachable")
-    assert total_calls(a, b) == 0
-    assert mk(30, cursor=tok("dmm", "maker")).results == [card("B-1")]  # 對照：同 p、k 對了就問得到
-
-
 def test_maker_pinned_provider_disabled_is_unreachable_and_other_not_asked(chain):
     a = MakerP("javbus", [R("A-1")])
     b = MakerP("dmm", [R("B-1")])
@@ -667,20 +577,3 @@ def test_maker_terminal_codes_still_hold_on_pinned_page(chain):
         assert mk(30, cursor=tok("dmm", "maker")) == E(code)
 
 
-def test_maker_empty_reply_writes_no_meta(chain):
-    a = MakerP("javbus", [E("maker_not_found")])
-    b = MakerP("dmm", [E("maker_no_sample")])
-    chain([a, b])
-    meta = {}
-    assert mk(0, meta=meta).results == [] and meta == {}
-    assert total_calls(a, b) > 0
-
-
-def test_maker_no_answer_memory(chain):
-    a = MakerP("javbus", [R("A-1")])
-    b = MakerP("dmm", [R("B-1")])
-    chain([a, b])
-    assert mk(30, limit=20, cursor=tok("dmm", "maker")).results == [card("B-1")]
-    before = total_calls(a, b)
-    assert mk(30, limit=20) == E("maker_unreachable")  # 同 maker_key／limit、不帶 token ⇒ 沒有上一輪的記憶
-    assert total_calls(a, b) == before

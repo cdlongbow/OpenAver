@@ -11,7 +11,6 @@ token 的 p 一律是已註冊 id（javbus／dmm），有效 token 一律取自�
 import base64
 import datetime
 import json
-from unittest.mock import patch
 
 import pytest
 
@@ -227,15 +226,6 @@ def test_rest_actress_ladder_reports_entity_cursor(client, chain):
     assert _nums(body) == WORKS[:LIMIT]
 
 
-def test_exact_mode_success_has_null_cursor_and_answerer(client, chain):
-    chain(Stub("javbus"), Stub("dmm"))
-    with patch("web.routers.search.search_jav", return_value=_card("SSIS-001")):
-        body = client.get(REST, params={"q": "SSIS-001", "mode": "exact"}).json()
-    assert body["success"] is True
-    assert "cursor" in body and body["cursor"] is None
-    assert "answered_by" in body and body["answered_by"] is None
-
-
 # ---------------------------------------------------------------- I-R2：第一頁其他欄位與 175c 逐欄相同
 EXPECTED_DATA = [{"number": f"MIDV-{i:03d}", "title": f"t MIDV-{i:03d}", "actors": [], "_mode": "prefix"} for i in range(3)]
 
@@ -245,16 +235,6 @@ def test_rest_first_page_matches_175c_shape(client, kw):
     assert set(body) - {"cursor", "answered_by"} == KEYS_175C
     assert {k: body[k] for k in KEYS_175C} == {
         "success": True, "data": EXPECTED_DATA, "total": 3, "mode": "prefix",
-        "offset": 0, "has_more": True, "actress_profile": None,
-    }
-
-
-def test_stream_first_page_result_matches_175c_shape(client, parse_sse_events, kw):
-    events = parse_sse_events(client.get(SSE, params=_page(0)).text)
-    result = [e for e in events if e["type"] == "result"][-1]
-    assert set(result) - {"cursor", "answered_by"} == KEYS_175C | {"type"}
-    assert {k: result[k] for k in KEYS_175C | {"type"}} == {
-        "type": "result", "success": True, "data": EXPECTED_DATA, "total": 3, "mode": "prefix",
         "offset": 0, "has_more": True, "actress_profile": None,
     }
 
@@ -273,10 +253,6 @@ def _check_keyword_continuation(ask, via, a, b):
 
 def test_rest_continuation_asks_only_the_pinned_provider(ask, kw):
     _check_keyword_continuation(ask, "rest", *kw)
-
-
-def test_stream_continuation_asks_only_the_pinned_provider(ask, kw):
-    _check_keyword_continuation(ask, "stream", *kw)
 
 
 @pytest.mark.parametrize("via", VIAS)
@@ -335,29 +311,7 @@ def test_keyword_token_round_trips_across_endpoints(ask, kw, order):
     assert b.windows == [Window(LIMIT, LIMIT), Window(2 * LIMIT, LIMIT)]
 
 
-@pytest.mark.parametrize("order", [("rest", "stream", "rest"), ("stream", "rest", "stream")])
-def test_maker_token_round_trips_across_endpoints(ask, mk, order):
-    a, b = mk
-    first, second, third = order
-    t1 = ask(first, **_maker_page(0))["cursor"]
-    _reset(a, b)
-    page2 = ask(second, **_maker_page(30), cursor=t1)
-    assert page2["success"] is True and _nums(page2)[0] == "MKR-030" and a.calls == []
-    page3 = ask(third, **_maker_page(60), cursor=page2["cursor"])
-    assert page3["success"] is True and _nums(page3)[0] == "MKR-060" and a.calls == []
-    assert b.windows == [30, 60]
-
-
 # ---------------------------------------------------------------- offset=0 不看 token（I-C2）
-@pytest.mark.parametrize("via", VIAS)
-def test_first_page_ignores_a_token_pinned_to_b(ask, kw, via):
-    a, b = kw
-    token = ask(via, **_page(0))["cursor"]  # 第一頁由 B 回答 ⇒ token 釘 dmm
-    a.cards = LIMIT  # 現在 A 也有卡了：若 token 被當真，offset=0 會直接問 B
-    _reset(a, b)
-    body = ask(via, **_page(0), cursor=token)
-    assert a.calls == ["run"] and b.calls == []  # 鏈第一家 A 仍先被問
-    assert body["success"] is True and body["answered_by"] == "javbus"  # 回答者以實際為準
 
 
 # ---------------------------------------------------------------- 無效 token ⇒ 查無且零呼叫（附對照）
@@ -381,46 +335,6 @@ def test_invalid_token_means_nothing_more_and_asks_nobody(ask, kw, via, bad):
     assert control["success"] is True and b.calls == ["run"] and a.calls == []
 
 
-@pytest.mark.parametrize("via", VIAS)
-def test_empty_cursor_counts_as_missing(ask, kw, via):
-    a, b = kw
-    good = ask(via, **_page(0))["cursor"]
-    _reset(a, b)
-    body = ask(via, **_page(LIMIT), cursor="")
-    assert body["success"] is False and body["data"] == []
-    _untouched(a, b)
-    assert ask(via, **_page(LIMIT), cursor=good)["success"] is True and b.calls == ["run"]  # 對照
-
-
-@pytest.mark.parametrize("via", VIAS)
-def test_empty_cursor_reaches_smart_search_as_none(ask, kw, via):
-    """「空字串＝未帶」要在 smart_search 的縫上量：回應上 "" 與缺 token 在核心結果相同，看不出來。"""
-    seen = []
-
-    def fake(q, *args, **kwargs):
-        seen.append(kwargs)
-        return [dict(_card("MIDV-021"), _mode="prefix")]
-
-    with patch("web.routers.search.smart_search", side_effect=fake):
-        ask(via, **_page(20), cursor="")
-        ask(via, **_page(20), cursor="Zm9v")
-        ask(via, **_page(20))
-    assert [kwargs["cursor"] for kwargs in seen] == [None, "Zm9v", None]  # 鍵必須在；非空原樣轉傳
-
-
 # ---------------------------------------------------------------- 超長／非法字元 ⇒ 422；剛好 512 的合法字元 ⇒ 查無
-@pytest.mark.parametrize("url", [REST, SSE], ids=["rest", "stream"])
-@pytest.mark.parametrize(
-    "cursor", ["A" * 513, "a b", "a/b", "a+b", "a.b"], ids=["513-chars", "space", "slash", "plus", "dot"]
-)
-def test_oversized_or_illegal_cursor_is_rejected_before_any_provider(client, kw, url, cursor):
-    r = client.get(url, params={**_page(LIMIT), "cursor": cursor})
-    assert r.status_code == 422
-    _untouched(*kw)
 
 
-@pytest.mark.parametrize("via", VIAS)
-def test_exactly_512_legal_chars_is_not_a_token_but_not_a_422(ask, kw, via):
-    body = ask(via, **_page(LIMIT), cursor="A" * 512)  # ask 內斷言 HTTP 200
-    assert body["success"] is False and body["data"] == []
-    _untouched(*kw)

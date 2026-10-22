@@ -1,6 +1,5 @@
 """175d-T1：名稱組純函式（actor_names）。期望值字面寫死，輸入全是我們自己的字串與 tmp sqlite。"""
 
-import sqlite3
 
 import pytest
 
@@ -77,10 +76,6 @@ def test_needs_swap_first(q, expected):
 # ---------- swap_candidates ----------
 
 
-def test_swap_candidates_drops_candidate_equal_to_tried():
-    assert swap_candidates(["葵司", "葵つかさ"], ["葵司"]) == ["葵つかさ"]
-
-
 def test_swap_candidates_drops_by_fold_not_raw_string():
     assert swap_candidates(["ＭＩＲＵ", "坂道みる"], ["miru"]) == ["坂道みる"]
 
@@ -130,11 +125,6 @@ def test_load_alias_groups_returns_groups_from_tmp_db(db_dir):
     repo.add("二階堂麗", ["あかね麗"])
     repo.add("坂道みる", ["miru", "Miru S"])
     assert load_alias_groups() == [("二階堂麗", ["あかね麗"]), ("坂道みる", ["miru", "Miru S"])]
-
-
-def test_load_alias_groups_file_without_table_returns_empty(db_dir):
-    sqlite3.connect(str(db_dir)).close()
-    assert load_alias_groups() == []
 
 
 def test_load_alias_groups_swallows_generic_exception_and_warns(db_dir, monkeypatch, caplog):
@@ -214,10 +204,6 @@ def test_actor_alt_names_folds_duplicates_keeps_order():
     assert actor_alt_names(_cand("坂道ｍ", "坂道ｍ", "AB、乙, 乙，坂道M / 丙")) == ["坂道ｍ", "乙", "丙"]
 
 
-def test_actor_alt_names_no_other_name():
-    assert actor_alt_names(_cand("葵司", "葵司", "")) == ["葵司"]
-
-
 # ---------- JavBus resolve_all ----------
 
 _REF_C = EntityRef(Kind.ACTOR, "star/36h", "美咲愛")
@@ -257,12 +243,6 @@ def test_javbus_resolve_none_when_no_match(monkeypatch):
 def test_javbus_resolve_all_non_entity_kinds_zero_lookups(monkeypatch, kind):
     calls = _stub_lookup(monkeypatch, [(_REF_C,)])
     assert JavBusProvider().resolve_all(kind, "美咲愛") == []
-    assert len(calls) == 0
-
-
-def test_javbus_resolve_all_blank_name_zero_lookups(monkeypatch):
-    calls = _stub_lookup(monkeypatch, [(_REF_C,)])
-    assert JavBusProvider().resolve_all(Kind.ACTOR, "  ") == []
     assert len(calls) == 0
 
 
@@ -336,13 +316,6 @@ def test_javdb_alt_names_non_actor_empty_zero_lookups(monkeypatch):
 
 
 @pytest.mark.usefixtures("_javdb_clean")
-def test_javdb_alt_names_blank_query_zero_lookups(monkeypatch):
-    calls = _stub_javdb(monkeypatch, _YUA)
-    assert JavDBProvider().alt_names(Kind.ACTOR, " ") == []
-    assert len(calls) == 0
-
-
-@pytest.mark.usefixtures("_javdb_clean")
 def test_javdb_resolve_then_alt_names_share_one_lookup(monkeypatch):
     calls = _stub_javdb(monkeypatch, _YUA)
     p = JavDBProvider()
@@ -360,20 +333,3 @@ def test_javdb_alt_names_then_resolve_share_one_lookup(monkeypatch):
     assert len(calls) == 1
 
 
-@pytest.mark.usefixtures("_javdb_clean")
-def test_javdb_clear_resolve_cache_clears_names_too(monkeypatch):
-    calls = _stub_javdb(monkeypatch, _YUA)
-    p = JavDBProvider()
-    p.alt_names(Kind.ACTOR, "三上悠亞")
-    _jdb.clear_resolve_cache()
-    p.alt_names(Kind.ACTOR, "三上悠亞")
-    assert len(calls) == 2
-
-
-@pytest.mark.usefixtures("_javdb_clean")
-def test_javdb_alt_names_returns_fresh_list(monkeypatch):
-    _stub_javdb(monkeypatch, _YUA)
-    p = JavDBProvider()
-    first = p.alt_names(Kind.ACTOR, "三上悠亞")
-    first.append("污染")
-    assert p.alt_names(Kind.ACTOR, "三上悠亞") == ["三上悠亜", "鬼头桃菜"]

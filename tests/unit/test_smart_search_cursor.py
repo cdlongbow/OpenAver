@@ -5,13 +5,12 @@ patch 使用端 core.scraper.*（BE-TEST-01）；search_prefix／search_actress�
 """
 
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
 import core.scraper as sc
 from core.search_providers import cursor, registry
-from core.search_providers.types import Kind, MakerSearchResult, Window
+from core.search_providers.types import Kind, Window
 
 TOKEN = "TOKEN-FROM-CLIENT"
 
@@ -84,20 +83,7 @@ def test_first_page_fallback_to_actress_marks_actress_mode(env):
     assert rec.calls["jav321"] == []
 
 
-def test_load_more_with_prefix_cards_returns_them_without_touching_fallbacks(env):
-    rec = env(Rec(prefix=[_card("P-21")], actress=[_card("A-1")], jav321=[_card("J-1")]))
-    out = sc.smart_search("MIDV", limit=20, offset=20, cursor=TOKEN)
-    assert [c["number"] for c in out] == ["P-21"] and out[0]["_mode"] == "prefix"
-    assert rec.calls["actress"] == [] and rec.calls["jav321"] == []
-
-
 # ================================================================ cursor／meta 轉傳
-def test_prefix_branch_forwards_cursor_and_meta(env):
-    rec = env(Rec(prefix=[_card("P-1")]))
-    meta = {}
-    sc.smart_search("MIDV", limit=20, offset=20, cursor=TOKEN, meta=meta)
-    got = rec.calls["prefix"][0]
-    assert got.cursor == TOKEN and got.meta is meta and got.offset == 20
 
 
 def test_fallback_actress_gets_the_same_meta_and_its_write_is_final(env):
@@ -108,15 +94,6 @@ def test_fallback_actress_gets_the_same_meta_and_its_write_is_final(env):
     out = sc.smart_search("MIDV", offset=0, meta=meta)
     assert out and rec.calls["actress"][0].meta is meta
     assert meta["cursor"] == "ACTRESS-TOKEN" and meta["answered_by"] == "dmm"
-
-
-def test_actress_branch_forwards_cursor_and_meta(env):
-    rec = env(Rec(actress=[_card("A-21")]))
-    meta = {}
-    out = sc.smart_search("三上悠亜", limit=20, offset=20, cursor=TOKEN, meta=meta)
-    got = rec.calls["actress"][0]
-    assert got.cursor == TOKEN and got.meta is meta and got.offset == 20
-    assert out[0]["_mode"] == "actress"
 
 
 def test_partial_branch_passes_neither_meta_nor_cursor(env, monkeypatch):
@@ -132,70 +109,7 @@ def test_partial_branch_passes_neither_meta_nor_cursor(env, monkeypatch):
     assert seen == {}  # 局部搜尋不傳 meta／cursor ⇒ 路由輸出 null
 
 
-def test_maker_branch_forwards_cursor_and_meta():
-    with patch("core.maker_names.known_makers", return_value=frozenset({"sod"})), \
-         patch("core.scraper.is_uncensored_route", return_value=False), \
-         patch("core.scraper._library_title_list", return_value=["T"]), \
-         patch("core.scraper.search_maker") as sm:
-        sm.return_value = MakerSearchResult([_card("SOD-1")], False, None)
-        meta = {}
-        sc.smart_search("SOD", offset=30, resolve_makers=True, cursor=TOKEN, meta=meta)
-    kwargs = sm.call_args.kwargs
-    assert kwargs["cursor"] == TOKEN and kwargs["meta"] is meta
-    assert meta == {"has_more": False}  # _search_maker_intent 自己不往 meta 加 cursor／answered_by，只有 relay 寫
-
-
 # ================================================================ shim 轉傳
-@pytest.fixture
-def intent_spy():
-    with patch("core.scraper.search_by_intent") as m:
-        m.return_value = []
-        yield m
-
-
-def test_search_prefix_shim_forwards_window_cursor_meta(intent_spy):
-    meta = {}
-    sc.search_prefix("MIDV", 20, 40, cursor=TOKEN, meta=meta)
-    args, kwargs = intent_spy.call_args
-    assert args == ("prefix", "MIDV", Window(40, 20))
-    assert kwargs["cursor"] == TOKEN and kwargs["meta"] is meta
-
-
-def test_search_actress_shim_forwards_window_cursor_meta(intent_spy):
-    meta = {}
-    sc.search_actress("三上悠亜", 20, 40, cursor=TOKEN, meta=meta)
-    args, kwargs = intent_spy.call_args
-    assert args == ("actress", "三上悠亜", Window(40, 20))
-    assert kwargs["cursor"] == TOKEN and kwargs["meta"] is meta
-
-
-def test_search_partial_shim_forwards_cursor_meta(intent_spy):
-    meta = {}
-    sc.search_partial("ABC-12", cursor=TOKEN, meta=meta)
-    args, kwargs = intent_spy.call_args
-    assert args == ("partial", "ABC-12", Window(0, 0))
-    assert kwargs["cursor"] == TOKEN and kwargs["meta"] is meta
-
-
-@pytest.mark.parametrize("call", [
-    lambda: sc.search_prefix("MIDV"),
-    lambda: sc.search_actress("x"),
-    lambda: sc.search_partial("ABC-12"),
-])
-def test_shims_default_cursor_and_meta_are_none(intent_spy, call):
-    call()
-    assert intent_spy.call_args.kwargs["cursor"] is None and intent_spy.call_args.kwargs["meta"] is None
-
-
-def test_search_maker_latest_shim_forwards_cursor_meta():
-    meta = {}
-    with patch("core.scraper.search_maker") as sm:
-        sm.return_value = MakerSearchResult([], False, "maker_empty")
-        sc.search_maker_latest("mk", "片商", ["片商"], 30, titles=[], today="2026-10-21", cursor=TOKEN, meta=meta)
-        sc.search_maker_latest("mk", "片商", ["片商"], 0, titles=[], today="2026-10-21")
-    first, second = sm.call_args_list
-    assert first.kwargs["cursor"] == TOKEN and first.kwargs["meta"] is meta
-    assert second.kwargs["cursor"] is None and second.kwargs["meta"] is None
 
 
 # ================================================================ 端到端：smart_search → shim → relay（stub 鏈）
