@@ -4,7 +4,8 @@ Guards the JavBus provider against site-side change AND against our own query
 silently breaking: name -> entity resolve (actor / series), the full works list
 of an entity (including titles without a magnet link), the `existmag=all`
 cookie surviving a second page in the same session, the uncensored-prefix retry
-(HEYZO), and names that contain a space.
+(HEYZO), names that contain a space, and (175d) one name -> censored + uncensored codes and
+an actress renamed under two codes merged into one list without duplicates.
 
 Verdict: probe unreachable -> skip (reason starts with UNVERIFIED, which means
 NOT verified, not passed). After the probe passes, ANY failure is a failure,
@@ -15,7 +16,8 @@ sent, every later cell fails (a block must never look like "unverified").
 Live rules (owner 2026-10-22): every request goes through the proxy
 http://192.168.1.177:8888/ via JavBusScraper's OWN session (BE-SCRAPER-08; a
 bare `requests` call gets 200 without #waterfall), strictly serialized, >= 2.0 s
-between two requests, hard cap 20 requests per pytest process. The throttle /
+between two requests, hard cap 28 requests per pytest process (J8 + J9 additionally share one
+budget of 8, refused BEFORE sending). The throttle /
 counter / recorder only measures and paces: it sits on the session's
 `HTTPAdapter.send`, the one point every request actually sent passes through
 (redirect hops included: `Session.resolve_redirects()` calls `Session.send()`
@@ -35,15 +37,17 @@ pytestmark = pytest.mark.smoke
 
 _PROXY = "http://192.168.1.177:8888/"
 _MIN_GAP = 2.0  # seconds from the end of one request to the start of the next
-_MAX_CALLS = 20
+_MAX_CALLS = 28
+_MERGE_LIMIT = 120  # J9: one merge_windows call over two codes (a single big limit, positions [0, 0])
 _MIN_ITEMS = 20
 _STOP_STATUS = frozenset({403, 429})
 # Cloudflare interstitial markers. "challenge-platform" is deliberately NOT here: Cloudflare injects
 # that script into normal pages too, so it would stop the run on a healthy 200.
 _CHALLENGE_MARKERS = ("just a moment", "attention required! | cloudflare", "cf-browser-verification", "cf_chl_opt")
 
+_NEW_CELLS_CAP = 8  # J8 + J9 share ONE budget of 8 requests (175d), enforced BEFORE each send
 _STATE = {"calls": 0, "last_end": None, "min_gap": None, "stopped": None, "overflow": False, "armed": False,
-          "actor_ref": None}
+          "actor_ref": None, "budget": None, "new_cells_used": 0, "new_cells_exceeded": False}
 _LOG = []  # one dict per request actually sent (each redirect hop is its own entry): url, status, cookie, t0, t1  (no bodies)
 _ERRORS = []  # (exception type, url) of every real send that raised after the probe
 _CELLS = {}  # test name -> requests that cell sent
@@ -90,6 +94,11 @@ def _gate_session_adapters(scraper):
                 if _STATE["calls"] >= _MAX_CALLS:
                     _STATE["overflow"] = True
                     pytest.fail(f"超出請求預算 (cap {_MAX_CALLS})")
+                if _STATE["budget"] is not None:  # a J8 / J9 cell is running: shared pre-send budget
+                    if _STATE["new_cells_used"] >= _NEW_CELLS_CAP:
+                        _STATE["new_cells_exceeded"] = True
+                        pytest.fail(f"新格（J8＋J9）超出共用請求預算 {_NEW_CELLS_CAP} 次，拒絕送出: {request.url}")
+                    _STATE["new_cells_used"] += 1
                 # the home IP must never reach JavBus directly: refuse to send unless THIS request carries the proxy
                 scheme = urlparse(request.url).scheme
                 assert (kwargs.get("proxies") or {}).get(scheme) == _PROXY, (
@@ -162,6 +171,7 @@ def _report(_inject):
         f"\n[javbus canary] requests={_STATE['calls']} (cap {_MAX_CALLS}) "
         f"min_gap={'n/a' if gap is None else f'{gap:.3f}s'} (floor {_MIN_GAP}s) "
         f"stopped={_STATE['stopped']} overflow={_STATE['overflow']} proxy={_PROXY} "
+        f"new_cells={_STATE['new_cells_used']}/{_NEW_CELLS_CAP} "
         f"per_cell={_CELLS}"
     )
 
@@ -171,10 +181,13 @@ def _cell_guard(request):
     """Per cell: count its requests; after the run, a stop / overflow / swallowed error that appeared DURING this cell fails it."""
     calls0, errors0 = _STATE["calls"], len(_ERRORS)
     was_stopped, was_overflow = bool(_STATE["stopped"]), _STATE["overflow"]
+    was_new_exceeded = _STATE["new_cells_exceeded"]
     yield
     _CELLS[request.node.name] = _STATE["calls"] - calls0
     if not _STATE["armed"]:
         return
+    if _STATE["new_cells_exceeded"] and not was_new_exceeded:
+        pytest.fail(f"新格（J8＋J9）超出共用請求預算 {_NEW_CELLS_CAP} 次（已拒絕送出）")
     if _STATE["overflow"] and not was_overflow:
         pytest.fail(f"超出請求預算 (cap {_MAX_CALLS})")
     if _STATE["stopped"] and not was_stopped:
@@ -182,6 +195,14 @@ def _cell_guard(request):
     if len(_ERRORS) > errors0:
         # verify_page / run_window / search_jav swallow per-detail exceptions; a real get() error after the probe must still fail
         pytest.fail(f"探針後 adapter.send 拋例外（上層會吞掉，這裡補抓）: {_ERRORS[errors0:]}")
+
+
+@pytest.fixture
+def _new_cells_budget():
+    """J8 / J9 only: turn on the shared pre-send budget for the duration of the cell (module-scope probe runs before this)."""
+    _STATE["budget"] = True
+    yield
+    _STATE["budget"] = None
 
 
 def _require_live():
@@ -322,3 +343,115 @@ def test_j7_series_name_resolves_to_series_page(provider):
     ref = provider.resolve(Kind.SERIES, "PLATINUM SOAP")
     assert ref is not None and ref.id == "series/rvz", ref
     _no_encoded_space(_LOG[mark:])
+
+
+def test_j8_resolve_all_censored_and_uncensored_star(provider, _new_cells_budget):
+    """J8 (175d): one name, two codes. Typing 美咲愛 must give the censored star page first AND the uncensored one.
+
+    conftest clears the JavBus resolve cache before every test, so the call below is a real request (counter delta).
+    """
+    _require_live()
+    from core.search_providers.types import Kind
+
+    before = _STATE["calls"]
+    refs = provider.resolve_all(Kind.ACTOR, "美咲愛")
+    assert _STATE["calls"] - before >= 1, "resolve_all 沒有發出 searchstar 請求（快取命中會讓這格變空殼）"
+    assert [r.id for r in refs] == ["star/36h", "uncensored/star/23f"], [r.id for r in refs]
+
+
+def _norm_date(raw):
+    """'YYYY/MM/DD' or 'YYYY-MM-DD' -> 'YYYY-MM-DD'; anything else (missing, odd shape) -> None (not comparable)."""
+    import re
+
+    text = (raw or "").strip().replace("/", "-")
+    return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else None
+
+
+def _j9_verdict(origins_seen, result_dates, absent_first_date):
+    """Decide J9 when it is known which origins the merged result contains.
+
+    result_dates: the dates of the merged items (raw strings, may be missing). absent_first_date: first item date of the
+    FIRST chunk the merge asked from the ref that is absent from the result (None when there was no such ref).
+    Returns "ok" (both origins present), "fail" (the absent ref's newest title is not older than the oldest dated title
+    in the result: it should have been merged in), or "skip" (not comparable, or the absent code's newest title is older
+    than everything reachable within the depth: cannot tell).
+    """
+    if origins_seen >= 2:
+        return "ok"
+    oldest = min((d for d in map(_norm_date, result_dates) if d), default=None)
+    absent = _norm_date(absent_first_date)
+    if oldest is None or absent is None:
+        return "skip"
+    return "fail" if absent >= oldest else "skip"
+
+
+def test_j9_renamed_actress_two_codes_merge_without_dup(provider, _new_cells_budget):
+    """J9 (175d): あかね麗 / 二階堂麗 are one actress under two codes; one merge call must interleave both without duplicates.
+
+    `provider` is requested only for the probe (unreachable -> UNVERIFIED skip, arms the cell guard).
+    Own JavBusProvider (not the module one): list_entity is wrapped on this instance only to remember what each chunk
+    returned (in memory, real function runs), so nothing leaks into other cells. Position [0, 0] and one big limit: from
+    a non-multiple of the 30-item page a chunk would cost 2 pages instead of 1.
+    """
+    _require_live()
+    import re
+
+    from core.search_providers import pipeline
+    from core.search_providers.javbus import JavBusProvider
+    from core.search_providers.types import Kind
+
+    p = JavBusProvider()
+    mark = len(_LOG)
+    found_a = p.resolve_all(Kind.ACTOR, "あかね麗")
+    found_b = p.resolve_all(Kind.ACTOR, "二階堂麗")
+    assert found_a and found_b, (found_a, found_b)
+    ref_a, ref_b = found_a[0], found_b[0]
+    assert (ref_a.id, ref_b.id) == ("star/140r", "star/12a7"), (ref_a.id, ref_b.id)
+
+    chunks = []  # (ref id, window offset, [(number, date)])
+    real = p.list_entity
+
+    def recorded(ref, w):
+        page = real(ref, w)
+        chunks.append((ref.id, w.offset, [(it.number, it.date) for it in page.items]))
+        return page
+
+    p.list_entity = recorded
+    result = pipeline.merge_windows(p, [ref_a, ref_b], [0, 0], _MERGE_LIMIT)
+
+    items = result.items
+    assert items, "合併結果 0 筆"
+    numbers = [it.number.upper() for it in items]
+    assert len(set(numbers)) == len(numbers), f"合併結果有重複番號: {sorted(n for n in set(numbers) if numbers.count(n) > 1)}"
+    assert all(it.origin in (ref_a, ref_b) for it in items), "有 item 的 origin 不是兩個 ref 之一"
+    dates = [_norm_date(it.date) for it in items]
+    dated = [d for d in dates if d]
+    assert all(later <= earlier for earlier, later in zip(dated, dated[1:], strict=False)), f"有日期者不是新→舊: {dated}"
+    first_undated = next((i for i, d in enumerate(dates) if d is None), len(dates))
+    assert not any(dates[first_undated:]), "缺日期者沒有全部排在有日期者之後"
+
+    # every list request of the two codes carries exactly one existmag cookie = all (each chunk has its own session)
+    wanted = re.compile(r"/(%s)(/\d+)?$" % "|".join(re.escape(r.id) for r in (ref_a, ref_b)))
+    list_requests = [r for r in _LOG[mark:] if wanted.search(r["url"].split("?")[0])]
+    assert list_requests, f"沒有記錄到兩個代號的列表請求: {[r['url'] for r in _LOG[mark:]]}"
+    for r in list_requests:
+        cookie = r["cookie"] or ""
+        values = [v for n, _, v in (part.strip().partition("=") for part in cookie.split(";")) if n == "existmag"]
+        assert values == ["all"], f"{r['url']} 的 Cookie 應恰一個 existmag=all，實得 {values}；Cookie 標頭原文={cookie!r}"
+
+    origins = {it.origin.id for it in items}
+    absent_first = None
+    if len(origins) < 2:
+        absent_id = ref_b.id if ref_a.id in origins else ref_a.id
+        absent_first = next(((c[2][0][1] if c[2] else None) for c in chunks if c[0] == absent_id), None)
+    verdict = _j9_verdict(len(origins), [it.date for it in items], absent_first)
+    if verdict == "fail":
+        pytest.fail(
+            f"只有 {sorted(origins)} 出現在結果；缺席代號第一塊第一部日期 {absent_first!r} 不早於結果最舊日期 "
+            f"{min(dated)!r}，本該被歸併進來卻沒有；chunks={[(c[0], c[1], len(c[2])) for c in chunks]}"
+        )
+    if verdict == "skip":
+        pytest.skip(
+            f"UNVERIFIED: 結果只有 {sorted(origins)}；缺席代號第一部日期={absent_first!r}，結果最舊日期="
+            f"{min(dated) if dated else None!r}（較舊代號在 {_MERGE_LIMIT} 部可達深度之外，或日期缺失，無法判定）"
+        )
