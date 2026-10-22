@@ -125,7 +125,7 @@ OpenAver has four main pages:
 - **Recognizes what others already organized**: reads a `.nfo`'s title, actress, tags, maker, series, and date; for covers, it recognizes same-name images, `-poster`/`-fanart` suffixes, `poster`/`fanart`/`cover`/`folder` files in the folder, or any image path written in the NFO, and reads `extrafanart/` too.
 - **Scanning only reads, never writes**: not a single byte in the source folder is touched.
 - **Fills only what's missing**: titles missing an NFO or cover are listed, one click fills them in from the web; only empty fields are filled, existing data is never overwritten.
-- **Actress/tag aliases**: add aliases right in the UI; Chinese/Japanese/English synonyms auto-expand, and one person's stage names and post-retirement name are collapsed into a single card.
+- **Actress/tag aliases**: add aliases right in the UI; Chinese/Japanese/English synonyms auto-expand, and one person's stage names and post-retirement name are collapsed into a single card; searching by either the old or the new name returns the same list of titles.
 - **Reorder sources yourself**: drag to set your preferred order, one click switches to "uncensored mode."
 - **Keeps subtitles, preserves VR tags when relocating**: subtitle files move along with the video, VR projection tags (`_180_LR`, `mkx200`) are preserved so your media player still recognizes the format.
 
