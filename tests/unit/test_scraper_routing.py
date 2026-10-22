@@ -4,10 +4,9 @@
 
 Mock patch target：core.scraper.metatube_state（使用端，非定義端，Gotcha §1）。
 """
-import time
 import threading
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock, call
+from unittest.mock import patch, MagicMock, PropertyMock
 
 from fastapi.testclient import TestClient
 
@@ -16,7 +15,6 @@ from core.scraper import (
     _MetatubeShim,
 )
 from core.scrapers.models import Video
-from core.scrapers.utils import SOURCE_ORDER
 
 
 # ---------------------------------------------------------------------------

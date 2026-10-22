@@ -5,7 +5,6 @@ spec-48b §b3 — multi-video folder gate + fetch_samples_only() integration
 """
 import pytest
 from unittest.mock import patch, MagicMock
-from dataclasses import asdict
 from fastapi.testclient import TestClient
 
 from core.path_utils import to_file_uri

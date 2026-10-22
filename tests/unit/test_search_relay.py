@@ -5,7 +5,6 @@
 """
 
 import concurrent.futures as cf
-import inspect
 import time
 from unittest.mock import MagicMock
 
@@ -13,7 +12,7 @@ import pytest
 
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.search_providers import registry, relay
-from core.search_providers.types import Enriched, EntityRef, Kind, Page, Provider, Window, WorkItem
+from core.search_providers.types import Enriched, EntityRef, Kind, Page, Window, WorkItem
 
 W = Window(0, 20)
 REF = EntityRef(Kind.ACTOR, "a1", "someone")

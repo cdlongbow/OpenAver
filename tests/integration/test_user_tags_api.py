@@ -20,7 +20,6 @@ from core.path_utils import to_file_uri
 # 使用 to_file_uri() 產生 canonical 形式的測試 key（路徑契約：禁止手刻 file:///）
 TEST_FILE_URI = to_file_uri("/test/SONE-205.mp4")
 TEST_FILE_URI2 = to_file_uri("/test/ABW-001.mp4")
-NONEXISTENT_URI = to_file_uri("/test/NONEXISTENT.mp4")
 
 
 @pytest.fixture

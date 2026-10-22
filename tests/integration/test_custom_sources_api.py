@@ -4,7 +4,6 @@ import threading
 
 import pytest
 
-import core.config as core_config
 import core.custom_source.fetch as fetch_mod
 from core.config import load_config, save_config
 from core.custom_source import registry, service, state

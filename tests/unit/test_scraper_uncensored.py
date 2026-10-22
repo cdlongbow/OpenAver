@@ -4,7 +4,6 @@
 patch get_enabled_source_ids（使用端 core.scraper）模擬「enabled + available」的來源集，
 隔離 staging 過濾邏輯（availability gate 本身由 get_enabled_source_ids 自己的測試覆蓋）。
 """
-import pytest
 
 from core import scraper
 

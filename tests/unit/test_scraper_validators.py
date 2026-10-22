@@ -8,7 +8,6 @@
 - is_prefix_only: regex ``^[A-Z]{2,6}$``
 - 三者都沒有 null guard (.strip() on None raises AttributeError)
 """
-from unittest.mock import patch
 
 import pytest
 

@@ -47,12 +47,6 @@ class TestMinSizeBytes:
 # _list_source_videos
 # ---------------------------------------------------------------------------
 
-FAKE_FILES = [
-    {"path": "/src/a.mp4", "mtime": 1.0, "size": 100, "nfo_mtime": 0.0},
-    {"path": "/src/b.mkv", "mtime": 2.0, "size": 200, "nfo_mtime": 0.0},
-]
-
-
 class TestListSourceVideos:
 
 

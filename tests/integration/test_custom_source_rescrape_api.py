@@ -1,7 +1,6 @@
 """自訂來源三個入口接線（TASK-165-T7b）：gate 句、重刮視窗五結果、確認寫挑的那一版、批次一律拒絕。全離線。"""
 
 import json
-import os
 import threading
 import time
 from pathlib import Path

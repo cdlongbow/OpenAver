@@ -2,7 +2,6 @@
 TDD-lite: strip_number_prefix 邊界條件測試
 對應 TASK-T2fix2 的 11 個邊界條件 + 2 個錯誤處理 case
 """
-import pytest
 from core.scrapers.utils import strip_number_prefix
 
 

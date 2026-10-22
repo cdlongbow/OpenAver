@@ -8,7 +8,6 @@ Contract: epic §5.1.1 (CD-61-9):
   (first non-empty source per field, may come from different sources).
 - empty candidates → defensive (caller never calls with empty; return safe).
 """
-import pytest
 
 from core.scrapers.models import Video, Actress
 from core.source_merger import merge_results

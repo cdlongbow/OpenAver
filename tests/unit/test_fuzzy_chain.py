@@ -9,8 +9,6 @@ from unittest.mock import patch, MagicMock
 
 from core.scrapers.dmm import DMMScraper, ListResult
 from core.scrapers.javbus import JavBusScraper
-from core.scrapers.jav321 import JAV321Scraper
-from core.scrapers.javdb import JavDBScraper
 from core.scrapers.models import Video
 pytestmark = pytest.mark.usefixtures("no_entity_lookup", "no_dmm_facts")
 

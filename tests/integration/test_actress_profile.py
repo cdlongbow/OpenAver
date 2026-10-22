@@ -54,7 +54,7 @@ def clear_actress_cache():
 
 def test_get_actress_profile_both_sources():
     """測試雙來源合併邏輯（Mock）"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
+    from core.scrapers.actress.orchestrator import get_actress_profile
 
     # Mock Graphis 回傳照片（含 birth/height/cup 供 TD-1 + text cascade 測試）
     def mock_graphis(name):
@@ -93,7 +93,7 @@ def test_get_actress_profile_both_sources():
 
 def test_get_actress_profile_cache_hit():
     """測試 cache 命中（Mock）"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
+    from core.scrapers.actress.orchestrator import get_actress_profile
 
     def mock_graphis(name):
         return {
@@ -272,7 +272,7 @@ def test_get_actress_profile_gfriends_wins():
     """gfriends 圖片勝出：graphis 無 prof_url 時，gfriends 應成為 photo cascade 的 winner。
     T4.3 note: orchestrator photo cascade = graphis prof_url → gfriends → wiki → xcity.
     To let gfriends win, graphis must have prof_url=None."""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
+    from core.scrapers.actress.orchestrator import get_actress_profile
 
     gfriends_url = 'https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/Content/7-S1/桜空もも.jpg'
 
@@ -293,7 +293,7 @@ def test_get_actress_profile_gfriends_wins():
 
 def test_get_actress_profile_gfriends_only():
     """gfriends 有圖但 javbus/graphis 都沒資料 → 仍回傳 minimal profile"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
+    from core.scrapers.actress.orchestrator import get_actress_profile
 
     gfriends_url = 'https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/Content/7-S1/桜空もも.jpg'
 
