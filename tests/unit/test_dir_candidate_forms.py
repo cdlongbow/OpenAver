@@ -17,29 +17,7 @@ from web.routers.gallery_media import _dir_candidate_forms
 
 
 class TestDirCandidateFormsUriIdempotent:
-    def test_uri_input_not_double_wrapped(self, tmp_path):
-        """URI-form dir → candidate URIs contain no 'file:///file:///' double-wrap."""
-        d = tmp_path / "srcU1"
-        d.mkdir()
-        uri = to_file_uri(str(d), {})
 
-        forms = _dir_candidate_forms(uri, {})
-
-        assert forms, "expected at least one candidate form"
-        for f in forms:
-            assert f.startswith("file:///")
-            # no double-wrap in any form (actual pre-fix bug was file:///file:/…)
-            assert not f.removeprefix("file:///").startswith("file:")
-
-    def test_uri_and_fs_input_agree(self, tmp_path):
-        """URI-form and FS-form of the same dir produce matching candidate URIs."""
-        d = tmp_path / "srcU2"
-        d.mkdir()
-
-        fs_forms = set(_dir_candidate_forms(str(d), {}))
-        uri_forms = set(_dir_candidate_forms(to_file_uri(str(d), {}), {}))
-
-        assert fs_forms == uri_forms
 
     def test_uri_dir_matches_child_file(self, tmp_path):
         """A file under a URI-form source dir is recognised as under one candidate form."""

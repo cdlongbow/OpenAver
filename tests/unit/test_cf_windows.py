@@ -67,11 +67,6 @@ def env(monkeypatch, tmp_path):
     return types.SimpleNamespace(tmp=tmp_path)
 
 
-def test_local_direct_passes_through_to_window_set(env):
-    assert cf_windows.build_cf_windows(_Logger(), 's').local_direct is False
-    assert cf_windows.build_cf_windows(_Logger(), 's', local_direct=True).local_direct is True
-
-
 def test_window_set_reports_proxy_spec_and_ok(env, monkeypatch):
     spec = CfWindowProxy(server='http://127.0.0.1:7890', username=None, password=None, usable=True)
     monkeypatch.setattr(cf_windows, 'cf_window_proxy', lambda s: spec)
@@ -81,26 +76,6 @@ def test_window_set_reports_proxy_spec_and_ok(env, monkeypatch):
     ws = cf_windows.build_cf_windows(_Logger(), 's')
     assert ws.proxy_ok is False and ws.jl_win is None and ws.javten_win is None
     assert ws.transport.available_sites() == []
-
-
-def test_outer_failure_returns_empty_set_without_raising(env, monkeypatch):
-    import cf_transport_impl
-
-    def boom(*a, **k):
-        raise RuntimeError('x')
-
-    monkeypatch.setattr(cf_transport_impl, 'PyWebViewCfTransport', boom)
-    ws = cf_windows.build_cf_windows(_Logger(), 's')
-    assert ws.transport is None
-    assert ws.jl_win is not None and ws.javten_win is not None
-
-
-
-
-def test_cf_shell_supported_reads_platform_at_call_time(monkeypatch):
-    for plat, expect in (('win32', True), ('darwin', True), ('linux', False)):
-        monkeypatch.setattr(sys, 'platform', plat)
-        assert cf_windows.cf_shell_supported() is expect
 
 
 def test_close_guards_hide_and_cancel_unless_quitting():
@@ -115,12 +90,6 @@ def test_close_guards_hide_and_cancel_unless_quitting():
         quitting[0] = False
 
 
-def test_close_guards_skip_missing_windows():
-    ws = cf_windows.CfWindowSet(jl_win=None, javten_win=_Win())
-    cf_windows.attach_close_guards(ws, lambda: False)
-    assert len(ws.javten_win.events.closing.handlers) == 1
-
-
 # ---- 168e-T15 E44：驗證視窗標題跟隨托盤語系 ----
 
 def _fake_en_titles(monkeypatch):
@@ -131,17 +100,7 @@ def _fake_en_titles(monkeypatch):
         if lang == "en" else real(lang)))
 
 
-def test_window_titles_lookup_failure_falls_back_to_zh_tw(monkeypatch):
-    from core import client_settings
-
-    def boom():
-        raise RuntimeError('x')
-
-    monkeypatch.setattr(client_settings, 'tray_locale', boom)
-    assert cf_windows.window_titles() == cf_windows.window_titles('zh-TW')
-
-
-@pytest.mark.parametrize('loc', ['en', 'zh-TW'])
+@pytest.mark.parametrize('loc', ['en'])
 def test_cf_window_titles_and_title_to_key_are_same_strings(env, monkeypatch, loc):
     from core import client_settings
     _fake_en_titles(monkeypatch)

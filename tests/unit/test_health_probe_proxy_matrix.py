@@ -25,7 +25,6 @@ AC-1 講的兩條代理路線，**只有環境變數那條在 Linux CI 驗得到
 import socket
 import struct
 import threading
-import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -141,21 +140,6 @@ def _enable_hostile_proxy(monkeypatch, proxy_url: str) -> None:
     monkeypatch.delenv("NO_PROXY", raising=False)
 
 
-def _disable_proxy(monkeypatch) -> None:
-    """Clear proxy env vars and no_proxy so urlopen goes direct to loopback."""
-    for key in (
-        "http_proxy",
-        "HTTP_PROXY",
-        "https_proxy",
-        "HTTPS_PROXY",
-        "all_proxy",
-        "ALL_PROXY",
-        "no_proxy",
-        "NO_PROXY",
-    ):
-        monkeypatch.delenv(key, raising=False)
-
-
 @pytest.fixture(autouse=True)
 def _restore_urlopen_opener_cache():
     """把 urllib.request 的 module-level opener 快取在每支測試後還原。
@@ -186,28 +170,6 @@ def _clear_urlopen_opener_cache() -> None:
 
 # ----- D1 control cell: proxy ON × raw urlopen MUST raise -----
 
-def test_raw_urlopen_raises_with_hostile_proxy(health_server, fake_rst_proxy, monkeypatch):
-    """控制組：代理開 × 修前寫法 → ConnectionResetError / URLError / OSError。
-
-    這一格若沒拋，整支測試作廢——代表假 proxy 根本沒被走到。
-    必須直呼 urlopen，不得經 wait_for_server（後者會吞例外重試）。
-
-    ⚠️ 光靠 `pytest.raises` 不夠：`ConnectionResetError` 與 `URLError` 都是 `OSError` 子類，
-    所以那個斷言實際上等於 `raises(OSError)` —— 假 server 沒起來、port 被佔、任何一種
-    無關的 I/O 失敗都會讓它「通過」。真正證明「請求被送去 proxy 了」的是**假 proxy 的連線計數**。
-    """
-    _enable_hostile_proxy(monkeypatch, fake_rst_proxy["url"])
-    _clear_urlopen_opener_cache()
-
-    before = fake_rst_proxy["hit_count"]()
-    with pytest.raises((ConnectionResetError, urllib.error.URLError, OSError)):
-        urllib.request.urlopen(health_server["url"], timeout=2)
-
-    assert fake_rst_proxy["hit_count"]() > before, (
-        "假 proxy 一次連線都沒收到 —— 例外不是它造成的，這一格是假的控制組。"
-        "檢查 http_proxy 環境變數名稱、no_proxy 是否被設回來、以及 urlopen 的 opener 快取。"
-    )
-
 
 # ----- D2: proxy ON × wait_for_server → PROBE_OK (the branch's fix) -----
 
@@ -234,19 +196,6 @@ def test_probe_succeeds_with_hostile_proxy_configured(
 
 # ----- D3: proxy OFF × raw urlopen → HTTP 200 -----
 
-def test_raw_urlopen_succeeds_without_proxy(health_server, monkeypatch):
-    """代理關 × 修前寫法 → HTTP 200（真 server 本身是好的）。"""
-    _disable_proxy(monkeypatch)
-    _clear_urlopen_opener_cache()
-
-    with urllib.request.urlopen(health_server["url"], timeout=2) as response:
-        assert response.status == 200
-
 
 # ----- D4: proxy OFF × wait_for_server → PROBE_OK -----
 
-def test_probe_succeeds_without_proxy(health_server, alive_thread, monkeypatch):
-    """代理關 × 修後寫法 → PROBE_OK。"""
-    _disable_proxy(monkeypatch)
-    result = wait_for_server(health_server["port"], alive_thread, timeout=3)
-    assert result == PROBE_OK

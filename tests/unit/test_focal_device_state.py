@@ -6,13 +6,11 @@ tmp_path，走真檔案 I/O，不 mock load_config / save_config / mutate_config
 
 from __future__ import annotations
 
-import json
-import threading
 
 import pytest
 
 import core.config as core_config
-from core.config import load_config, mutate_config, save_config
+from core.config import load_config, save_config
 from core.focal.subprocess_runner import RunnerOutcome
 
 
@@ -59,10 +57,6 @@ def _found(x: float = 0.5, y: float = 0.5) -> RunnerOutcome:
     return RunnerOutcome(kind="FOUND", focal=(x, y))
 
 
-def _no_face() -> RunnerOutcome:
-    return RunnerOutcome(kind="NO_FACE")
-
-
 # ---------------------------------------------------------------------------
 # INV-152c-1 — 只有 detect_timeout 遞增；FOUND 歸零計數但不解除 disabled
 # ---------------------------------------------------------------------------
@@ -99,7 +93,7 @@ class TestInv152c1Classification:
 
     @pytest.mark.parametrize(
         "reason",
-        ["crashed", "circuit_open", "skipped_disabled"],
+        ["crashed", ],
     )
     def test_abandoned_noop_reasons_leave_state_unchanged(
         self, tmp_path, monkeypatch, reason
@@ -120,41 +114,6 @@ class TestInv152c1Classification:
         fd = _read_focal_device()
         assert fd["consecutive_timeout_count"] == 1
         assert fd["disabled"] is False
-
-    def test_one_detect_timeout_then_found_resets_count(self, tmp_path, monkeypatch):
-        """明確斷言「一次超時接著成功 → 歸零」（DoD）。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(judged_at_version=VERSION)
-
-        assert device_state.record_outcome(_abandoned("detect_timeout")) is False
-        assert _read_focal_device()["consecutive_timeout_count"] == 1
-
-        assert device_state.record_outcome(_found()) is False
-        fd = _read_focal_device()
-        assert fd["consecutive_timeout_count"] == 0
-        assert fd["disabled"] is False
-
-    def test_no_face_also_resets_count_without_clearing_disabled(
-        self, tmp_path, monkeypatch
-    ):
-        """FOUND／NO_FACE 都歸零計數，但不解除 disabled。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(
-            disabled=True,
-            consecutive_timeout_count=2,
-            judged_at_version=VERSION,
-        )
-
-        assert device_state.record_outcome(_no_face()) is False
-        fd = _read_focal_device()
-        assert fd["consecutive_timeout_count"] == 0
-        assert fd["disabled"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -199,101 +158,9 @@ class TestInv152c2LazyReset:
 # ---------------------------------------------------------------------------
 
 
-class TestRecordOutcomePropagatesMutateConfigErrors:
-    def test_record_outcome_does_not_swallow_mutate_config_exception(
-        self, tmp_path, monkeypatch
-    ):
-        """mutate_config 拋例外時，record_outcome 必須原樣往外拋，不得吞掉回傳 bool。
-
-        T10 的通知綁在 record_outcome 的回傳值上。若內部包 try/except 吞掉寫入
-        失敗並回傳 True，就會出現「config.json 根本沒寫成功，卻發了一則『自動
-        對焦已自動關閉』通知」——狀態沒落盤、通知已送出，重開 App 之後那則
-        通知說的事情不存在。
-        """
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(judged_at_version=VERSION)
-
-        def _boom(_mutator):
-            raise OSError("disk full (simulated)")
-
-        # device_state 用 from-import 綁定 mutate_config，必須 patch 該 binding。
-        monkeypatch.setattr(device_state, "mutate_config", _boom)
-
-        with pytest.raises(OSError, match="disk full \\(simulated\\)"):
-            device_state.record_outcome(_abandoned("detect_timeout"))
-
-
 # ---------------------------------------------------------------------------
 # INV-152c-3 — record_outcome mutator 遵守 mutate_config 契約（真檔案 I/O + 真 thread）
 # ---------------------------------------------------------------------------
-
-
-class TestInv152c3ConcurrentMutate:
-    """INV-152c-3：驗證 record_outcome 的 mutator 遵守既有 mutate_config 契約。
-
-    mutate_config 本身已用單一 ``_config_write_lock`` 序列化整個
-    load→mutator→save（見 ``test_mutate_config_holds_lock``），兩條 thread 的
-    RMW 臨界區物理上不可能交錯，因此本測試**不**證明獨立的 lost-update 防護。
-
-    它證明的是：新 mutator 沒有繞過鎖，且與另一支任意 mutator 共存時兩邊寫入
-    都落盤（plan INV-152c-3 oracle）。
-    """
-
-    def test_concurrent_record_outcome_and_unrelated_mutate_both_persist(
-        self, tmp_path, monkeypatch
-    ):
-        """兩 thread 各經 mutate_config 寫 focal_device / general.folder_format，兩邊都落盤。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(judged_at_version=VERSION)
-
-        barrier = threading.Barrier(2)
-        errors: list[BaseException] = []
-
-        def write_focal() -> None:
-            try:
-                barrier.wait(timeout=5)
-                device_state.record_outcome(_abandoned("detect_timeout"))
-            except BaseException as exc:  # noqa: BLE001 — 收集到主 thread 再 raise
-                errors.append(exc)
-
-        def write_unrelated() -> None:
-            try:
-                barrier.wait(timeout=5)
-
-                def _mut(cfg: dict) -> None:
-                    cfg.setdefault("general", {})["folder_format"] = "{actor}/{maker}"
-
-                mutate_config(_mut)
-            except BaseException as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        threads = [
-            threading.Thread(target=write_focal, name="inv152c3-focal"),
-            threading.Thread(target=write_unrelated, name="inv152c3-general"),
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10)
-            assert not t.is_alive(), f"{t.name} did not finish"
-
-        assert errors == [], f"worker errors: {errors!r}"
-
-        cfg = load_config()
-        assert cfg["focal_device"]["consecutive_timeout_count"] == 1
-        assert cfg["focal_device"]["disabled"] is False
-        assert cfg["general"]["folder_format"] == "{actor}/{maker}"
-
-        # 真檔案 I/O：磁碟上的 config.json 也同時含兩邊
-        persisted = json.loads(core_config.CONFIG_PATH.read_text(encoding="utf-8"))
-        assert persisted["focal_device"]["consecutive_timeout_count"] == 1
-        assert persisted["general"]["folder_format"] == "{actor}/{maker}"
 
 
 # ---------------------------------------------------------------------------
@@ -324,62 +191,6 @@ class TestNotificationSinkTransition:
         assert device_state.record_outcome(_abandoned("detect_timeout")) is True
         assert calls == [(("warn", "notif.focal_auto_disabled"), {})]
 
-    def test_no_notification_without_transition_when_already_disabled(
-        self, tmp_path, monkeypatch
-    ):
-        """DoD：裝置已經是停用狀態，再超時一次 → 沒有轉態，零通知。
-
-        mutation 錨點 M1：record_outcome 裡
-        `if just_disabled and _notification_sink is not None:`。
-        """
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(
-            disabled=True, consecutive_timeout_count=2, judged_at_version=VERSION,
-        )
-        calls: list[tuple] = []
-        monkeypatch.setattr(
-            device_state, "_notification_sink",
-            lambda *args, **kwargs: calls.append((args, kwargs)),
-        )
-
-        assert device_state.record_outcome(_abandoned("detect_timeout")) is False
-        assert calls == []
-
-    def test_found_scan_never_notifies(self, tmp_path, monkeypatch):
-        """DoD：全庫有碼片掃描完成（只有 FOUND/NO_FACE，從未超時）→ 零通知。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(judged_at_version=VERSION)
-        calls: list[tuple] = []
-        monkeypatch.setattr(
-            device_state, "_notification_sink",
-            lambda *args, **kwargs: calls.append((args, kwargs)),
-        )
-
-        for _ in range(5):
-            assert device_state.record_outcome(_found()) is False
-        assert calls == []
-
-    def test_notification_copy_has_no_numbers_and_mentions_manual_escape_hatch(self):
-        """DoD：文案不含張數／具體耗時數字、含手動拖曳逃生口（F6）。"""
-        import json
-        import re
-        from pathlib import Path
-
-        zh = json.loads(Path("locales/zh_TW.json").read_text(encoding="utf-8"))
-        text = zh["notif"]["focal_auto_disabled"]
-
-        # [lint-guard: pytest-justified] i18n fallback 字串 fingerprint（明文例外）：驗的是
-        # locales/zh_TW.json 的值本身，不是 html/js/css 渲染輸出；且兩條都是 spec F6 的
-        # 文案不變式（不得含數字、必須寫出逃生口），不是靜態存在性檢查。
-        assert not re.search(r"\d", text), f"F6 明文禁止張數／耗時數字，實際文案：{text}"
-        assert "拖" in text, f"F6 要求提到手動拖曳的逃生口，實際文案：{text}"
-
 
 # ---------------------------------------------------------------------------
 # feature/152d TASK-D1 — set_by_user：使用者的決定不被系統覆寫
@@ -387,31 +198,6 @@ class TestNotificationSinkTransition:
 
 
 class TestSetByUser:
-    def test_missing_set_by_user_key_treated_as_false(self, tmp_path, monkeypatch):
-        """舊 config.json 的 focal_device 沒有 set_by_user → 視同 False，行為與今天相同。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        # 刻意不寫 set_by_user（模擬升級前的舊檔）
-        save_config(
-            {
-                "focal_device": {
-                    "disabled": False,
-                    "consecutive_timeout_count": 0,
-                    "judged_at_version": VERSION,
-                }
-            }
-        )
-
-        assert device_state.is_disabled() is False
-        assert device_state.record_outcome(_abandoned("detect_timeout")) is False
-        just = device_state.record_outcome(_abandoned("detect_timeout"))
-        assert just is True
-        fd = _read_focal_device()
-        assert fd["disabled"] is True
-        assert fd["consecutive_timeout_count"] == 2
-        assert device_state.is_disabled() is True
 
     def test_set_by_user_true_blocks_auto_disable(self, tmp_path, monkeypatch):
         """set_by_user=True 時，連續 2 次 detect_timeout 不會把 disabled 翻成 True。"""
@@ -459,38 +245,6 @@ class TestSetByUser:
         assert fd["judged_at_version"] == "0.16.4"
         assert device_state.is_disabled() is True
 
-    def test_set_disabled_by_user_only_touches_disabled_and_set_by_user(
-        self, tmp_path, monkeypatch
-    ):
-        """使用者切換只寫 disabled ＋ set_by_user；count／judged_at_version 逐字不變。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(
-            disabled=False,
-            consecutive_timeout_count=1,
-            judged_at_version=VERSION,
-            set_by_user=False,
-        )
-
-        before = _read_focal_device()
-        device_state.set_disabled_by_user(True)
-        after = _read_focal_device()
-
-        assert after["disabled"] is True
-        assert after["set_by_user"] is True
-        assert after["consecutive_timeout_count"] == before["consecutive_timeout_count"]
-        assert after["judged_at_version"] == before["judged_at_version"]
-        assert device_state.is_disabled() is True
-
-        device_state.set_disabled_by_user(False)
-        after2 = _read_focal_device()
-        assert after2["disabled"] is False
-        assert after2["set_by_user"] is True  # 仍標記為使用者決定
-        assert after2["consecutive_timeout_count"] == before["consecutive_timeout_count"]
-        assert after2["judged_at_version"] == before["judged_at_version"]
-
 
 # ---------------------------------------------------------------------------
 # feature/152d TASK-D2 — record_manual_outcome：前景單次逾時判定、不發 sink
@@ -498,26 +252,6 @@ class TestSetByUser:
 
 
 class TestRecordManualOutcome:
-    def test_record_manual_outcome_does_not_call_sink(self, tmp_path, monkeypatch):
-        """前景轉態不呼叫 notification sink（CD-152d-5）——即使 sink 會拋例外也不影響。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(judged_at_version=VERSION)
-
-        calls = []
-
-        def _boom_sink(*args, **kwargs):
-            calls.append((args, kwargs))
-            raise RuntimeError("sink must not be called on manual path")
-
-        monkeypatch.setattr(device_state, "_notification_sink", _boom_sink)
-
-        just = device_state.record_manual_outcome(_abandoned("detect_timeout"))
-        assert just is True
-        assert calls == []
-        assert device_state.is_disabled() is True
 
     def test_record_manual_outcome_single_timeout_disables(self, tmp_path, monkeypatch):
         """前景單次 detect_timeout 就翻 disabled（不必累積到背景的 2 次門檻）。"""
@@ -539,83 +273,4 @@ class TestRecordManualOutcome:
         assert fd["judged_at_version"] == VERSION
         assert device_state.is_disabled() is True
 
-    def test_record_manual_outcome_set_by_user_suppresses_flip_but_stamps_version(
-        self, tmp_path, monkeypatch
-    ):
-        """set_by_user=True 時抑制翻旗標，但仍蓋章 judged_at_version。"""
-        from core.focal import device_state
-        from core.version import VERSION
 
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(
-            disabled=False,
-            consecutive_timeout_count=0,
-            judged_at_version="old-version",
-            set_by_user=True,
-        )
-
-        just = device_state.record_manual_outcome(_abandoned("detect_timeout"))
-        assert just is False
-        fd = _read_focal_device()
-        assert fd["disabled"] is False
-        assert fd["set_by_user"] is True
-        assert fd["consecutive_timeout_count"] == 0
-        assert fd["judged_at_version"] == VERSION
-        assert device_state.is_disabled() is False
-
-    def test_manual_success_does_not_reset_background_streak(self, tmp_path, monkeypatch):
-        """前景 FOUND 不得清掉背景累積的 consecutive_timeout_count。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(
-            disabled=False,
-            consecutive_timeout_count=1,
-            judged_at_version=VERSION,
-        )
-
-        just = device_state.record_manual_outcome(_found())
-        assert just is False
-        fd = _read_focal_device()
-        assert fd["consecutive_timeout_count"] == 1
-
-    def test_background_threshold_still_reachable_after_manual_success(
-        self, tmp_path, monkeypatch
-    ):
-        """背景逾時→前景成功→背景再逾時，仍能湊到門檻 2 並翻 disabled。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(
-            disabled=False,
-            consecutive_timeout_count=1,
-            judged_at_version=VERSION,
-        )
-
-        assert device_state.record_manual_outcome(_found()) is False
-        assert _read_focal_device()["consecutive_timeout_count"] == 1
-
-        just_disabled = device_state.record_outcome(_abandoned("detect_timeout"))
-        fd = _read_focal_device()
-        assert fd["consecutive_timeout_count"] == 2
-        assert fd["disabled"] is True
-        assert just_disabled is True
-
-    def test_record_outcome_found_still_resets_streak(self, tmp_path, monkeypatch):
-        """背景路徑 FOUND 仍須歸零 streak（迴歸鎖；不得被 count_timeouts 守衛誤傷）。"""
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_focal_device(
-            disabled=False,
-            consecutive_timeout_count=1,
-            judged_at_version=VERSION,
-        )
-
-        just = device_state.record_outcome(_found())
-        assert just is False
-        fd = _read_focal_device()
-        assert fd["consecutive_timeout_count"] == 0

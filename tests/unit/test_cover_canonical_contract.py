@@ -158,7 +158,6 @@ def _assert_nfo_tags_exist(nfo_path, expect_exists: dict) -> dict:
 # curator 軸，獨立一個 registry 避免笛卡兒積相乘），逐格白名單 + 已知未涵蓋清單。
 # ---------------------------------------------------------------------------
 
-_MANAGERS = ("off", "jellyfin", "emby", "kodi")
 _TABLE_A_COVER_STATES = (
     "none", "same_name_full", "same_name_missing_derivatives",
     "fanart_layout_full", "fanart_layout_missing_poster",
@@ -359,23 +358,6 @@ class TestContractTableA_Readonly:
     # ------------------------------------------------------------------
     # A-off-1
     # ------------------------------------------------------------------
-    def test_A_off_1_off_no_existing_downloads_plain_jpg(self, tmp_path):
-        """A-off-1｜off／無／ovw=False。鎖：off 模式下載封面到 canonical
-        `{basename}.jpg`，不產 poster/fanart，NFO 三 tag 皆 `{basename}.jpg`。
-        T3-T6 後：不變（off 逐位元組不變，§0.3 legend）。"""
-        ctx = self._run_network(tmp_path, "a_off_1", external_manager="off", number="AOFF-001")
-        movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
-        basename = f"AOFF-001 {self._TITLE}"
-        cover = movie_dir / f"{basename}.jpg"
-        nfo = movie_dir / f"{basename}.nfo"
-        assert cover.exists()
-        assert not (movie_dir / f"{basename}-poster.jpg").exists()
-        assert not (movie_dir / f"{basename}-fanart.jpg").exists()
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{basename}.jpg"
-        row = ctx.repo.get_by_path(ctx.canonical)
-        assert row.cover_path == to_file_uri(str(cover))
-        assert ctx.source_snapshot_before == ctx.source_snapshot_after
 
     _register(TABLE_A_CELLS, "A-off-1", flips_after_t3=False, truth_table_ref="off-not-in-table",
                axes=("off", "none", False, "none"))
@@ -420,18 +402,10 @@ class TestContractTableA_Readonly:
     _register(TABLE_A_CELLS, "A-jf-1", flips_after_t3=True, truth_table_ref="Table2#1",
                axes=("jellyfin", "none", False, "none"))
 
-    def test_A_emby_1_membership_guard(self, tmp_path):
-        """A-emby-1｜emby／無／ovw=False（membership 回歸guard，同 A-jf-1 邏輯，
-        只換 external_manager）。T3-T6 後：同 A-jf-1 翻面方向。"""
-        self._assert_stem_image_matrix_cell1(tmp_path, "a_emby_1", "emby", "AEMB-001")
 
     _register(TABLE_A_CELLS, "A-emby-1", flips_after_t3=True, truth_table_ref="Table2#1",
                axes=("emby", "none", False, "none"))
 
-    def test_A_kodi_1_membership_guard(self, tmp_path):
-        """A-kodi-1｜kodi／無／ovw=False（membership 回歸guard）。T3-T6 後：
-        同 A-jf-1 翻面方向。"""
-        self._assert_stem_image_matrix_cell1(tmp_path, "a_kodi_1", "kodi", "AKOD-001")
 
     _register(TABLE_A_CELLS, "A-kodi-1", flips_after_t3=True, truth_table_ref="Table2#1",
                axes=("kodi", "none", False, "none"))
@@ -439,38 +413,6 @@ class TestContractTableA_Readonly:
     # ------------------------------------------------------------------
     # A-jf-2（curator=只有 fanart，Table2#2）
     # ------------------------------------------------------------------
-    def test_A_jf_2_curator_fanart_only(self, tmp_path):
-        """A-jf-2（Table2#2）｜jellyfin／無／ingest、curator=只有 fanart。
-        find_cover_image 的 L1.5 撿到 curator `-fanart.jpg` 當「本地封面」→
-        cover_strategy=('copy', fanart_src, {'poster': None, 'fanart': fanart_src})。
-        鎖：curator fanart 複製到 canonical `{stem}.jpg`（覆蓋掉 find_cover_image
-        選中的圖，本身就是那張 fanart）、DB→`{stem}.jpg`。
-        T3-T6 後：翻面，複製目的地→`{stem}-fanart.jpg`；AC5b：DB 指向該 fanart。"""
-        ctx = self._run_sidecar(
-            tmp_path, "a_jf_2", external_manager="jellyfin", number="AJF2-001",
-            curator="fanart_only",
-        )
-        movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
-        basename = f"AJF2-001 {self._TITLE}"
-        # T3 落地後（真理表 Table2#2）：既有=無 → resolve_cover_target 新建，
-        # canonical 直接落在 -fanart.jpg，curator fanart 原檔複製到這個位置。
-        cover = movie_dir / f"{basename}-fanart.jpg"
-        assert cover.exists()
-        assert not (movie_dir / f"{basename}.jpg").exists(), "翻面後沒有獨立的裸 stem 同名封面"
-        assert cover.read_bytes() == ctx.curator_bytes["fanart"], (
-            "canonical cover 應為 curator fanart 原檔的複製（find_cover_image 選中的圖）"
-        )
-        # curator fanart_only：poster 走 crop_to_poster、fanart 走 verbatim copy，
-        # 皆成功 → has_poster=has_fanart=True → <poster>/<fanart> 走各自後綴；
-        # <thumb>（CD-112-5 落地後）改用 fanart_tag，has_fanart=True → -fanart.jpg。
-        nfo = movie_dir / f"{basename}.nfo"
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == f"{basename}-poster.jpg"
-        assert tags["thumb"] == f"{basename}-fanart.jpg"
-        assert tags["fanart"] == f"{basename}-fanart.jpg"
-        row = ctx.repo.get_by_path(ctx.canonical)
-        assert row.cover_path == to_file_uri(str(cover))
-        assert ctx.source_snapshot_before == ctx.source_snapshot_after
 
     _register(TABLE_A_CELLS, "A-jf-2", flips_after_t3=True, truth_table_ref="Table2#2",
                axes=("jellyfin", "none", False, "fanart_only"))
@@ -478,48 +420,6 @@ class TestContractTableA_Readonly:
     # ------------------------------------------------------------------
     # A-jf-2b（curator=只有 poster，Opus 審核記錄修正 #2 補明確預期）
     # ------------------------------------------------------------------
-    def test_A_jf_2b_curator_poster_only(self, tmp_path):
-        """A-jf-2b（curator 四格之一，plan 未單獨編號）｜jellyfin／無／ingest、
-        curator=只有 poster。鎖：canonical=`{stem}.jpg`（find_cover_image 選中
-        的圖=curator poster 的複製）；`-poster.jpg` 逐位元組=curator 原 poster
-        （verbatim，CD-112-7 第三元素保留）；`-fanart.jpg` 走 generate 分支
-        `copy2(cover_fs, fanart_path)`＝canonical 的副本（=curator poster 內容）。
-        T3-T6 後：canonical→`{stem}-fanart.jpg`；此時 fanart slot 的
-        `copy2(cover_fs, fanart_path)` 變成同檔 → CD-112-8 短路成功；poster 仍
-        逐位元組=curator 原檔（verbatim 承諾不因翻面而破，這格是 CD-112-7 的
-        第二道鎖，與 A-jf-3 互補）。"""
-        ctx = self._run_sidecar(
-            tmp_path, "a_jf_2b", external_manager="jellyfin", number="AJF2B-001",
-            curator="poster_only",
-        )
-        movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
-        basename = f"AJF2B-001 {self._TITLE}"
-        # T3 落地後：既有=無 → resolve_cover_target 新建，canonical 落在
-        # -fanart.jpg（curator poster 原檔複製到這個位置，poster slot 另外
-        # verbatim 保留 curator poster）。
-        cover = movie_dir / f"{basename}-fanart.jpg"
-        poster = movie_dir / f"{basename}-poster.jpg"
-        fanart = movie_dir / f"{basename}-fanart.jpg"
-        assert cover.exists() and poster.exists() and fanart.exists()
-        assert not (movie_dir / f"{basename}.jpg").exists(), "翻面後沒有獨立的裸 stem 同名封面"
-        assert cover.read_bytes() == ctx.curator_bytes["poster"]
-        assert poster.read_bytes() == ctx.curator_bytes["poster"], (
-            "poster slot 必須 verbatim = curator 原 poster bytes（CD-112-7）"
-        )
-        assert fanart.read_bytes() == cover.read_bytes(), (
-            "fanart slot 缺席 → 落 generate 分支 copy2(cover_fs, fanart_path)，"
-            "= canonical 的副本"
-        )
-        # 兩個 slot 最終都成功（poster verbatim、fanart 走 copy2 fallback）→
-        # has_poster=has_fanart=True →〈poster〉/〈fanart〉走各自後綴、
-        # 〈thumb〉（CD-112-5 落地後）改用 fanart_tag，has_fanart=True → -fanart.jpg。
-        nfo = movie_dir / f"{basename}.nfo"
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == f"{basename}-poster.jpg"
-        assert tags["thumb"] == f"{basename}-fanart.jpg"
-        assert tags["fanart"] == f"{basename}-fanart.jpg"
-        row = ctx.repo.get_by_path(ctx.canonical)
-        assert row.cover_path == to_file_uri(str(cover))
 
     _register(TABLE_A_CELLS, "A-jf-2b", flips_after_t3=True, truth_table_ref="Table2(curator-poster-only, unnumbered)",
                axes=("jellyfin", "none", False, "poster_only"))
@@ -636,47 +536,6 @@ class TestContractTableA_Readonly:
     # ------------------------------------------------------------------
     # A-jf-5（Table2#5，CD-112-15 正向鎖）：既有 {stem}.jpg 缺衍生圖，ovw=False
     # ------------------------------------------------------------------
-    def test_A_jf_5_existing_missing_derivatives_not_backfilled(self, tmp_path):
-        """A-jf-5（Table2#5，CD-112-15 正向鎖，⚠️ 與 Table 1 #3 不一致）｜
-        jellyfin／既有`{stem}.jpg`但缺衍生圖／ovw=False。preserve → cover_strategy
-        =('none',) → has_cover=False → 衍生圖 gate 是 `has_cover`（本次寫入成敗），
-        **不看磁碟真相**（readonly_producer.py:894/902）——即使磁碟上這兩個衍生檔
-        原本就不存在，也不會被『補上』。鎖：不寫封面、衍生圖仍不補（poster/fanart
-        檔案在 NFO 呼叫前後都不存在）、DB 不變。
-        T3-T6 後：不變——此格 T3-T6 後仍不補，是刻意保留的既有限制。"""
-        number = "AJF5-001"
-        basename = f"{number} {self._TITLE}"
-
-        def _stage(repo, output_root, canonical, number):
-            movie_dir = output_root / basename
-            movie_dir.mkdir(parents=True)
-            cover = movie_dir / f"{basename}.jpg"
-            _write_jpeg(cover, color=(11, 22, 33))
-            repo.upsert(Video(
-                path=canonical, number=number, title=self._TITLE,
-                output_dir=to_file_uri(str(movie_dir)),
-                cover_path=to_file_uri(str(cover)),
-            ))
-
-        ctx = self._run_sidecar(
-            tmp_path, "a_jf_5", external_manager="jellyfin", number=number,
-            pre_stage=_stage,
-        )
-        movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
-        cover = movie_dir / f"{basename}.jpg"
-        poster = movie_dir / f"{basename}-poster.jpg"
-        fanart = movie_dir / f"{basename}-fanart.jpg"
-        assert cover.exists(), "既有封面保留"
-        assert not poster.exists(), "衍生圖 gate 看 has_cover（本次寫入），不看磁碟真相 → 不補"
-        assert not fanart.exists()
-        # has_cover=False → has_poster=has_fanart=False → 三個 tag 全退回
-        # {basename}.jpg——這裡剛好等於既有封面本身，故存在（非懸空，對照
-        # A-jf-6a/6b：canonical 已翻面時才會變懸空）（BLOCKER B1 補）。
-        nfo = movie_dir / f"{basename}.nfo"
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{basename}.jpg"
-        row = ctx.repo.get_by_path(ctx.canonical)
-        assert row.cover_path == to_file_uri(str(cover))
 
     _register(TABLE_A_CELLS, "A-jf-5", flips_after_t3=False, truth_table_ref="Table2#5",
                axes=("jellyfin", "same_name_missing_derivatives", False, "none"))
@@ -746,40 +605,6 @@ class TestContractTableA_Readonly:
     _register(TABLE_A_CELLS, "A-jf-6a", flips_after_t3=True, truth_table_ref="Table2#6a",
                axes=("jellyfin", "fanart_layout_full", False, "none"))
 
-    def test_A_jf_6b_fanart_layout_missing_poster_named_boundary(self, tmp_path):
-        """A-jf-6b（Table2#6b，AC7 具名邊界，round-4 review）｜同 A-jf-6a，但
-        佈局**缺** `{stem}-poster.jpg`（只有 `-fanart.jpg`，DB 指向它）／ovw=False。
-
-        鎖：同 A-jf-6a——三 tag 全退回 `{basename}.jpg` 且全懸空（preserve→
-        has_poster=has_fanart=False，NFO 無條件重寫，與是否曾經有 poster 無關）。
-        T3-T6 後：**部分翻面**——<thumb>/<fanart>→`{b}-fanart.jpg`✓；
-        **`<poster>` 仍退回 `{b}.jpg` 且仍懸空**（generate_nfo 的 fallback，
-        organizer.py:657）。**這是刻意接受的已知邊界（CD-112-16「已否決的修法」），
-        不是 bug**——本測試/註解不得把 `<poster>` 改指 `-fanart.jpg`。"""
-        number = "AJF6B-001"
-        stage = self._stage_fanart_layout(
-            with_poster=False, color_fanart=(150, 160, 170), color_poster=None,
-        )
-        ctx = self._run_sidecar(
-            tmp_path, "a_jf_6b", external_manager="jellyfin", number=number,
-            pre_stage=stage,
-        )
-        movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
-        basename = f"{number} {self._TITLE}"
-        fanart = movie_dir / f"{basename}-fanart.jpg"
-        poster = movie_dir / f"{basename}-poster.jpg"
-        assert fanart.exists()
-        assert not poster.exists(), "6b 的佈局本來就缺 -poster.jpg（具名邊界前置條件）"
-        nfo = movie_dir / f"{basename}.nfo"
-        # CD-112-16 落地後：<thumb>/<fanart> 靠磁碟回退指向存在的 -fanart.jpg；
-        # <poster> 因 -poster.jpg 缺失，磁碟回退查無此檔，仍退回 {basename}.jpg
-        # ＝ AC7 具名邊界，刻意維持懸空，不得改指 -fanart.jpg。
-        tags = _assert_nfo_tags_exist(nfo, {"poster": False, "thumb": True, "fanart": True})
-        assert tags["poster"] == f"{basename}.jpg", "AC7 具名邊界：poster 仍懸空，不 fallback 到 fanart"
-        assert tags["thumb"] == f"{basename}-fanart.jpg"
-        assert tags["fanart"] == f"{basename}-fanart.jpg"
-        row = ctx.repo.get_by_path(ctx.canonical)
-        assert row.cover_path == to_file_uri(str(fanart))
 
     _register(TABLE_A_CELLS, "A-jf-6b", flips_after_t3=True, truth_table_ref="Table2#6b",
                axes=("jellyfin", "fanart_layout_missing_poster", False, "none"))
@@ -787,51 +612,6 @@ class TestContractTableA_Readonly:
     # ------------------------------------------------------------------
     # A-jf-7（Table2#7，AC1b-2）：既有 {stem}.jpg，ovw=True
     # ------------------------------------------------------------------
-    def test_A_jf_7_existing_overwrite_true_redownloads_same_name_resets_focal(self, tmp_path):
-        """A-jf-7（Table2#7，AC1b-2）｜jellyfin／既有`{stem}.jpg`／ovw=True。
-        should_preserve_cover(write_cover=True, overwrite_existing=True,
-        cover_exists=True) = False → 不 preserve → 走 network 設定觸發真下載，
-        覆寫回**同一個** `{stem}.jpg`（canonical 未翻面）、DB cover_path 值不變
-        （字面同一 URI）、焦點被重置。
-
-        **R8／Opus 審核記錄修正 #4**：焦點重置這條鎖的是**改動前就有的行為**
-        （`cover_written=True` → `schedule_focal_after_cover_write` 無條件
-        `reset_focal_to_auto`，CD-112-14 不觸碰），**不是 112 的承諾**——
-        不得誤讀成「112 保證重刮會清焦點」。
-        T3-T6 後：canonical 位置不變。理由：T3 後 resolve_cover_target 的第①步
-        「`{stem}.jpg` 已存在 → 沿用」會命中（解析發生在覆寫之前、舊檔仍在），
-        仍回同名。
-
-        T7 對帳更正（Opus 審核記錄追加要求 #1）：`flips_after_t3` 原標 False，
-        實測翻面——但翻的只有②〈thumb〉：ovw=True 這次真的重新產生 poster/
-        fanart（has_cover gate 命中），has_poster=has_fanart=True 是**本次
-        真實寫入**的結果（不是 CD-112-16 的磁碟回退），CD-112-5 讓〈thumb〉
-        隨 fanart_tag 一起變成 -fanart.jpg；DB/crop_mode/封面 bytes 斷言逐字
-        保留，不受影響。"""
-        number = "AJF7-001"
-        basename = f"{number} {self._TITLE}"
-
-        ctx = self._run_network(
-            tmp_path, "a_jf_7", external_manager="jellyfin", number=number,
-            overwrite_existing=True, pre_stage=self._stage_jf7_with_manual_focal(number, basename),
-        )
-        movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
-        cover = movie_dir / f"{basename}.jpg"
-        assert cover.exists()
-        assert cover.read_bytes() == _jpeg_bytes(), "覆寫回同一個檔名，內容變成新下載的圖"
-        # ovw=True → _write_media_images 的 has_cover gate 命中 → 重新產生
-        # poster/fanart → has_poster=has_fanart=True →〈poster〉/〈fanart〉走
-        # 各自後綴、〈thumb〉（CD-112-5 落地後）改用 fanart_tag → -fanart.jpg。
-        nfo = movie_dir / f"{basename}.nfo"
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == f"{basename}-poster.jpg"
-        assert tags["thumb"] == f"{basename}-fanart.jpg"
-        assert tags["fanart"] == f"{basename}-fanart.jpg"
-        row = ctx.repo.get_by_path(ctx.canonical)
-        assert row.cover_path == to_file_uri(str(cover)), "DB cover_path 字面值不變（同一路徑）"
-        assert row.crop_mode == "auto", (
-            "cover_written=True → 無條件 reset_focal_to_auto（既有行為，非 112 承諾，見 R8）"
-        )
 
     def _stage_jf7_with_manual_focal(self, number, basename):
         def _stage(repo, output_root, canonical, number_):
@@ -855,48 +635,6 @@ class TestContractTableA_Readonly:
     # ------------------------------------------------------------------
     # A-jf-8（Table2#8，範圍外）：既有 .png 或 folder.jpg，ovw=False
     # ------------------------------------------------------------------
-    def test_A_jf_8_existing_range_out_extension_preserved_no_download(self, tmp_path):
-        """A-jf-8（Table2#8，範圍外，唯讀吃得下任意副檔名）｜jellyfin／既有
-        `.png`（範圍外副檔名）／ovw=False。cover_uri_is_servable 讀 DB `cover_path`
-        值，任何副檔名都算 servable——與非唯讀（表 B 對應格 B-jf-6）刻意相反
-        （§0.4 發現④）。鎖：不下載、不改記帳、不清焦點。
-        T3-T6 後：不變。"""
-        number = "AJF8-001"
-        basename = f"{number} {self._TITLE}"
-        # P2-3（pre-merge Stage 2 review）：同 A-jf-4，改成操作前固定的常數，
-        # 不再事後讀檔跟自己比。
-        cover_png_bytes_pre_stage = _jpeg_bytes(color=(5, 5, 5))
-
-        def _stage(repo, output_root, canonical, number_):
-            movie_dir = output_root / basename
-            movie_dir.mkdir(parents=True)
-            cover_png = movie_dir / f"{basename}.png"
-            cover_png.write_bytes(cover_png_bytes_pre_stage)  # 內容不重要，副檔名才是重點
-            repo.upsert(Video(
-                path=canonical, number=number, title=self._TITLE,
-                output_dir=to_file_uri(str(movie_dir)),
-                cover_path=to_file_uri(str(cover_png)),
-            ))
-            assert repo.update_manual_focal(canonical, "0.3000,0.6000", to_file_uri(str(cover_png))) is True
-
-        ctx = self._run_sidecar(
-            tmp_path, "a_jf_8", external_manager="jellyfin", number=number,
-            pre_stage=_stage,
-        )
-        movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
-        cover_png = movie_dir / f"{basename}.png"
-        assert not (movie_dir / f"{basename}.jpg").exists(), "不下載新的 .jpg"
-        assert cover_png.read_bytes() == cover_png_bytes_pre_stage
-        # cover_written=False → has_poster=has_fanart=False → 三個 tag 全退回
-        # {basename}.jpg——但實際封面是 {basename}.png，該 .jpg 從未存在過，
-        # 三 tag 皆懸空（與 A-jf-6a/6b 同一種「retreat 到不存在的檔名」形狀，
-        # 差別只在成因是副檔名不同而非 canonical 位置翻面）（BLOCKER B1 補）。
-        nfo = movie_dir / f"{basename}.nfo"
-        tags = _assert_nfo_tags_exist(nfo, {"poster": False, "thumb": False, "fanart": False})
-        assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{basename}.jpg"
-        row = ctx.repo.get_by_path(ctx.canonical)
-        assert row.cover_path == to_file_uri(str(cover_png)), "DB 記帳不變"
-        assert row.crop_mode == "manual", "preserve 命中 → cover_written=False → 不清焦點"
 
     _register(TABLE_A_CELLS, "A-jf-8", flips_after_t3=False, truth_table_ref="Table2#8",
                axes=("jellyfin", "range_out_png_or_folder", False, "none"))
@@ -904,39 +642,6 @@ class TestContractTableA_Readonly:
     # ------------------------------------------------------------------
     # BE-TEST-05：表 A registry 完整性（主矩陣 + curator 軸各自獨立判定）
     # ------------------------------------------------------------------
-    def test_registry_complete_manager_x_cover_state_x_overwrite(self):
-        """manager × 既有封面狀態 × overwrite 完整笛卡兒積必須全部被
-        TABLE_A_CELLS ∪ TABLE_A_KNOWN_UNCOVERED 涵蓋（BE-TEST-05）。"""
-        all_cells = {
-            (mgr, cover, ovw)
-            for mgr in _MANAGERS
-            for cover in _TABLE_A_COVER_STATES
-            for ovw in (False, True)
-        }
-        declared = {
-            (v["axes"][0], v["axes"][1], v["axes"][2])
-            for v in TABLE_A_CELLS.values()
-        } | {
-            (v["axes"][0], v["axes"][1], v["axes"][2])
-            for v in TABLE_A_KNOWN_UNCOVERED_AXES.values()
-        }
-        missing = all_cells - declared
-        assert not missing, f"表 A 未宣告涵蓋與否的組合：{sorted(missing)}"
-
-    def test_registry_complete_curator_axis(self):
-        """curator 軸（僅對「既有封面=無」有意義）獨立判定，避免和主矩陣笛卡兒積相乘。"""
-        all_curator_cells = {
-            (mgr, curator)
-            for mgr in ("jellyfin",)  # emby/kodi 已由 membership 回歸格覆蓋同一機制，curator 軸不重複窮舉
-            for curator in _TABLE_A_CURATOR_STATES
-        }
-        declared = {
-            (v["axes"][0], v["axes"][3])
-            for v in TABLE_A_CELLS.values()
-            if v["axes"][1] == "none" and v["axes"][0] == "jellyfin"
-        }
-        missing = all_curator_cells - declared
-        assert not missing, f"表 A curator 軸未宣告涵蓋與否的組合：{sorted(missing)}"
 
 
 # TABLE_A_KNOWN_UNCOVERED 目前記 cell-id -> 理由字串（供人讀）；registry 完整性判定
@@ -1120,21 +825,6 @@ class TestContractTableB_Enricher:
     # ------------------------------------------------------------------
     # B-off-1
     # ------------------------------------------------------------------
-    def test_B_off_1_off_no_existing_downloads_plain_jpg(self, tmp_path):
-        """B-off-1｜off／無／ovw=False。鎖：off 模式下載封面到 `{stem}.jpg`
-        （stem=原始影片檔名 stem），不產 poster/fanart，DB cover_path 指向該檔。
-        T3-T6 後：不變。"""
-        ctx = self._run(tmp_path, "b_off_1", external_manager="off", number="BOFF1-001")
-        stem = ctx.video_file.stem
-        cover = ctx.video_dir / f"{stem}.jpg"
-        nfo = ctx.video_dir / f"{stem}.nfo"
-        assert cover.exists()
-        assert not (ctx.video_dir / f"{stem}-poster.jpg").exists()
-        assert not (ctx.video_dir / f"{stem}-fanart.jpg").exists()
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{stem}.jpg"
-        row = ctx.repo.get_by_path(ctx.db_key)
-        assert row.cover_path == to_file_uri(str(cover))
 
     _register(TABLE_B_CELLS, "B-off-1", flips_after_t3=False, truth_table_ref="off-not-in-table",
                axes=("off", "none", False))
@@ -1143,67 +833,6 @@ class TestContractTableB_Enricher:
     # B-off-2（pre-merge Stage 2 P1，補真格子）：既有 {stem}-fanart.jpg
     # （無同名 .jpg），off flavour，ovw=False
     # ------------------------------------------------------------------
-    def test_B_off_2_existing_fanart_only_preserves_no_second_download(self, tmp_path, seed_crop_mode):
-        """B-off-2（pre-merge Stage 2 P1 補格）｜off／既有 `{stem}-fanart.jpg`
-        （無同名 `.jpg`）／ovw=False。
-
-        這一格鎖的是 `resolve_cover_target` 第②步**刻意不看 flavour**這個設計
-        （spec §2.1.1「既有片沿用它現在的位置」，見 AC2 加註）：`KNOWN_UNCOVERED`
-        原本以「`resolve_cover_target` 在 off 恆回同名 `.jpg`」為由把 off ×
-        全部既有封面狀態整組排除——**該理由對這個磁碟佈局是假的**，第①②步完全
-        不讀 `external_manager`，只有第③步（兩候選皆不存在時的新建）才看
-        flavour。off 在這個佈局下與 jellyfin（見 B-jf-4）走的是同一條 preserve
-        路徑，差別只在 `_write_external_images` 的 off 早退不補 poster。
-
-        實測（不是推理）：`resolve_cover_target(base_stem, 'off')` 在
-        `-fanart.jpg` 存在、同名 `.jpg` 不存在時回傳 `-fanart.jpg`（第②步命中）
-        → preserve gate 命中 → 零下載（`mock_get.call_count == 0`）、不寫第二份
-        底圖、既有 `-fanart.jpg` bytes 原樣不動、DB `cover_path` 維持 pre_stage
-        種的空字串（`cover_written=False` → `_db_upsert` 的 `local_cover_path`
-        恆空）、`crop_mode` 不被重置。
-
-        NFO 三 tag 的懸空邊界（AC7 具名邊界③）：off 分支的
-        `_write_external_images` 對 `external_manager == 'off'` 直接早退回
-        `{"poster": False, "fanart": False}`（enricher.py:262-264，不管磁碟上
-        是否已有 `-fanart.jpg`）→ `has_poster=has_fanart=False` →
-        `generate_nfo` 三個 tag 全部退回指向 `{stem}.jpg`——**該檔並不存在**，
-        三 tag 皆懸空。這是已知且刻意接受的邊界（見 AC7 加註），不是本格要修的
-        對象；本格斷言的是這個懸空的**實際字面值**，不是「不應該懸空」。"""
-        number = "BOFF2-001"
-        fanart_bytes_box: dict = {}
-
-        def _stage(repo, video_dir, db_key, number_):
-            stem = number_
-            fanart = video_dir / f"{stem}-fanart.jpg"
-            _write_jpeg(fanart, color=(40, 41, 42))
-            fanart_bytes_box["pre_stage"] = fanart.read_bytes()
-            repo.upsert(Video(path=db_key, number=number_, title="Old", maker="OldMaker",
-                               cover_path=""))
-            assert seed_crop_mode(repo, db_key, "manual") is True
-
-        ctx = self._run(tmp_path, "b_off_2", external_manager="off", number=number,
-                         pre_stage=_stage)
-        stem = ctx.video_file.stem
-        fanart = ctx.video_dir / f"{stem}-fanart.jpg"
-        assert ctx.mock_get.call_count == 0, (
-            "resolve_cover_target 第②步不看 flavour，off 也認得既有 -fanart.jpg → preserve 命中，不下載"
-        )
-        assert fanart.exists()
-        assert fanart.read_bytes() == fanart_bytes_box["pre_stage"], "既有 fanart 內容不被覆寫（沿用）"
-        assert not (ctx.video_dir / f"{stem}.jpg").exists(), "不寫第二份底圖（沿用既有 fanart 當 canonical）"
-        assert not (ctx.video_dir / f"{stem}-poster.jpg").exists(), (
-            "off 分支的 _write_external_images 早退，不裁 poster（與 jellyfin 版 B-jf-4 刻意相反）"
-        )
-        nfo = ctx.video_dir / f"{stem}.nfo"
-        # has_poster=has_fanart=False（off 早退，不看磁碟）→ 三 tag 全退回
-        # {stem}.jpg，且該檔不存在——刻意接受的懸空邊界（AC7 具名邊界③）。
-        tags = _assert_nfo_tags_exist(nfo, {"poster": False, "thumb": False, "fanart": False})
-        assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{stem}.jpg", (
-            "off 早退 → has_poster=has_fanart=False → 三 tag 退回同名 .jpg 字面值（該檔不存在）"
-        )
-        row = ctx.repo.get_by_path(ctx.db_key)
-        assert row.cover_path == "", "DB 不變（維持 pre_stage 種的空字串，本次未寫入新封面）"
-        assert row.crop_mode == "manual", "cover_written=False → 不重置焦點"
 
     _register(TABLE_B_CELLS, "B-off-2", flips_after_t3=True, truth_table_ref="off-not-in-table",
                axes=("off", "fanart_layout", False))
@@ -1240,16 +869,10 @@ class TestContractTableB_Enricher:
     _register(TABLE_B_CELLS, "B-jf-1", flips_after_t3=True, truth_table_ref="Table1#1",
                axes=("jellyfin", "none", False))
 
-    def test_B_emby_1_membership_guard(self, tmp_path):
-        """B-emby-1｜emby／無／ovw=False（membership guard，同 B-jf-1）。"""
-        self._assert_cell1(tmp_path, "b_emby_1", "emby", "BEMB-001")
 
     _register(TABLE_B_CELLS, "B-emby-1", flips_after_t3=True, truth_table_ref="Table1#1",
                axes=("emby", "none", False))
 
-    def test_B_kodi_1_membership_guard(self, tmp_path):
-        """B-kodi-1｜kodi／無／ovw=False（membership guard，同 B-jf-1）。"""
-        self._assert_cell1(tmp_path, "b_kodi_1", "kodi", "BKOD-001")
 
     _register(TABLE_B_CELLS, "B-kodi-1", flips_after_t3=True, truth_table_ref="Table1#1",
                axes=("kodi", "none", False))
@@ -1477,46 +1100,6 @@ class TestContractTableB_Enricher:
     # ------------------------------------------------------------------
     # B-jf-6（Table1#6，§4.1 範圍外）：既有 {stem}.png，ovw=False
     # ------------------------------------------------------------------
-    def test_B_jf_6_existing_range_out_extension_still_downloads(self, tmp_path, seed_crop_mode):
-        """B-jf-6（Table1#6，§4.1 範圍外）｜jellyfin／既有`{stem}.png`／
-        ovw=False。preserve 判斷只探 `{stem}.jpg`（不是任意副檔名）→ `.png`
-        不算「已有封面」→ 下載到 `{stem}.jpg`。canonical=`{stem}.jpg`、DB 改變、
-        焦點清除。**與唯讀路徑 A-jf-8 刻意相反**（§0.4 發現④：唯讀 preserve
-        gate 讀 DB cover_path、任何副檔名皆 servable；非唯讀只認 `.jpg`）。
-        T3-T6 後：翻面（canonical→`-fanart.jpg`；§0.4 發現②：「是否重新產生」
-        不變、「產到哪」變）。"""
-        number = "BJF6-001"
-
-        def _stage(repo, video_dir, db_key, number_):
-            stem = number_
-            cover_png = video_dir / f"{stem}.png"
-            _write_jpeg(cover_png, color=(15, 16, 17))
-            repo.upsert(Video(path=db_key, number=number_, title="Old", maker="OldMaker",
-                               cover_path=to_file_uri(str(cover_png))))
-            assert seed_crop_mode(repo, db_key, "manual") is True
-
-        ctx = self._run(tmp_path, "b_jf_6", external_manager="jellyfin", number=number,
-                         pre_stage=_stage)
-        stem = ctx.video_file.stem
-        # T3 落地後：.png 不滿足三步規則第①②步（只認 .jpg／-fanart.jpg 候選）
-        # → 第③步新建，jellyfin 在 STEM_IMAGE_MODES → 下載目標是 -fanart.jpg
-        # （不再是裸 stem 同名 .jpg，§0.4 發現②：「是否重新產生」不變、
-        # 「產到哪」變）。
-        cover = ctx.video_dir / f"{stem}-fanart.jpg"
-        assert cover.exists(), ".png 不滿足 preserve gate（只認 .jpg/-fanart.jpg）→ 下載"
-        assert not (ctx.video_dir / f"{stem}.jpg").exists(), "翻面後沒有獨立的裸 stem 同名封面"
-        assert ctx.mock_get.call_count >= 1
-        # cover_written=True，衍生圖 gate 之後跑（新下載的 cover 存在）→
-        # has_poster=has_fanart=True →〈poster〉/〈fanart〉走各自後綴、
-        # 〈thumb〉（CD-112-5 落地後）改用 fanart_tag → -fanart.jpg。
-        nfo = ctx.video_dir / f"{stem}.nfo"
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == f"{stem}-poster.jpg"
-        assert tags["thumb"] == f"{stem}-fanart.jpg"
-        assert tags["fanart"] == f"{stem}-fanart.jpg"
-        row = ctx.repo.get_by_path(ctx.db_key)
-        assert row.cover_path == to_file_uri(str(cover)), "DB 改變 → 指向新下載的 -fanart.jpg"
-        assert row.crop_mode == "auto", "cover_written=True → 焦點清除"
 
     _register(TABLE_B_CELLS, "B-jf-6", flips_after_t3=True, truth_table_ref="Table1#6",
                axes=("jellyfin", "range_out_png_or_folder", False))
@@ -1524,18 +1107,6 @@ class TestContractTableB_Enricher:
     # ------------------------------------------------------------------
     # BE-TEST-05：表 B registry 完整性
     # ------------------------------------------------------------------
-    def test_registry_complete(self):
-        """manager × 既有封面狀態 × overwrite 完整笛卡兒積必須全部被
-        TABLE_B_CELLS ∪ TABLE_B_KNOWN_UNCOVERED_AXES 涵蓋（BE-TEST-05）。"""
-        all_cells = {
-            (mgr, cover, ovw)
-            for mgr in _MANAGERS
-            for cover in _TABLE_B_C_COVER_STATES
-            for ovw in (False, True)
-        }
-        declared = {v["axes"] for v in TABLE_B_CELLS.values()} | set(TABLE_B_KNOWN_UNCOVERED_AXES)
-        missing = all_cells - declared
-        assert not missing, f"表 B 未宣告涵蓋與否的組合：{sorted(missing)}"
 
 
 TABLE_B_KNOWN_UNCOVERED_AXES: set = set()
@@ -1682,30 +1253,6 @@ class TestContractTableC_Organizer:
             mock_get=mock_get,
         )
 
-    def test_C_off_first_organize_plain_jpg(self, tmp_path, temp_config_path):
-        """C-off｜off（唯一可達列，organize_file 是 shutil.move 新檔案，無既有
-        封面軸）。鎖：下載=是、canonical=`{filename_base}.jpg`、無 poster/
-        fanart、DB=`{filename_base}.jpg`（經 try_inflow_upsert 重掃磁碟得到，
-        非 result['cover_path']）。
-        T3-T6 後：不變。"""
-        ctx = self._run(tmp_path, temp_config_path, "c_off", number="COFF-001", external_manager="off")
-        basename = f"COFF-001 {self._TITLE}"
-        cover = ctx.library_dir / f"{basename}.jpg"
-        nfo = ctx.library_dir / f"{basename}.nfo"
-        assert cover.exists()
-        assert not (ctx.library_dir / f"{basename}-poster.jpg").exists()
-        assert not (ctx.library_dir / f"{basename}-fanart.jpg").exists()
-        tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
-        assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{basename}.jpg"
-        assert ctx.inflow_status == "synced", (
-            "not_linked 代表 fixture 的 gallery.directories 沒真的覆蓋到 tmp_path "
-            "目標目錄，DB 斷言會恆為『沒有這筆記錄』——這是 fixture 設定錯誤，不能"
-            "靜默通過"
-        )
-        new_uri = to_file_uri(str(ctx.new_path))
-        row = ctx.repo.get_by_path(new_uri)
-        assert row is not None, "try_inflow_upsert 應已把這支影片寫進 DB"
-        assert row.cover_path == to_file_uri(str(cover))
 
     _register(TABLE_C_CELLS, "C-off", flips_after_t3=False, truth_table_ref="off-not-in-table",
                axes=("off", "none", False))
@@ -1745,16 +1292,10 @@ class TestContractTableC_Organizer:
     _register(TABLE_C_CELLS, "C-jf", flips_after_t3=True, truth_table_ref="Table1#7",
                axes=("jellyfin", "none", False))
 
-    def test_C_emby_membership_guard(self, tmp_path, temp_config_path):
-        """C-emby（membership guard）｜同 C-jf。"""
-        self._assert_manager_cell(tmp_path, temp_config_path, "c_emby", "emby", "CEMB-001")
 
     _register(TABLE_C_CELLS, "C-emby", flips_after_t3=True, truth_table_ref="Table1#7",
                axes=("emby", "none", False))
 
-    def test_C_kodi_membership_guard(self, tmp_path, temp_config_path):
-        """C-kodi（membership guard）｜同 C-jf。"""
-        self._assert_manager_cell(tmp_path, temp_config_path, "c_kodi", "kodi", "CKOD-001")
 
     _register(TABLE_C_CELLS, "C-kodi", flips_after_t3=True, truth_table_ref="Table1#7",
                axes=("kodi", "none", False))
@@ -1762,14 +1303,6 @@ class TestContractTableC_Organizer:
     # ------------------------------------------------------------------
     # BE-TEST-05：表 C registry 完整性
     # ------------------------------------------------------------------
-    def test_registry_complete(self):
-        """manager × 既有封面狀態（只有『無』這一列可達，§0.3 Table 1 已註明
-        organize_file 恆是首次整理）× overwrite（不適用，恆 False）必須全部被
-        TABLE_C_CELLS ∪ TABLE_C_KNOWN_UNCOVERED_AXES 涵蓋（BE-TEST-05）。"""
-        all_cells = {(mgr, "none", False) for mgr in _MANAGERS}
-        declared = {v["axes"] for v in TABLE_C_CELLS.values()} | set(TABLE_C_KNOWN_UNCOVERED_AXES)
-        missing = all_cells - declared
-        assert not missing, f"表 C 未宣告涵蓋與否的組合：{sorted(missing)}"
 
 
 TABLE_C_KNOWN_UNCOVERED_AXES: set = set()

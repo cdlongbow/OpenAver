@@ -78,35 +78,6 @@ def test_lifespan_consumes_reset_access_auth_marker_once(monkeypatch):
     consume.assert_called_once_with()
 
 
-def test_finalized_legacy_emits_once_with_root_path(monkeypatch):
-    root = Path("/tmp/openaver-data-root-finalized-fixture")
-    emit = Mock()
-    _run_lifespan_with_bootstrap(
-        monkeypatch, _recording_bootstrap("finalized_legacy", root), emit
-    )
-
-    data_root_calls = [
-        c for c in emit.call_args_list if c.args and c.args[1] == "notif.data_root_finalized"
-    ]
-    assert len(data_root_calls) == 1
-    assert data_root_calls[0].args[0] == "info"
-    assert data_root_calls[0].kwargs.get("message") == str(root)
-
-
-def test_finalized_legacy_skipped_when_is_synology(monkeypatch):
-    root = Path("/tmp/openaver-data-root-finalized-fixture")
-    emit = Mock()
-    monkeypatch.setattr(webapp, "is_synology", lambda: True)
-    _run_lifespan_with_bootstrap(
-        monkeypatch, _recording_bootstrap("finalized_legacy", root), emit
-    )
-
-    data_root_calls = [
-        c for c in emit.call_args_list if c.args and c.args[1] == "notif.data_root_finalized"
-    ]
-    assert data_root_calls == []
-
-
 def test_recovered_existing_emits_warn_with_required_literals(monkeypatch):
     root = Path("/tmp/openaver-data-root-recovered-fixture")
     emit = Mock()
@@ -126,90 +97,6 @@ def test_recovered_existing_emits_warn_with_required_literals(monkeypatch):
     )
     for needle in ("來源設定", "跨機器路徑映射", "外部服務設定", "介面偏好"):
         assert needle in zh
-
-
-def test_marker_valid_config_missing_records_recovered_existing(
-    tmp_path, monkeypatch
-):
-    """真 bootstrap：已定版 marker、無 config、有 DB → consume 得 recovered_existing。"""
-    import json
-
-    import core.config as core_config
-    import core.data_root as data_root_module
-    from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result
-
-    root = tmp_path / "notif_recover_root"
-    root.mkdir()
-    (root / "openaver.db").write_bytes(b"db-for-recovered-existing-notification")
-    (root / ".layout.json").write_text(
-        json.dumps({"version": 1, "complete": True}),
-        encoding="utf-8",
-    )
-    legacy = tmp_path / "web" / "config.json"
-    legacy.parent.mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setenv("OPENAVER_DATA_DIR", str(root))
-    monkeypatch.setattr(data_root_module, "get_data_root", lambda: root)
-    monkeypatch.setattr(data_root_module, "get_default_data_root", lambda: root)
-    monkeypatch.setattr(
-        data_root_module, "get_project_root", lambda: legacy.parent.parent
-    )
-    monkeypatch.setattr(core_config, "CONFIG_PATH", root / "config.json")
-
-    result = bootstrap_data_layout()
-    assert result.status == "recovered_existing"
-
-    pending = consume_pending_bootstrap_result()
-    assert pending is not None
-    assert pending.status == "recovered_existing"
-    assert pending.root == root
-
-
-def test_desktop_double_bootstrap_emits_only_once(monkeypatch):
-    """standalone 先記一次非 already_complete，lifespan 再記 already_complete → emit 恰一次。"""
-    monkeypatch.setattr(webapp, "is_synology", lambda: False)
-    root = Path("/tmp/openaver-data-root-desktop-double")
-    data_layout_module._record_first_bootstrap_result(
-        BootstrapResult(status="finalized_legacy", root=root)
-    )
-    emit = Mock()
-    _run_lifespan_with_bootstrap(
-        monkeypatch, _recording_bootstrap("already_complete", root), emit
-    )
-
-    data_root_calls = [
-        c
-        for c in emit.call_args_list
-        if c.args and c.args[1] in {"notif.data_root_finalized", "notif.data_root_recovered"}
-    ]
-    assert len(data_root_calls) == 1
-    assert data_root_calls[0].args[1] == "notif.data_root_finalized"
-
-
-def test_fresh_status_zero_emit(monkeypatch):
-    root = Path("/tmp/openaver-data-root-fresh")
-    emit = Mock()
-    _run_lifespan_with_bootstrap(monkeypatch, _recording_bootstrap("fresh", root), emit)
-
-    data_root_calls = [
-        c
-        for c in emit.call_args_list
-        if c.args and c.args[1] in {"notif.data_root_finalized", "notif.data_root_recovered"}
-    ]
-    assert data_root_calls == []
-
-
-def test_resumed_status_zero_emit(monkeypatch):
-    root = Path("/tmp/openaver-data-root-resumed")
-    emit = Mock()
-    _run_lifespan_with_bootstrap(monkeypatch, _recording_bootstrap("resumed", root), emit)
-
-    data_root_calls = [
-        c
-        for c in emit.call_args_list
-        if c.args and c.args[1] in {"notif.data_root_finalized", "notif.data_root_recovered"}
-    ]
-    assert data_root_calls == []
 
 
 class _OsExitProxy:

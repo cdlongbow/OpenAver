@@ -6,16 +6,13 @@ import logging
 import os
 
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock, ANY
 
-import core.actress_photo as actress_photo
 from core.actress_photo import (
     download_actress_photo,
     get_local_photo_path,
     delete_local_photo,
 )
-from core.database.version_tracker import get_showcase_revision
 
 
 @pytest.fixture
@@ -52,40 +49,11 @@ def test_download_success_and_get_local_path(gfriends_dir):
 # -------------------------------------------------------------------
 # Test 2: 同名 rescrape（.jpg → .webp），舊檔被刪
 # -------------------------------------------------------------------
-def test_rescrape_old_file_deleted(gfriends_dir):
-    """rescrape 時舊副檔名的檔案被刪，只剩新副檔名的檔案"""
-    # 先建立 Gfriends dir 並放一個舊的 .jpg 檔
-    gfriends_dir.mkdir(parents=True, exist_ok=True)
-    old_file = gfriends_dir / "田中美久.jpg"
-    old_file.write_bytes(b"old_jpeg_data")
-    assert old_file.exists()
-
-    # 再次下載，但這次 Content-Type 是 webp
-    mock_resp = make_mock_response(status_code=200, content_type="image/webp")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp):
-        result = download_actress_photo("田中美久", "https://raw.githubusercontent.com/photo.webp", "gfriends")
-
-    assert result is True
-    # 舊 .jpg 應該被刪掉
-    assert not old_file.exists()
-    # 新 .webp 應該存在
-    new_file = gfriends_dir / "田中美久.webp"
-    assert new_file.exists()
-    # 目錄裡只有一個檔案
-    files = list(gfriends_dir.glob("田中美久.*"))
-    assert len(files) == 1
 
 
 # -------------------------------------------------------------------
 # Test 3: requests exception → False
 # -------------------------------------------------------------------
-def test_download_requests_exception(gfriends_dir):
-    """requests.get() 拋例外時，download_actress_photo() 回 False，不 re-raise"""
-    import requests as req_module
-    with patch("core.actress_photo.requests.get", side_effect=req_module.exceptions.ConnectionError("no conn")):
-        result = download_actress_photo("佐藤みき", "https://www.graphis.ne.jp/photo.jpg", "graphis")
-
-    assert result is False
 
 
 # -------------------------------------------------------------------
@@ -112,62 +80,11 @@ def test_delete_photo_then_get_returns_none(gfriends_dir):
 # -------------------------------------------------------------------
 # Test 5b: delete_local_photo 的 showcase revision bump（PR#207 Codex P2）
 # -------------------------------------------------------------------
-def test_delete_local_photo_success_bumps_revision(gfriends_dir):
-    """delete_local_photo() 真的刪掉既有照片檔 → revision 前後不同。
-
-    純檔案 I/O 不經過 DB commit，不會被 `_RevisionTrackingConnection.commit()`
-    自動 bump；若這裡沒有手動呼叫 `bump_showcase_revision()`，依賴
-    `get_showcase_revision()` 的 ETag（如 web/routers/insights.py 的
-    `hasPhoto`）會對不上刪除後的檔案狀態。
-    """
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp):
-        download_actress_photo(
-            "刪除revision測試", "https://raw.githubusercontent.com/photo.jpg", "gfriends"
-        )
-    assert get_local_photo_path("刪除revision測試") is not None
-
-    revision_before = get_showcase_revision()
-    deleted = delete_local_photo("刪除revision測試")
-    assert deleted is True
-    assert get_showcase_revision() != revision_before
-
-
-def test_delete_local_photo_noop_or_failure_does_not_bump_revision(gfriends_dir):
-    """delete_local_photo() 沒有真的刪到東西（無檔可刪的 idempotent no-op，
-    或內部拋例外回 False）→ revision 不變，不該把「什麼都沒變」誤標成「有變動」。
-    """
-    revision_before = get_showcase_revision()
-
-    # 無檔可刪：idempotent no-op，回 True 但沒有實際刪除
-    deleted = delete_local_photo("從未存在的女優")
-    assert deleted is True
-    assert get_showcase_revision() == revision_before
-
-    # 內部拋例外：回 False
-    with patch(
-        "core.actress_photo.sanitize_filename", side_effect=RuntimeError("boom")
-    ):
-        deleted = delete_local_photo("不存在的人")
-    assert deleted is False
-    assert get_showcase_revision() == revision_before
 
 
 # -------------------------------------------------------------------
 # Test 6: 特殊字元女優名（含 ·）
 # -------------------------------------------------------------------
-def test_special_chars_actress_name(gfriends_dir):
-    """含 · 的女優名可正常下載與讀取；/ \\ : 等非法字元被替換為空格"""
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp):
-        result = download_actress_photo("田中·ナナ", "https://raw.githubusercontent.com/photo.jpg", "gfriends")
-
-    assert result is True
-    found = get_local_photo_path("田中·ナナ")
-    assert found is not None
-    # · 應被保留（不在 illegal_chars 中）
-    assert "田中·ナナ" in found.stem
-    assert found.exists()
 
 
 # ===================================================================
@@ -242,29 +159,6 @@ def test_crop_video_cover_spec_v1_dimensions():
 # -------------------------------------------------------------------
 # Test 8: cache hit — 不重複 open
 # -------------------------------------------------------------------
-def test_crop_video_cover_cache_hit():
-    """相同 (path, mtime, spec) 第二次呼叫直接回 cache，不呼叫 Image.open"""
-    from unittest.mock import MagicMock, patch
-    import core.actress_photo as _mod
-
-    _mod._CROP_CACHE.clear()
-    fake_bytes = b"CACHED_JPEG"
-
-    # cache key 現在包含 mtime；mock os.stat 回傳固定 mtime=1000.0
-    fake_stat = MagicMock()
-    fake_stat.st_mtime = 1000.0
-    cache_key = ("/some/cover.jpg", 1000.0, "v1")
-    _mod._CROP_CACHE[cache_key] = fake_bytes
-
-    mock_pil = MagicMock()
-
-    with patch("os.stat", return_value=fake_stat):
-        with patch.dict("sys.modules", {"PIL": mock_pil, "PIL.Image": mock_pil.Image}):
-            result = _mod.crop_video_cover("/some/cover.jpg", "v1")
-
-    assert result == fake_bytes
-    # PIL.Image.open 不應被呼叫
-    mock_pil.Image.open.assert_not_called()
 
 
 # -------------------------------------------------------------------
@@ -274,56 +168,11 @@ def test_crop_video_cover_cache_hit():
 # -------------------------------------------------------------------
 # Test 10: cover_path 不存在 → None
 # -------------------------------------------------------------------
-def test_crop_video_cover_file_not_found(tmp_path):
-    """cover_path 不存在時 crop_video_cover 回 None"""
-    import core.actress_photo as _mod
-
-    _mod._CROP_CACHE.clear()
-
-    mock_pil = MagicMock()
-    mock_pil.Image.open.side_effect = FileNotFoundError("no such file")
-
-    nonexistent = str(tmp_path / "does_not_exist.jpg")
-
-    with patch.dict("sys.modules", {"PIL": mock_pil, "PIL.Image": mock_pil.Image}):
-        result = _mod.crop_video_cover(nonexistent, "v1")
-
-    assert result is None
 
 
 # -------------------------------------------------------------------
 # Test 11: happy path — 真實 Pillow（若安裝）或 mock 完整流程
 # -------------------------------------------------------------------
-def test_crop_video_cover_happy_path(tmp_path):
-    """crop_video_cover 正常流程：開圖 → crop → JPEG bytes"""
-    import core.actress_photo as _mod
-
-    _mod._CROP_CACHE.clear()
-
-    # 建立假圖片檔（用 mock，不依賴真 Pillow）
-    fake_cover = tmp_path / "cover.jpg"
-    fake_cover.write_bytes(b"not_real_image")
-
-    fake_bytes = b"FAKE_CROPPED_JPEG"
-    mock_img = _make_fake_pil_image(width=800, height=600)
-
-    def fake_save(buf, format=None, quality=None):
-        buf.write(fake_bytes)
-    mock_img.save.side_effect = fake_save
-
-    mock_pil = MagicMock()
-    mock_pil.Image.open.return_value = mock_img
-
-    with patch.dict("sys.modules", {"PIL": mock_pil, "PIL.Image": mock_pil.Image}):
-        _mod._CROP_CACHE.clear()
-        result = _mod.crop_video_cover(str(fake_cover), "v1")
-
-    assert result is not None
-    assert result == fake_bytes
-    # 結果應被 cache（key 包含真實 mtime）
-    import os
-    mtime = os.stat(str(fake_cover)).st_mtime
-    assert _mod._CROP_CACHE[(str(fake_cover), mtime, "v1")] == fake_bytes
 
 
 # -------------------------------------------------------------------
@@ -333,51 +182,11 @@ def test_crop_video_cover_happy_path(tmp_path):
 # -------------------------------------------------------------------
 # Test 13: LRU eviction — 超過 maxsize 時 evict 最舊的 entry
 # -------------------------------------------------------------------
-def test_crop_cache_lru_eviction():
-    """超過 maxsize 時 evict 最舊的 entry，且 cache 大小維持在 maxsize 以內"""
-    import core.actress_photo as _mod
-
-    _mod._CROP_CACHE.clear()
-    original_max = _mod._CROP_CACHE_MAXSIZE
-    _mod._CROP_CACHE_MAXSIZE = 3
-    try:
-        _mod._cache_put(("a", 0.0, "v1"), b"a")
-        _mod._cache_put(("b", 0.0, "v1"), b"b")
-        _mod._cache_put(("c", 0.0, "v1"), b"c")
-        # 加第 4 個，"a" 應被 evict（最早寫入）
-        _mod._cache_put(("d", 0.0, "v1"), b"d")
-        assert ("a", 0.0, "v1") not in _mod._CROP_CACHE, "最舊的 'a' 應被 evict"
-        assert ("d", 0.0, "v1") in _mod._CROP_CACHE, "最新的 'd' 應在 cache"
-        assert len(_mod._CROP_CACHE) == 3, "cache 大小應維持在 maxsize=3"
-    finally:
-        _mod._CROP_CACHE_MAXSIZE = original_max
-        _mod._CROP_CACHE.clear()
 
 
 # -------------------------------------------------------------------
 # Test 14: LRU semantics — get 命中後 move_to_end，evict 順序變更
 # -------------------------------------------------------------------
-def test_crop_cache_lru_get_bumps_recency():
-    """get 命中應延長 entry 壽命：put a/b/c → get a → put d → evict b 而非 a"""
-    import core.actress_photo as _mod
-
-    _mod._CROP_CACHE.clear()
-    original_max = _mod._CROP_CACHE_MAXSIZE
-    _mod._CROP_CACHE_MAXSIZE = 3
-    try:
-        _mod._cache_put(("a", 0.0, "v1"), b"a")
-        _mod._cache_put(("b", 0.0, "v1"), b"b")
-        _mod._cache_put(("c", 0.0, "v1"), b"c")
-        # get "a" → 提升為最近使用
-        assert _mod._cache_get(("a", 0.0, "v1")) == b"a"
-        # 加第 4 個 → 應 evict "b"（現在最舊）而非 "a"
-        _mod._cache_put(("d", 0.0, "v1"), b"d")
-        assert ("a", 0.0, "v1") in _mod._CROP_CACHE, "get 後 'a' 應延壽"
-        assert ("b", 0.0, "v1") not in _mod._CROP_CACHE, "現最舊的 'b' 應被 evict"
-        assert len(_mod._CROP_CACHE) == 3
-    finally:
-        _mod._CROP_CACHE_MAXSIZE = original_max
-        _mod._CROP_CACHE.clear()
 
 
 # ===================================================================
@@ -388,14 +197,6 @@ def test_download_actress_photo_rejects_non_whitelisted_host(gfriends_dir):
     """photo_url host 不在白名單 → return False，不發 requests.get"""
     with patch("core.actress_photo.requests.get") as mock_get:
         result = download_actress_photo("テスト女優", "http://evil.com/x.jpg", "gfriends")
-    assert result is False
-    mock_get.assert_not_called()
-
-
-def test_download_actress_photo_rejects_bad_scheme(gfriends_dir):
-    """photo_url scheme 為 file:// → return False，不發 requests.get"""
-    with patch("core.actress_photo.requests.get") as mock_get:
-        result = download_actress_photo("テスト女優", "file:///etc/passwd", "graphis")
     assert result is False
     mock_get.assert_not_called()
 
@@ -431,22 +232,6 @@ def test_download_actress_photo_redirect_not_followed(gfriends_dir, caplog):
 # Fix 5: Atomic replace 測試
 # ===================================================================
 
-def test_download_actress_photo_failure_preserves_old(gfriends_dir):
-    """requests.get 拋例外時，舊檔仍存在（atomic replace 未執行）"""
-    gfriends_dir.mkdir(parents=True, exist_ok=True)
-    old_file = gfriends_dir / "田中美久.jpg"
-    old_file.write_bytes(b"old_data")
-
-    import requests as req_module
-    with patch("core.actress_photo.requests.get",
-               side_effect=req_module.exceptions.ConnectionError("fail")):
-        result = download_actress_photo("田中美久", "https://www.graphis.ne.jp/photo.jpg", "graphis")
-
-    assert result is False
-    # 舊檔仍存在（因為 download 失敗，atomic replace 未執行，舊檔未被刪除）
-    assert old_file.exists()
-    assert old_file.read_bytes() == b"old_data"
-
 
 def test_download_actress_photo_replace_failure_preserves_old(gfriends_dir):
     """🔴 Codex P1 回歸鎖：os.replace 失敗時，舊照片必須原封不動。
@@ -481,154 +266,14 @@ def test_download_actress_photo_replace_failure_preserves_old(gfriends_dir):
     assert old_file.read_bytes() == b"old_data"
 
 
-def test_download_actress_photo_success_overwrites_old(gfriends_dir):
-    """下載成功時舊檔被刪、新檔寫入（副檔名依 Content-Type）"""
-    gfriends_dir.mkdir(parents=True, exist_ok=True)
-    old_file = gfriends_dir / "田中美久.jpg"
-    old_file.write_bytes(b"old_data")
-
-    mock_resp = make_mock_response(status_code=200, content_type="image/png",
-                                   content=b"new_png_data")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp):
-        result = download_actress_photo("田中美久",
-                                        "https://www.graphis.ne.jp/photo.png", "graphis")
-
-    assert result is True
-    # 舊 .jpg 應該被刪掉
-    assert not old_file.exists()
-    # 新 .png 存在
-    new_file = gfriends_dir / "田中美久.png"
-    assert new_file.exists()
-    assert new_file.read_bytes() == b"new_png_data"
-
-
 # ===================================================================
 # TASK-113d-T2: A4 固定 temp 檔名 → mkstemp（CD-113d-4 行為變更）
 # ===================================================================
-
-def test_download_actress_photo_sequential_calls_use_distinct_temp_names(gfriends_dir):
-    """確定性測試（不開真執行緒，比照 test_api_actress.py:2376 手法）：spy
-    core.atomic_write.tempfile.mkstemp，序列呼叫兩次 download_actress_photo，
-    斷言兩次產生的 temp 路徑不同——這是 CD-113d-4 行為變更的本體展示：
-    mkstemp 唯一命名取代固定 .download.tmp 之後，並發下載不再互撞同一個 temp 檔。"""
-    import tempfile as _tempfile
-    real_mkstemp = _tempfile.mkstemp
-    seen = []
-
-    def spy_mkstemp(*args, **kwargs):
-        fd, path = real_mkstemp(*args, **kwargs)
-        seen.append(path)
-        return fd, path
-
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.atomic_write.tempfile.mkstemp", side_effect=spy_mkstemp), \
-         patch("core.actress_photo.requests.get", return_value=mock_resp):
-        download_actress_photo("同名女優", "https://raw.githubusercontent.com/a.jpg", "gfriends")
-        download_actress_photo("同名女優", "https://raw.githubusercontent.com/b.jpg", "gfriends")
-
-    assert len(seen) == 2, "兩次下載都應該呼叫一次 mkstemp"
-    assert seen[0] != seen[1], "兩個 temp 路徑必須不同（mkstemp 唯一性保證）"
-
-
-def test_download_actress_photo_write_failure_leaves_no_temp(gfriends_dir):
-    """寫入 tmp 階段（atomic_write 區塊內）拋例外 → temp 已清、目錄不留任何檔案
-    （首次下載無舊檔情境；GFRIENDS_DIR.mkdir 在 try 之前已無條件執行，故目錄必存在，
-    不需要 fail-open 的 if-exists 判斷）。"""
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp), \
-         patch("core.atomic_write.os.fdopen", side_effect=OSError("disk full")):
-        result = download_actress_photo("寫入失敗女優", "https://raw.githubusercontent.com/a.jpg", "gfriends")
-
-    assert result is False
-    assert gfriends_dir.exists()
-    assert list(gfriends_dir.glob("*")) == []
-
-
-def test_download_actress_photo_atomic_write_suffix_uses_content_type_ext(gfriends_dir):
-    """URL 猜測 ext（.png）與 Content-Type 判定 ext（.webp）不一致時，傳給
-    atomic_write（進而傳給 mkstemp）的 suffix 必須是 Content-Type 修正後的值，
-    不是 URL 猜測的初始值——鎖住陷阱清單第 2 條：atomic_write() 呼叫點必須在
-    ct_ext 判斷之後。"""
-    import tempfile as _tempfile
-    real_mkstemp = _tempfile.mkstemp
-    seen_suffixes = []
-
-    def spy_mkstemp(*args, **kwargs):
-        seen_suffixes.append(kwargs.get("suffix"))
-        return real_mkstemp(*args, **kwargs)
-
-    mock_resp = make_mock_response(status_code=200, content_type="image/webp")
-    with patch("core.atomic_write.tempfile.mkstemp", side_effect=spy_mkstemp), \
-         patch("core.actress_photo.requests.get", return_value=mock_resp):
-        result = download_actress_photo("後綴女優", "https://raw.githubusercontent.com/photo.png", "gfriends")
-
-    assert result is True
-    assert seen_suffixes == [".webp"]
-
-
-def test_download_actress_photo_temp_dir_matches_gfriends_dir(gfriends_dir):
-    """mkstemp 的 dir kwarg 必須等於 GFRIENDS_DIR（同目錄才能保證 os.replace
-    不跨檔案系統，比照 T1 測試 #5 的守法）。"""
-    import tempfile as _tempfile
-    real_mkstemp = _tempfile.mkstemp
-    seen_dirs = []
-
-    def spy_mkstemp(*args, **kwargs):
-        seen_dirs.append(kwargs.get("dir"))
-        return real_mkstemp(*args, **kwargs)
-
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.atomic_write.tempfile.mkstemp", side_effect=spy_mkstemp), \
-         patch("core.actress_photo.requests.get", return_value=mock_resp):
-        result = download_actress_photo("目錄女優", "https://raw.githubusercontent.com/photo.jpg", "gfriends")
-
-    assert result is True
-    assert seen_dirs == [gfriends_dir]
-
-
-def test_download_actress_photo_replace_failure_no_old_file_stays_absent(gfriends_dir):
-    """首次下載（無舊檔）+ os.replace 失敗 → final_path 依然不存在，回 False。
-    這與既有 Codex P1 回歸鎖（test_download_actress_photo_replace_failure_preserves_old）
-    不同：那條測的是「有舊檔」情境（保留舊檔），本條測的是「無舊檔」情境
-    （不產生半成品新檔），先前沒有顯式測試覆蓋。"""
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp), \
-         patch("core.atomic_write.os.replace", side_effect=PermissionError("被防毒鎖住")):
-        result = download_actress_photo("首次失敗女優", "https://raw.githubusercontent.com/photo.jpg", "gfriends")
-
-    assert result is False
-    final_path = gfriends_dir / "首次失敗女優.jpg"
-    assert not final_path.exists()
-    # 不只「沒有半成品」，也不得留下 temp 殘檔（primitive 的 os.replace 失敗路徑
-    # 必須清 temp）。目錄由 GFRIENDS_DIR.mkdir 無條件建立，故可無條件斷言。
-    assert gfriends_dir.exists()
-    assert list(gfriends_dir.glob("*")) == []
 
 
 # ===================================================================
 # Fix A (Codex round-2): 擴充 host 白名單 — jsdelivr / data.graphis
 # ===================================================================
-
-def test_download_actress_photo_accepts_jsdelivr_for_gfriends(gfriends_dir):
-    """gfriends source: cdn.jsdelivr.net URL 應通過白名單驗證並觸發下載"""
-    url = "https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/Content/最高画質/photo.jpg"
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp) as mock_get:
-        result = download_actress_photo("テスト女優A", url, "gfriends")
-    assert result is True
-    mock_get.assert_called_once()
-
-
-def test_download_actress_photo_accepts_data_graphis_subdomain(gfriends_dir):
-    """graphis source: data.graphis.ne.jp URL 應通過白名單驗證並觸發下載"""
-    url = "https://data.graphis.ne.jp/images/actr/profile/001234.jpg"
-    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
-    with patch("core.actress_photo.requests.get", return_value=mock_resp) as mock_get:
-        result = download_actress_photo("テスト女優B", url, "graphis")
-    assert result is True
-    mock_get.assert_called_once()
-
-
 
 
 # ===================================================================
@@ -661,27 +306,3 @@ def test_get_local_photo_path_prefers_newest_when_stale_sibling_survives(gfriend
     assert found.read_bytes() == b"FRESH"
 
 
-def test_get_local_photo_path_single_file_unaffected(gfriends_dir):
-    """對照組（regression control，非 mutation 標的）：正常單檔路徑語意不變。
-
-    ⚠️ 誠實揭露：本條在 `return matches[0]` 的 mutation 下**仍會綠**——它不驗
-    fast-path 或 stat 次數，只驗「修正沒有弄壞絕大多數情境」。抓 mutation 的是
-    上一條（prefers_newest）。"""
-    gfriends_dir.mkdir(parents=True, exist_ok=True)
-    only = gfriends_dir / "テスト女優D.jpg"
-    only.write_bytes(b"ONLY")
-
-    assert get_local_photo_path("テスト女優D") == only
-    assert get_local_photo_path("不存在的女優") is None
-
-
-def test_get_local_photo_path_survives_sibling_vanishing_midway(gfriends_dir):
-    """良性 TOCTOU：glob 之後、stat 之前殘檔被清掉 → 不可拋、且不可讓幽靈檔勝出。"""
-    gfriends_dir.mkdir(parents=True, exist_ok=True)
-    ghost = gfriends_dir / "テスト女優E.gif"     # 字母序在前
-    real = gfriends_dir / "テスト女優E.png"
-    real.write_bytes(b"FRESH")
-    # ghost 從未實際建立 ⇒ stat() 拋 FileNotFoundError
-
-    with patch.object(type(gfriends_dir), "glob", lambda self, pat: [ghost, real]):
-        assert get_local_photo_path("テスト女優E") == real

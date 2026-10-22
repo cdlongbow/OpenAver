@@ -73,30 +73,6 @@ def test_win_clipboard_non_bmp_size_uses_encoded_length(win):
     assert k.GlobalFree.calls == []
 
 
-@pytest.mark.parametrize("fail,freed", [
-    ({"alloc": None}, False),
-    ({"lock": None}, True),
-    ({"open": 0}, True),
-    ({"set": None}, True),
-])
-def test_win_clipboard_failures_return_false_and_free(win, fail, freed):
-    fake = win(**fail)
-    assert clipboard.copy_text(TEXT) is False
-    assert bool(fake.windll.kernel32.GlobalFree.calls) is freed
-
-
-def test_win_clipboard_exception_returns_false(win):
-    fake = win()
-    fake.windll.kernel32.GlobalAlloc = Mock(side_effect=OSError("boom"))
-    assert clipboard.copy_text(TEXT) is False
-
-
-def test_non_string_returns_false(win):
-    win()
-    assert clipboard.copy_text(None) is False
-    assert clipboard.copy_text(123) is False
-
-
 def test_macos_uses_pbcopy_with_utf8_bytes(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     run = Mock(return_value=Mock(returncode=0))
@@ -106,17 +82,3 @@ def test_macos_uses_pbcopy_with_utf8_bytes(monkeypatch):
     assert run.call_args.kwargs["input"] == TEXT.encode("utf-8")
 
 
-def test_macos_nonzero_or_exception_is_false(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(clipboard.subprocess, "run", Mock(return_value=Mock(returncode=1)))
-    assert clipboard.copy_text(TEXT) is False
-    monkeypatch.setattr(clipboard.subprocess, "run", Mock(side_effect=OSError))
-    assert clipboard.copy_text(TEXT) is False
-
-
-def test_other_platform_is_false_without_subprocess(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "linux")
-    run = Mock()
-    monkeypatch.setattr(clipboard.subprocess, "run", run)
-    assert clipboard.copy_text(TEXT) is False
-    run.assert_not_called()

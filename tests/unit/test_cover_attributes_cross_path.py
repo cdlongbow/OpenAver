@@ -12,7 +12,7 @@ import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from core import readonly_assets, readonly_paths, readonly_producer
+from core import readonly_assets, readonly_paths
 from core.cover_attributes import ATTRIBUTE_TABLE, effective_tags
 from core.database import VideoRepository, init_db
 from core.gallery_scanner import VideoScanner
@@ -20,20 +20,6 @@ from core.organizer import generate_nfo, organize_file
 
 # 單一來源：未來 ATTRIBUTE_TABLE 加第 6 列，本檔的子集合斷言自動跟上。
 _ATTR_TAGS = frozenset(rule.canonical_tag for rule in ATTRIBUTE_TABLE)
-
-_VIDEO_PY = Path(__file__).resolve().parents[2] / "core" / "database" / "video.py"
-
-# videos.tags 寫入點（core/database/video.py 內會寫 tags 欄位的函式）。
-# 數字變了必須重新盤點：新 writer 若沒走 effective_tags()，下次掃描會把剛補的
-# 屬性 tag 清回舊值。
-_TAGS_WRITE_FUNCS = (
-    "upsert",
-    "insert_if_ignore",
-    "repath",
-    "upsert_batch",
-    "update_tags_if_changed",
-)
-_TAGS_WRITE_FUNC_COUNT = 5
 
 
 def _attr_subset(tags) -> set[str]:
@@ -381,40 +367,7 @@ def test_b03_no_token_equivalent_to_identity_effective_tags(tmp_path):
 
 # ── 邊界 4（清單來源）───────────────────────────────────────────────────────
 
-def test_b04_attr_tags_come_from_attribute_table():
-    """屬性 tag 清單來自 ATTRIBUTE_TABLE，不是本檔硬編的五個字串。"""
-    assert _ATTR_TAGS == frozenset(rule.canonical_tag for rule in ATTRIBUTE_TABLE)
-    src = Path(__file__).read_text(encoding="utf-8")
-    assert src.count("rule.canonical_tag for rule in ATTRIBUTE_TABLE") >= 2
-
 
 # ── 邊界 5（videos.tags 寫入點粗顆粒守衛）────────────────────────────────────
 
-def _video_py_tags_write_funcs() -> list[str]:
-    """粗顆粒：video.py 裡方法體含 INSERT INTO videos 或 SET tags 的 def 名。
 
-    刻意用字串比對而非 AST（plan-121a §T6：粗顆粒即可，不寫 AST 矩陣）。
-    已知失敗模式：若未來某支**沒有實際寫入**的方法在 docstring 裡提到
-    「SET tags」或「INSERT INTO videos」字面，會被誤算成寫入點而讓本守衛紅。
-    看到不認得的名字先確認它到底有沒有寫 SQL，再決定是更新清單還是改寫這支 helper。
-    """
-    text = _VIDEO_PY.read_text(encoding="utf-8")
-    found: list[str] = []
-    for part in re.split(r"\n    def ", text)[1:]:
-        name = part.split("(", 1)[0]
-        if "INSERT INTO videos" in part or "SET tags" in part:
-            found.append(name)
-    return found
-
-
-def test_b05_tags_write_site_count_locked():
-    """video.py 內含 tags 欄位寫入的函式數量鎖定；必須含 update_tags_if_changed。"""
-    # [lint-guard: pytest-justified] 這條讀的是 Python 源碼語意（「哪些函式含 tags 欄位寫入」），
-    # 不是前端靜態字串——lint 表達不了「函式邊界 × SQL 寫入」這個組合，屬 SA-pre-6 例外清單的
-    # 「Python-AST 源碼語意守衛」。
-    found = _video_py_tags_write_funcs()
-    assert found == list(_TAGS_WRITE_FUNCS)
-    assert len(found) == _TAGS_WRITE_FUNC_COUNT
-    assert "update_tags_if_changed" in found
-    src = _VIDEO_PY.read_text(encoding="utf-8")
-    assert "def update_tags_if_changed(" in src

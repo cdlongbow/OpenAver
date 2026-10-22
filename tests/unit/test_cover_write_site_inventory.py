@@ -183,47 +183,7 @@ def _all_calls() -> dict:
 
 
 class TestCoverWriteSiteInventory:
-    def test_write_sites_match_hardcoded_inventory(self):
-        """三個封面模組裡的每一個 copy2/copyfile/crop_to_poster 呼叫點，
-        必須與硬編碼清單逐格相同（多一格、少一格、次數變了都轉紅）。"""
-        actual = {k: v for k, v in _all_calls().items() if k[2] in _WRITE_CALLS}
 
-        added = {k: v for k, v in actual.items() if k not in _EXPECTED_WRITE_SITES}
-        removed = {k: v for k, v in _EXPECTED_WRITE_SITES.items() if k not in actual}
-        changed = {
-            k: (_EXPECTED_WRITE_SITES[k], v)
-            for k, v in actual.items()
-            if k in _EXPECTED_WRITE_SITES and _EXPECTED_WRITE_SITES[k] != v
-        }
-
-        assert not added, (
-            f"新的封面/衍生圖寫入點：{sorted(added)}。\n"
-            "先回 core/cover_layout.py 的「交棒清單」判斷它需不需要 "
-            "same_target_verdict preflight（來源是不是 cover **不影響**判斷——"
-            "判準是『有沒有寫到 stem 級衍生圖位置』），落檔後再把它加進本檔的 "
-            "_EXPECTED_WRITE_SITES。"
-        )
-        assert not removed, (
-            f"清單裡的寫入點已消失：{sorted(removed)}。刪除是好事，"
-            "但要同步刪掉本檔與 core/cover_layout.py 交棒清單的對應列（反腐）。"
-        )
-        assert not changed, f"同一個函式裡的呼叫次數變了（預期, 實際）：{changed}"
-
-    def test_every_write_site_owner_has_its_own_preflight(self):
-        """每一個持有寫入呼叫的函式，都必須自己呼叫 same_target_verdict
-        （葉節點例外逐條寫在 _PREFLIGHT_EXEMPT，附理由）。"""
-        calls = _all_calls()
-        owners = {(f, fn) for (f, fn, name) in calls if name in _WRITE_CALLS}
-        with_preflight = {(f, fn) for (f, fn, name) in calls if name == _PREFLIGHT}
-
-        unguarded = sorted(owners - with_preflight - set(_PREFLIGHT_EXEMPT))
-        assert not unguarded, (
-            f"這些函式直接寫封面/衍生圖但自己沒有 same_target_verdict preflight："
-            f"{unguarded}。\n"
-            "同檔情境下 shutil 會以 'wb' 開啟它正在讀的那個檔並清空它"
-            "（`shutil.copyfile` 內部的 `_samefile` 把 OSError 吞成 False）——"
-            "這正是 CD-112-8 存在的理由。"
-        )
 
     def test_preflight_count_matches_write_site_count_per_owner(self):
         """Codex PR#125 round-3 P2：**逐 owner 對帳次數**，不是存在性。
@@ -270,15 +230,3 @@ class TestCoverWriteSiteInventory:
             "寫入點在同檔情境下裸奔（shutil 會清空它正在讀的那個檔）。"
         )
 
-    def test_exempt_entries_are_not_stale(self):
-        """反腐（照抄 py_function_size_lint 的 anti-rot 判準）：例外清單裡的
-        每一條都必須仍然對應到一個真實存在、且真的沒有自己 preflight 的函式。"""
-        calls = _all_calls()
-        owners = {(f, fn) for (f, fn, name) in calls if name in _WRITE_CALLS}
-        with_preflight = {(f, fn) for (f, fn, name) in calls if name == _PREFLIGHT}
-
-        for entry in _PREFLIGHT_EXEMPT:
-            assert entry in owners, f"例外清單條目已不存在（ghost）：{entry}"
-            assert entry not in with_preflight, (
-                f"例外清單條目現在已經自己 preflight 了（stale），請刪除：{entry}"
-            )

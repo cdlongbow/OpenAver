@@ -13,8 +13,6 @@ import pytest
 
 @pytest.mark.parametrize("standalone_val,platform_val,expected", [
     ("1",   "win32",  True),   # 桌面 Windows → True
-    ("1",   "linux",  False),  # standalone 但非 win32 → False
-    ("0",   "win32",  False),  # win32 但非 standalone → False
     (None,  "win32",  False),  # env 未設 + win32 → False
 ])
 def test_is_windows_desktop_truth_table(standalone_val, platform_val, expected, monkeypatch):

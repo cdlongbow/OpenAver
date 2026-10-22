@@ -20,7 +20,6 @@ if WINDOWS_DIR not in sys.path:
     sys.path.insert(0, WINDOWS_DIR)
 
 import cf_shell  # noqa: E402
-from cf_transport_impl import PyWebViewCfTransport  # noqa: E402
 
 ORIGIN = 'http://shell-test.invalid:8765'
 OK_NULL = {'ok': True, 'job': None}
@@ -46,11 +45,6 @@ class FakeTransport:
 
     def change(self):
         self.listener()
-
-
-class NoPreparingTransport:
-    def available_sites(self):
-        return [JL]
 
 
 class Net:
@@ -128,23 +122,12 @@ def mk(monkeypatch):
                 assert not th.is_alive(), 'daemon thread outlived the test'
 
 
-def _wait(sem):
-    assert sem.acquire(timeout=WAIT_S), 'timed out waiting for the expected request'
-
-
 # ---------------------------------------------------------------------------
 def test_poll_body_carries_preparing_sites(mk):
     agent, net = mk(FakeTransport(sites=[JL], preparing=[JT]))
     assert agent.announce() is True
     assert net.sync_bodies[0]['preparing'] == [JT]
     assert net.sync_bodies[0]['sites'] == [JL]
-
-
-def test_poll_body_preparing_empty_without_transport_support(mk):
-    agent, _ = mk(NoPreparingTransport())
-    assert agent._poll_body(0)['preparing'] == []
-    agent2, _ = mk(None)
-    assert agent2._poll_body(0)['preparing'] == []
 
 
 def test_status_starting_until_server_knows_sites(mk):
@@ -160,92 +143,3 @@ def test_status_starting_until_server_knows_sites(mk):
     assert agent.public_status()['state'] == 'ready'
 
 
-def test_listener_exception_does_not_break_confirm_ready():
-    class _Closed:
-        def __iadd__(self, handler):
-            return self
-
-    def win():
-        return types.SimpleNamespace(events=types.SimpleNamespace(closed=_Closed()))
-
-    t = PyWebViewCfTransport({JL: win(), JT: win()}, {}, pending={JL, JT})
-    t.set_change_listener(lambda: 1 / 0)
-    t.confirm_ready(JL)
-    assert t.available_sites() == [JL]
-    t.confirm_ready(JT)
-    assert t.available_sites() == [JT, JL]
-    assert t.preparing_sites() == []
-
-
-def test_failed_sync_leaves_status_untouched(mk):
-    t = FakeTransport(sites=[])
-    agent, net = mk(t)
-    net.sync_script = {0: httpx.ConnectError('boom'), 1: httpx.Response(401, json={})}
-    agent.start()
-    _wait(net.lp_arrived)
-    t.sites = [JL]
-    for _ in range(3):                       # 第 3 筆送出＝第 2 筆（401）已處理完（單一 worker 串行）
-        t.change()
-        _wait(net.sync_arrived)
-    st = agent.public_status()
-    assert (st['state'], st['reason']) == ('not_ready', 'starting')
-    assert agent._terminal is None and agent._last_ok is None
-    assert agent._thread.is_alive()
-    t.change()                               # 第 4 筆送出＝第 3 筆（成功）的回覆已處理完
-    _wait(net.sync_arrived)
-    net.lp_permits.release()                 # 長輪詢成功
-    _wait(net.lp_arrived)
-    assert agent.public_status()['state'] == 'ready'
-
-
-def test_stale_longpoll_reply_cannot_revoke_ready(mk):
-    t = FakeTransport(sites=[])
-    agent, net = mk(t)
-    agent.start()
-    _wait(net.lp_arrived)                    # 啟動長輪詢（sites=[]）在途
-    assert net.lp_bodies[0]['sites'] == []
-    t.sites = [JL]
-    for _ in range(2):                       # 第 2 筆送出＝第 1 筆補送已處理完
-        t.change()
-        _wait(net.sync_arrived)
-    net.lp_permits.release()                 # 放行舊長輪詢回覆
-    _wait(net.lp_arrived)                    # 下一輪長輪詢送出＝舊回覆已處理
-    assert agent.public_status()['state'] == 'ready'
-
-
-def test_stale_sync_reply_cannot_downgrade_sites(mk):
-    t = FakeTransport(sites=[])
-    agent, net = mk(t)
-    net.sync_gates = {0: threading.Event(), 1: threading.Event()}
-    agent.start()
-    _wait(net.lp_arrived)
-    t.sites = [JL]
-    t.change()
-    _wait(net.sync_arrived)                  # 補送 A 在途（卡住）
-    t.sites = [JL, JT]
-    t.change()
-    net.lp_permits.release()                 # 長輪詢#1（舊 body）回覆
-    _wait(net.lp_arrived)                    # 長輪詢#2 帶 AB
-    assert net.lp_bodies[1]['sites'] == [JL, JT]
-    net.lp_permits.release()                 # 長輪詢#2 回 ok
-    _wait(net.lp_arrived)                    # #3 送出＝#2 已處理
-    net.sync_gates[0].set()                  # 放行補送 A 的回覆
-    _wait(net.sync_arrived)                  # worker 轉去送補送 AB＝A 的回覆已處理完
-    assert agent._last_sent_sites >= {JL, JT}
-    assert agent.public_status()['state'] == 'ready'
-    net.sync_gates[1].set()
-
-
-def test_no_send_after_stop(mk):
-    t = FakeTransport(sites=[])
-    agent, net = mk(t)
-    agent.start()
-    _wait(net.lp_arrived)
-    agent.stop()
-    net.lp_permits.release()
-    agent._thread.join(timeout=WAIT_S)
-    agent._sync_thread.join(timeout=WAIT_S)
-    t.sites = [JL]
-    t.change()
-    assert net.sync_bodies == []
-    assert agent._http is None

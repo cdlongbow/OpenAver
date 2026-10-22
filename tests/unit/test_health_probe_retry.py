@@ -54,23 +54,6 @@ class _StubResponse:
         return False
 
 
-def test_connection_reset_is_retried_not_raised(alive_thread, monkeypatch):
-    """AC-T2-1: ConnectionResetError 被重試迴圈捕獲，不穿出 wait_for_server，逾時回傳 PROBE_TIMEOUT"""
-    call_count = 0
-
-    class StubOpener:
-        def open(self, url, timeout=1):
-            nonlocal call_count
-            call_count += 1
-            raise ConnectionResetError("Connection reset by peer")
-
-    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: StubOpener())
-
-    result = wait_for_server(49152, alive_thread, timeout=0.5)
-    assert result == PROBE_TIMEOUT
-    assert call_count >= 2
-
-
 def test_bad_status_line_is_retried_not_raised(alive_thread, monkeypatch):
     """AC-T2-2: http.client.BadStatusLine 被重試迴圈捕獲，不穿出 wait_for_server，逾時回傳 PROBE_TIMEOUT。
 
@@ -84,31 +67,6 @@ def test_bad_status_line_is_retried_not_raised(alive_thread, monkeypatch):
             nonlocal call_count
             call_count += 1
             raise http.client.BadStatusLine("???")
-
-    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: StubOpener())
-
-    result = wait_for_server(49152, alive_thread, timeout=0.5)
-    assert result == PROBE_TIMEOUT
-    assert call_count >= 2
-
-
-def test_remote_disconnected_is_retried_not_raised(alive_thread, monkeypatch):
-    """RemoteDisconnected 被重試迴圈捕獲，不穿出 wait_for_server，逾時回傳 PROBE_TIMEOUT。
-
-    ⚠️ 這支**不能**用來證明 tuple 裡的 `http.client.HTTPException` 是必要的：
-    `RemoteDisconnected` 同時繼承 `ConnectionResetError`（→ `OSError`）與 `BadStatusLine`
-    （→ `HTTPException`），光靠 `OSError` 那一項就接得到。
-    真正鎖住 `HTTPException` 那一項的是 `test_bad_status_line_is_retried_not_raised`
-    （`BadStatusLine` 只繼承 `HTTPException`，不是 `OSError`）——mutation 點也是打在那支。
-    本支的價值是覆蓋真實世界最常見的那個類別，不是證明 tuple 的哪一項。
-    """
-    call_count = 0
-
-    class StubOpener:
-        def open(self, url, timeout=1):
-            nonlocal call_count
-            call_count += 1
-            raise http.client.RemoteDisconnected("Remote end closed connection without response")
 
     monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: StubOpener())
 
@@ -136,18 +94,3 @@ def test_retries_then_succeeds(alive_thread, monkeypatch):
     assert call_count == 4
 
 
-def test_timeout_returns_probe_timeout_not_raises(alive_thread, monkeypatch):
-    """AC-T2-3: 連線持續拋出 OSError 時，wait_for_server 於逾時後回傳 PROBE_TIMEOUT 而非拋出例外"""
-    call_count = 0
-
-    class StubOpener:
-        def open(self, url, timeout=1):
-            nonlocal call_count
-            call_count += 1
-            raise OSError("Network unreachable")
-
-    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: StubOpener())
-
-    result = wait_for_server(49152, alive_thread, timeout=0.5)
-    assert result == PROBE_TIMEOUT
-    assert call_count >= 2

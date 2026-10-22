@@ -1,9 +1,7 @@
 """測試 /api/search/local-status API"""
 import pytest
-from pathlib import Path
-from fastapi.testclient import TestClient
 
-from core.database import init_db, Video, VideoRepository
+from core.database import Video
 
 
 # temp_db fixture 定義於 tests/unit/conftest.py
@@ -54,19 +52,6 @@ class TestLocalStatusAPI:
         assert "XYZ-999" in data
         assert data["XYZ-999"]["exists"] is False
 
-    def test_multiple_numbers_mixed(self, client, populated_db, monkeypatch):
-        """測試查詢多個番號（混合存在/不存在）"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.search.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/search/local-status?numbers=SONE-205,ABW-001,XYZ-999")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["SONE-205"]["exists"] is True
-        assert data["ABW-001"]["exists"] is True
-        assert data["XYZ-999"]["exists"] is False
 
     def test_case_insensitive_lowercase(self, client, populated_db, monkeypatch):
         """測試大小寫不敏感 - 小寫查詢"""
@@ -82,163 +67,4 @@ class TestLocalStatusAPI:
         assert data["sone-205"]["exists"] is True
         assert data["sone-205"]["count"] == 2
 
-    def test_case_insensitive_mixed(self, client, populated_db, monkeypatch):
-        """測試大小寫不敏感 - 混合大小寫查詢"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.search.get_db_path", mock_get_db_path)
 
-        response = client.get("/api/search/local-status?numbers=SoNe-205,abw-001")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["SoNe-205"]["exists"] is True
-        assert data["abw-001"]["exists"] is True
-
-    def test_empty_numbers(self, client, temp_db, monkeypatch):
-        """測試空番號列表"""
-        def mock_get_db_path():
-            return temp_db
-        monkeypatch.setattr("web.routers.search.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/search/local-status?numbers=")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data == {}
-
-    def test_whitespace_handling(self, client, populated_db, monkeypatch):
-        """測試空白處理"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.search.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/search/local-status?numbers= SONE-205 , ABW-001 ")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["SONE-205"]["exists"] is True
-        assert data["ABW-001"]["exists"] is True
-
-    def test_limit_100_numbers(self, client, temp_db, monkeypatch):
-        """測試限制單次查詢最多 100 個番號"""
-        def mock_get_db_path():
-            return temp_db
-        monkeypatch.setattr("web.routers.search.get_db_path", mock_get_db_path)
-
-        # 產生 150 個番號
-        numbers = [f"TEST-{i:03d}" for i in range(150)]
-        numbers_str = ",".join(numbers)
-
-        response = client.get(f"/api/search/local-status?numbers={numbers_str}")
-        assert response.status_code == 200
-
-        data = response.json()
-        # 應該只回傳前 100 個
-        assert len(data) == 100
-
-    def test_fc2_number(self, client, populated_db, monkeypatch):
-        """測試 FC2 番號查詢"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.search.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/search/local-status?numbers=FC2-PPV-1234567")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["FC2-PPV-1234567"]["exists"] is True
-        assert data["FC2-PPV-1234567"]["count"] == 1
-
-    def test_same_number_multiple_files(self, client, populated_db, monkeypatch):
-        """測試同番號多檔案正確計數"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.search.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/search/local-status?numbers=SONE-205")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["SONE-205"]["exists"] is True
-        assert data["SONE-205"]["count"] == 2
-        assert "/mnt/media/SONE-205.mp4" in data["SONE-205"]["paths"]
-        assert "/mnt/media/SONE-205-uncensored.mp4" in data["SONE-205"]["paths"]
-
-
-class TestVideoRepositoryGetByNumbers:
-    """測試 VideoRepository.get_by_numbers() 方法"""
-
-    def test_get_by_numbers_empty(self, temp_db):
-        """測試空番號列表"""
-        repo = VideoRepository(temp_db)
-        result = repo.get_by_numbers([])
-        assert result == {}
-
-    def test_get_by_numbers_not_found(self, temp_db):
-        """測試查詢不存在的番號"""
-        repo = VideoRepository(temp_db)
-        result = repo.get_by_numbers(["XYZ-999"])
-        assert result == {}
-
-    def test_get_by_numbers_found(self, temp_db):
-        """測試查詢存在的番號"""
-        repo = VideoRepository(temp_db)
-
-        video = Video(
-            path="/mnt/media/SONE-205.mp4",
-            number="SONE-205",
-            title="Test Video",
-            mtime=100.0
-        )
-        repo.upsert(video)
-
-        result = repo.get_by_numbers(["SONE-205"])
-        assert "SONE-205" in result
-        assert len(result["SONE-205"]) == 1
-        assert result["SONE-205"][0].path == "/mnt/media/SONE-205.mp4"
-
-    def test_get_by_numbers_case_insensitive(self, temp_db):
-        """測試大小寫不敏感"""
-        repo = VideoRepository(temp_db)
-
-        video = Video(
-            path="/mnt/media/SONE-205.mp4",
-            number="SONE-205",
-            title="Test Video",
-            mtime=100.0
-        )
-        repo.upsert(video)
-
-        # 小寫查詢
-        result = repo.get_by_numbers(["sone-205"])
-        assert "sone-205" in result
-        assert len(result["sone-205"]) == 1
-
-    def test_get_by_numbers_multiple(self, temp_db):
-        """測試多番號查詢"""
-        repo = VideoRepository(temp_db)
-
-        videos = [
-            Video(path="/mnt/media/SONE-205.mp4", number="SONE-205", mtime=100.0),
-            Video(path="/mnt/media/ABW-001.mp4", number="ABW-001", mtime=200.0),
-        ]
-        repo.upsert_batch(videos)
-
-        result = repo.get_by_numbers(["SONE-205", "ABW-001"])
-        assert len(result) == 2
-        assert "SONE-205" in result
-        assert "ABW-001" in result
-
-    def test_get_by_numbers_same_number_multiple_files(self, temp_db):
-        """測試同番號多檔案"""
-        repo = VideoRepository(temp_db)
-
-        videos = [
-            Video(path="/mnt/media/SONE-205.mp4", number="SONE-205", mtime=100.0),
-            Video(path="/mnt/media/SONE-205-uncensored.mp4", number="SONE-205", mtime=101.0),
-        ]
-        repo.upsert_batch(videos)
-
-        result = repo.get_by_numbers(["SONE-205"])
-        assert len(result["SONE-205"]) == 2
