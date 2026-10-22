@@ -283,23 +283,18 @@ def test_first_click_resolves_from_library_titles(client, env):
 
 # ---------------- REST paging / has_more ----------------
 
-def test_second_page_reports_has_more_from_request_page(client, env, monkeypatch):
-    # 175d-T5～T6 之間的橋接：REST 還沒有 cursor 參數，路由呼叫 search_maker_latest 時補上有效 maker token（T6 換成真 query 參數後移除）
-    from core.search_providers import cursor as cursor_codec
-    from web.routers import search as search_router
-
-    token = cursor_codec.encode(cursor_codec.Token("javbus", "maker"))
-    real = search_router.search_maker_latest
-    monkeypatch.setattr(search_router, "search_maker_latest", lambda *a, **kw: real(*a, **kw, cursor=token))
+def test_second_page_reports_has_more_from_request_page(client, env):
     five_s1(env)
     with maker_patches(studio=studio_pages({1: nums(30), 2: nums(30, 100)})) as m:
-        body = rest(client, offset=30).json()
+        token = rest(client).json()["cursor"]  # 第一頁回的 token：載入更多帶它
+        m.studio.reset_mock()
+        body = rest(client, offset=30, cursor=token).json()
         assert m.studio.call_count == 1
         assert m.studio.call_args_list[0].args[1] == 2
     assert body["success"] is True and body["total"] == 30 and body["has_more"] is True
     assert body["mode"] == "maker" and body["maker_key"] == KEY and body["offset"] == 30
     with maker_patches(studio=studio_pages({2: nums(12, 100)})):
-        body = rest(client, offset=30).json()
+        body = rest(client, offset=30, cursor=token).json()
     assert body["total"] == 12 and body["has_more"] is False
 
 
