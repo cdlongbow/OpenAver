@@ -261,6 +261,31 @@
     font-weight: 700;
 }
 
+/* 177-T4：焦點卡頭像格的收藏愛心。元件本體預設 44x56 會撐破 52px 圓形槽，
+   這裡只覆寫尺寸；色票／透明度沿用 actress-add-panel.css。
+   :focus-visible 的全站 outline／box-shadow 畫在邊框外，會被槽的 overflow:hidden 整圈裁掉，
+   改成內縮，鍵盤 Tab 到愛心才看得到焦點框。
+   hover 打亮在元件本體綁 .actress-add-row:hover，分析頁沒有 row，這裡補同一組數值。 */
+.insights-container .insights-focus-avatar .actress-add-heart {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+}
+
+.insights-container .insights-focus-avatar .actress-add-heart:focus-visible {
+    outline-offset: -2px;
+    box-shadow: none;
+    opacity: 1;
+    color: var(--color-favorite);
+}
+
+@media (hover: hover) {
+    .insights-container .insights-focus-avatar .actress-add-heart:hover:not(:disabled) {
+        opacity: 1;
+        color: var(--color-favorite);
+    }
+}
+
 .insights-container .insights-x-btn {
     border: none;
     background: var(--surface-2);

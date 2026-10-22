@@ -5494,11 +5494,15 @@ const RULES = [
   // ---- [161a-T5b] 頂排拆女優格／片商格、兩條件疊加 ----
   { file: 'web/static/js/pages/insights/state.js', kind: 'required-string', pattern: '#tileActress .insights-focus-avatar:not(.mk)', count: 2, note: '[161a-T5b] state.js 頭像飛行目標是 #tileActress（清除分支與 _flyAvatarToFocusTile 各一處）：指到別格＝替身飛不到頭像、卡在半空' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearMaker()"', scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 的 × 接 clearMaker：接成別的＝按片商格的 × 清掉別的條件' },
-  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearActress()"', scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 的 × 接 clearActress：接成別的＝按女優格的 × 清掉別的條件' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearActress()"', scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[161a-T5b] #tileActress 的 × 接 clearActress：接成別的＝按女優格的 × 清掉別的條件' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_maker')", scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 未選時顯示淡色「全部片商」：寫成別的字＝使用者分不出兩格' },
-  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_actress')", scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 未選時顯示淡色「全部女優」：寫成別的字＝使用者分不出兩格' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_actress')", scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[161a-T5b] #tileActress 未選時顯示淡色「全部女優」：寫成別的字＝使用者分不出兩格' },
   { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（insights.html）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
   { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（state.js）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
+  // ---- [177-T4] 焦點卡愛心 ----
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click.stop="addFocusedFavorite()"', scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[177-T4-heart-click] #tileActress 的愛心接 addFocusedFavorite：沒接＝使用者點空心愛心什麼都沒發生（沒送收藏、沒轉圈、沒提示）' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'isFavoriteActress(', count: 2, scope: { anchor: /id="tileActress"/, window: 3100 }, note: '[177-T4-heart-state] #tileActress 頭像槽首字態與愛心態各讀一次 isFavoriteActress：少一處或寫成恆真＝已收藏女優的照片旁多出愛心、再點又送一次收藏' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'x-show="$store.toast.visible"', note: '[177-T4-toast] insights.html 要有 toast 容器：沒有＝使用者點愛心收藏後成功或失敗都沒有任何提示' },
 
   // ---- [161a-T6b] 年份拖曳：預覽蓋板、年表淡化、觸控降級、dispose 清理 ----
   { file: 'web/static/js/pages/insights/charts.js', kind: 'forbidden-string', pattern: "getZr().on('click'", note: '[161a-T6b] charts.js 年份圖不得有 click 監聽：單點與範圍都由 mousedown→mouseup 手勢提交，加回 click 會在拖完範圍後多觸發一次單點、把剛選的範圍改成單年' },

@@ -317,9 +317,29 @@ export function libraryInsightsState() {
                 this.snapshot.actressFavorites = mergeFavorite(this.snapshot.actressFavorites, name, buildFavoriteEntry(data.actress));
                 this.photoFailed[name] = false;
                 this.redrawAge(); // I-4：年齡圖命令式重繪
+                this.playFavoriteReveal(name);
             }
             const [type, key] = FAVORITE_TOAST[kind];
             this.showToast(window.t(key), type);
+        },
+
+        // TASK-177-T4：收藏成功後頭像淡入（焦點已切到別人就不動；node 測試無 $nextTick／motion 時直接略過）
+        playFavoriteReveal(name) {
+            if (typeof this.$nextTick !== 'function') return;
+            const motion = window.OpenAver && window.OpenAver.motion;
+            if (!motion) return;
+            if (!this.sel || this.sel.actress !== name) return;
+            this.$nextTick(() => {
+                const els = document.querySelectorAll('#tileActress .insights-focus-avatar:not(.mk) img');
+                if (!els.length) return;
+                motion.playFadeTo(els, {
+                    fromOpacity: 0,
+                    opacity: 1,
+                    duration: motion.DURATION.fast,
+                    overwrite: 'auto',
+                    onComplete: () => motion.clearProps(els, 'opacity'),
+                });
+            });
         },
 
         recomputeScopedCount() {
