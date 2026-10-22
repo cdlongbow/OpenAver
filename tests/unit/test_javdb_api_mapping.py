@@ -1,14 +1,8 @@
 """
 test_javdb_api_mapping.py - JavDB API JSON → Video 映射單元測試（TASK-132b-T2）
 
-本檔不證明站方的欄位名是對的。餵存下來的 JSON 跑欄位斷言，在站方改版時會假綠。
-欄位名的偵測器是金絲雀 A（T5）。本檔鎖的只有「我們自己的規則」。
-
-
-⚠️ **圖片網址一律用 `tp.spfcas.com`（真實的資料介面圖床），不要用 `example.com` 佔位。**
-TASK-132b-T4 之後 `fetch_video()` 會驗圖片 host 有沒有登記在 `core/image_host_policy.py`
-（CD-132b-7：未登記 → 丟 `ValueError` → `search()` 降級 HTML）。用未登記的佔位網域
-會讓本檔每一支都炸在那個閘上，而不是測到映射規則。
+本檔不證明站方的欄位名是對的。欄位名的偵測器是金絲雀 A（T5）。
+現況（spec-176）：欄位映射測試已全刪，本檔只剩 4 支例外傳遞測試。
 """
 
 from __future__ import annotations

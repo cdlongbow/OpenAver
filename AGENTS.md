@@ -252,7 +252,14 @@ If a regression of this class arises, the fix is:
   metatube mapper and source_merger), provider/relay stubs, the custom-source interpreter's
   tiny synthetic pages (tests/unit/_custom_source_pages.py), shipped-table reconciliation,
   security guards, and request-shape tests whose responses are mere placeholders (assert on
-  the params/URL/throttle WE send). Live canaries under tests/smoke/ are the guard for
+  the params/URL/throttle WE send); image/cover download pipeline tests only — fed bytes we
+  generate or a bare HTTP status, asserting that we do not overwrite/poison existing files
+  (plan-176 K2 / cover_canonical_contract); transport-mechanism tests whose bodies are non-decisive
+  placeholders and whose assertions are on what WE do — size caps, charset handling, action
+  order, locks/flags, origin pins (K3/K4); mock transports for our own server protocol
+  (httpx.MockTransport in cf_shell_*). A test is deleted when its pass/fail is decided by
+  fabricated site content — including status codes and exception classification in scraper or
+  metatube clients (403→Blocked, 500→Unreachable stay deleted; spec-176 §2.1/§7). Live canaries under tests/smoke/ are the guard for
   site-response handling.
 - When migrating a guard to lint, port it at the **same scan granularity** as the original
   (whole-file / element-scoped / attribute-value / method-body window) and prefer
@@ -263,7 +270,8 @@ If a regression of this class arises, the fix is:
   negation re-allowing `*.html` under `tests/` (default: `*.html` is ignored). Site
   structure is verified against the live site when a scraper is actually being fixed
   (canary NG → owner reproduces → compare with the live page); a stored copy goes stale
-  silently and only adds friction. The only inline synthetic markup allowed is for the
-  custom-source interpreter (tests/unit/_custom_source_pages.py). Exact-name matching /
+  silently and only adds friction. Inline synthetic markup is allowed only for the
+  custom-source interpreter (tests/unit/_custom_source_pages.py) or as a non-decisive placeholder
+  (see the whitelist above). Exact-name matching /
   empty-result handling whose input is a site response is not tested offline; extract it into
   a pure function over our own dicts if it needs a test. Severity P3, but flag it every time.
