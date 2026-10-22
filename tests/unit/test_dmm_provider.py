@@ -2,7 +2,7 @@
 import concurrent.futures as cf
 import copy
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -176,83 +176,3 @@ def test_dmm_empty_wrong_kind_and_discovery(case):
     assert calls == ([("dmm", "searching")] if case == "empty" else [])
     if case == "discovery":
         search.assert_not_called()
-
-
-# ─── 175c-T6：列表轉換（rows → WorkItem／shallow 卡）production 向量 ──────────────
-# 期望值是刪除舊的關鍵字列表函式之前，用它對同一份 JSON 實跑抄下的字面常數
-# （不用 _content_id_to_number 現算：同源恆真）。13dsvr／h_／55t 的「錯」番號是現行行為，官方番號是 T8 的事。
-_VECTOR_ROWS = [
-    {"id": "13dsvr01774", "title": "VR タイトル A", "packageImage": {"largeUrl": "https://img.invalid/13dsvr01774pl.jpg"},
-     "deliveryStartAt": "2024-05-01T00:00:00Z", "releaseStatus": "RELEASED",
-     "actresses": [{"id": "1093154", "name": "あかね麗（二階堂麗）"}, {"id": "1030262", "name": "三上悠亜"}],
-     "maker": {"id": "3152", "name": "エスワン ナンバーワンスタイル"}},
-    {"id": "h_113id00057", "title": "タイトル B", "packageImage": {"largeUrl": "https://img.invalid/h_113id00057pl.jpg"},
-     "deliveryStartAt": "2023-01-02T00:00:00Z", "releaseStatus": "RELEASED",
-     "actresses": [{"id": "2001", "name": "テスト女優"}],
-     "maker": {"id": "1509", "name": "ムーディーズ"}},
-    {"title": "id 欠落列", "packageImage": {"largeUrl": "https://img.invalid/noid.jpg"},
-     "actresses": [{"id": "3", "name": "丟棄女優"}], "maker": {"id": "9", "name": "丟棄片商"}},
-    {"id": "sone00205", "title": "最小列", "packageImage": None, "actresses": None, "maker": None},
-    {"id": "55t28103", "title": "數字前綴", "packageImage": {"largeUrl": "https://img.invalid/55t28103pl.jpg"},
-     "deliveryStartAt": "2022-03-04T00:00:00Z", "releaseStatus": "PRE_ORDER",
-     "actresses": [{"id": "4001", "name": "女優甲（舊名）"}, {"id": "4002", "name": ""}],
-     "maker": {"id": "1227", "name": "アタッカーズ"}},
-]
-
-# (content_id, number, title, cover_url, date, 女優名, maker, source, detail_url)
-_VECTOR_EXPECTED = [
-    ('13dsvr01774', 'DSVR-1774', 'VR タイトル A', 'https://img.invalid/13dsvr01774pl.jpg', '',
-     ['あかね麗', '三上悠亜'], 'エスワン ナンバーワンスタイル', 'dmm',
-     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=13dsvr01774/'),
-    ('h_113id00057', 'h_113id00057', 'タイトル B', 'https://img.invalid/h_113id00057pl.jpg', '',
-     ['テスト女優'], 'ムーディーズ', 'dmm',
-     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=h_113id00057/'),
-    ('sone00205', 'SONE-205', '最小列', '', '', [], '', 'dmm',
-     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=sone00205/'),
-    ('55t28103', 'T-28103', '數字前綴', 'https://img.invalid/55t28103pl.jpg', '',
-     ['女優甲'], 'アタッカーズ', 'dmm',
-     'https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=55t28103/'),
-]
-
-
-def _json_resp(status=200, data=None):
-    r = MagicMock()
-    r.status_code = status
-    r.json = lambda: data
-    return r
-
-
-def _provider_with_post(response):
-    scraper = DMMScraper()
-    return DMMProvider(scraper), patch.object(scraper._session, "post", return_value=response)
-
-
-def test_search_keyword_row_conversion_matches_pre_deletion_vector():
-    """使用者搜 あかね麗：卡片女優欄是『あかね麗』而不是『あかね麗（二階堂麗）』；缺 id 列丟棄、缺 maker／女優列照收。"""
-    body = {"data": {"legacySearchPPV": {"result": {
-        "pageInfo": {"totalCount": 5, "hasNext": False}, "contents": _VECTOR_ROWS}}}}
-    provider, post_patch = _provider_with_post(_json_resp(200, body))
-    with post_patch as post:
-        page = provider.search_keyword("キーワード", Window(0, 40))
-    assert post.call_count == 1
-    assert post.call_args.kwargs["json"]["variables"] == {
-        "limit": 40, "offset": 0, "sort": "RELEASE_DATE", "queryWord": "キーワード"}
-    got = [(it.ref[0], it.number, it.title, it.cover_url, it.date,
-            [a.name for a in it.ref[1].actresses], it.ref[1].maker, it.source, it.ref[1].detail_url)
-           for it in page.items]
-    assert got == _VECTOR_EXPECTED
-    # WorkItem 欄位與 shallow 卡一致、actors 維持 None
-    assert all(it.actors is None and it.ref[1].number == it.number and it.ref[1].title == it.title
-               and it.ref[1].source == "dmm" for it in page.items)
-    assert page.has_next is False and page.total == 5  # T8：Page.has_next／total 取自 pageInfo
-
-
-def test_search_keyword_has_next_and_total_come_from_page_info():
-    """T8（CD-175c-7）：has_next／total 取自 pageInfo，不再用『筆數 ≥ 視窗』猜（缺 id 的丟掉後恆為 4 部）。"""
-    for has_next, window_limit in ((True, 5), (False, 4)):  # 不滿一頁而站方說還有、整頁滿而站方說沒有
-        body = {"data": {"legacySearchPPV": {"result": {
-            "pageInfo": {"totalCount": 999, "hasNext": has_next}, "contents": _VECTOR_ROWS}}}}
-        provider, post_patch = _provider_with_post(_json_resp(200, body))
-        with post_patch:
-            page = provider.search_keyword("x", Window(0, window_limit))
-        assert page.has_next is has_next and page.total == 999

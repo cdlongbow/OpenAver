@@ -139,21 +139,16 @@ def test_batch_search_does_not_resolve_makers(client):
     assert seen and all("resolve_makers" not in kw for kw in seen)
 
 
-# ---------------------------------------------------------------- 175c-T9：DMM 經真 smart_search→relay.search_maker→真 DMMProvider.run_maker
+# ---------------------------------------------------------------- 175c-T9：只開 DMM 時的片商膠囊列
 #
-# 與上面的案相反：這三組**不** patch smart_search／search_maker／relay，鏈固定只有 dmm，只 patch DMM 傳輸（類別層）與
-# 使用端的名單／片庫／tmp DB，否則「由 DMM 回答」沒被測到。合成資料全為檔內字面，不連外、不存站方檔（BE-TEST-43）。
+# DMM 實際回答片商搜尋（REST／SSE／膠囊別名）的端到端不在這裡造假回應：靠活站金絲雀
+# （tests/smoke/test_dmm_search_canary.py）。這裡只留不碰站方回應的一案：鏈只有 dmm 時膠囊列啟用。
 import datetime
 
 import pytest
 
 from core.database import init_db
-from core.scrapers.dmm import DMMScraper, Facts, ListResult
-from core.scrapers.models import Video
 from core.search_providers import relay
-
-_DMM_MAKER_ID = "3152"
-_DMM_MAKER_NAME = "エスワン ナンバーワンスタイル"  # S1 的拼法集合內才有的 DMM 站上名稱
 
 
 def _dmm_chain(monkeypatch, ids):
@@ -162,8 +157,8 @@ def _dmm_chain(monkeypatch, ids):
 
 
 @pytest.fixture
-def dmm_maker(monkeypatch, tmp_path):
-    """鏈只有 dmm、使用端名單認得 S1、片庫空、tmp DB；回傳一個登記 DMM 傳輸罐頭的函式（登記後回呼叫紀錄）。"""
+def dmm_only_chain(monkeypatch, tmp_path):
+    """鏈只有 dmm、使用端名單認得 S1、片庫空、tmp DB。"""
     relay._reset_maker_answerers()
     _dmm_chain(monkeypatch, {"dmm"})
     known = lambda: frozenset({maker_key_of("S1")})  # noqa: E731
@@ -173,69 +168,11 @@ def dmm_maker(monkeypatch, tmp_path):
     monkeypatch.setattr("core.scraper.is_uncensored_route", lambda *a, **kw: False)
     db = tmp_path / "t.db"
     monkeypatch.setattr("core.database.get_db_path", lambda: db)
-
-    def install(n, has_next):
-        listing = [(f"sone{i:05d}", f"SONE-{i:03d}") for i in range(300, 300 + n)]
-        calls = {"probe": [], "list": [], "facts": []}
-
-        def list_contents(scraper, query_word=None, filter=None, *, limit, offset):
-            if filter is None:
-                calls["probe"].append(query_word)
-                maker = {"id": _DMM_MAKER_ID, "name": _DMM_MAKER_NAME}
-                return ListResult([{"id": "probe00001", "title": "p", "maker": maker}], 1, False)
-            calls["list"].append({"filter": filter, "limit": limit, "offset": offset})
-            maker = {"id": _DMM_MAKER_ID, "name": _DMM_MAKER_NAME}
-            rows = [{"id": cid, "title": f"t {cid}", "maker": maker} for cid, _ in listing]
-            return ListResult(rows, 999, has_next)
-
-        def fetch_facts(scraper, content_ids):
-            calls["facts"].append(tuple(content_ids))
-            return {cid: Facts(official, None, None, []) for cid, official in listing if cid in content_ids}
-
-        def fetch_by_id(scraper, content_id):
-            return Video(number=dict(listing)[content_id], title=f"full {content_id}", source="dmm")
-
-        monkeypatch.setattr(DMMScraper, "list_contents", list_contents)
-        monkeypatch.setattr(DMMScraper, "fetch_facts", fetch_facts)
-        monkeypatch.setattr(DMMScraper, "_fetch_by_id", fetch_by_id)
-        calls["numbers"] = [official for _, official in listing]
-        return calls
-
-    yield install
+    yield
     relay._reset_maker_answerers()
 
 
-@pytest.mark.parametrize("n,has_next", [(5, True), (LIMIT, False)])
-def test_rest_typed_maker_answered_by_dmm(client, dmm_maker, n, has_next):
-    """使用者只開 DMM、在搜尋框打 S1 → 看到 DMM 用片商 ID 列出的作品；『載入更多』以站方 hasNext 為準
-    （這頁只有 5 部但站方說還有 → 要有；剛好滿 20 部但站方說沒了 → 不能多一顆空按鈕）"""
-    calls = dmm_maker(n, has_next)
-    body = client.get("/api/search", params={"q": "S1", "limit": LIMIT}).json()
-    assert body["mode"] == "maker" and body["success"] is True
-    assert [c["number"] for c in body["data"]] == calls["numbers"]
-    assert {c["_source"] for c in body["data"]} == {"dmm"}
-    assert body["has_more"] is has_next
-    assert calls["probe"] == ["S1"] and len(calls["list"]) == 1
-    assert calls["list"][0]["filter"] == {"makerIds": {"ids": [{"id": _DMM_MAKER_ID}], "op": "OR"}}
-    assert (calls["list"][0]["limit"], calls["list"][0]["offset"]) == (LIMIT, 0)
-
-
-@pytest.mark.parametrize("n,has_next", [(5, True), (LIMIT, False)])
-def test_stream_typed_maker_answered_by_dmm(client, parse_sse_events, dmm_maker, n, has_next):
-    calls = dmm_maker(n, has_next)
-    r = client.get("/api/search/stream", params={"q": "S1", "limit": LIMIT})
-    events = parse_sse_events(r.text)
-    assert events[0] == {"type": "mode", "mode": "maker"}
-    types = [e["type"] for e in events]
-    assert types.count("seed") == 1 and types.index("seed") < types.index("result-item")
-    result = _result(events)
-    assert result["mode"] == "maker" and result["success"] is True
-    assert [c["number"] for c in result["data"]] == calls["numbers"]
-    assert result["has_more"] is has_next
-    assert len(calls["list"]) == 1
-
-
-def test_capsules_enabled_when_only_dmm_is_on(client, dmm_maker, monkeypatch, tmp_path):
+def test_capsules_enabled_when_only_dmm_is_on(client, dmm_only_chain, monkeypatch, tmp_path):
     """使用者只開 DMM 進搜尋頁 → 片商膠囊列可用（DMM 宣告了 MAKER）；DMM 也關了 → 整排停用。"""
     db = tmp_path / "caps.db"
     init_db(db)
@@ -248,19 +185,3 @@ def test_capsules_enabled_when_only_dmm_is_on(client, dmm_maker, monkeypatch, tm
     _dmm_chain(monkeypatch, set())
     body = client.get("/api/search/maker-capsules").json()
     assert body["success"] is True and body["maker_search_enabled"] is False
-
-
-def test_rest_capsule_alias_answered_by_dmm(client, dmm_maker, monkeypatch, tmp_path):
-    """使用者只開 DMM、點 S1 片商膠囊（前端只送片庫寫法 spellings=S1）→ 看到 DMM 用片商 ID 列出的作品。
-    DMM 站上的片商名是對照表裡 S1 的別名，比對候選沒展開別名就會回「找不到」。真對照表、真路由（maker_key 路徑）。"""
-    calls = dmm_maker(5, True)
-    db = tmp_path / "caps-rest.db"
-    monkeypatch.setattr("web.routers.search.get_db_path", lambda: db)
-    monkeypatch.setattr("web.routers.search._library_titles", lambda db_path: [])
-    monkeypatch.setattr("web.routers.search._today", lambda: datetime.date(2026, 10, 21))
-    body = client.get("/api/search", params={"maker_key": "s1", "maker": "S1", "spellings": ["S1"], "offset": 0}).json()
-    assert body["success"] is True and body["mode"] == "maker" and body["maker_key"] == "s1"
-    assert [c["number"] for c in body["data"]] == calls["numbers"]
-    assert {c["_source"] for c in body["data"]} == {"dmm"} and body["has_more"] is True
-    assert calls["probe"][0] == "S1" and len(calls["list"]) == 1
-    assert (calls["list"][0]["limit"], calls["list"][0]["offset"]) == (30, 0)  # 膠囊路徑不帶 limit ⇒ 一頁 30

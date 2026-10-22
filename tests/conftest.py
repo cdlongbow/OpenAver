@@ -598,7 +598,7 @@ def empty_library_makers(monkeypatch):
 # 才輪到 KEYWORD：真 `JavBusProvider.resolve` 會發 searchstar／搜尋請求（被 `_outbound_guard` 擋成
 # `OutboundConnectionViolation`），或在假 scraper 沒有 `search_stars` 時被梯子吞成 `[]` 而讓 KEYWORD 沒被問。
 # 這些既有測試要驗的是 KEYWORD／前綴／部分番號的舊行為，所以把 resolve 換成「查無」讓梯子走空。
-# 不做 autouse：resolve 自己的測試與 test_javbus_entity_list.py 要真的 resolve（受影響的檔案逐檔 pytestmark opt-in）：
+# 不做 autouse：受影響的檔案逐檔 pytestmark opt-in（站方回應不再於單元測試造假，真 resolve 的測試已刪，靠活站金絲雀）：
 #     pytestmark = pytest.mark.usefixtures("no_entity_lookup")
 # 只 patch 既有屬性（不用 create=True，命名錯誤要炸）；T7 加入 DMM 的 resolve 後擴成兩家。
 # T9：DMM 宣告 MAKER 後，片商路徑（`relay.search_maker` → `DMMProvider.run_maker`）經 `_resolve_maker` 解析片商名
@@ -619,7 +619,7 @@ def no_entity_lookup(monkeypatch):
 # 只 patch `list_contents` 的既有測試（假 rows、斷言推導番號）沒有替身可吃這次呼叫，真 `fetch_facts` 會被
 # `_outbound_guard` 擋成 `OutboundConnectionViolation`。這裡把它換成「站方一個 alias 都沒回」（`{}`）＝官方番號全走
 # cid 推導的退路＝等於這些測試今天斷言的值。
-# 不做 autouse：test_dmm_entity_list.py 與 test_dmm_resolve.py 要真的有 facts（受影響的檔案逐檔 pytestmark opt-in）：
+# 不做 autouse：受影響的檔案逐檔 pytestmark opt-in（站方回應不再於單元測試造假，要真 facts 的測試已刪，靠活站金絲雀）：
 #     pytestmark = pytest.mark.usefixtures("no_dmm_facts")
 # 只 patch 既有屬性（不用 create 旗標，命名錯誤要炸）。
 @pytest.fixture
