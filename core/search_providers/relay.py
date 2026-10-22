@@ -18,8 +18,8 @@ from typing import NamedTuple
 
 from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked
-from core.search_providers import registry
-from core.search_providers.pipeline import run_window
+from core.search_providers import actor_names, registry
+from core.search_providers.pipeline import merge_windows, run_window
 from core.search_providers.types import EntityRef, Kind, MakerSearchResult, Window
 
 logger = get_logger(__name__)
@@ -47,14 +47,145 @@ def _streams_as_fallback(provider) -> bool:
     return bool(getattr(provider, "fallback_streaming", False))
 
 
-def _resolve_refs(provider, kind: Kind, name: str) -> list[EntityRef]:
-    """名字 → 實體參照清單（目前 0 或 1 個；175b 接多候選的上接點）。"""
+_MAX_REFS = 4  # 一次搜尋最多取幾個實體代號（CD-175d-3）
+_MAX_SWAP_NAMES = 3  # 換名候選最多取幾個（CD-175d-6）
+
+
+class _LadderHit(NamedTuple):
+    """實體梯子的命中結果：cards 為空時 refs／positions 一律是空 list（該家回答了「沒有」）。"""
+
+    cards: list[dict]
+    provider_id: str
+    refs: list[EntityRef]
+    positions: list[int]  # 與 refs 等長：該 ref 累計消耗位置，或 -1（耗盡）
+
+
+def _no_cards(provider) -> _LadderHit:
+    return _LadderHit([], provider.id, [], [])
+
+
+def _is_all_kana(q: str) -> bool:
+    """全假名（平假名／片假名含「ー」「・」、半形片假名含半形中點「･」U+FF65；空白略過，至少 1 個非空白字元）⇒ 不換名。"""
+    chars = [ch for ch in q if not ch.isspace()]
+    return bool(chars) and all("\u3040" <= ch <= "\u30ff" or "\uff65" <= ch <= "\uff9f" for ch in chars)
+
+
+class _ActorNames:
+    """女優名稱組（CD-175d-2、-6）：建構零 I/O；別名組惰性讀、整次搜尋只讀一次；換名結果整次搜尋只算一次。
+
+    groups(provider) 依優先序逐組產生名稱組（list[str]）；呼叫端取第一個產生 ref 的組。"""
+
+    def __init__(self, q: str, chain):
+        self._q = q
+        self._chain = chain  # providers_for 的未過濾結果
+        self._aliases = None
+        self._base = None
+        self._cands = None  # None＝尚未問過換名者；失敗記為 []
+
+    @property
+    def q(self) -> str:
+        return self._q
+
+    def base(self) -> list[str]:
+        if self._base is None:
+            if self._aliases is None:
+                self._aliases = actor_names.load_alias_groups()  # 模組屬性呼叫，測試 patch 才攔得到
+            self._base = actor_names.expand_actor_names(self._q, self._aliases)
+        return self._base
+
+    def groups(self, provider):
+        swap_first = actor_names.needs_swap_first(self._q)
+        if swap_first:
+            yield from self._swap_groups(provider)
+        yield self.base()
+        if not swap_first:
+            yield from self._swap_groups(provider)
+
+    def _swapper(self, asked):
+        for p in self._chain:
+            if p.id != asked.id and callable(getattr(p, "alt_names", None)):
+                return p
+        return None
+
+    def _candidates(self, swapper) -> list[str]:
+        if self._cands is None:
+            tried = self.base()
+            try:
+                found = swapper.alt_names(Kind.ACTOR, self._q)
+                self._cands = actor_names.swap_candidates(found, tried, _MAX_SWAP_NAMES)
+            except Exception as swap_err:
+                logger.warning("actor name swap failed: %s (%s)", swapper.id, type(swap_err).__name__)
+                self._cands = []
+        return self._cands
+
+    def _swap_groups(self, asked):
+        if _is_all_kana(self._q):
+            return
+        swapper = self._swapper(asked)
+        if swapper is None:
+            return
+        for cand in self._candidates(swapper):
+            yield actor_names.expand_actor_names(cand, self._aliases)
+
+
+def _single_ref(provider, kind: Kind, name: str) -> list[EntityRef]:
     ref = provider.resolve(kind, name)
     return [ref] if ref is not None else []
 
 
-def _entity_ladder(provider, name: str, w: Window, cb, status_callback=None) -> list[dict] | None:
-    """None＝梯子沒有任何 ref 命中（呼叫端改問 KEYWORD）；list＝命中了（可為空；該家不再問 KEYWORD）。
+def _resolve_refs(provider, kind: Kind, names: list[str]) -> list[EntityRef]:
+    """一組名字 → 實體參照（去重保序，上限 _MAX_REFS；湊滿後不再問後面的名字）。"""
+    resolve_all = getattr(provider, "resolve_all", None)
+    refs: list[EntityRef] = []
+    seen: set = set()
+    for name in names:
+        found = resolve_all(kind, name) if callable(resolve_all) else _single_ref(provider, kind, name)
+        for ref in found:
+            key = (ref.kind, ref.id)
+            if key in seen:
+                continue
+            seen.add(key)
+            refs.append(ref)
+        if len(refs) >= _MAX_REFS:
+            break
+    return refs[:_MAX_REFS]
+
+
+def _actor_refs(provider, names: _ActorNames) -> list[EntityRef]:
+    """依名稱組優先序，第一個產生 ≥1 個 ref 的組勝出，後面的組不再問（I-X3）。"""
+    hit: list[EntityRef] = []
+    for group in names.groups(provider):
+        hit = _resolve_refs(provider, Kind.ACTOR, group)
+        if hit:
+            break
+    return hit
+
+
+def _kind_refs(provider, kind: Kind, names: _ActorNames) -> list[EntityRef]:
+    if kind is Kind.ACTOR:
+        return _actor_refs(provider, names)
+    return _resolve_refs(provider, kind, [names.q])  # SERIES／DIRECTOR／LABEL 不展開別名、不換名
+
+
+def _answer_window(provider, refs, w: Window, cb, status_callback) -> _LadderHit:
+    """refs（≥1 個）→ 一個視窗的卡片。單 ref 與 175c 同一行呼叫（不經 merge_windows）；多 ref 歸併後逐部以 origin 補詳情。"""
+    if len(refs) == 1:
+        page = provider.list_entity(refs[0], w)
+        items = page.items
+        positions = [w.offset + len(page.items) if page.has_next else -1]
+    else:
+        merged = merge_windows(provider, refs, [0] * len(refs), w.limit)
+        items, positions = merged.items, merged.new_positions
+    res = run_window(provider, items, refs[0], result_callback=cb, guard=True)
+    if not res.cards:
+        return _no_cards(provider)
+    if status_callback is not None:
+        status_callback("done", f"found:{len(res.cards)}")
+    return _LadderHit(res.cards, provider.id, list(refs), positions)
+
+
+def _entity_ladder(provider, names: _ActorNames, w: Window, cb, status_callback=None) -> _LadderHit | None:
+    """None＝梯子沒有任何 ref 命中（呼叫端改問 KEYWORD）；_LadderHit＝命中了（cards 可為空；該家不再問 KEYWORD）。
 
     可觀測：只有宣告了實體能力的 provider 才送 status（第一次進入實體 kind 前 searching、有卡時 done）；
     不宣告實體能力者（JavBus／DMM）梯子是空操作、零事件。"""
@@ -66,37 +197,24 @@ def _entity_ladder(provider, name: str, w: Window, cb, status_callback=None) -> 
             status_callback(provider.id, "searching")
         announced = True
         try:
-            refs = _resolve_refs(provider, kind, name)
-            for ref in refs:
-                page = provider.list_entity(ref, w)
-                res = run_window(
-                    provider,
-                    page.items,
-                    ref,
-                    result_callback=cb,
-                    guard=True,
-                )
-                if res.cards:
-                    if status_callback is not None:
-                        status_callback("done", f"found:{len(res.cards)}")
-                    return res.cards
+            refs = _kind_refs(provider, kind, names)
+            if refs:
+                return _answer_window(provider, refs, w, cb, status_callback)
         except Exception as err:
             logger.warning(
                 "entity ladder failed: %s/%s (%s%s)",
                 provider.id, kind.value, type(err).__name__, "/blocked" if isinstance(err, SourceBlocked) else "",
             )
-            return []
-        if refs:
-            return []
+            return _no_cards(provider)
     return None
 
 
-def _ask(provider, mode, q, w, status_callback, cb, discovery_only) -> list[dict]:
+def _ask(provider, mode, q, w, status_callback, cb, discovery_only, names=None) -> list[dict]:
     if mode == "actress":
         if not discovery_only:
-            cards = _entity_ladder(provider, q, w, cb, status_callback)
-            if cards is not None:
-                return cards
+            hit = _entity_ladder(provider, names, w, cb, status_callback)
+            if hit is not None:
+                return hit.cards
         kind = Kind.KEYWORD
     else:
         kind = _MODE_KIND[mode]
@@ -115,6 +233,7 @@ def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, 
         raise ValueError(f"unknown search mode: {mode!r}")
     providers = registry.providers_for(kinds, discovery_only=discovery_only)
     chain_ids = [p.id for p in providers]
+    names = _ActorNames(q, providers) if mode == "actress" else None
     gate = _SeedGate(result_callback)
     for index, provider in enumerate(providers):
         provider_id = provider.id
@@ -122,7 +241,7 @@ def search_by_intent(mode, q, w, *, status_callback=None, result_callback=None, 
             raise TypeError(f"provider {provider_id!r} has no run()")
         cb = None if gate.seeded or (index and not _streams_as_fallback(provider)) else gate.callback
         try:
-            cards = _ask(provider, mode, q, w, status_callback, cb, discovery_only)
+            cards = _ask(provider, mode, q, w, status_callback, cb, discovery_only, names)
         except Exception as exc:
             logger.warning(
                 "relay: %s failed (%s%s), trying next of %s",

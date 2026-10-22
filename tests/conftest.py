@@ -625,6 +625,22 @@ def no_actor_aliases(monkeypatch):
     monkeypatch.setattr("core.search_providers.actor_names.load_alias_groups", lambda *a, **k: [])
 
 
+# ============ TASK-175d-T4：relay 讀本機別名表的全域隔離（autouse）============
+# relay 的女優梯級每次搜尋都會惰性呼叫 `actor_names.load_alias_groups()`；該函式讀真實 `output/openaver.db`。
+# 開發機有該檔時，任何走到 `search_by_intent("actress", …)` 的測試（含 smart_search 系列）會撞上 G1 拋 BaseException，
+# CI 沒有該檔不會 ⇒ 本機紅 CI 綠（BE-TEST-28 同形）。所以預設換成「沒有別名」。
+# 要餵別名組的測試在測試內 `monkeypatch.setattr("core.search_providers.actor_names.load_alias_groups", lambda: groups)`
+# （晚於本 fixture，會蓋過它）。relay 必須以模組屬性呼叫才攔得到；T1 的 test_actor_names 以 from-import 綁名，不受影響。
+# smoke／e2e 不動。與上面 opt-in 的 `no_actor_aliases` 並存（T2 的測試仍可明寫它）。
+@pytest.fixture(autouse=True)
+def _no_real_actor_aliases(request, monkeypatch):
+    if request.node.get_closest_marker("smoke") or request.node.get_closest_marker("e2e"):
+        yield
+        return
+    monkeypatch.setattr("core.search_providers.actor_names.load_alias_groups", lambda *a, **k: [])
+    yield
+
+
 # ============ TASK-175c-T8：DMM 官方番號 facts 的隔離（R14 測試遷移）====
 #
 # DMM 列表（關鍵字與實體共用的頁面組裝）現在在回傳前多打一次 `fetch_facts` 取官方番號（CD-175c-7）。
