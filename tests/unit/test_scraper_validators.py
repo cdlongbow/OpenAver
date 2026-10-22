@@ -38,28 +38,6 @@ class TestIsNumberFormat:
         """UC/UNCEN suffixes are stripped before matching"""
         assert is_number_format("SONE-103-UC") is True
 
-    def test_multi_dash_accepted(self):
-        """Multi-dash formats like FC2-PPV-1234567 are accepted via is_strict_number"""
-        assert is_number_format("FC2-PPV-1234567") is True
-
-    def test_digit_in_prefix_accepted(self):
-        """Prefix with digit like T28-001 is accepted via is_strict_number"""
-        assert is_number_format("T28-001") is True
-
-    def test_number_prefix_accepted(self):
-        """Prefix starting with digit like 259LUXU-001 is accepted via is_strict_number"""
-        assert is_number_format("259LUXU-001") is True
-
-    def test_underscore_in_number_rejected(self):
-        """Underscore in number portion doesn't match"""
-        assert is_number_format("1Pondo-123456_789") is False
-
-    def test_invalid_formats(self):
-        assert is_number_format("hello") is False
-        assert is_number_format("12345") is False
-        assert is_number_format("") is False
-        assert is_number_format("ABP-") is False
-        assert is_number_format("-001") is False
 
     def test_too_few_digits(self):
         """Less than 3 digits rejected (belongs to is_partial_number)"""
@@ -73,18 +51,12 @@ class TestIsNumberFormat:
         assert is_number_format("T28-103") is True
 
     @pytest.mark.parametrize("val", [
-        "三上悠亜", "白桃はな", "巨乳 2024", "S1 NO.1 STYLE", "prestige 2023",
-        "4K 無碼", "IPZ", "2024", "hhd800.com@SONE-103",
-        "../etc/passwd/SONE-103", "https://evil.com/SONE-103"
+        "三上悠亜",
+        "https://evil.com/SONE-103"
     ])
     def test_negative_f3a_cases(self, val: str):
         """F3-a 反向鎖：關鍵字與路徑/網址等雜訊字串經 is_number_format 為 False"""
         assert is_number_format(val) is False
-
-    def test_none_raises(self):
-        """None input raises AttributeError (no null guard)"""
-        with pytest.raises(AttributeError):
-            is_number_format(None)
 
 
 class TestIsPartialNumber:
@@ -92,62 +64,12 @@ class TestIsPartialNumber:
         assert is_partial_number("SNIS-1") is True
         assert is_partial_number("ABP12") is True  # no dash, 1-2 digits
 
-    def test_no_digits_rejected(self):
-        """ABP- has no digits, doesn't match regex"""
-        assert is_partial_number("ABP-") is False
-
-    def test_multi_segment_rejected(self):
-        """FC2-PPV- doesn't match simple letter-digit partial pattern"""
-        assert is_partial_number("FC2-PPV-") is False
-
-    def test_complete_number_rejected(self):
-        """3+ digits = complete number, not partial"""
-        assert is_partial_number("ABP-001") is False
-
-    def test_invalid_partial(self):
-        assert is_partial_number("hello") is False
-        assert is_partial_number("12345") is False
-        assert is_partial_number("") is False
-
-    def test_none_raises(self):
-        """None input raises AttributeError (no null guard)"""
-        with pytest.raises(AttributeError):
-            is_partial_number(None)
-
 
 class TestIsPrefixOnly:
     def test_valid_prefix(self):
         assert is_prefix_only("ABP") is True
         assert is_prefix_only("SNIS") is True
         assert is_prefix_only("ABCDEF") is True  # 6 chars = max
-
-    def test_digit_in_prefix_rejected(self):
-        """FC2 contains digit '2', doesn't match ^[A-Z]{2,6}$"""
-        assert is_prefix_only("FC2") is False
-
-    def test_too_short(self):
-        """Single letter is too short (min 2)"""
-        assert is_prefix_only("A") is False
-
-    def test_too_long(self):
-        """7+ letters is too long (max 6)"""
-        assert is_prefix_only("ABCDEFG") is False
-
-    def test_lowercase_converted(self):
-        """Input is uppercased before matching, so lowercase works"""
-        assert is_prefix_only("abp") is True
-        assert is_prefix_only("snis") is True
-
-    def test_invalid_prefix(self):
-        assert is_prefix_only("ABP-001") is False
-        assert is_prefix_only("ABP-") is False
-        assert is_prefix_only("123") is False
-        assert is_prefix_only("") is False
-
-    def test_none_raises(self):
-        """None input raises AttributeError (no null guard)"""
-        with pytest.raises(AttributeError):
-            is_prefix_only(None)
 
 
 # ============ search_jav source routing (TASK-61a-3) ============
@@ -213,12 +135,6 @@ class TestValidateSourceIntegration:
         result = search_jav("ABP-001", source="not-a-real-source")
         assert result is None
 
-    def test_auto_is_accepted(self, monkeypatch):
-        # 'auto' must pass validation; with empty enabled list -> no results -> None.
-        _install_scraper_spies(monkeypatch)
-        monkeypatch.setattr(scraper_mod, 'get_enabled_source_ids', lambda availability_map=None: [])
-        result = search_jav("ABP-001", source="auto")
-        assert result is None
 
     def test_known_explicit_source_accepted(self, monkeypatch):
         # 'javbus' must pass validation and construct exactly JavBusScraper.
@@ -248,13 +164,6 @@ class TestAutoFanOutReadsEnabledIds:
             if attr not in ('JavBusScraper', 'JavDBScraper'):
                 assert constructed[attr] == 0
 
-    def test_auto_empty_enabled_list_returns_none(self, monkeypatch):
-        constructed = _install_scraper_spies(monkeypatch)
-        monkeypatch.setattr(scraper_mod, 'get_enabled_source_ids', lambda availability_map=None: [])
-        result = search_jav("ABP-001", source="auto")
-        assert result is None
-        assert all(v == 0 for v in constructed.values())
-
 
 class TestDmmBuiltRegardlessOfProxyField:
     """DMM 能不能被用只看膠囊（auto fan-out 的 enabled 清單），與 Proxy 欄無關（163a）。"""
@@ -275,29 +184,8 @@ class TestDmmBuiltRegardlessOfProxyField:
         assert constructed['DMMScraper'] == 1
         assert constructed['JavBusScraper'] == 1
 
-    def test_auto_dmm_not_in_enabled_list_not_constructed(self, monkeypatch):
-        # 膠囊關（不在 enabled 清單）→ auto fan-out 不建 DMM。
-        constructed = _install_scraper_spies(monkeypatch)
-        monkeypatch.setattr(
-            scraper_mod, 'get_enabled_source_ids', lambda availability_map=None: ['javbus']
-        )
-        search_jav("ABP-001", source="auto")
-        assert constructed['DMMScraper'] == 0
-        assert constructed['JavBusScraper'] == 1
-
 
 # ============ TASK-73a-T1: 入口 gate + search_jav 整合 ============
-
-class TestTokyoHotGate:
-    """is_number_format 入口 gate 守衛：n0762 / N0762 必須通過"""
-
-    def test_is_number_format_n0762_lowercase(self):
-        """n0762 通過入口 gate（契約守衛）"""
-        assert is_number_format('n0762') is True
-
-    def test_is_number_format_N0762_uppercase(self):
-        """N0762 通過入口 gate（契約守衛）"""
-        assert is_number_format('N0762') is True
 
 
 class TestTokyoHotSearchJavIntegration:

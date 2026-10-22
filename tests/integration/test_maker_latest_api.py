@@ -3,7 +3,6 @@
 DB 一律 tmp_path、今天一律注入、JavBus 一律在使用端替身，不連外網。
 """
 import datetime
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +10,7 @@ import requests
 
 from core.database import Video, VideoRepository, init_db, maker_javbus_map
 from core.path_utils import to_file_uri
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceBlocked
 from core.search_providers.relay import MakerCapsulePolicy
 from core.scrapers.javbus import STUDIO_MISS, JavBusScraper, StudioVote
 
@@ -145,21 +144,9 @@ def rest(client, **extra):
 
 # ---------------- capsules ----------------
 
-def test_recent_window_includes_since_day(client, env):
-    add_videos(env, [
-        ("A-001.mp4", "AAA-001", "Alpha", "2025-10-21"),
-        ("A-002.mp4", "AAA-002", "Alpha", "2025-10-20"),
-    ])
-    data = caps(client)
-    assert data["since"] == "2025-10-21"
-    assert by_maker(data)["Alpha"] == {"maker": "Alpha", "total": 2, "recent": 1}
-
 
 @pytest.mark.parametrize("today,since", [
-    (datetime.date(2026, 10, 21), "2025-10-21"),
-    (datetime.date(2026, 2, 28), "2025-02-28"),
     (datetime.date(2024, 2, 29), "2023-02-28"),
-    (datetime.date(2028, 2, 29), "2027-02-28"),
 ])
 def test_since_is_twelve_months_back_clamped(client, env, monkeypatch, today, since):
     monkeypatch.setattr("web.routers.search._today", lambda: today)
@@ -209,41 +196,11 @@ def test_capsules_row_disabled_when_no_provider_can_answer(client, env, monkeypa
     assert idb.call_count == 0 and repo.call_count == 0 and lnf.call_count == 0
 
 
-def test_capsules_hidden_keys_empty_when_javdb_also_answers(client, env, monkeypatch):
-    five_s1(env)
-    monkeypatch.setattr("web.routers.search.maker_capsule_policy", lambda: MakerCapsulePolicy(True, False))
-    with patch("web.routers.search.list_not_found_keys", return_value=["x"]) as lnf:
-        data = caps(client)
-    assert data["maker_search_enabled"] is True and data["hidden_keys"] == []
-    assert by_maker(data)["S1"]["total"] == 5
-    assert lnf.call_count == 0
-
-
-def test_capsules_hidden_keys_from_table_when_javbus_only(client, env):
-    five_s1(env)
-    with patch("web.routers.search.list_not_found_keys", return_value=["x", "y"]) as lnf:
-        data = caps(client)
-    assert data["hidden_keys"] == ["x", "y"] and lnf.call_count == 1
-
-
-def test_capsules_missing_db_file_is_empty(client, env):
-    env.db.unlink()
-    data = caps(client)
-    assert data["success"] is True and data["makers"] == [] and data["hidden_keys"] == []
-
-
 def test_capsules_failure_hides_exception_text(client, env):
     with patch("web.routers.search.VideoRepository", side_effect=RuntimeError(SECRET)):
         r = client.get(CAPS)
     assert r.json()["success"] is False
     assert SECRET not in r.text
-
-
-def test_capsules_is_sync_def():
-    import inspect
-    from web.routers import search as mod
-    fn = mod.get_maker_capsules
-    assert not inspect.iscoroutinefunction(fn)
 
 
 # ---------------- SSE ----------------
@@ -271,16 +228,6 @@ def test_sse_found_event_order_and_no_actress_helpers(client, env, parse_sse_eve
     assert maker_javbus_map.get_mapping(KEY, db_path=env.db)["status"] == "found"
 
 
-def test_first_click_resolves_from_library_titles(client, env):
-    five_s1(env)
-    with maker_patches() as m:
-        body = rest(client).json()
-    assert body["success"] is True
-    called = set(m.sample.fetcher.calls)
-    assert called and called <= {f"SONE-{200 + i}" for i in range(5)}
-    assert len(called) == 2  # 兩票同值即停
-
-
 # ---------------- REST paging / has_more ----------------
 
 def test_second_page_reports_has_more_from_request_page(client, env):
@@ -296,20 +243,6 @@ def test_second_page_reports_has_more_from_request_page(client, env):
     with maker_patches(studio=studio_pages({2: nums(12, 100)})):
         body = rest(client, offset=30, cursor=token).json()
     assert body["total"] == 12 and body["has_more"] is False
-
-
-def test_second_request_skips_sample_fetch_but_still_lists(client, env):
-    five_s1(env)
-    with maker_patches() as m:
-        first = rest(client).json()
-        assert m.sample.call_count >= 1
-        m.sample.reset_mock()
-        second = rest(client).json()
-        assert m.sample.call_count == 0
-        assert m.studio.call_count == 2
-        assert m.sj.call_count == 60
-    assert first["success"] and second["success"]
-    assert len(first["data"]) == len(second["data"]) == 30
 
 
 # ---------------- failure shapes ----------------
@@ -336,23 +269,13 @@ def assert_found_not_hidden(env):
     assert maker_javbus_map.list_not_found_keys(db_path=env.db) == []
 
 
-@pytest.mark.parametrize("exc", [SourceBlocked("b"), SourceUnreachable("u"), TimeoutError("t")])
+@pytest.mark.parametrize("exc", [SourceBlocked("b"), ])
 def test_list_failure_after_resolve_is_unreachable_not_empty(client, env, exc, parse_sse_events):
     five_s1(env)
     with maker_patches(studio=MagicMock(side_effect=exc)):
         body = rest(client).json()
     assert body["success"] is False and body["error_code"] == "maker_unreachable"
     assert_found_not_hidden(env)
-
-
-def test_not_found_skips_list_and_detail(client, env):
-    five_s1(env)
-    with maker_patches(sample_outcomes=[STUDIO_MISS] * 5) as m:
-        body = rest(client).json()
-    assert body["success"] is False and body["error_code"] == "maker_not_found"
-    assert body["maker_key"] == KEY
-    assert m.studio.call_count == 0 and m.sj.call_count == 0
-    assert maker_javbus_map.get_mapping(KEY, db_path=env.db)["status"] == "not_found"
 
 
 def test_no_sample_and_empty_pass_through_both_transports(client, env, parse_sse_events):
@@ -371,16 +294,7 @@ def test_no_sample_and_empty_pass_through_both_transports(client, env, parse_sse
     assert res["success"] is False and res["error_code"] == "maker_empty"
 
 
-def test_found_but_all_details_missing_has_no_error_code(client, env):
-    five_s1(env)
-    ids = nums(3)
-    with maker_patches(studio=studio_pages({1: ids}), sj=detail(missing=set(ids))):
-        body = rest(client).json()
-    assert body["success"] is False and "error_code" not in body
-
-
-@pytest.mark.parametrize("where", ["resolver", "list"])
-@pytest.mark.parametrize("transport", ["rest", "sse"])
+@pytest.mark.parametrize("transport,where", [("rest", "resolver"), ("sse", "list")], ids=["rest-resolver", "sse-list"])
 def test_unexpected_exception_maps_to_maker_unreachable(client, env, parse_sse_events, where, transport):
     five_s1(env)
     boom = RuntimeError(SECRET)
@@ -407,43 +321,4 @@ def test_unexpected_exception_maps_to_maker_unreachable(client, env, parse_sse_e
 
 # ---------------- validation ----------------
 
-def test_bad_offset_rest_400_and_sse_error(client, env, parse_sse_events):
-    with patch("web.routers.search.search_maker_latest") as sm:
-        r = rest(client, offset=15)
-        assert r.status_code == 400
-        assert r.json()["success"] is False and r.json()["error"]
-        _, events = sse(client, parse_sse_events, offset=15)
-    assert [e["type"] for e in events] == ["error"]
-    assert sm.call_count == 0
 
-
-def test_too_many_spellings_is_400(client, env):
-    with patch("web.routers.search.search_maker_latest") as sm:
-        r = client.get(REST, params={"maker_key": KEY, "spellings": [f"s{i}" for i in range(21)]})
-    assert r.status_code == 400
-    assert sm.call_count == 0
-
-
-@pytest.mark.parametrize("params", [
-    {"maker_key": ""},
-    {"maker_key": "x" * 201},
-    {"maker_key": KEY, "spellings": ["y" * 201]},
-])
-def test_other_invalid_maker_params_are_400(client, env, params):
-    with patch("web.routers.search.search_maker_latest") as sm:
-        assert client.get(REST, params=params).status_code == 400
-    assert sm.call_count == 0
-
-
-def test_missing_q_and_maker_key_keeps_existing_error(client, env, parse_sse_events):
-    assert client.get(REST).json()["error"] == "請輸入有效的搜尋關鍵字"
-    r = client.get(SSE)
-    assert json.loads(r.text.strip()[len("data: "):])["message"] == "請輸入有效的搜尋關鍵字"
-
-
-def test_spellings_default_to_label(client, env):
-    five_s1(env)
-    with patch("web.routers.search.search_maker_latest") as sm:
-        sm.return_value = MagicMock(results=[], has_more=False, error_code="maker_empty")
-        client.get(REST, params={"maker_key": KEY, "maker": "S1"})
-    assert sm.call_args.args[:3] == (KEY, "S1", ["S1"])

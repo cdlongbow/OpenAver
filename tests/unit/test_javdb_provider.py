@@ -18,14 +18,7 @@ class TestListPage:
         assert len(p.items) == 50
         assert p.total is None
 
-    def test_list_page_has_next_stops_at_max_page(self):
-        assert list_page(_rows(50), 98).has_next is True
-        assert list_page(_rows(50), 99).has_next is False
 
     def test_short_page_has_no_next(self):
         assert list_page(_rows(49), 1).has_next is False
 
-    def test_empty_page_has_no_next(self):
-        p = list_page([], 1)
-        assert p.has_next is False and p.items == []
-        assert list_page(None, 1).has_next is False

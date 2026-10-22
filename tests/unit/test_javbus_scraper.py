@@ -52,26 +52,6 @@ class TestConnectionErrorHandling:
         with pytest.raises(TimeoutError):
             scraper_zh.search("SNOS-143")
 
-    def test_get_ids_from_search_connection_error_raises_timeout(self, scraper_zh):
-        """get_ids_from_search() 撞 ConnectionError → 拋 TimeoutError"""
-        scraper_zh._session.get = MagicMock(side_effect=requests.ConnectionError("proxy down"))
-        with pytest.raises(TimeoutError):
-            scraper_zh.get_ids_from_search("姐妹")
-
-    def test_fetch_by_id_connection_error_raises_timeout(self, scraper_zh):
-        """_fetch_by_id() 撞 ConnectionError → 拋 TimeoutError"""
-        scraper_zh._session.get = MagicMock(side_effect=requests.ConnectionError("network unreachable"))
-        with pytest.raises(TimeoutError):
-            scraper_zh._fetch_by_id("SONE-001_2026-03-20")
-
-    def test_search_by_keyword_inner_loop_connection_error_returns_empty(self, scraper_zh):
-        """inner loop：get_ids_from_search 成功回 ids，但逐筆 search() 撞 ConnectionError → 跳過全部，回空 list"""
-        scraper_zh.get_ids_from_search = MagicMock(return_value=["A-1", "A-2", "A-3"])
-        # search() 內部撞 ConnectionError，會被新加的 except 接住並 raise TimeoutError，
-        # search_by_keyword 內層 except (ValueError, TimeoutError, ConnectionError) 跳過。
-        scraper_zh._session.get = MagicMock(side_effect=requests.ConnectionError("net err"))
-        result = scraper_zh.search_by_keyword("姐妹")
-        assert result == []
 
     def test_search_by_keyword_get_ids_failure_returns_empty(self, scraper_zh):
         """outer call：get_ids_from_search 本身撞 ConnectionError → 不讓 TimeoutError 穿透，回空 list

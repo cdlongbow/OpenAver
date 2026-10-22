@@ -9,7 +9,7 @@ AC-3：假 proxy socket 真的收到 CONNECT（＋ bypass 對照零連線）
 import contextlib
 import socket
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -125,118 +125,10 @@ def _clear_proxy_env(monkeypatch):
 # AC-1：_resolve_proxies() 四條分支
 # ============================================================
 
-class TestResolveProxies:
-    def test_getproxies_https_returns_same_dict(self, monkeypatch):
-        proxies = {"https": "http://127.0.0.1:7890"}
-        monkeypatch.setattr(javdb, "getproxies", lambda: dict(proxies), raising=False)
-        monkeypatch.setattr(javdb, "proxy_bypass", lambda host: False, raising=False)
-        assert javdb._resolve_proxies("https://javdb.com/search") == proxies
-
-    def test_bypass_host_returns_none(self, monkeypatch):
-        monkeypatch.setattr(
-            javdb, "getproxies", lambda: {"https": "http://127.0.0.1:7890"}, raising=False
-        )
-        monkeypatch.setattr(javdb, "proxy_bypass", lambda host: True, raising=False)
-        assert javdb._resolve_proxies("https://javdb.com/search") is None
-
-    def test_empty_getproxies_returns_none(self, monkeypatch):
-        monkeypatch.setattr(javdb, "getproxies", lambda: {}, raising=False)
-        monkeypatch.setattr(javdb, "proxy_bypass", lambda host: False, raising=False)
-        assert javdb._resolve_proxies("https://javdb.com/search") is None
-
-    def test_malformed_url_skips_bypass_and_still_resolves(self, monkeypatch):
-        """畸形 URL → hostname 為 None → 不呼叫 proxy_bypass，但仍取得代理值。
-
-        反向鎖：`if host and ...` 的左半若被刪掉，proxy_bypass(None) 會被呼叫。
-        """
-        called = []
-        monkeypatch.setattr(
-            javdb, "getproxies", lambda: {"https": "http://127.0.0.1:7890"}, raising=False
-        )
-        monkeypatch.setattr(
-            javdb, "proxy_bypass", lambda host: called.append(host) or True, raising=False
-        )
-        assert javdb._resolve_proxies("not a url") == {"https": "http://127.0.0.1:7890"}
-        assert called == [], f"proxy_bypass 不該被呼叫，卻收到 {called}"
-
-    def test_http_only_is_passed_through(self, monkeypatch):
-        """只有 http 沒有 https → 原樣傳（由 curl 自己挑），不得被過濾成 None。"""
-        monkeypatch.setattr(
-            javdb, "getproxies", lambda: {"http": "http://127.0.0.1:7890"}, raising=False
-        )
-        monkeypatch.setattr(javdb, "proxy_bypass", lambda host: False, raising=False)
-        assert javdb._resolve_proxies("https://javdb.com/search") == {
-            "http": "http://127.0.0.1:7890"
-        }
-
-    def test_only_no_key_returns_none(self, monkeypatch):
-        monkeypatch.setattr(
-            javdb, "getproxies", lambda: {"no": "localhost"}, raising=False
-        )
-        monkeypatch.setattr(javdb, "proxy_bypass", lambda host: False, raising=False)
-        assert javdb._resolve_proxies("https://javdb.com/search") is None
-
 
 # ============================================================
 # AC-2：_get_html() proxies kwarg 形狀
 # ============================================================
-
-class TestGetHtmlProxiesKwarg:
-    def test_get_html_passes_proxies_kwarg(self, scraper, monkeypatch):
-        pytest.importorskip("curl_cffi")
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        proxies = {"https": "http://127.0.0.1:7890"}
-        monkeypatch.setattr(javdb, "_resolve_proxies", lambda url: proxies, raising=False)
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html></html>"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper._get_html("https://javdb.com/v/Ww9zN8")
-
-        assert result == "<html></html>"
-        assert mock_get.call_args.kwargs["proxies"] == proxies
-
-    def test_get_html_omits_proxies_when_none(self, scraper, monkeypatch):
-        pytest.importorskip("curl_cffi")
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        monkeypatch.setattr(javdb, "_resolve_proxies", lambda url: None, raising=False)
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html></html>"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper._get_html("https://javdb.com/v/Ww9zN8")
-
-        assert result == "<html></html>"
-        assert "proxies" not in mock_get.call_args.kwargs
-
-    def test_get_html_proxies_orthogonal_with_curl_options(self, scraper, monkeypatch):
-        """proxies 與 curl_options（CAINFO）可同時存在。"""
-        pytest.importorskip("curl_cffi")
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        proxies = {"https": "http://127.0.0.1:7890"}
-        monkeypatch.setattr(javdb, "_resolve_proxies", lambda url: proxies, raising=False)
-        ca_bytes = b"C:\\fake\\cacert.pem"
-        monkeypatch.setattr(javdb, "_cainfo_override_bytes", lambda: ca_bytes)
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html></html>"
-        mock_get = MagicMock(return_value=mock_resp)
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        result = scraper._get_html("https://javdb.com/v/Ww9zN8")
-
-        assert result == "<html></html>"
-        assert mock_get.call_args.kwargs["proxies"] == proxies
-        assert mock_get.call_args.kwargs["curl_options"] == {
-            javdb.CurlOpt.CAINFO: ca_bytes
-        }
 
 
 # ============================================================

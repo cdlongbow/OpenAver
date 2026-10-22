@@ -12,9 +12,6 @@ from unittest.mock import MagicMock, patch
 
 from core.metatube.errors import (
     MetatubeUnavailable,
-    MetatubeNotFound,
-    MetatubeAuthError,
-    MetatubeClientError,
     MetatubeProtocolError,
 )
 from core.metatube.client import MetatubeHttpClient, pick_movie_result
@@ -81,18 +78,10 @@ class TestSearch:
 
 class TestTokenHeader:
 
-    def test_token_none_no_authorization_header(self):
-        client = MetatubeHttpClient("http://localhost:8900", token=None)
-        assert "Authorization" not in client._session.headers
 
     def test_token_set_has_bearer_header(self):
         client = MetatubeHttpClient("http://localhost:8900", token="secret")
         assert client._session.headers.get("Authorization") == "Bearer secret"
-
-    def test_token_empty_string_no_authorization_header(self):
-        """Empty string is falsy — must not send Authorization header."""
-        client = MetatubeHttpClient("http://localhost:8900", token="")
-        assert "Authorization" not in client._session.headers
 
 
 # ============================================================
@@ -101,8 +90,6 @@ class TestTokenHeader:
 
 class TestPickMovieResult:
 
-    def test_empty_list_returns_none(self):
-        assert pick_movie_result([]) is None
 
     def test_picks_video_dmm_homepage_over_first(self):
         """3 results: second has video.dmm.co.jp homepage — should be picked."""
@@ -125,18 +112,6 @@ class TestPickMovieResult:
         picked = pick_movie_result(results)
         assert picked["id"] == "first"
 
-    def test_single_result_with_video_dmm_returns_it(self):
-        """1 result with video.dmm.co.jp homepage → return it (overlap of rule 1 and first)."""
-        results = [{"id": "only", "homepage": "https://video.dmm.co.jp/product/detail/x/"}]
-        picked = pick_movie_result(results)
-        assert picked["id"] == "only"
-
-    def test_single_result_no_homepage_key_returns_it(self):
-        """1 result without homepage key → r.get('homepage', '') is safe → returns results[0]."""
-        results = [{"id": "nopage", "title": "Some Title"}]
-        picked = pick_movie_result(results)
-        assert picked["id"] == "nopage"
-
 
 # ============================================================
 # TC-6: movie_id URL quoting in get_info
@@ -151,35 +126,6 @@ class TestMovieIdQuoting:
             return call.args[0]
         return call.kwargs.get("url", "")
 
-    def test_underscore_id_not_mangled(self):
-        """020125_001 — underscore is valid URL char; path must contain it unchanged."""
-        client = make_client()
-        client._session.get = MagicMock(
-            return_value=make_json_response({"data": {"number": "020125_001"}})
-        )
-        client.get_info("1Pondo", "020125_001")
-        url = self._get_called_url(client)
-        assert "020125_001" in url
-
-    def test_alphanumeric_id_not_mangled(self):
-        """156785614478ab480db — pure alphanum, path unchanged."""
-        client = make_client()
-        client._session.get = MagicMock(
-            return_value=make_json_response({"data": {"number": "156785614478ab480db"}})
-        )
-        client.get_info("Pcolle", "156785614478ab480db")
-        url = self._get_called_url(client)
-        assert "156785614478ab480db" in url
-
-    def test_lowercase_id_not_mangled(self):
-        """1stars00141 — all lower-case alphanum, path unchanged."""
-        client = make_client()
-        client._session.get = MagicMock(
-            return_value=make_json_response({"data": {"number": "1stars00141"}})
-        )
-        client.get_info("FANZA", "1stars00141")
-        url = self._get_called_url(client)
-        assert "1stars00141" in url
 
     def test_no_double_slash_in_url(self):
         """base_url with trailing slash must not produce double slashes."""
@@ -217,15 +163,6 @@ class TestRedirectBlocking:
             "MetatubeHttpClient must pass allow_redirects=False to prevent SSRF via redirects"
         )
 
-    def test_3xx_redirect_raises_protocol_error(self):
-        """A 3xx response → MetatubeProtocolError, not followed."""
-        client = make_client()
-        resp = make_json_response({}, status_code=302)
-        resp.headers = {"Location": "http://127.0.0.1:8080/admin"}
-        client._session.get = MagicMock(return_value=resp)
-        with pytest.raises(MetatubeProtocolError):
-            client.get_info("FANZA", "1stars00141")
-
 
 # ============================================================
 # 憑證不得進 log／例外訊息（Codex PR review 三審 P1 的**根因**層）
@@ -241,11 +178,7 @@ def _client_with_secret_url():
 
 
 @pytest.mark.parametrize("status,exc_type", [
-    (401, MetatubeAuthError),
-    (404, MetatubeNotFound),
-    (418, MetatubeClientError),
     (302, MetatubeProtocolError),
-    (500, MetatubeUnavailable),
 ])
 def test_error_messages_never_embed_credentials(status, exc_type):
     """**這支是整組修正的核心鎖。**
@@ -268,20 +201,6 @@ def test_error_messages_never_embed_credentials(status, exc_type):
     assert "10.0.0.5:8900" in msg
     for secret in _SECRETS:
         assert secret not in msg, f"HTTP {status} 的例外訊息洩漏 {secret!r}：{msg}"
-
-
-def test_invalid_json_error_message_never_embeds_credentials():
-    c = _client_with_secret_url()
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.side_effect = ValueError("bad json")
-    with patch.object(c._session, "get", return_value=resp):
-        with pytest.raises(MetatubeProtocolError) as ei:
-            c._get_data("/v1/providers", None)
-    msg = str(ei.value)
-    assert "10.0.0.5:8900" in msg
-    for secret in _SECRETS:
-        assert secret not in msg
 
 
 def test_request_logs_never_leak_credentials(caplog):

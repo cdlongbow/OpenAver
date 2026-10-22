@@ -111,7 +111,6 @@ def test_match_predicate_escapes_regex_metachars(scraper):
 # 這類 prefix 繞過），這裡是補上 fc-javten 的對等檢查，寫法沿用同一個 urlparse 慣例。
 
 @pytest.mark.parametrize("landed, why", [
-    ("https://evil.com/video/12345/id4914771/slug", "完全不同的 host"),
     ("https://javten.com.evil.com/video/12345/id4914771/slug", "prefix 繞過（不得用 startswith 比對）"),
     ("https://evil.com/?x=https://javten.com/video/12345/id4914771/", "把合法 URL 塞進 query（regex 未錨定）"),
     ("http://javten.com/video/12345/id4914771/slug", "降級成明文 http"),

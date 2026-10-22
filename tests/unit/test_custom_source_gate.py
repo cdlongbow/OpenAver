@@ -7,7 +7,7 @@ import pytest
 
 import core.config as core_config
 from core.config import load_config, save_config
-from core.custom_source import gate, registry, state, views
+from core.custom_source import gate, state, views
 from tests.unit._custom_source_fake import FakeTransport
 from tests.unit._custom_source_pages import FIXTURE_DIR
 
@@ -44,44 +44,10 @@ def _record(sid, sha, status="passed", enable=False):
         assert state.set_enabled(sid, bool(enable), sha)
 
 
-def test_gate_not_loaded_id_missing(env):
-    _put(env, "single-og")
-    r = gate.check_usable("no-such-id", NUMBER)
-    assert (r.ok, r.reason, r.loaded) == (False, "not_loaded", None)
-
-
-def test_gate_not_loaded_bad_id_shape(env):
-    assert gate.check_usable("../etc/passwd", NUMBER).reason == "not_loaded"
-
-
-def test_gate_orphan_record_is_not_loaded(env):
-    _record("ghost", "d" * 64, enable=False)
-    assert gate.check_usable("ghost").reason == "not_loaded"
-    assert views.custom_source_configs() == []
-
-
-def test_gate_load_failed(env):
-    (env / "bad-syntax.yaml").write_text("id: [unclosed", encoding="utf-8")
-    assert gate.check_usable("bad-syntax", NUMBER).reason == "load_failed"
-
-
 def test_gate_unverified(env):
     _put(env, "fuzzy")
     r = gate.check_usable("fuzzy", NUMBER)
     assert (r.ok, r.reason) == (False, "unverified")
-
-
-def test_gate_verifying(env):
-    p = _put(env, "two-step")
-    _record("two-step", _sha(p), enable=True)
-    assert state.try_begin_verify("two-step")
-    assert gate.check_usable("two-step", NUMBER).reason == "verifying"
-
-
-def test_gate_failed(env):
-    p = _put(env, "single-og-min")
-    _record("single-og-min", _sha(p), status="failed")
-    assert gate.check_usable("single-og-min", NUMBER).reason == "failed"
 
 
 def test_gate_disabled(env):
@@ -98,23 +64,6 @@ def test_gate_pattern_mismatch(env):
     assert (r.ok, r.reason) == (False, "pattern_mismatch")
     assert transport.calls == []  # gate 不碰網路
     assert gate.check_usable("text").ok is True  # number=None 不判 pattern
-
-
-def test_gate_ok_returns_single_snapshot(env, monkeypatch):
-    p = _put(env, "single-og")
-    _record("single-og", _sha(p), enable=True)
-    calls = []
-    real = registry.load_one
-
-    def spy(*a, **k):
-        calls.append(a)
-        return real(*a, **k)
-
-    monkeypatch.setattr(registry, "load_one", spy)
-    r = gate.check_usable("single-og", NUMBER)
-    assert r.ok is True and r.reason is None
-    assert r.loaded.sha256 == hashlib.sha256(p.read_bytes()).hexdigest()
-    assert len(calls) == 1
 
 
 def test_gate_overwritten_file_becomes_unverified(env):

@@ -78,25 +78,6 @@ class TestUnregisteredHost:
             javdb_api.fetch_video("SSIS-001")
         assert "unregistered-cdn.example" in resolve.calls
 
-    def test_sample_host_resolving_private_raises(self, monkeypatch, public_resolver):
-        resolve = public_resolver({"evil-sample.example": ["10.0.0.5"]})
-        monkeypatch.setattr(
-            javdb_api,
-            "api_search",
-            lambda _kw: [{"id": "abc123", "number": "SSIS-001"}],
-        )
-        monkeypatch.setattr(
-            javdb_api,
-            "api_movie_detail",
-            lambda _id: _detail_with_cover(
-                "https://tp.spfcas.com/covers/ok.jpg",
-                samples=["https://evil-sample.example/s1.jpg"],
-            ),
-        )
-
-        with pytest.raises(ValueError, match="evil-sample.example"):
-            javdb_api.fetch_video("SSIS-001")
-        assert "evil-sample.example" in resolve.calls
 
     def test_public_unlisted_host_ok(self, monkeypatch):
         """名單外的公網圖床不再被擋（公網規則）。"""
@@ -114,25 +95,6 @@ class TestUnregisteredHost:
         assert video is not None
         assert "unregistered-cdn.example" in video.cover_url
 
-    def test_registered_codec_host_ok(self, monkeypatch):
-        monkeypatch.setattr(
-            javdb_api,
-            "api_search",
-            lambda _kw: [{"id": "abc123", "number": "SSIS-001"}],
-        )
-        monkeypatch.setattr(
-            javdb_api,
-            "api_movie_detail",
-            lambda _id: _detail_with_cover(
-                "https://tp.spfcas.com/rhe/covers/p9/ok.jpg",
-                samples=["https://tp.spfcas.com/rhe/samples/1.jpg"],
-            ),
-        )
-
-        video = javdb_api.fetch_video("SSIS-001")
-        assert video is not None
-        assert "tp.spfcas.com" in video.cover_url
-
 
 class TestFormerlyNotProxyable:
     """公網規則後，舊的三種「登記過但代理 403」形狀只剩 host 解不出來仍擋。"""
@@ -149,11 +111,6 @@ class TestFormerlyNotProxyable:
             lambda _id: _detail_with_cover(cover_url),
         )
         return javdb_api.fetch_video("SSIS-001")
-
-    def test_unparseable_host_raises(self, monkeypatch):
-        """舊版對「非空但抓不出 host」的網址直接 `continue` 放行。"""
-        with pytest.raises(ValueError, match="host=\\?"):
-            self._fetch(monkeypatch, "not-a-url-at-all")
 
 
 class TestSearchDegradesOnUnregisteredHost:

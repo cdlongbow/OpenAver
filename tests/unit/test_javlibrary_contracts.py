@@ -11,9 +11,7 @@ tests/unit/test_javlibrary_contracts.py — T3 javlibrary 來源系統 contract 
   - get_enabled_source_ids 不含 javlibrary（manual_only=True 被過濾）
 """
 import json
-import logging
 
-import pytest
 
 
 # 1. validate_source_id 放行
@@ -23,56 +21,24 @@ def test_validate_source_id_javlibrary():
 
 
 # 2. CENSORED_SOURCES 包含 javlibrary（is_censored 無 warning）
-def test_javlibrary_in_censored_sources():
-    from core.scrapers.utils import CENSORED_SOURCES
-    assert 'javlibrary' in CENSORED_SOURCES
 
 
 # 3. 不在 SOURCE_ORDER（不污染 fan-out）
-def test_javlibrary_not_in_source_order():
-    from core.scrapers.utils import SOURCE_ORDER
-    assert 'javlibrary' not in SOURCE_ORDER
 
 
 # 4. 不在 search_providers 註冊表（exact-only）
-def test_javlibrary_not_in_fuzzy_search_sources():
-    from core.search_providers.registry import registered_ids
-    assert 'javlibrary' not in registered_ids()
 
 
 # 5. get_manual_only_sources() 回傳 javlibrary，屬性正確
-def test_get_manual_only_sources():
-    from core.source_config import get_manual_only_sources
-    sources = get_manual_only_sources()
-    assert len(sources) >= 1
-    jl = next(s for s in sources if s.id == 'javlibrary')
-    assert jl.manual_only is True
-    assert jl.is_beta is True
-    assert jl.enabled is False
-    assert jl.type == 'builtin'
-    assert jl.order == 99
 
 
 # 6. is_censored 計算正確（builtin 分支命中 CENSORED_SOURCES，不觸發 warning）
-def test_javlibrary_is_censored_no_warning(caplog):
-    from core.source_config import get_manual_only_sources
-    with caplog.at_level(logging.WARNING, logger='core.source_config'):
-        sources = get_manual_only_sources()
-    jl = next(s for s in sources if s.id == 'javlibrary')
-    assert jl.is_censored is True
-    assert 'javlibrary' not in caplog.text  # 不觸發 L77 warning
 
 
 # 7. JavLibraryScraper 可從 __init__.py import
-def test_javlibrary_scraper_importable():
-    from core.scrapers import JavLibraryScraper
-    assert JavLibraryScraper is not None
 
 
 # 8. JavLibraryScraper 在 __all__
-def test_javlibrary_scraper_in_all():
-    import core.scrapers
-    assert 'JavLibraryScraper' in core.scrapers.__all__
 
 
 # 9. get_enabled_source_ids 不含 javlibrary

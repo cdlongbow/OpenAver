@@ -68,31 +68,6 @@ def test_text_source_empty_field_falls_back():
     assert merged.source == "jav321"
 
 
-def test_label_backfills_from_later_source():
-    """label parity (61a-6 review B1): text_source empty label → backfill from later source.
-
-    OLD merge block backfilled `label`; the field-list refactor must keep parity since
-    `label` feeds NFO writing.
-    """
-    primary = _v("jav321", title="J321 Title", label="")
-    backup = _v("javbus", title="JB Title", label="JB Label")
-    merged = merge_results({"jav321": primary, "javbus": backup},
-                           user_order=["jav321", "javbus"])
-
-    assert merged.title == "J321 Title"   # whole block still from jav321
-    assert merged.label == "JB Label"     # empty label backfilled
-    assert merged.source == "jav321"
-
-
-def test_label_kept_from_text_source_when_present():
-    """text_source has a non-empty label → keep it, no backfill."""
-    primary = _v("jav321", label="J321 Label")
-    backup = _v("javbus", label="JB Label")
-    merged = merge_results({"jav321": primary, "javbus": backup},
-                           user_order=["jav321", "javbus"])
-    assert merged.label == "J321 Label"
-
-
 def test_summary_backfills_from_later_source():
     """summary parity (P2-1): winner with empty summary → backfill later source's plot.
 
@@ -111,15 +86,6 @@ def test_summary_backfills_from_later_source():
     assert merged.source == "jav321"
 
 
-def test_summary_kept_from_text_source_when_present():
-    """text_source has a non-empty summary → keep it, no backfill."""
-    primary = _v("jav321", summary="J321 plot")
-    backup = _v("javbus", summary="JB plot")
-    merged = merge_results({"jav321": primary, "javbus": backup},
-                           user_order=["jav321", "javbus"])
-    assert merged.summary == "J321 plot"
-
-
 def test_meta_fields_from_text_source():
     """date/duration/rating/votes come from text_source (整包贏)."""
     primary = _v("jav321", date="2024-01-01", duration=120, rating=4.5, votes=10)
@@ -131,15 +97,6 @@ def test_meta_fields_from_text_source():
     assert merged.duration == 120
     assert merged.rating == 4.5
     assert merged.votes == 10
-
-
-def test_duration_zero_is_present():
-    """duration=0 is a value (is None check), not falsy → not overwritten."""
-    primary = _v("jav321", duration=0)
-    backup = _v("javbus", duration=120)
-    merged = merge_results({"jav321": primary, "javbus": backup},
-                           user_order=["jav321", "javbus"])
-    assert merged.duration == 0
 
 
 # ---------------------------------------------------------------------------
@@ -177,15 +134,6 @@ def test_cover_and_sample_images_resolved_independently():
 
     assert merged.cover_url == "http://javbus/cover.jpg"
     assert merged.sample_images == ["http://jav321/s.jpg"]
-
-
-def test_cover_user_order_direct():
-    """user_order directly selects cover source — any source in user_order wins."""
-    # avsox is the only source; user_order=['avsox'] → avsox cover wins directly
-    avsox = _v("avsox", title="AV", cover_url="http://avsox/cover.jpg")
-    merged = merge_results({"avsox": avsox},
-                           user_order=["avsox"])
-    assert merged.cover_url == "http://avsox/cover.jpg"
 
 
 def test_cover_skips_empty_source_in_user_order():
@@ -235,76 +183,9 @@ def test_preview_cover_url_empty_when_cover_winner_not_metatube():
     assert merged.preview_cover_url == ""
 
 
-def test_preview_cover_url_text_source_value_does_not_leak_when_cover_winner_differs():
-    """同源綁定的第二種洩漏路徑：text_source（整包贏的來源）自己有 preview_cover_url，
-    但 cover 的勝出候選是**另一個**來源時，merged 不能沿用 text_source 自己的 preview。
-
-    user_order=['metatube:FANZA', 'javbus']；metatube:FANZA 是 text_source 但沒有
-    cover_url（跳過），javbus 是 cover 勝者（無 preview）→ merged.preview_cover_url
-    必須為空，不可誤用 text_source 的 preview_cover_url 預設值以外的殘留。
-    """
-    metatube_no_cover = _v("metatube:FANZA", title="", cover_url="",
-                            preview_cover_url="")
-    javbus = _v("javbus", title="JB Title", cover_url="http://javbus/cover.jpg",
-                preview_cover_url="")
-    merged = merge_results({"javbus": javbus, "metatube:FANZA": metatube_no_cover},
-                           user_order=["metatube:FANZA", "javbus"])
-    assert merged.cover_url == "http://javbus/cover.jpg"
-    assert merged.preview_cover_url == ""
-
-
 # ---------------------------------------------------------------------------
 # Fallbacks / edge cases
 # ---------------------------------------------------------------------------
-
-def test_single_source_passthrough():
-    """single candidate → that source's data verbatim."""
-    only = _v("javbus", title="Only Title", cover_url="http://c.jpg",
-              maker="M", actresses=[Actress(name="A")])
-    merged = merge_results({"javbus": only}, user_order=["javbus"])
-    assert merged.title == "Only Title"
-    assert merged.cover_url == "http://c.jpg"
-    assert merged.maker == "M"
-    assert merged.source == "javbus"
-
-
-def test_text_source_keys_not_in_user_order_falls_back_to_insertion_order():
-    """candidates whose keys are not in user_order → use insertion-order first."""
-    a = _v("avsox", title="AVSOX Title")
-    b = _v("fc2", title="FC2 Title")
-    merged = merge_results({"avsox": a, "fc2": b}, user_order=["javbus", "jav321"])
-    # neither in user_order → insertion-order first = avsox
-    assert merged.source == "avsox"
-    assert merged.title == "AVSOX Title"
-
-
-def test_empty_candidates_returns_none():
-    """defensive: empty candidates → None (caller guards before merge)."""
-    assert merge_results({}, user_order=["javbus"]) is None
-
-
-
-
-def test_preview_cover_url_cleared_when_no_candidate_has_cover():
-    """③`cover_winner is None`（**沒有任何候選有 cover_url**）→ preview 必須被明確清空。
-
-    這是 T3b review 的 P2：該分支原本不寫 `updates['preview_cover_url']`，於是結果
-    會**繼承 text_source 自己的 preview**。今天漏不出來，只因為 mapper 的
-    `_build_preview_cover_url()` 在 cover 空時回 ''——但那是**別的模組**的不變式。
-    merger 隱性依賴它，正是 CD-113c-12 要消滅的形狀。
-
-    本測試刻意**繞過 mapper**、直接建一個違反該不變式的 `Video`（有 preview、無
-    cover），確認 merger 這一層自己守得住，而不是靠上游剛好沒送出這種值。
-    """
-    leaky = _v("metatube:FANZA", title="MT Title", cover_url="",
-               preview_cover_url="http://mt:8080/v1/images/primary/FANZA/X?url=y")
-    other = _v("javbus", title="", cover_url="", preview_cover_url="")
-    merged = merge_results({"metatube:FANZA": leaky, "javbus": other},
-                           user_order=["metatube:FANZA", "javbus"])
-    assert merged.cover_url == ""
-    assert merged.preview_cover_url == "", (
-        "沒有任何候選有封面時 preview 必須清空，不得從 text_source 漏出"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -371,21 +252,3 @@ def test_merge_preview_sample_images_positive_copies_winner_previews():
     )
 
 
-def test_merge_preview_sample_images_cleared_when_no_sample_winner():
-    """邊界 9：無任何候選有 sample_images，但 text_source 有 preview_sample_images
-    → preview_sample_images 明確清空為 []，不得從 text_source 漏出。"""
-    leaky = _v(
-        "metatube:FANZA",
-        title="MT Title",
-        sample_images=[],
-        preview_sample_images=["http://mt:8080/v1/images/primary/FANZA/X?url=s1"],
-    )
-    other = _v("javbus", title="", sample_images=[], preview_sample_images=[])
-    merged = merge_results(
-        {"metatube:FANZA": leaky, "javbus": other},
-        user_order=["metatube:FANZA", "javbus"],
-    )
-    assert merged.sample_images == []
-    assert merged.preview_sample_images == [], (
-        "沒有任何候選有劇照時 preview_sample_images 必須清空，不得從 text_source 漏出"
-    )

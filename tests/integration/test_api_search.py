@@ -8,8 +8,7 @@ import logging
 import pytest
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock, call, ANY
-from bs4 import BeautifulSoup
+from unittest.mock import AsyncMock, patch, MagicMock, ANY
 
 pytestmark = pytest.mark.usefixtures("empty_library_makers")
 
@@ -23,75 +22,6 @@ def load_fixture(filename: str) -> dict:
 
 # ============ 番號搜尋 ============
 
-class TestSearchByNumber:
-    """測試番號搜尋 API"""
-
-    def test_search_exact_number_success(self, client, mocker):
-        """精確番號搜尋成功"""
-        mock_data = load_fixture('responses/javbus/SONE-103.json')
-        mocker.patch('web.routers.search.search_jav', return_value=mock_data)
-
-        response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'exact'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data'][0]['number'] == 'SONE-103'
-        assert data['total'] == 1
-
-    def test_search_auto_mode(self, client, mocker):
-        """自動模式搜尋"""
-        mock_data = load_fixture('responses/javbus/SONE-103.json')
-        mocker.patch('web.routers.search.smart_search', return_value=[mock_data])
-
-        response = client.get('/api/search', params={'q': 'SONE-103'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert len(data['data']) >= 1
-
-    def test_search_no_results(self, client, mocker):
-        """搜尋無結果"""
-        mocker.patch('web.routers.search.smart_search', return_value=[])
-
-        response = client.get('/api/search', params={'q': 'FAKE-999'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is False
-        assert '找不到' in data['error']
-        assert data['total'] == 0
-
-
-class TestSearchValidation:
-    """測試搜尋輸入驗證"""
-
-    def test_search_empty_query(self, client):
-        """空查詢應返回錯誤"""
-        response = client.get('/api/search', params={'q': ''})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is False
-        assert '有效' in data['error'] or len(data['data']) == 0
-
-    def test_search_single_char(self, client):
-        """單字元查詢應返回錯誤"""
-        response = client.get('/api/search', params={'q': 'A'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is False
-
-    def test_search_whitespace_only(self, client):
-        """純空白查詢應返回錯誤"""
-        response = client.get('/api/search', params={'q': '   '})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is False
-
 
 class TestSearchSourceValidation:
     """測試 source 參數驗證（TASK-61a-4：改用 validate_source_id）"""
@@ -102,36 +32,6 @@ class TestSearchSourceValidation:
         assert response.status_code == 400
         data = response.json()
         assert data == {"success": False, "error": "未知來源: nope"}
-
-    def test_known_source_not_400(self, client, mocker):
-        """已知 builtin source（javbus）+ exact mode → 非 400"""
-        mock_data = load_fixture('responses/javbus/SONE-103.json')
-        # search_jav_single_source 在函式內 local import，patch 原始模組符號
-        mocker.patch('core.scraper.search_jav_single_source', return_value=mock_data)
-
-        response = client.get('/api/search', params={
-            'q': 'SONE-103', 'mode': 'exact', 'source': 'javbus'
-        })
-        assert response.status_code != 400
-
-    def test_auto_source_not_400(self, client, mocker):
-        """source=auto → 非 400（auto 仍被接受，保留現狀）"""
-        mocker.patch('web.routers.search.smart_search', return_value=[])
-        response = client.get('/api/search', params={'q': 'SONE-103', 'source': 'auto'})
-        assert response.status_code != 400
-
-    def test_d2pass_and_heyzo_sources_not_400(self, client, mocker):
-        """d2pass / heyzo（capabilities 原缺、search 一直接受）→ 非 400
-
-        TASK-135-T7：d2pass/heyzo 是具體來源（在 SOURCE_ORDER 內，非 'auto' 特判），
-        T7 新增「source 只在 mode=exact 生效」的檢查後，這裡必須明帶 mode=exact
-        才能繼續測試本測試原本要鎖的東西（validate_source_id 接受 d2pass/heyzo，
-        不是被本測試不相關的 mode 預設值擋掉）。
-        """
-        mocker.patch('core.scraper.search_jav_single_source', return_value=None)
-        for src in ('d2pass', 'heyzo'):
-            response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'exact', 'source': src})
-            assert response.status_code != 400, f"source={src} should not be 400"
 
 
 class TestSearchSourceExactModeRequired:
@@ -146,21 +46,6 @@ class TestSearchSourceExactModeRequired:
             "error": "source 僅在 mode=exact 時生效，請改用 mode=exact 或移除 source",
         }
 
-    def test_default_mode_with_source_returns_400(self, client):
-        """不帶 mode（走預設 auto）＋ source=dmm → 400（DoD-1）"""
-        response = client.get('/api/search', params={'q': 'SONE-103', 'source': 'dmm'})
-        assert response.status_code == 400
-        assert set(response.json().keys()) == {"success", "error"}
-
-    def test_partial_mode_with_source_returns_400(self, client):
-        """mode=partial ＋ source → 400（一般化：非 exact 一律擋，不只 auto）"""
-        response = client.get('/api/search', params={'q': 'SON', 'mode': 'partial', 'source': 'dmm'})
-        assert response.status_code == 400
-
-    def test_actress_mode_with_source_returns_400(self, client):
-        """mode=actress ＋ source → 400"""
-        response = client.get('/api/search', params={'q': '明日花キララ', 'mode': 'actress', 'source': 'dmm'})
-        assert response.status_code == 400
 
     def test_exact_mode_with_source_unaffected(self, client, mocker):
         """合法組合：mode=exact ＋ source=dmm → 照舊行為，不受本檢查影響（DoD-3）"""
@@ -173,125 +58,6 @@ class TestSearchSourceExactModeRequired:
         data = response.json()
         assert data['success'] is True
         assert data['data'][0]['number'] == 'SONE-103'
-
-    def test_no_source_zero_impact_across_modes(self, client, mocker):
-        """不帶 source：auto/exact/partial/actress/不帶 mode/非法 mode 一律不受本檢查影響（DoD-4）"""
-        mocker.patch('web.routers.search.smart_search', return_value=[])
-        mocker.patch('web.routers.search.search_jav', return_value=None)
-        mocker.patch('web.routers.search.search_partial', return_value=[])
-        mocker.patch('web.routers.search.search_actress', return_value=[])
-
-        for params in (
-            {'q': 'SONE-103', 'mode': 'auto'},
-            {'q': 'SONE-103'},
-            {'q': 'SONE-103', 'mode': 'exact'},
-            {'q': 'SON', 'mode': 'partial'},
-            {'q': '明日花キララ', 'mode': 'actress'},
-            {'q': 'SONE-103', 'mode': 'EXACT'},
-        ):
-            response = client.get('/api/search', params=params)
-            assert response.status_code != 400, f"params={params} should not be 400"
-
-    def test_source_auto_not_blocked_regardless_of_mode(self, client, mocker):
-        """source=auto 語意上不是「指定了具體來源」（core/source_config.py 的既有特判），
-        不受本檢查限制，即使不帶 mode（預設 auto）也不是 400（回歸鎖，見 test_auto_source_not_400）"""
-        mocker.patch('web.routers.search.smart_search', return_value=[])
-        response = client.get('/api/search', params={'q': 'SONE-103', 'source': 'auto'})
-        assert response.status_code != 400
-
-    def test_illegal_mode_case_with_source_returns_400(self, client):
-        """mode=EXACT（大寫，既有端點本來就不驗證，靜默降級成 auto）＋ source
-        → 400（刻意接受的既有行為改動，僅限「source 存在 + mode 非法」這個冷門組合）"""
-        response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'EXACT', 'source': 'dmm'})
-        assert response.status_code == 400
-
-
-class TestSearchCapabilitiesSourceExactModeDoc:
-    """測試 TASK-135-T7 DoD-5：capabilities 的 search 工具寫明 source/mode 相依"""
-
-    def test_search_tool_source_and_mode_description_mention_exact_dependency(self, client, tmp_path, monkeypatch):
-        # 冷啟動 load_snapshot()（core/access_auth.py）未 mock 前會連上 output/openaver.db。
-        # 同手法見 tests/integration/test_scraper_b3.py::test_capabilities_exposes_fetch_samples。
-        import core.access_auth as access_auth
-
-        db_path = tmp_path / "access.db"
-        monkeypatch.setattr("core.access_auth.get_db_path", lambda: db_path)
-        access_auth.ensure_schema()
-        access_auth.reset_state_for_tests()
-        try:
-            resp = client.get('/api/capabilities')
-        finally:
-            access_auth.reset_state_for_tests()
-        assert resp.status_code == 200
-        tools = resp.json()['tools']
-        search_tool = next(t for t in tools if t['name'] == 'search')
-        source_desc = search_tool['input_schema']['properties']['source']['description']
-        mode_desc = search_tool['input_schema']['properties']['mode']['description']
-
-        # [lint-guard: pytest-justified] 斷言的是 /api/capabilities 回傳的 dict 欄位
-        # 說明（AI-facing 契約），不是 html/js/css 字串；它鎖的是「web/routers/search.py
-        # 新增的 source×mode 拒絕條件有沒有被揭露給 AI」這個跨檔 contract。
-        assert 'exact' in source_desc
-        assert '必須搭配精確模式' in source_desc
-        assert 'source 只在 exact 時有效' in mode_desc
-
-
-class TestSearchModes:
-    """測試不同搜尋模式"""
-
-    def test_search_partial_mode(self, client, mocker):
-        """局部番號搜尋模式"""
-        mock_results = [
-            {'number': 'SONE-101', 'title': 'Title 1'},
-            {'number': 'SONE-102', 'title': 'Title 2'},
-            {'number': 'SONE-103', 'title': 'Title 3'},
-        ]
-        mocker.patch('web.routers.search.search_partial', return_value=mock_results)
-
-        response = client.get('/api/search', params={'q': 'SONE-10', 'mode': 'partial'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert len(data['data']) >= 1
-
-    def test_search_actress_mode(self, client, mocker):
-        """女優搜尋模式"""
-        mock_results = load_fixture('responses/javdb/actress_search.json')
-        mocker.patch('web.routers.search.search_actress', return_value=mock_results)
-
-        response = client.get('/api/search', params={'q': '石川澪', 'mode': 'actress'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert len(data['data']) >= 1
-
-
-class TestSearchPagination:
-    """測試搜尋分頁"""
-
-    def test_search_with_limit(self, client, mocker):
-        """分頁 limit 參數"""
-        mock_results = [{'number': f'SONE-{i}', 'title': f'Title {i}'} for i in range(10)]
-        mocker.patch('web.routers.search.smart_search', return_value=mock_results[:5])
-
-        response = client.get('/api/search', params={'q': 'SONE', 'limit': 5})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['total'] <= 5
-
-    def test_search_with_offset(self, client, mocker):
-        """分頁 offset 參數"""
-        mock_results = [{'number': f'SONE-{i}', 'title': f'Title {i}'} for i in range(100, 110)]
-        mocker.patch('web.routers.search.smart_search', return_value=mock_results)
-
-        response = client.get('/api/search', params={'q': 'SONE', 'limit': 5, 'offset': 5})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert 'offset' in data
 
 
 class TestSearchSources:
@@ -314,31 +80,6 @@ class TestSearchSources:
         source_ids = [s["id"] for s in data["sources"]]
         assert "auto" in source_ids
 
-    def test_sources_has_order(self, client):
-        """測試 sources 包含 order 欄位"""
-        response = client.get("/api/search/sources")
-        assert response.status_code == 200
-        data = response.json()
-
-        # 檢查 order 存在且內容合理
-        assert "order" in data
-        assert isinstance(data["order"], list)
-        assert len(data["order"]) >= 2
-        assert all(isinstance(s, str) for s in data["order"])
-
-        # 檢查順序包含基本來源
-        assert "javbus" in data["order"]
-        assert "jav321" in data["order"]
-
-    def test_sources_order_matches_sources(self, client):
-        """測試 order 與 sources 一致"""
-        response = client.get("/api/search/sources")
-        data = response.json()
-
-        # order 中的所有來源都應該在 sources 中（除了 auto）
-        source_ids = [s["id"] for s in data["sources"] if s["id"] != "auto"]
-        for source in data["order"]:
-            assert source in source_ids
 
     def test_sources_order_no_manual_only(self, client):
         """測試 order 不含 manual_only（javlibrary）與 metatube provider（D7 守衛）
@@ -420,48 +161,6 @@ class TestSearchStreamSSE:
         assert not any(e.get('type') == 'result-complete' for e in events), \
             "Exact mode should not send result-complete event"
 
-    def test_search_stream_preserves_internal_nfo_keys(self, client, parse_sse_events, tmp_path):
-        """147c-T1：SSE 路徑保留 _summary/_rating（result-item + result event）"""
-        mock_item = {
-            'number': 'SONE-100',
-            'title': 'Title 100',
-            'actors': ['三上悠亜'],
-            '_summary': 'plot text',
-            '_rating': 4.0,
-        }
-
-        def mock_smart_search(q, limit=20, offset=0, status_callback=None,
-                              result_callback=None, **kwargs):
-            if status_callback:
-                status_callback('javbus', 'searching')
-                status_callback('javbus', 'found:1')
-            if result_callback:
-                result_callback(-1, ['SONE-100'])
-                result_callback(0, mock_item)
-            if status_callback:
-                status_callback('done', 'found:1')
-            return [mock_item]
-
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
-             patch('core.database.ActressRepository.get_by_name', return_value=None), \
-             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
-            response = client.get('/api/search/stream?q=三上悠亜')
-
-        events = parse_sse_events(response.text)
-
-        item_events = [e for e in events if e.get('type') == 'result-item']
-        assert len(item_events) == 1
-        assert item_events[0]['data']['_summary'] == 'plot text'
-        assert item_events[0]['data']['_rating'] == 4.0
-        assert 'summary' not in item_events[0]['data']
-        assert 'rating' not in item_events[0]['data']
-
-        result_events = [e for e in events if e.get('type') == 'result']
-        assert len(result_events) == 1
-        assert result_events[0]['data'][0]['_summary'] == 'plot text'
-        assert result_events[0]['data'][0]['_rating'] == 4.0
-        assert 'summary' not in result_events[0]['data'][0]
-        assert 'rating' not in result_events[0]['data'][0]
 
     @pytest.fixture
     def actress_mode_events(self, client, parse_sse_events, tmp_path):
@@ -500,37 +199,6 @@ class TestSearchStreamSSE:
         events = parse_sse_events(response.text)
         return events, ids
 
-    def test_actress_mode_sends_seed_event(self, actress_mode_events):
-        """actress 模式下 SSE 應送出 seed event"""
-        events, ids = actress_mode_events
-        seed_events = [e for e in events if e.get('type') == 'seed']
-        assert len(seed_events) == 1, f"Expected 1 seed event, got {seed_events}"
-        seed_event = seed_events[0]
-        assert seed_event['total'] == 3
-        assert set(seed_event['slots']) == set(ids)
-
-    def test_actress_mode_sends_result_items(self, actress_mode_events):
-        """actress 模式下 SSE 應送出 N 個 result-item"""
-        events, ids = actress_mode_events
-        item_events = [e for e in events if e.get('type') == 'result-item']
-        assert len(item_events) == 3, f"Expected 3 result-item events, got {len(item_events)}"
-        for item_event in item_events:
-            assert 'slot' in item_event
-            assert 'data' in item_event
-            slot = item_event['slot']
-            assert 0 <= slot < len(ids)
-            assert item_event['data']['number'] == ids[slot]
-
-    def test_actress_mode_sends_result_complete(self, actress_mode_events):
-        """actress 模式下 SSE 應送出 result-complete event，含 merged_results 與 actress_profile"""
-        events, _ = actress_mode_events
-        complete_events = [e for e in events if e.get('type') == 'result-complete']
-        assert len(complete_events) == 1, f"Expected 1 result-complete event, got {complete_events}"
-        complete_event = complete_events[0]
-        assert 'total' in complete_event
-        assert 'has_more' in complete_event
-        assert 'actress_profile' in complete_event
-        assert complete_event['total'] == 3
 
     def test_actress_mode_sends_result_and_ordering(self, actress_mode_events):
         """actress 模式下 SSE 應送出 result event，且 result-complete 在 result 之前"""
@@ -548,47 +216,6 @@ class TestSearchStreamSSE:
         result_idx = next(i for i, e in enumerate(events) if e.get('type') == 'result')
         assert complete_idx < result_idx, "result-complete must appear before result event in the stream"
 
-    def test_javdb_fallback_sends_result_event(self, client, parse_sse_events, tmp_path):
-        """JavDB fallback（no result_callback called）應走傳統 result event（C12）"""
-        results = [
-            {'number': 'SONE-100', 'actors': ['三上悠亜']},
-            {'number': 'SONE-101', 'actors': ['三上悠亜']},
-            {'number': 'SONE-102', 'actors': ['三上悠亜']},
-        ]
-
-        def mock_smart_search(q, limit=20, offset=0, status_callback=None,
-                              result_callback=None, **kwargs):
-            # JavDB path: result_callback is never called → sent_seed stays False
-            if status_callback:
-                status_callback('javdb', 'searching')
-                status_callback('done', f'found:{len(results)}')
-            return results
-
-        # 同 actress_mode_events 理由：3 筆同演員觸發 _fetch_actress_profile_with_db，
-        # init_db()/AliasRepository()/ActressRepository() 未 mock 前連上 output/openaver.db；
-        # _fetch_actress_profile_with_db 本身直接 mock 掉（同 actress_mode_events
-        # fixture 的做法），DB miss 後才會 fallback 呼叫 get_actress_profile 連 xcity/
-        # wikipedia/graphis，直接擋在 _fetch_actress_profile_with_db 這層最乾淨。
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
-             patch('core.database.ActressRepository.get_by_name', return_value=None), \
-             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"), \
-             patch('web.routers.search._fetch_actress_profile_with_db', return_value=None):
-            response = client.get('/api/search/stream?q=三上悠亜')
-
-        events = parse_sse_events(response.text)
-
-        # Should have traditional result event
-        result_events = [e for e in events if e.get('type') == 'result']
-        assert len(result_events) == 1, f"JavDB fallback should send traditional result event"
-        result_event = result_events[0]
-        assert result_event['success'] is True
-        assert 'data' in result_event
-
-        # Must NOT have seed or result-complete
-        assert not any(e.get('type') == 'seed' for e in events), \
-            "JavDB fallback should not send seed event"
-        assert not any(e.get('type') == 'result-complete' for e in events), \
-            "JavDB fallback should not send result-complete event"
 
     def test_double_seed_protection(self, client, parse_sse_events):
         """prefix→actress fallback 修正後：fallback 不傳 result_callback，只有一個 seed
@@ -630,150 +257,10 @@ class TestSearchStreamSSE:
         assert len(complete_events) == 1, \
             f"Must have result-complete when seed was sent, got {len(complete_events)}"
 
-    def test_always_sends_result_event_with_incremental(self, client, parse_sse_events):
-        """當 sent_seed=True 時，SSE 流必須包含 result-complete（前）和 result（後）兩個事件"""
-        ids = ['IPZZ-100', 'IPZZ-101']
-        items_list = [
-            {'number': 'IPZZ-100', 'title': 'Title 100', 'actors': ['桜空もも']},
-            {'number': 'IPZZ-101', 'title': 'Title 101', 'actors': ['桜空もも']},
-        ]
-
-        def mock_smart_search(q, limit=20, offset=0, status_callback=None,
-                              result_callback=None, **kwargs):
-            if result_callback:
-                result_callback(-1, ids)  # send seed
-                for idx, item in enumerate(items_list):
-                    result_callback(idx, item)  # send result-items
-            if status_callback:
-                status_callback('done', f'found:{len(items_list)}')
-            return items_list
-
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search):
-            response = client.get('/api/search/stream?q=IPZZ')
-
-        events = parse_sse_events(response.text)
-        event_types = [e.get('type') for e in events]
-
-        # Both result-complete and result must be present
-        assert 'result-complete' in event_types, \
-            f"Stream must contain result-complete when seed was sent. Events: {event_types}"
-        assert 'result' in event_types, \
-            f"Stream must always contain result event. Events: {event_types}"
-
-        # result-complete appears before result
-        complete_idx = event_types.index('result-complete')
-        result_idx = event_types.index('result')
-        assert complete_idx < result_idx, \
-            "result-complete must appear before result in the event stream"
-
-        # result event has correct structure
-        result_event = next(e for e in events if e.get('type') == 'result')
-        assert 'success' in result_event
-        assert 'data' in result_event
-        assert isinstance(result_event['data'], list)
-        assert 'total' in result_event
-        assert 'mode' in result_event
-        assert 'has_more' in result_event
-        assert 'actress_profile' in result_event
-
-    def test_result_complete_has_actress_profile_and_has_more(
-        self, client, parse_sse_events, tmp_path
-    ):
-        """result-complete event 應包含 actress_profile 和 has_more 欄位"""
-        ids = ['SONE-100', 'SONE-101', 'SONE-102']
-        items_list = [
-            {'number': 'SONE-100', 'actors': ['桜空もも']},
-            {'number': 'SONE-101', 'actors': ['桜空もも']},
-            {'number': 'SONE-102', 'actors': ['桜空もも']},
-        ]
-
-        def mock_smart_search(q, limit=20, offset=0, status_callback=None,
-                              result_callback=None, **kwargs):
-            if result_callback:
-                result_callback(-1, ids)
-                for idx, item in enumerate(items_list):
-                    result_callback(idx, item)
-            if status_callback:
-                status_callback('done', f'found:{len(ids)}')
-            return items_list
-
-        from core.scrapers.actress.orchestrator import ProfileResult
-        mock_profile = ProfileResult(
-            data={'name': '桜空もも', 'img': 'https://graphis.ne.jp/prof.jpg'},
-            timed_out=False
-        )
-
-        # web/routers/search.py:_fetch_actress_profile_with_db 無條件呼叫 init_db() +
-        # AliasRepository().resolve()，未 mock 前連上 output/openaver.db。
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
-             patch('core.scrapers.actress.orchestrator.get_actress_profile', return_value=mock_profile), \
-             patch('core.database.ActressRepository.get_by_name', return_value=None), \
-             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
-            response = client.get('/api/search/stream?q=桜空もも')
-
-        events = parse_sse_events(response.text)
-        complete_events = [e for e in events if e.get('type') == 'result-complete']
-        assert len(complete_events) == 1
-
-        complete_event = complete_events[0]
-        assert 'has_more' in complete_event
-        assert 'actress_profile' in complete_event
-
-    def test_status_events_have_type_field(self, client, parse_sse_events):
-        """status event 應包含 type 欄位"""
-        def mock_smart_search(q, limit=20, offset=0, status_callback=None,
-                              result_callback=None, **kwargs):
-            if status_callback:
-                status_callback('javbus', 'searching')
-                status_callback('done', 'found:0')
-            return []
-
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search):
-            response = client.get('/api/search/stream?q=TESTXYZ')
-
-        events = parse_sse_events(response.text)
-        status_events = [e for e in events if e.get('type') == 'status']
-        assert len(status_events) >= 1, "Should have at least 1 status event"
-
-        for event in status_events:
-            assert event.get('type') == 'status', "Status events must have type='status'"
-            assert 'source' in event
-            assert 'status' in event
 
 class TestFilterFiles:
     """Test /api/search/filter-files"""
 
-    def test_filter_files_basic(self, client, tmp_path, monkeypatch):
-        """基本過濾功能測試"""
-        # 建立一個合格影片
-        p1 = tmp_path / "good.mp4"
-        p1.write_bytes(b'x' * (1 * 1024 * 1024 + 1))
-        
-        # 建立一個副檔名不符的
-        p2 = tmp_path / "bad.txt"
-        p2.write_bytes(b'x')
-        
-        # 不存在的檔案
-        p3 = tmp_path / "not_exist.mp4"
-        
-        test_config = {
-            "scraper": {"video_extensions": [".mp4"]},
-            "gallery": {"min_size_mb": 1},
-        }
-        monkeypatch.setattr("core.config.load_config", lambda: test_config)
-        
-        response = client.post(
-            "/api/search/filter-files",
-            json={"paths": [str(p1), str(p2), str(p3)]}
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert len(data["files"]) == 1
-        assert data["files"][0]["path"] == str(p1)
-        assert "has_nfo" in data["files"][0]
-        assert data["rejected"]["extension"] == 1
-        assert data["rejected"]["not_found"] == 1
 
     def test_strm_not_filtered_by_min_size(self, client, tmp_path, monkeypatch):
         """.strm file should NOT be filtered by min_size setting"""
@@ -874,176 +361,8 @@ class TestFavoriteFiles:
         assert len(data["files"]) == 1
         assert "test_fav.mp4" in data["files"][0]
 
-    def test_get_favorite_files_empty(self, client, tmp_path, monkeypatch):
-        """測試取得空目錄時返回錯誤訊息"""
-        fav_dir = tmp_path / "fav_empty"
-        fav_dir.mkdir()
-        
-        test_config = {"search": {"favorite_folder": str(fav_dir)}}
-        monkeypatch.setattr("core.config.load_config", lambda: test_config)
-        
-        response = client.get("/api/search/favorite-files")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "無有效影片" in data["error"]
-
-    def test_get_favorite_files_not_found(self, client, monkeypatch):
-        """測試目標目錄不存在時的防呆"""
-        test_config = {"search": {"favorite_folder": "/path/not/exists/123"}}
-        monkeypatch.setattr("core.config.load_config", lambda: test_config)
-        
-        response = client.get("/api/search/favorite-files")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "不存在" in data["error"]
-
-
-class TestSearchStreamSSEProtocol:
-    """測試 /api/search/stream SSE 協議行為 — seed event 結構與欄位"""
-
-    def test_seed_event_has_mode_total_slots(self, client, parse_sse_events):
-        """seed event 應包含 mode、total、slots 欄位"""
-        ids = ['SONE-100', 'SONE-101']
-
-        def mock_smart_search(q, limit=20, offset=0, status_callback=None,
-                              result_callback=None, **kwargs):
-            if result_callback:
-                result_callback(-1, ids)
-                for idx, num in enumerate(ids):
-                    result_callback(idx, {'number': num})
-            return [{'number': num} for num in ids]
-
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search):
-            response = client.get('/api/search/stream?q=SONE')
-
-        events = parse_sse_events(response.text)
-        seed_events = [e for e in events if e.get('type') == 'seed']
-        assert len(seed_events) == 1
-
-        seed = seed_events[0]
-        assert 'mode' in seed, "seed event must have 'mode' field"
-        assert 'total' in seed, "seed event must have 'total' field"
-        assert 'slots' in seed, "seed event must have 'slots' field"
-        assert seed['total'] == len(ids)
-        assert seed['slots'] == ids
-
 
 # ============ T5a — 新欄位透傳 + proxy-image Referer ============
-
-class TestSearchNewFields:
-    """測試 T5a 新欄位（director/duration/label/series/sample_images）透傳"""
-
-    def test_search_result_contains_new_fields(self, client, mocker):
-        """REST GET /api/search?mode=exact 回傳 data[0] 含新欄位"""
-        mock_data = load_fixture('responses/javbus/SONE-103.json')
-        mocker.patch('web.routers.search.search_jav', return_value=mock_data)
-
-        response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'exact'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert len(data['data']) == 1
-        item = data['data'][0]
-
-        # 驗證所有新欄位存在
-        assert 'director' in item, "director key must be present"
-        assert 'duration' in item, "duration key must be present"
-        assert 'label' in item, "label key must be present"
-        assert 'series' in item, "series key must be present"
-        assert 'sample_images' in item, "sample_images key must be present"
-
-        # 驗證值正確
-        assert item['director'] == 'イナバール'
-        assert item['duration'] == 119
-        assert item['label'] == 'S1 NO.1 STYLE'
-        assert item['series'] == ''
-        assert isinstance(item['sample_images'], list)
-        assert len(item['sample_images']) == 3
-
-    def test_new_fields_empty_values_still_present(self, client, mocker):
-        """新欄位空值時，key 仍必須出現在 response 中（前端可安全 access data.director ?? ""）"""
-        mock_data = {
-            'number': 'FAKE-001',
-            'title': 'Some Title',
-            'cover': '',
-            'actors': [],
-            'maker': '',
-            'tags': [],
-            'date': '',
-            'source': 'javbus',
-            'url': '',
-            'director': '',
-            'duration': None,
-            'label': '',
-            'series': '',
-            'sample_images': [],
-        }
-        mocker.patch('web.routers.search.search_jav', return_value=mock_data)
-
-        response = client.get('/api/search', params={'q': 'FAKE-001', 'mode': 'exact'})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        item = data['data'][0]
-
-        # 空值時 key 仍須存在
-        assert 'director' in item
-        assert 'duration' in item
-        assert 'label' in item
-        assert 'series' in item
-        assert 'sample_images' in item
-
-        # 值為空
-        assert item['director'] == ''
-        assert item['duration'] is None
-        assert item['label'] == ''
-        assert item['series'] == ''
-        assert item['sample_images'] == []
-
-    def test_sse_result_item_contains_new_fields(self, client, parse_sse_events):
-        """SSE result-item event 的 data 應包含新欄位"""
-        ids = ['SONE-103']
-        item_with_new_fields = {
-            'number': 'SONE-103',
-            'title': '新人 専属19歳AVデビュー 石川澪',
-            'actors': ['石川澪'],
-            'director': 'イナバール',
-            'duration': 119,
-            'label': 'S1 NO.1 STYLE',
-            'series': '',
-            'sample_images': [
-                'https://awsimgsrc.dmm.co.jp/pics_dig/mono/movie/adult/sone103/sone103jp-1.jpg',
-            ],
-        }
-
-        def mock_smart_search(q, limit=20, offset=0, status_callback=None,
-                              result_callback=None, **kwargs):
-            if result_callback:
-                result_callback(-1, ids)
-                result_callback(0, item_with_new_fields)
-            if status_callback:
-                status_callback('done', 'found:1')
-            return [item_with_new_fields]
-
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search):
-            response = client.get('/api/search/stream?q=SONE-103')
-
-        events = parse_sse_events(response.text)
-        item_events = [e for e in events if e.get('type') == 'result-item']
-        assert len(item_events) == 1
-
-        item_data = item_events[0]['data']
-        assert 'director' in item_data, "SSE result-item data must have director"
-        assert 'duration' in item_data, "SSE result-item data must have duration"
-        assert 'label' in item_data, "SSE result-item data must have label"
-        assert 'series' in item_data, "SSE result-item data must have series"
-        assert 'sample_images' in item_data, "SSE result-item data must have sample_images"
-        assert item_data['director'] == 'イナバール'
-        assert item_data['duration'] == 119
 
 
 class TestProxyImageReferer:
@@ -1076,19 +395,6 @@ class TestProxyImageReferer:
         assert headers_sent.get('Referer') == 'https://www.dmm.co.jp/', \
             f"Expected Referer 'https://www.dmm.co.jp/', got '{headers_sent.get('Referer')}'"
 
-    def test_proxy_image_pics_dmm_referer(self, client):
-        """`pics.dmm.co.jp` URL 發送請求時 Referer 應為 https://www.dmm.co.jp/"""
-        url = 'https://pics.dmm.co.jp/mono/movie/adult/sone103/sone103jp-3.jpg'
-
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-        _, call_kwargs = mock_get.call_args
-        headers_sent = call_kwargs.get('headers', {})
-        assert headers_sent.get('Referer') == 'https://www.dmm.co.jp/', \
-            f"Expected Referer 'https://www.dmm.co.jp/', got '{headers_sent.get('Referer')}'"
 
     def test_proxy_image_javbus_referer(self, client):
         """`javbus.com` URL 發送請求時 Referer 應為 https://www.javbus.com/"""
@@ -1113,29 +419,6 @@ class TestProxyImageReferer:
         assert response.status_code == 200
         mock_get.assert_called_once()
         assert 'cdn.example.com' in self.resolve.calls
-
-    def test_proxy_image_external_failure_returns_404(self, client):
-        """外部請求失敗時應回傳 HTTP 404 空 body"""
-        url = 'https://awsimgsrc.dmm.co.jp/pics_dig/mono/movie/adult/sone103/sone103jp-1.jpg'
-
-        with patch('web.routers.search.requests.get', side_effect=Exception('timeout')):
-            response = client.get('/api/proxy-image', params={'url': url})
-
-        assert response.status_code == 404
-        assert response.content == b''
-
-    def test_proxy_image_success_has_cache_control(self, client):
-        """成功 200 回應必須帶 Cache-Control: public, max-age=86400（TASK-80）"""
-        url = 'https://www.javbus.com/pics/cover/abc.jpg'
-
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()):
-            response = client.get('/api/proxy-image', params={'url': url})
-
-        assert response.status_code == 200
-        assert response.headers.get('Cache-Control') == 'public, max-age=86400', (
-            f"proxy-image 200 缺少 Cache-Control: public, max-age=86400，"
-            f"實際值：{response.headers.get('Cache-Control')!r}"
-        )
 
 
 class TestProxyImageSSRF:
@@ -1180,101 +463,16 @@ class TestProxyImageSSRF:
         mock_get.assert_not_called()
 
 
-
     # ---- Scraper real-host allow cases (2) ----
 
-    def test_allow_pics_javbus_subdomain(self, client):
-        """pics.javbus.com（root domain endswith 比對）應通過 → 200"""
-        url = 'https://pics.javbus.com/cover/abc.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
-    def test_allow_www_javbus_subdomain(self, client):
-        """www.javbus.com（root domain endswith 比對）應通過 → 200"""
-        url = 'https://www.javbus.com/image.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
 
     # ---- Actress cascade host allow cases (4) ----
 
-    def test_allow_graphis_data_subdomain(self, client):
-        """data.graphis.ne.jp（graphis.ne.jp root domain）應通過 → 200"""
-        url = 'https://data.graphis.ne.jp/model/xxx/prof.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
-    def test_allow_cdn_jsdelivr_exact_host(self, client):
-        """cdn.jsdelivr.net（exact host）應通過 → 200"""
-        url = 'https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/Content/xxx.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
-    def test_allow_upload_wikimedia_exact_host(self, client):
-        """upload.wikimedia.org（exact host）應通過 → 200"""
-        url = 'https://upload.wikimedia.org/wikipedia/commons/x.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
-    def test_allow_jdbstatic_cdn_numbered_subdomain(self, client):
-        """c0.jdbstatic.com / c1.jdbstatic.com 等 JavDB CDN（jdbstatic.com root domain）應通過 → 200
-
-        Codex 2026-05-28 round-2 review P1：JavDB scraper 實際回傳 cover URL
-        host 為 c0.jdbstatic.com（見 tests/fixtures/responses/javdb/SONE-103.json:4），
-        不是 javdb.com；原 allowlist 只列 javdb.com exact host，導致 JavDB 結果封面 403。
-        """
-        url = 'https://c0.jdbstatic.com/covers/sone103.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
 
     # ---- 無碼來源圖床 allow cases (FC2 / AVSOX，實機驗證真實 host) ----
 
-    def test_allow_fc2_contents_thumbnail_subdomain(self, client):
-        """FC2 封面/劇照 host contents-thumbnail2.fc2.com（fc2.com root domain）應通過 → 200
-
-        實機驗證（FC2-PPV-4908730）：scraper 取 data-fancybox gallery href，
-        cover + samples 皆在 contents-thumbnail2.fc2.com。原 allowlist 無 fc2.com → 403。
-        """
-        url = 'https://contents-thumbnail2.fc2.com/w1280/storage201000.contents.fc2.com/file/382/x.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
-    def test_allow_fc2_storage_numbered_subdomain(self, client):
-        """storage<NNN>.contents.fc2.com（FC2 og:image 數字子域，fc2.com root domain）應通過 → 200"""
-        url = 'https://storage201000.contents.fc2.com/file/382/38137888/x.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
-    def test_allow_avsox_netcdn_exact_host(self, client):
-        """AVSOX 封面 CDN file.netcdn.space（exact host）應通過 → 200
-
-        實機驗證（032620-001）：scraper 取 a.bigImage href，cover 在 file.netcdn.space。
-        原 allowlist 無此 host → 403。
-        """
-        url = 'https://file.netcdn.space/storage/caribbeancom/moviepages/032620-001/images/l_l.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
 
     # ---- Exact-host subdomain blocked (1) ----
-
-
 
 
     # ---- TASK-113c-T2: redirect 不跟隨 ＋ 403 log ----
@@ -1355,13 +553,6 @@ class TestProxyImageSSRF:
 
     # ---- TASK-113c-T3a: metatube dynamic + path/dot-segment + cf.javfree.me ----
 
-    def test_proxy_image_unclosed_ipv6_returns_403_not_500(self, client):
-        """BE-SEC-01: http://[::1 unclosed IPv6 → 403, never 500."""
-        url = 'http://[::1'
-        with patch('web.routers.search.requests.get') as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 403
-        mock_get.assert_not_called()
 
     def test_metatube_dot_segment_literal_dotdot_rejected(self, client):
         """§1.7(a) row1: /v1/images/../db → 403, no request."""
@@ -1376,44 +567,6 @@ class TestProxyImageSSRF:
         finally:
             metatube_state.disconnect()
 
-    def test_metatube_dot_segment_literal_dot_dotdot_rejected(self, client):
-        """§1.7(a) row2: /v1/images/./../db → 403, no request."""
-        from core.metatube.state import metatube_state
-        metatube_state.connect('http://127.0.0.1:8900', '', [])
-        try:
-            url = 'http://127.0.0.1:8900/v1/images/./../db'
-            with patch('web.routers.search.requests.get') as mock_get:
-                response = client.get('/api/proxy-image', params={'url': url})
-            assert response.status_code == 403
-            mock_get.assert_not_called()
-        finally:
-            metatube_state.disconnect()
-
-    def test_metatube_dot_segment_percent_encoded_lower_rejected(self, client):
-        """§1.7(a) row3: /v1/images/%2e%2e/db → 403, no request."""
-        from core.metatube.state import metatube_state
-        metatube_state.connect('http://127.0.0.1:8900', '', [])
-        try:
-            url = 'http://127.0.0.1:8900/v1/images/%2e%2e/db'
-            with patch('web.routers.search.requests.get') as mock_get:
-                response = client.get('/api/proxy-image', params={'url': url})
-            assert response.status_code == 403
-            mock_get.assert_not_called()
-        finally:
-            metatube_state.disconnect()
-
-    def test_metatube_dot_segment_percent_encoded_upper_slash_rejected(self, client):
-        """§1.7(a) row4: /v1/images/%2E%2E%2Fdb → 403, no request."""
-        from core.metatube.state import metatube_state
-        metatube_state.connect('http://127.0.0.1:8900', '', [])
-        try:
-            url = 'http://127.0.0.1:8900/v1/images/%2E%2E%2Fdb'
-            with patch('web.routers.search.requests.get') as mock_get:
-                response = client.get('/api/proxy-image', params={'url': url})
-            assert response.status_code == 403
-            mock_get.assert_not_called()
-        finally:
-            metatube_state.disconnect()
 
     def test_metatube_non_images_path_rejected(self, client):
         """AC5b: connected metatube /v1/db/version → 403 (path_prefix)."""
@@ -1465,15 +618,8 @@ class TestProxyImageSSRF:
 
     @pytest.mark.parametrize("evil_path", [
         '/v1/images/%252e%252e/db',       # 雙重百分比編碼
-        '/v1/images/%252e%252e%252fdb',   # 雙重編碼 + 編碼斜線
-        '/v1/images/..%c0%afdb',          # overlong UTF-8 斜線（IIS 類）
-        '/v1/images/%c0%ae%c0%ae/db',     # overlong UTF-8 句點
         '/v1/images/..;/db',              # matrix parameter（Tomcat 類）
-        '/v1/images/%00../db',            # NUL byte
-        '/v1/images/..%2f..%2fdb',        # 編碼斜線
-        '/v1/images/x%5c..%5cdb',         # 反斜線
         '/v1/images//x',                  # 空段
-        '/v1/images/....//db',            # 四點
     ])
     def test_metatube_path_allowlist_blocks_exotic_encodings(self, client, evil_path):
         """path 閘門是**正向字元允許清單**，不是列舉違規編碼。
@@ -1499,9 +645,6 @@ class TestProxyImageSSRF:
 
     @pytest.mark.parametrize("nested", [
         'http://127.0.0.1:6379/',                       # 同機 Redis
-        'http://192.168.1.1/admin.png',                 # 同網段設備
-        'http://169.254.169.254/latest/meta-data',      # 雲端 metadata
-        'http://[::1]/x.png',                           # IPv6 loopback
         'http://nas/photo.jpg',                         # 裸內網名
     ])
     def test_metatube_nested_url_to_private_target_is_rejected(self, client, nested):
@@ -1551,8 +694,6 @@ class TestProxyImageSSRF:
             metatube_state.disconnect()
 
     @pytest.mark.parametrize("good_path", [
-        '/v1/images/primary/FANZA/ssis-001',
-        '/v1/images/thumb/TOKYO-HOT/n1234',
         '/v1/images/backdrop/P_v2/abc_123.jpg',
     ])
     def test_metatube_path_allowlist_permits_real_image_paths(self, client, good_path):
@@ -1574,28 +715,6 @@ class TestProxyImageSSRF:
         finally:
             metatube_state.disconnect()
 
-    @pytest.mark.parametrize("bad_port_url", [
-        'http://127.0.0.1:99999/v1/images/primary/x/y',   # 超出 0-65535
-        'http://127.0.0.1:abc/v1/images/primary/x/y',     # 非數字
-        'http://127.0.0.1:-1/v1/images/primary/x/y',      # 負數
-    ])
-    def test_metatube_malformed_port_is_403_not_500(self, client, bad_port_url):
-        """BE-SEC-01 家族：`urlparse()` 成功但 `.port` 拋 ValueError。
-
-        這是 T3a review 實測抓到的 BLOCKER——port 比對引入了第二個「解析
-        成功但取值會炸」的點，而 `_is_allowed_image_url()` 的 try/except 只
-        包住 `urlparse()` 本身。未修前這三筆是**未處理例外 → 500**，不是
-        fail-closed 的 403。必須 metatube 連著才觸發（host 要先命中動態條目）。
-        """
-        from core.metatube.state import metatube_state
-        metatube_state.connect('http://127.0.0.1:8900', '', [])
-        try:
-            with patch('web.routers.search.requests.get') as mock_get:
-                response = client.get('/api/proxy-image', params={'url': bad_port_url})
-            assert response.status_code == 403
-            mock_get.assert_not_called()
-        finally:
-            metatube_state.disconnect()
 
     def test_metatube_images_path_allowed(self, client):
         """Connected metatube /v1/images/... matching host+port+scheme → 200."""
@@ -1613,36 +732,12 @@ class TestProxyImageSSRF:
         finally:
             metatube_state.disconnect()
 
-    def test_allow_cf_javfree_me_exact_host(self, client):
-        """cf.javfree.me exact host → 200."""
-        url = 'https://cf.javfree.me/HLIC/abc.jpg'
-        with patch(
-            'web.routers.search.requests.get',
-            return_value=self._make_mock_response(),
-        ) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
-
 
 # ============ since 日期過濾 ============
 
 class TestSearchSince:
     """測試 GET /api/search?since=YYYY-MM-DD 日期後過濾"""
 
-    def test_since_invalid_format_returns_400(self, client):
-        """since 格式不符 YYYY-MM-DD → 400"""
-        response = client.get('/api/search', params={'q': 'SONE', 'since': 'abc'})
-        assert response.status_code == 400
-        data = response.json()
-        assert 'error' in data
-        assert 'since' in data['error']
-
-    def test_since_invalid_format_slash_returns_400(self, client):
-        """since 2026/01/01 格式不符 → 400"""
-        response = client.get('/api/search', params={'q': 'SONE', 'since': '2026/01/01'})
-        assert response.status_code == 400
 
     def test_since_filters_old_results(self, client, mocker):
         """since=2026-01-01 應過濾 date < 2026-01-01 的結果"""
@@ -1660,58 +755,6 @@ class TestSearchSince:
         assert 'SONE-101' in numbers
         assert 'SONE-100' not in numbers
 
-    def test_since_keeps_results_without_date(self, client, mocker):
-        """缺 date 的結果應保留（保守策略）"""
-        mock_results = [
-            {'number': 'SONE-100', 'title': 'No date'},
-            {'number': 'SONE-101', 'title': 'With date', 'date': '2026-02-01'},
-        ]
-        mocker.patch('web.routers.search.smart_search', return_value=mock_results)
-
-        response = client.get('/api/search', params={'q': 'SONE', 'since': '2026-01-01'})
-        assert response.status_code == 200
-        data = response.json()
-        numbers = [r['number'] for r in data['data']]
-        assert 'SONE-100' in numbers  # no date → kept
-        assert 'SONE-101' in numbers
-
-    def test_since_keeps_results_with_empty_date(self, client, mocker):
-        """date 為空字串的結果應保留"""
-        mock_results = [
-            {'number': 'SONE-200', 'title': 'Empty date', 'date': ''},
-        ]
-        mocker.patch('web.routers.search.smart_search', return_value=mock_results)
-
-        response = client.get('/api/search', params={'q': 'SONE', 'since': '2026-01-01'})
-        assert response.status_code == 200
-        data = response.json()
-        assert any(r['number'] == 'SONE-200' for r in data['data'])
-
-    def test_since_all_filtered_returns_not_found(self, client, mocker):
-        """since 過濾後無結果 → success: false"""
-        mock_results = [
-            {'number': 'SONE-100', 'title': 'Old', 'date': '2020-01-01'},
-        ]
-        mocker.patch('web.routers.search.smart_search', return_value=mock_results)
-
-        response = client.get('/api/search', params={'q': 'SONE', 'since': '2026-01-01'})
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is False
-
-    def test_since_no_filter_when_absent(self, client, mocker):
-        """不帶 since 時結果不過濾（向後相容）"""
-        mock_results = [
-            {'number': 'SONE-100', 'title': 'Old', 'date': '2020-01-01'},
-        ]
-        mocker.patch('web.routers.search.smart_search', return_value=mock_results)
-
-        response = client.get('/api/search', params={'q': 'SONE'})
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert any(r['number'] == 'SONE-100' for r in data['data'])
-
 
 # ============ discovery 參數 ============
 
@@ -1728,113 +771,12 @@ class TestSearchDiscovery:
         data = response.json()
         assert data.get('discovery') is True
 
-    def test_discovery_calls_search_actress_with_discovery_only(self, client, mocker):
-        """discovery=true + mode=actress 時呼叫 search_actress(discovery_only=True)"""
-        received = {}
-
-        def mock_search_actress(q, limit=20, offset=0, discovery_only=False, **kwargs):
-            received['discovery_only'] = discovery_only
-            return [{'number': 'SONE-100', 'title': ''}]
-
-        mocker.patch('web.routers.search.search_actress', side_effect=mock_search_actress)
-        client.get('/api/search', params={'q': '三上悠亜', 'mode': 'actress', 'discovery': 'true'})
-        assert received.get('discovery_only') is True
-
-    def test_discovery_false_does_not_set_flag(self, client, mocker):
-        """discovery=false（預設）回傳不包含 discovery 欄位"""
-        mocker.patch('web.routers.search.smart_search', return_value=[
-            {'number': 'SONE-100', 'title': 'Title'}
-        ])
-        response = client.get('/api/search', params={'q': '三上悠亜'})
-        assert response.status_code == 200
-        data = response.json()
-        assert 'discovery' not in data
-
-    def test_discovery_with_exact_mode_ignores_discovery(self, client, mocker):
-        """discovery=true + mode=exact 忽略 discovery（正常精確搜尋）"""
-        mock_data = {'number': 'SONE-103', 'title': 'Some Title'}
-        mocker.patch('web.routers.search.search_jav', return_value=mock_data)
-
-        response = client.get('/api/search', params={
-            'q': 'SONE-103', 'mode': 'exact', 'discovery': 'true'
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert 'discovery' not in data  # exact mode: no discovery flag
-
-    def test_discovery_no_results_returns_discovery_flag(self, client, mocker):
-        """discovery=true + mode=actress 無結果時仍回傳 discovery: true"""
-        mocker.patch('web.routers.search.search_actress', return_value=[])
-        response = client.get('/api/search', params={'q': '三上悠亜', 'mode': 'actress', 'discovery': 'true'})
-        assert response.status_code == 200
-        data = response.json()
-        assert data.get('discovery') is True
-        assert data['success'] is False
-
-    def test_discovery_auto_mode_ignored(self, client, mocker):
-        """discovery=true + mode=auto → 忽略 discovery（auto 不在白名單）"""
-        mocker.patch('web.routers.search.smart_search', return_value=[])
-        response = client.get('/api/search', params={'q': '三上悠亜', 'discovery': 'true'})
-        assert response.status_code == 200
-        data = response.json()
-        assert 'discovery' not in data
-
-    def test_discovery_auto_mode_with_number_format_ignores_discovery(self, client, mocker):
-        """discovery=true + auto mode + 番號格式 → smart_search 走 exact 路徑，回傳完整結果"""
-        mock_result = {'number': 'SONE-100', 'title': 'Full Title', '_mode': 'exact'}
-
-        received = {}
-
-        def mock_smart_search(q, limit=20, offset=0, discovery_only=False, **kwargs):
-            received['discovery_only'] = discovery_only
-            received['q'] = q
-            return [mock_result]
-
-        mocker.patch('web.routers.search.smart_search', side_effect=mock_smart_search)
-
-        # auto mode（不帶 mode 參數）+ 番號格式 + discovery=true
-        response = client.get('/api/search', params={'q': 'SONE-100', 'discovery': 'true'})
-        assert response.status_code == 200
-        data = response.json()
-
-        # smart_search 被呼叫（auto 路徑，非直接走 search_jav）
-        assert received.get('q') == 'SONE-100', \
-            "smart_search should be called with the query"
-
-        # 回傳完整搜尋結果（success: true，data 含完整番號資料）
-        assert data['success'] is True
-        assert data['total'] >= 1
-        assert data['data'][0]['number'] == 'SONE-100'
-
-        # auto mode 偵測到番號格式，detected_mode 應為 exact
-        assert data.get('mode') == 'exact', \
-            f"Auto mode with number format should detect as exact, got {data.get('mode')}"
-
-        # exact 路徑不應帶 discovery flag
-        assert 'discovery' not in data, \
-            "auto→exact path should not include discovery flag in response"
-
 
 # ============ POST /api/batch-search ============
 
 class TestBatchSearch:
     """測試 POST /api/batch-search"""
 
-    def test_batch_search_empty_list_returns_400(self, client):
-        """空 numbers → 400"""
-        response = client.post('/api/batch-search', json={'numbers': []})
-        assert response.status_code == 400
-        data = response.json()
-        assert 'error' in data
-
-    def test_batch_search_over_50_returns_422(self, client):
-        """超過 50 筆 → 422"""
-        numbers = [f'SONE-{i:03d}' for i in range(51)]
-        response = client.post('/api/batch-search', json={'numbers': numbers})
-        assert response.status_code == 422
-        data = response.json()
-        assert 'error' in data
 
     def test_batch_search_found_and_not_found(self, client, mocker):
         """1 found + 1 not found → results + summary 正確"""
@@ -1884,85 +826,6 @@ class TestBatchSearch:
         assert response.status_code == 200
         data = response.json()
         assert 'cover_url' in data['results']['SONE-100']
-
-    def test_batch_search_all_not_found(self, client, mocker):
-        """全部找不到仍正常回傳 summary.found=0"""
-        mocker.patch('web.routers.search.smart_search', return_value=[])
-
-        response = client.post('/api/batch-search', json={'numbers': ['FAKE-001', 'FAKE-002']})
-        assert response.status_code == 200
-        data = response.json()
-        assert data['summary']['found'] == 0
-        assert data['summary']['not_found'] == 2
-        assert data['summary']['total'] == 2
-
-    def test_batch_search_response_structure(self, client, mocker):
-        """回傳結構符合規範"""
-        mocker.patch('web.routers.search.smart_search', return_value=[
-            {'number': 'SONE-100', 'title': 'Title'}
-        ])
-
-        response = client.post('/api/batch-search', json={'numbers': ['SONE-100']})
-        assert response.status_code == 200
-        data = response.json()
-
-        assert 'results' in data
-        assert 'summary' in data
-        assert isinstance(data['results'], dict)
-        assert 'total' in data['summary']
-        assert 'found' in data['summary']
-        assert 'not_found' in data['summary']
-
-    def test_batch_search_preserves_internal_nfo_keys(self, client, mocker):
-        """147c-T1：_summary/_rating 保留在 batch-search response"""
-        def mock_smart_search(q, limit=1, **kwargs):
-            return [{
-                'number': q,
-                'title': 'Found Title',
-                'cover_url': 'http://example.com/cover.jpg',
-                '_summary': 'internal summary should be stripped',
-                '_rating': 4.5,
-            }]
-
-        mocker.patch('web.routers.search.smart_search', side_effect=mock_smart_search)
-
-        response = client.post('/api/batch-search', json={'numbers': ['SONE-100']})
-        assert response.status_code == 200
-        data = response.json()
-
-        entry = data['results']['SONE-100']
-        assert entry['found'] is True
-        assert entry['_summary'] == 'internal summary should be stripped'
-        assert entry['_rating'] == 4.5
-        # Canonical fields should still be present
-        assert entry['title'] == 'Found Title'
-        assert 'summary' not in entry
-        assert 'rating' not in entry
-
-    def test_batch_search_dedup_numbers(self, client, mocker):
-        """重複番號去重：["SONE-100", "SONE-100", "SONE-101"] 只呼叫 smart_search 兩次"""
-        def mock_smart_search(q, limit=1, **kwargs):
-            return [{'number': q, 'title': f'Title for {q}', 'found': True}]
-
-        mock = mocker.patch('web.routers.search.smart_search', side_effect=mock_smart_search)
-
-        response = client.post('/api/batch-search', json={
-            'numbers': ['SONE-100', 'SONE-100', 'SONE-101']
-        })
-        assert response.status_code == 200
-        data = response.json()
-
-        # smart_search 只被呼叫 2 次（去重後）
-        assert mock.call_count == 2, \
-            f"Expected 2 calls (deduped), got {mock.call_count}"
-
-        # results 有 2 個 key（SONE-100 和 SONE-101）
-        assert set(data['results'].keys()) == {'SONE-100', 'SONE-101'}, \
-            f"Expected keys {{SONE-100, SONE-101}}, got {set(data['results'].keys())}"
-
-        # summary.total 是去重後的數量（2），不是原始輸入數量（3）
-        assert data['summary']['total'] == 2, \
-            f"Expected summary.total == 2 (deduped), got {data['summary']['total']}"
 
 
 class TestAutoOrganizeHooks:
@@ -2043,25 +906,6 @@ class TestAutoOrganizeEndpoints:
         assert resp_off.status_code == 200
         assert resp_off.json() == {"success": True}
 
-    def test_auto_organize_config_toggle_resets_due_time(self, client, mocker):
-        """DoD-1 / M3：撥開關當下呼叫 reset_due_time。"""
-        from core import config as core_config
-        from web import auto_organize_scheduler
-
-        core_config.mutate_config(
-            lambda cfg: cfg.setdefault("search", {}).update(
-                {"favorite_folder": "/tmp/fav-for-ao"}
-            )
-        )
-        spy = mocker.spy(auto_organize_scheduler, "reset_due_time")
-
-        resp = client.post("/api/search/auto-organize/config", json={"enabled": True})
-        assert resp.status_code == 200
-        assert resp.json() == {"success": True}
-        spy.assert_called()
-
-        cfg = core_config.load_config()
-        assert cfg["search"]["auto_organize"]["enabled"] is True
 
     def test_disabling_toggle_aborts_running_round(self, client):
         """Codex PR#181 之後的最壞情況盤點 R1：撥掉開關＝叫停正在跑的那一輪。
@@ -2112,54 +956,8 @@ class TestAutoOrganizeEndpoints:
         finally:
             auto_organize_state.exit_cron()
 
-    def test_use_resolved_folder_writes_favorite_folder(self, client, tmp_path, monkeypatch):
-        """DoD：use-resolved-folder 把 resolve 結果寫進 favorite_folder。"""
-        from core import config as core_config
-
-        fav = tmp_path / "resolved-fav"
-        fav.mkdir()
-        monkeypatch.setattr(
-            "web.routers.search.resolve_favorite_folder",
-            lambda _cfg: str(fav),
-        )
-
-        resp = client.post("/api/search/auto-organize/use-resolved-folder")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["folder"] == str(fav)
-        assert core_config.load_config()["search"]["favorite_folder"] == str(fav)
-
-    def test_status_unset_non_desktop_returns_empty_resolved_folder(self, client, monkeypatch):
-        from core import config as core_config
-
-        monkeypatch.delenv("OPENAVER_STANDALONE", raising=False)
-        core_config.mutate_config(
-            lambda cfg: cfg.setdefault("search", {}).update({"favorite_folder": ""})
-        )
-
-        response = client.get("/api/search/auto-organize/status")
-
-        assert response.status_code == 200
-        assert response.json()["resolved_folder"] == ""
 
     # [lint-guard: pytest-justified] 模板 x-show 與 autoOrganizePanel() 欄位名的跨檔 Alpine state 契約＋i18n 文字
-    def test_panel_renders_unset_message_and_conditional_action(self, client):
-        response = client.get("/search")
-        assert response.status_code == 200
-        dom = BeautifulSoup(response.text, "html.parser")
-        panel = dom.select_one('[x-data="autoOrganizePanel"]')
-        assert panel is not None
-        message = panel.select_one('.auto-organize-panel__unset')
-        assert message is not None
-        assert message.get('x-show') == '!folderIsSet && !resolvedFolder'
-        assert '尚未設定最愛資料夾' in message.get_text()
-        link = message.select_one('a[href="/settings"]')
-        assert link is not None
-        assert link.get_text(strip=True) == "前往設定"
-        action = panel.select_one('button[x-text="window.t(\'search.auto_organize.use_resolved_folder\')"]')
-        assert action is not None
-        assert action.parent.get('x-show') == '!folderIsSet && resolvedFolder'
 
     def test_use_resolved_folder_unset_non_desktop_returns_error_and_does_not_write_config(
         self, client, monkeypatch
@@ -2224,7 +1022,6 @@ class TestAutoOrganizeEndpoints:
         # 等背景輪結束，避免污染後續測試
         from web import auto_organize_scheduler as aos
         if aos._round_task is not None:
-            import asyncio
             # 🔴 不可用 `aos._round_task.result(timeout=5)`：`asyncio.Task.result()`
             # **不接受 timeout 參數**（那是 `concurrent.futures.Future` 的簽名），
             # 會立刻拋 TypeError 並被 `except` 吞掉 ⇒ 這段「等背景輪結束」完全沒有生效

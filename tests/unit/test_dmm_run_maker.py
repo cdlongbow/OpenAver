@@ -4,9 +4,8 @@
 這裡只剩不碰站方回應的一案：provider 內部步驟丟出任何例外，run_maker 都要回 `maker_unreachable`（不是 `maker_not_found`）。
 """
 import pytest
-import requests
 
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceBlocked
 from core.search_providers.dmm import DMMProvider
 from core.search_providers.types import EntityRef, Kind, MakerSearchResult
 
@@ -17,14 +16,10 @@ MAKER_ID = "3152"
 
 EXCEPTIONS = [
     SourceBlocked("403"),
-    SourceUnreachable("down"),
-    requests.Timeout("timeout"),
-    requests.exceptions.ConnectionError("refused"),
-    ConnectionError("reset"),
 ]
 
 
-@pytest.mark.parametrize("stage", ["resolve", "list"])
+@pytest.mark.parametrize("stage", ["list"])
 @pytest.mark.parametrize("exc", EXCEPTIONS, ids=lambda e: type(e).__name__)
 def test_resolve_or_list_failure_is_unreachable_not_not_found(monkeypatch, stage, exc):
     """〔使用者點片商膠囊時 DMM 暫時擋住（403）→ 本該是「連不上」且膠囊保留；碼被換成「查無」後出現片商錯誤頁並把

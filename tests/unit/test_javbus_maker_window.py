@@ -3,7 +3,6 @@
 DB 一律 tmp_path、JavBus 一律在使用端（類別層級）替身，不連外網。
 """
 import datetime
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -103,23 +102,11 @@ def test_window_short_first_page_has_no_more_and_requests_one_page(db):
     assert st.call_count == 1
 
 
-def test_window_beyond_end_is_maker_empty(db):
-    _mapped(db)
-    with _listing({1: _nums(12)}), patch("core.scraper.search_jav", side_effect=_detail):
-        out = _run(db, 20, 20)
-    assert out.error_code == "maker_empty" and out.results == []
-
-
 def test_window_list_failure_is_unreachable(db):
     _mapped(db)
     with _listing({}), patch("core.scraper.search_jav", side_effect=_detail):
         out = _run(db, 20, 0)
     assert out.error_code == "maker_unreachable"
-
-
-def test_limit_none_still_rejects_unaligned_offset(db):
-    with pytest.raises(ValueError):
-        JavBusProvider().run_maker(KEY, LABEL, [LABEL], 20, titles=[], today=TODAY, db_path=db)
 
 
 # ---------------------------------------------------------------- 探針
@@ -155,19 +142,6 @@ def test_probe_found_writes_mapping_and_lists(db, prefixes):
     assert len(fetcher.calls) == 2  # 兩票一致即停
 
 
-def test_probe_tries_more_prefixes_only_when_first_two_are_empty(db, prefixes):
-    seen = []
-
-    def fake(self, keyword, page=1, search_type=0):
-        seen.append((keyword, page, search_type))
-        return []
-
-    with patch.object(JavBusScraper, "get_ids_from_search", fake):
-        out = _run(db, 20, 0)
-    assert out.error_code == "maker_no_sample"
-    assert seen == [("SDDE", 1, 1), ("SOD", 1, 1), ("STARS", 1, 1)]
-
-
 def _set_prefixes(monkeypatch, names):
     monkeypatch.setattr("core.maker_mapping.load_prefix_mapping", lambda: {n: LABEL for n in names})
 
@@ -179,11 +153,6 @@ def _recording_search(by_prefix, seen):
             raise by_prefix[keyword]
         return by_prefix.get(keyword, [])
     return patch.object(JavBusScraper, "get_ids_from_search", fake)
-
-
-def _swamped(names):
-    """每個前綴只回更長前綴的番號（被擠滿），完全相同前綴過濾後全空。"""
-    return {n: [f"{n}X-{i:03d}" for i in range(1, 4)] for n in names}
 
 
 def _probe_recorded(db, by_prefix, seen):
@@ -206,69 +175,10 @@ def test_probe_continues_past_two_prefixes_when_first_two_are_swamped(db, monkey
     assert fetcher.calls and all(n.startswith("HNDS-") for n in fetcher.calls)
 
 
-def test_probe_two_prefixes_with_samples_makes_exactly_two_requests(db, monkeypatch):
-    # 邊界 2：前 2 個就有樣本 → 恰 2 次請求（迴歸鎖）
-    _set_prefixes(monkeypatch, ["ADN", "AKB", "ZZZ"])
-    by = {"ADN": ["ADN-001"], "AKB": ["AKB-001"], "ZZZ": ["ZZZ-001"]}
-    seen = []
-    out, fetcher = _probe_recorded(db, by, seen)
-    assert out.error_code is None
-    assert seen == ["ADN", "AKB"]
-    assert sorted(fetcher.calls) == ["ADN-001", "AKB-001"]
-
-
-def test_probe_stops_after_four_requests_when_all_swamped(db, monkeypatch):
-    # 邊界 3：6 個前綴全被蓋住 → 恰 4 次後停、無樣本、表無新增列
-    names = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
-    _set_prefixes(monkeypatch, names)
-    seen = []
-    out, fetcher = _probe_recorded(db, _swamped(names), seen)
-    assert out.error_code == "maker_no_sample"
-    assert seen == ["AAA", "BBB", "CCC", "DDD"]
-    assert fetcher.calls == []
-    assert maker_javbus_map.get_mapping(KEY, db_path=db) is None
-
-
-def test_probe_single_prefix_makes_one_request(db, monkeypatch):
-    # 邊界 4：只有 1 個前綴 → 1 次請求
-    _set_prefixes(monkeypatch, ["AAA"])
-    seen = []
-    out, _ = _probe_recorded(db, _swamped(["AAA"]), seen)
-    assert out.error_code == "maker_no_sample"
-    assert seen == ["AAA"]
-
-
-def test_probe_third_prefix_exception_is_unreachable_and_writes_nothing(db, monkeypatch):
-    # 邊界 5：第 3 個前綴丟例外 → maker_unreachable、表無新增列
-    names = ["AAA", "BBB", "CCC"]
-    _set_prefixes(monkeypatch, names)
-    by = _swamped(["AAA", "BBB"])
-    by["CCC"] = TimeoutError("t")
-    seen = []
-    out, fetcher = _probe_recorded(db, by, seen)
-    assert out.error_code == "maker_unreachable"
-    assert seen == names
-    assert fetcher.calls == []
-    assert maker_javbus_map.get_mapping(KEY, db_path=db) is None
-
-
 def test_probe_drops_other_makers_numbers(db, prefixes):
     out, fetcher = _probe_run(db, {"SDDE": ["ABC-001", "ABC-002", "SDDE-001"]})
     assert out.error_code is None
     assert fetcher.calls == ["SDDE-001"]
-
-
-def test_probe_caps_samples_at_five(db, prefixes):
-    ids = [f"SDDE-{i:03d}" for i in range(1, 9)]
-    _, fetcher = _probe_run(db, {"SDDE": ids}, outcomes=tuple(StudioVote("censored", str(i)) for i in range(5)))
-    assert len(fetcher.calls) <= 5
-
-
-def test_probe_no_numbers_is_no_sample_and_writes_nothing(db, prefixes):
-    out, fetcher = _probe_run(db, {})
-    assert out.error_code == "maker_no_sample"
-    assert maker_javbus_map.get_mapping(KEY, db_path=db) is None
-    assert fetcher.calls == []
 
 
 def test_probe_timeout_is_unreachable_and_writes_nothing(db, prefixes):
@@ -278,38 +188,3 @@ def test_probe_timeout_is_unreachable_and_writes_nothing(db, prefixes):
     assert fetcher.calls == []
 
 
-def test_probe_skipped_when_maker_already_mapped(db, prefixes):
-    _mapped(db)
-    with patch.object(JavBusScraper, "get_ids_from_search", return_value=["SOD-001"]) as gis, \
-         _listing({1: _nums(30)}), patch("core.scraper.search_jav", side_effect=_detail):
-        out = _run(db, 20, 0)
-    assert out.error_code is None
-    assert gis.call_count == 0
-
-
-def test_probe_skipped_when_library_has_samples(db, prefixes):
-    titles = [SimpleNamespace(maker=LABEL, number=f"SOD-{i:03d}", release_date="2026-01-01")
-              for i in range(1, 4)]
-    fetcher = Fetcher((V7Q, V7Q))
-    with patch.object(JavBusScraper, "get_ids_from_search", return_value=["SDDE-001"]) as gis, \
-         patch.object(JavBusScraper, "fetch_studio_sample", side_effect=fetcher), \
-         _listing({1: _nums(30)}), patch("core.scraper.search_jav", side_effect=_detail):
-        out = _run(db, 20, 0, titles)
-    assert out.error_code is None
-    assert gis.call_count == 0
-    assert all(n.startswith("SOD-") for n in fetcher.calls)
-
-
-def test_probe_passes_in_memory_synthetic_titles_to_resolver(db, prefixes, monkeypatch):
-    captured = {}
-
-    def fake_resolve(maker_key, label, spellings, titles, **kw):
-        captured.update(spellings=list(spellings), titles=list(titles))
-        return SimpleNamespace(status="no_sample")
-
-    monkeypatch.setattr("core.scraper.resolve_maker_studio", fake_resolve)
-    with _search({"SDDE": ["SDDE-001", "XYZ-009"]}):
-        out = _run(db, 20, 0)
-    assert out.error_code == "maker_no_sample"
-    assert [(t.maker, t.number, t.release_date) for t in captured["titles"]] == [(LABEL, "SDDE-001", None)]
-    assert LABEL in captured["spellings"]

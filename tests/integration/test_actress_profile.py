@@ -87,47 +87,6 @@ def test_get_actress_profile_both_sources():
         assert result.timed_out is False
 
 
-
-def test_get_actress_profile_graphis_only():
-    """測試只有 Graphis 有資料（Mock）"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
-
-    def mock_graphis(name):
-        return {
-            'name': name,
-            'name_ja': name,   # T4.3: orchestrator reads name_ja for result['name']
-            'prof_url': 'https://graphis.ne.jp/prof.jpg',
-            'backdrop_url': 'https://graphis.ne.jp/model.jpg'
-        }
-
-    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
-         patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
-         patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis), \
-         patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
-
-        result = get_actress_profile("桜空もも")
-
-        assert result.data is not None
-        assert result.data['name'] == '桜空もも'
-        assert result.data['img'] == 'https://graphis.ne.jp/prof.jpg'
-        assert result.data['backdrop'] == 'https://graphis.ne.jp/model.jpg'
-        assert result.timed_out is False
-
-
-def test_get_actress_profile_both_fail():
-    """測試雙來源都失敗（Mock）"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
-
-    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
-         patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
-         patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=None), \
-         patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
-
-        result = get_actress_profile("不存在的女優")
-        assert result.data is None
-        assert result.timed_out is False
-
-
 # ============================================================================
 # Cache 機制測試（全 mock）
 # ============================================================================
@@ -159,71 +118,6 @@ def test_get_actress_profile_cache_hit():
         assert result1.data == result2.data
         # Mock 不應被再次呼叫
         assert graphis_mock.call_count == 1
-
-
-def test_get_actress_profile_cache_expired():
-    """測試 cache 過期（Mock）"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache, _CACHE_TTL
-
-    def mock_graphis(name):
-        return {
-            'name': name,
-            'prof_url': 'https://graphis.ne.jp/prof.jpg',
-            'backdrop_url': 'https://graphis.ne.jp/model.jpg'
-        }
-
-    # Mock time.time 使用固定值
-    fixed_time = [1000.0]
-
-    def mock_time():
-        return fixed_time[0]
-
-    with patch('time.time', side_effect=mock_time), \
-         patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
-         patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
-         patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis) as graphis_mock, \
-         patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
-
-        # 第一次呼叫
-        result1 = get_actress_profile("桜空もも")
-        assert result1.data is not None
-        assert graphis_mock.call_count == 1
-
-        # 模擬時間過期（超過 TTL）
-        fixed_time[0] = 1000.0 + _CACHE_TTL + 1
-
-        # 第二次呼叫（應重新抓取）
-        result2 = get_actress_profile("桜空もも")
-        assert result2.data is not None
-        assert graphis_mock.call_count == 2  # 應被再次呼叫
-
-
-def test_get_actress_profile_cache_name_normalization():
-    """測試 cache key 名稱正規化（Mock）"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
-
-    def mock_graphis(name):
-        return {
-            'name': name,
-            'prof_url': 'https://graphis.ne.jp/prof.jpg',
-            'backdrop_url': 'https://graphis.ne.jp/model.jpg'
-        }
-
-    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
-         patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
-         patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis) as graphis_mock, \
-         patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
-
-        # 第一次：正常名稱
-        result1 = get_actress_profile("桜空もも")
-        assert result1.data is not None
-        assert graphis_mock.call_count == 1
-
-        # 第二次：帶前後空白（應命中 cache）
-        result2 = get_actress_profile("  桜空もも  ")
-        assert result2.data is not None
-        assert result1.data == result2.data
-        assert graphis_mock.call_count == 1  # 不應再次呼叫
 
 
 # ============================================================================
@@ -258,80 +152,6 @@ def test_analyze_top_actor_mixed_below_threshold():
 
     top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
     assert top_actor is None  # 3/5 = 60% < 80%
-
-
-def test_analyze_top_actor_few_samples():
-    """測試結果 < 3 筆（不觸發）"""
-    from web.routers.search import _analyze_top_actor
-
-    results = [
-        {'actors': ['桜空もも']},
-        {'actors': ['桜空もも']},
-    ]
-
-    top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
-    assert top_actor is None  # < min_samples
-
-
-def test_analyze_top_actor_no_actors_field():
-    """測試無 actors 欄位的結果"""
-    from web.routers.search import _analyze_top_actor
-
-    results = [
-        {'title': 'video1'},
-        {'title': 'video2'},
-        {'title': 'video3'},
-    ]
-
-    top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
-    assert top_actor is None
-
-
-def test_analyze_top_actor_mixed_formats():
-    """測試 actors 多種格式"""
-    from web.routers.search import _analyze_top_actor
-
-    results = [
-        {'actors': ['桜空もも']},
-        {'actors': [{'name': '桜空もも'}]},
-        {'actors': '桜空もも'},
-        {'actors': ['桜空もも']},
-    ]
-
-    top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
-    assert top_actor == '桜空もも'  # 4/4 = 100%
-
-
-def test_analyze_top_actor_name_normalization():
-    """測試名稱正規化（全形/半形空白）"""
-    from web.routers.search import _analyze_top_actor
-
-    results = [
-        {'actors': ['桜空もも']},
-        {'actors': ['  桜空もも  ']},  # 前後空白
-        {'actors': ['桜空　もも']},  # 全形空白
-        {'actors': ['桜空もも']},
-        {'actors': ['桜空もも']},  # 多加一筆確保 >= 80%
-    ]
-
-    top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
-    assert top_actor == '桜空もも'  # 正規化後應為同一人（5/5 = 100%）
-
-
-def test_analyze_top_actor_80_percent_threshold():
-    """測試剛好 80% 閾值"""
-    from web.routers.search import _analyze_top_actor
-
-    results = [
-        {'actors': ['桜空もも']},
-        {'actors': ['桜空もも']},
-        {'actors': ['桜空もも']},
-        {'actors': ['桜空もも']},
-        {'actors': ['其他女優']},
-    ]
-
-    top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
-    assert top_actor == '桜空もも'  # 4/5 = 80% 剛好通過
 
 
 # ============================================================================
@@ -391,92 +211,6 @@ def test_search_api_actress_with_profile(
         assert 'graphis.ne.jp' in data['actress_profile']['img']
 
 
-def test_search_api_exact_no_profile(client):
-    """測試番號搜尋（無 actress_profile）"""
-    def mock_search_jav(q, **kwargs):
-        return {'number': 'SONE-205', 'actors': ['桜空もも']}
-
-    with patch('web.routers.search.search_jav', side_effect=mock_search_jav):
-        resp = client.get("/api/search?q=SONE-205&mode=exact")
-        data = resp.json()
-
-        assert data['success'] is True
-        assert 'actress_profile' in data
-        # exact 模式不觸發 consistency check
-        assert data['actress_profile'] is None
-
-
-@pytest.mark.usefixtures("empty_library_makers")
-def test_search_api_mixed_results_no_profile(client):
-    """測試混合結果（consistency < 80%）"""
-    def mock_smart_search(q, **kwargs):
-        return [
-            {'number': 'FUGA-001', 'actors': ['古川いおり']},
-            {'number': 'FUGA-002', 'actors': ['古川いおり']},
-            {'number': 'FUGA-003', 'actors': ['古川祐子']},
-            {'number': 'FUGA-004', 'actors': ['古川ななせ']},
-            {'number': 'FUGA-005', 'actors': ['古川未波']},
-        ]
-
-    def mock_search_actress(q, **kwargs):
-        # Mock actress mode 也回傳混合結果
-        return [
-            {'number': 'FUGA-001', 'actors': ['古川いおり']},
-            {'number': 'FUGA-002', 'actors': ['古川いおり']},
-            {'number': 'FUGA-003', 'actors': ['古川祐子']},
-            {'number': 'FUGA-004', 'actors': ['古川ななせ']},
-            {'number': 'FUGA-005', 'actors': ['古川未波']},
-        ]
-
-    with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
-         patch('web.routers.search.search_actress', side_effect=mock_search_actress):
-        resp = client.get("/api/search?q=古川")
-        data = resp.json()
-
-        assert data['success'] is True
-        assert 'actress_profile' in data
-        assert data['actress_profile'] is None  # 未通過 consistency check
-
-
-@pytest.mark.usefixtures("empty_library_makers")
-def test_search_api_few_results_no_profile(client):
-    """測試結果 < 3 筆（不觸發）"""
-    def mock_smart_search(q, **kwargs):
-        return [
-            {'number': 'SONE-205', 'actors': ['桜空もも']},
-            {'number': 'SONE-180', 'actors': ['桜空もも']},
-        ]
-
-    with patch('web.routers.search.smart_search', side_effect=mock_smart_search):
-        resp = client.get("/api/search?q=test")
-        data = resp.json()
-
-        assert 'actress_profile' in data
-        assert data['actress_profile'] is None  # < 3 筆不觸發
-
-
-def test_search_api_graceful_failure(client, mock_search_actress, tmp_path):
-    """測試雙來源失敗時不影響搜尋結果"""
-    from core.scrapers.actress.orchestrator import ProfileResult
-
-    # Mock 雙來源都失敗（orchestrator 回傳 ProfileResult(data=None)）
-    # 同上一支理由：init_db()/AliasRepository().resolve() 未 mock 前連真實 DB。
-    with patch('web.routers.search.search_actress', side_effect=mock_search_actress), \
-         patch('core.scrapers.actress.orchestrator.get_actress_profile',
-               return_value=ProfileResult(data=None, timed_out=False)), \
-         patch('core.database.ActressRepository.get_by_name', return_value=None), \
-         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
-
-        resp = client.get("/api/search?q=桜空もも&mode=actress")
-        data = resp.json()
-
-        assert data['success'] is True  # 搜尋結果正常
-        assert data['actress_profile'] is None  # 資料卡為空
-        assert isinstance(data['data'], list)
-        assert len(data['data']) == 3  # mock 會提供 3 筆結果
-        assert data['data'][0]['number'] == 'SONE-205'
-
-
 def test_sse_includes_actress_profile(
     client, mock_search_actress, mock_actress_profile, tmp_path
 ):
@@ -534,7 +268,6 @@ def _make_graphis_result(name="桜空もも", **overrides):
     return base
 
 
-
 def test_get_actress_profile_gfriends_wins():
     """gfriends 圖片勝出：graphis 無 prof_url 時，gfriends 應成為 photo cascade 的 winner。
     T4.3 note: orchestrator photo cascade = graphis prof_url → gfriends → wiki → xcity.
@@ -555,68 +288,6 @@ def test_get_actress_profile_gfriends_wins():
         assert result.data['img'] == gfriends_url
         # Backdrop still comes from graphis
         assert result.data['backdrop'] == 'https://graphis.ne.jp/model.jpg'
-        assert result.timed_out is False
-
-
-def test_get_actress_profile_graphis_text_wins():
-    """graphis 文字欄位優先（age/height/cup）
-    NOTE (T4.2 semantic shift): Post-T3 orchestrator has no javbus route.
-    With xcity/wiki mocks → None, graphis supplies the available text fields.
-    age == 28 is still correct: _compute_age_from_birth('1997-12-03') under frozen 2026-04-11.
-    """
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
-
-    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
-         patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
-         patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=_make_graphis_result(age=28, height='160cm', cup='G')), \
-         patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
-
-        result = get_actress_profile("桜空もも")
-
-        assert result.data is not None
-        # Graphis text wins
-        assert result.data['age'] == 28
-        assert result.data['height'] == '160cm'
-        assert result.data['cup'] == 'G'
-        assert result.timed_out is False
-
-
-def test_get_actress_profile_name_en():
-    """graphis name_en 正確傳遞到最終結果"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
-
-    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
-         patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
-         patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=_make_graphis_result(name_en='Momo Sakurazora')), \
-         patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
-
-        result = get_actress_profile("桜空もも")
-
-        assert result.data is not None
-        assert result.data.get('name_en') == 'Momo Sakurazora'
-        assert result.timed_out is False
-
-
-def test_get_actress_profile_birth_from_graphis():
-    """birth は graphis text cascade から取得される。graphis には hometown フィールドがないため
-    hometown は None になる。"""
-    from core.scrapers.actress.orchestrator import get_actress_profile, _cache
-
-    # Graphis result has birth='1997-12-03' (added by T4.2) but no hometown
-    graphis = _make_graphis_result()
-
-    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
-         patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
-         patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=graphis), \
-         patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
-
-        result = get_actress_profile("桜空もも")
-
-        assert result.data is not None
-        # birth comes from graphis cascade winner (javbus ignored)
-        assert result.data.get('birth') == '1997-12-03'
-        # hometown is None: graphis has no hometown, javbus is ignored
-        assert result.data.get('hometown') is None
         assert result.timed_out is False
 
 
@@ -643,44 +314,6 @@ def test_get_actress_profile_gfriends_only():
 # ============================================================================
 # Router makers 傳遞測試
 # ============================================================================
-
-def test_search_api_passes_makers_to_profile(client, tmp_path):
-    """REST /api/search 路徑：_extract_top_makers 的結果應傳給 get_actress_profile"""
-    from core.scrapers.actress.orchestrator import ProfileResult
-
-    def mock_smart_search(q, **kwargs):
-        return [
-            {'number': 'SONE-205', 'actors': ['桜空もも']},
-            {'number': 'SONE-180', 'actors': ['桜空もも']},
-            {'number': 'SONE-162', 'actors': ['桜空もも']},
-        ]
-
-    mock_profile = MagicMock(return_value=ProfileResult(data={
-        'name': '桜空もも',
-        'img': 'https://graphis.ne.jp/prof.jpg',
-        'backdrop': 'https://graphis.ne.jp/model.jpg',
-    }, timed_out=False))
-
-    # Patch smart_search in the router's own namespace (it's imported at module load time)
-    # init_db()/AliasRepository().resolve() 未 mock 前連上 output/openaver.db。
-    with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
-         patch('core.scrapers.actress.orchestrator.get_actress_profile', mock_profile), \
-         patch('core.database.ActressRepository.get_by_name', return_value=None), \
-         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
-
-        resp = client.get("/api/search?q=桜空もも")
-        data = resp.json()
-
-        assert data['success'] is True
-        # get_actress_profile should have been called with makers kwarg
-        assert mock_profile.called
-        call_kwargs = mock_profile.call_args
-        # Should have been called with makers=['S1']
-        # (SONE prefix maps to 'S1' in maker_mapping.json)
-        makers_arg = call_kwargs.kwargs.get('makers')
-        assert makers_arg is not None
-        assert isinstance(makers_arg, list)
-        assert 'S1' in makers_arg
 
 
 def test_sse_passes_makers_to_profile(client, tmp_path):

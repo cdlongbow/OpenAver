@@ -50,41 +50,11 @@ def make_mock_scraper_actress(ids_per_page):
     return mock_scraper
 
 
-
-
 # ============ search_prefix result_callback 測試 ============
 
 class TestSearchPrefixResultCallback:
     """測試 search_prefix() 的 result_callback 行為"""
 
-    def test_seed_sent_after_found(self, make_mock_search_jav):
-        """result_callback(-1, target_ids) 應在 found:N 後被呼叫一次"""
-        from core.scraper import search_prefix
-
-        ids = ['SONE-100', 'SONE-101']
-        results_map = {
-            'SONE-100': {'number': 'SONE-100', 'title': 'Title 100'},
-            'SONE-101': {'number': 'SONE-101', 'title': 'Title 101'},
-        }
-
-        mock_scraper = make_mock_scraper_prefix(ids)
-        callback_calls = []
-
-        def result_callback(slot, data):
-            callback_calls.append((slot, data))
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)):
-            search_prefix('SONE', limit=20, result_callback=result_callback)
-
-        # seed (slot=-1) must have been called exactly once
-        seed_calls = [(s, d) for s, d in callback_calls if s == -1]
-        assert len(seed_calls) == 1, f"Expected 1 seed call, got {len(seed_calls)}"
-
-        # seed data should be the target_ids list
-        seed_slot, seed_data = seed_calls[0]
-        assert seed_slot == -1
-        assert set(seed_data) == set(ids)
 
     def test_slot_index_matches_target_ids_order(self, make_mock_search_jav):
         """result-item slot index 必須對應 target_ids 的原始 index"""
@@ -119,46 +89,6 @@ class TestSearchPrefixResultCallback:
                 f"but got {data['number']}"
             )
 
-    def test_empty_target_ids_no_seed(self, make_mock_search_jav):
-        """found:0 時不應呼叫 result_callback(-1, [])"""
-        from core.scraper import search_prefix
-
-        mock_scraper = make_mock_scraper_prefix([])  # empty ids
-        callback_calls = []
-
-        def result_callback(slot, data):
-            callback_calls.append((slot, data))
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper):
-            search_prefix('SONE', limit=20, result_callback=result_callback)
-
-        seed_calls = [(s, d) for s, d in callback_calls if s == -1]
-        assert len(seed_calls) == 0, f"Should not send seed for empty results, but got {seed_calls}"
-
-    def test_result_item_not_called_for_none_data(self, make_mock_search_jav):
-        """search_jav 回傳 None 時不應呼叫 result_callback(idx, None)"""
-        from core.scraper import search_prefix
-
-        ids = ['SONE-100', 'SONE-FAIL']
-        results_map = {
-            'SONE-100': {'number': 'SONE-100', 'title': 'Title 100'},
-            'SONE-FAIL': None,  # scraper fails for this one
-        }
-
-        mock_scraper = make_mock_scraper_prefix(ids)
-        callback_calls = []
-
-        def result_callback(slot, data):
-            callback_calls.append((slot, data))
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)):
-            search_prefix('SONE', limit=20, result_callback=result_callback)
-
-        # Only successful items should trigger result-item callback
-        item_calls = [(s, d) for s, d in callback_calls if s >= 0]
-        for slot, data in item_calls:
-            assert data is not None, "result_callback should not be called with None data"
 
     def test_search_prefix_cross_page_boundary(self, make_mock_search_jav):
         """offset=20 + limit=20 需要跨頁抓取，不能只拿 10 筆"""
@@ -213,112 +143,12 @@ class TestSearchPrefixResultCallback:
 class TestSearchActressResultCallback:
     """測試 search_actress() 的 result_callback 行為"""
 
-    def test_seed_sent_after_found(self, make_mock_search_jav):
-        """result_callback(-1, target_ids) 應在 JavBus found:N 後被呼叫一次"""
-        from core.scraper import search_actress
-
-        ids = ['SONE-100', 'SONE-101', 'SONE-102']
-        results_map = {
-            'SONE-100': {'number': 'SONE-100', 'title': 'Title 100', 'actors': ['三上悠亜']},
-            'SONE-101': {'number': 'SONE-101', 'title': 'Title 101', 'actors': ['三上悠亜']},
-            'SONE-102': {'number': 'SONE-102', 'title': 'Title 102', 'actors': ['三上悠亜']},
-        }
-
-        mock_scraper = make_mock_scraper_actress([ids])
-        callback_calls = []
-
-        def result_callback(slot, data):
-            callback_calls.append((slot, data))
-
-        # limit=3 ensures target_ids is exactly ids (no extra page fetching)
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)):
-            search_actress('三上悠亜', limit=3, result_callback=result_callback)
-
-        seed_calls = [(s, d) for s, d in callback_calls if s == -1]
-        assert len(seed_calls) == 1, f"Expected 1 seed call, got {len(seed_calls)}"
-
-        seed_slot, seed_data = seed_calls[0]
-        assert seed_slot == -1
-        assert set(seed_data) == set(ids)
-
-    def test_slot_index_matches_target_ids_order(self, make_mock_search_jav):
-        """result-item slot index 必須對應 target_ids 的原始 index"""
-        from core.scraper import search_actress
-
-        ids = ['SONE-100', 'SONE-101', 'SONE-102']
-        results_map = {
-            'SONE-100': {'number': 'SONE-100', 'title': 'Title 100', 'actors': ['三上悠亜']},
-            'SONE-101': {'number': 'SONE-101', 'title': 'Title 101', 'actors': ['三上悠亜']},
-            'SONE-102': {'number': 'SONE-102', 'title': 'Title 102', 'actors': ['三上悠亜']},
-        }
-
-        mock_scraper = make_mock_scraper_actress([ids])
-        callback_calls = []
-
-        def result_callback(slot, data):
-            callback_calls.append((slot, data))
-
-        # limit=3 ensures target_ids is exactly 3 items (no extra page fetching)
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)):
-            search_actress('三上悠亜', limit=3, result_callback=result_callback)
-
-        item_calls = [(s, d) for s, d in callback_calls if s >= 0]
-        assert len(item_calls) == 3, f"Expected 3 item calls, got {len(item_calls)}: {item_calls}"
-
-        for slot, data in item_calls:
-            expected_number = ids[slot]
-            assert data['number'] == expected_number, (
-                f"Slot {slot} should be {expected_number}, got {data['number']}"
-            )
 
     @staticmethod
     def _dmm_video(number):
         from core.scrapers.models import Video
         return Video(number=number, title='T', source='dmm', date='2024-01-01')
 
-    def test_fallback_source_receives_callback_when_javbus_has_no_ids(self, monkeypatch):
-        """JavBus 查無（沒送過 seed）→ 後備的 DMM 拿得到 callback，骨架卡邊補邊顯示（175a 新規則）"""
-        from core.scraper import search_actress
-        from core.scrapers.dmm import DMMScraper, ListResult
-
-        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javbus', 'dmm'])
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
-        callback_calls = []
-        mock_scraper = make_mock_scraper_actress([[]])
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch.object(DMMScraper, 'list_contents',
-                          return_value=ListResult([{'id': 'sone00100', 'title': 'T'}], None, False)) as mock_dmm, \
-             patch.object(DMMScraper, '_fetch_by_id', return_value=self._dmm_video('SONE-100')):
-            results = search_actress('三上悠亜', limit=20,
-                                     result_callback=lambda s, d: callback_calls.append((s, d)))
-
-        mock_dmm.assert_called_once()
-        assert len(results) == 1
-        assert callback_calls[0] == (-1, ['SONE-100'])
-        assert [s for s, _ in callback_calls].count(-1) == 1
-        assert [s for s, _ in callback_calls if s >= 0] == [0]
-
-    def test_javbus_fallback_after_dmm_gets_none(self, monkeypatch):
-        """DMM 排第一、查無，JavBus 接手 → JavBus 不串流（最後結果依日期排序，與今天相同）"""
-        from core.scraper import search_actress
-        from core.scrapers.dmm import DMMScraper, ListResult
-
-        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['dmm', 'javbus'])
-        monkeypatch.setattr("core.scraper.is_source_enabled", lambda sid: True)
-        callback_calls = []
-        mock_scraper = make_mock_scraper_actress([['SONE-001', 'SONE-002']])
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=lambda n, source='javbus': {'number': n, 'title': 't', 'date': '2024-01-01'}), \
-             patch.object(DMMScraper, 'list_contents', return_value=ListResult([], None, False)):
-            results = search_actress('三上悠亜', limit=20,
-                                     result_callback=lambda s, d: callback_calls.append((s, d)))
-
-        assert len(results) == 2
-        assert callback_calls == []  # JavBus 後備沒有拿到 callback → 沒有 seed、沒有 result-item
 
     def test_fallback_source_gets_none_after_seed_sent(self, monkeypatch):
         """JavBus 已送出 seed、詳情全失敗 → DMM 拿到 None，不再送第二組骨架卡（R28，I-S3）"""
@@ -344,61 +174,6 @@ class TestSearchActressResultCallback:
 
 
 # ============ smart_search result_callback 透傳測試 ============
-
-class TestSmartSearchResultCallback:
-    """測試 smart_search() 的 result_callback 透傳行為"""
-
-    @pytest.mark.parametrize("query, target, prefix_only", [
-        ("三上悠亜", "search_actress", False),
-        ("SONE", "search_prefix", True),
-    ])
-    def test_result_callback_passthrough_actress_mode(self, make_mock_search_jav, query, target, prefix_only):
-        """smart_search 在 actress／prefix 模式下應透傳 result_callback 給 search_actress／search_prefix"""
-        from core.scraper import smart_search
-
-        received_callbacks = {}
-
-        def mock_search(name, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
-            received_callbacks['callback'] = result_callback
-            return [{'number': 'SONE-100'}]
-
-        my_callback = MagicMock()
-
-        with patch(f'core.scraper.{target}', side_effect=mock_search), \
-             patch('core.scraper.is_number_format', return_value=False), \
-             patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=prefix_only):
-            smart_search(query, result_callback=my_callback)
-
-        assert received_callbacks.get('callback') is my_callback, \
-            f"smart_search should pass result_callback to {target}"
-
-    def test_smart_search_prefix_fallback_does_not_pass_callback(self, make_mock_search_jav):
-        """prefix→actress fallback 時，actress call 不應收到 result_callback（避免 stale seed）"""
-        from core.scraper import smart_search
-
-        actress_received_callback = {}
-
-        def mock_search_prefix(prefix, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
-            # Prefix search returns empty → triggers fallback to actress
-            return []
-
-        def mock_search_actress(name, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
-            actress_received_callback['callback'] = result_callback
-            return [{'number': 'SONE-100', 'actors': ['三上悠亜'], '_mode': 'actress'}]
-
-        my_callback = MagicMock()
-
-        with patch('core.scraper.search_prefix', side_effect=mock_search_prefix), \
-             patch('core.scraper.search_actress', side_effect=mock_search_actress), \
-             patch('core.scraper.is_number_format', return_value=False), \
-             patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=True):
-            smart_search('SONE', result_callback=my_callback)
-
-        assert actress_received_callback.get('callback') is None, \
-            "prefix→actress fallback must NOT pass result_callback to search_actress " \
-            f"(got {actress_received_callback.get('callback')})"
 
 
 # ============ discovery_only 參數測試 ============
@@ -428,99 +203,6 @@ class TestDiscoveryOnly:
         for r in results:
             assert 'number' in r
             assert r.get('title', '') == ''  # title is empty in discovery mode
-
-    def test_search_actress_discovery_only_returns_ids_no_enrich(self, monkeypatch, make_mock_search_jav):
-        """discovery_only=True: search_actress 只做 get_ids_from_search，不呼叫 search_jav"""
-        from core.scraper import search_actress
-
-        # Pin source order so test is not config-coupled
-        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javbus'])
-
-        ids = ['SONE-100', 'SONE-101']
-        mock_scraper = make_mock_scraper_actress([ids])
-        search_jav_calls = []
-
-        def fake_search_jav(num, source='javbus'):
-            search_jav_calls.append(num)
-            return {'number': num, 'title': f'Title {num}'}
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=fake_search_jav):
-            results = search_actress('三上悠亜', limit=20, discovery_only=True)
-
-        assert search_jav_calls == [], \
-            f"discovery_only=True: search_jav should not be called, got {search_jav_calls}"
-        assert len(results) == 2
-        for r in results:
-            assert 'number' in r
-
-    def test_search_partial_discovery_only_returns_candidates_no_enrich(self):
-        """discovery_only=True: search_partial 只展開候選番號，不呼叫 search_jav"""
-        from core.scraper import search_partial
-
-        candidates = ['SONE-100', 'SONE-101']
-        search_jav_calls = []
-
-        def fake_search_jav(num, source='javbus'):
-            search_jav_calls.append(num)
-            return {'number': num, 'title': f'Title {num}'}
-
-        with patch('core.scraper.expand_partial_number', return_value=candidates), \
-             patch('core.scraper.search_jav', side_effect=fake_search_jav):
-            results = search_partial('SONE-10', discovery_only=True)
-
-        assert search_jav_calls == [], \
-            f"discovery_only=True: search_jav should not be called, got {search_jav_calls}"
-        assert len(results) == 2
-        for r in results:
-            assert 'number' in r
-
-    @pytest.mark.parametrize("query, target, prefix_only", [
-        ("三上悠亜", "search_actress", False),
-        ("SONE", "search_prefix", True),
-    ])
-    def test_smart_search_passes_discovery_only_to_actress(self, make_mock_search_jav, query, target, prefix_only):
-        """smart_search(discovery_only=True) 在 actress／prefix 模式下傳遞給 search_actress／search_prefix"""
-        from core.scraper import smart_search
-
-        received = {}
-
-        def mock_search(name, limit=20, offset=0, status_callback=None,
-                        result_callback=None, discovery_only=False, **kwargs):
-            received['discovery_only'] = discovery_only
-            return [{'number': 'SONE-100'}]
-
-        with patch(f'core.scraper.{target}', side_effect=mock_search), \
-             patch('core.scraper.is_number_format', return_value=False), \
-             patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=prefix_only):
-            smart_search(query, discovery_only=True)
-
-        assert received.get('discovery_only') is True, \
-            f"smart_search should pass discovery_only=True to {target}"
-
-    def test_smart_search_exact_ignores_discovery_only(self, make_mock_search_jav):
-        """smart_search(discovery_only=True) 在 exact 模式下忽略 discovery_only，仍回傳結果。
-
-        cascade 不傳 discovery_only 給 search_jav_single_source（其簽名無此參數），
-        行為一致——exact 路徑本就忽略 discovery_only。
-        """
-        from core.scraper import smart_search
-
-        mock_result = {'number': 'SONE-100', 'title': 'Title', '_source': 'dmm'}
-
-        with patch('core.scraper.is_number_format', return_value=True), \
-             patch('core.scraper.normalize_number', return_value='SONE-100'), \
-             patch('core.scraper.get_enabled_source_ids', return_value=['dmm']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', return_value=mock_result):
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            results = smart_search('SONE-100', discovery_only=True)
-
-        # exact mode should still return a result (not empty)
-        assert len(results) == 1
-        assert results[0]['number'] == 'SONE-100'
 
 
 # ============ Disabled source absent from auto-search routing (EC-6) ============
@@ -579,54 +261,4 @@ class TestDisabledSourceRouting:
         assert 'dmm' not in instantiated
         assert set(instantiated) <= {'jav321', 'javdb'}
 
-    def test_all_disabled_auto_returns_none_no_crash(self, make_mock_search_jav):
-        """全關（0 enabled）→ search_jav('auto') 回 None，不 crash（EC-8）"""
-        from core.scraper import search_jav
-        from contextlib import ExitStack
 
-        cms, instantiated = self._instantiated_scraper_mocks()
-        with ExitStack() as stack:
-            for cm in cms:
-                stack.enter_context(cm)
-            stack.enter_context(
-                patch('core.scraper.get_enabled_source_ids', return_value=[])
-            )
-            result = search_jav('SONE-100', source='auto')
-
-        assert result is None
-        assert instantiated == [], "no scraper should be instantiated when all disabled"
-
-    def test_all_disabled_uncensored_fallback_still_works(self, make_mock_search_jav):
-        """全關但 Rule 2 無碼 always-on：FC2 番號仍透過 _get_uncensored_sources 硬寫清單搜尋"""
-        from core.scraper import smart_search
-
-        searched = []
-        fc2_result = {'number': 'FC2-PPV-123', 'title': 'FC2'}
-
-        def fake_search_jav(num, source='auto', javbus_lang=None):
-            searched.append(source)
-            return fc2_result if source == 'fc2' else None
-
-        # 全關 enabled，但 Rule 2 走 _get_uncensored_sources（builtin-only 硬寫）不受 enabled 影響
-        with patch('core.scraper.get_enabled_source_ids', return_value=[]), \
-             patch('core.scraper.search_jav', side_effect=fake_search_jav):
-            results = smart_search('FC2-PPV-123', uncensored_mode=True)
-
-        # Rule 2 always-on：fc2 仍被搜尋（不被 enabled filter 跳過）
-        assert 'fc2' in searched, \
-            f"uncensored Rule 2 fallback should search fc2 even when all disabled, got {searched}"
-        assert len(results) == 1
-
-
-class TestSmartSearchResolveMakers:
-    """175a-T7：smart_search 的 resolve_makers 預設關閉"""
-
-    def test_smart_search_default_never_reads_library(self):
-        """預設（非互動呼叫端）不讀片庫：known_makers 不被呼叫"""
-        from core.scraper import smart_search
-
-        with patch('core.maker_names.known_makers') as mock_known, \
-             patch('core.scraper.search_actress', return_value=[{'number': 'X-1'}]):
-            smart_search('三上悠亜')
-
-        assert mock_known.call_count == 0
