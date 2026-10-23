@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-10-24
+
+> 這版零畫面改動，只更新一個背後的元件，並多了一個開發用的檢查工具。
+
+### Fixed
+
+#### 🔒 影像元件安全更新
+- 更新影像處理元件，處理從網路下載的封面圖時更安全。
+
+### Changed
+
+#### 🧰 開發檢查工具
+- 新增一個檢查工具，改畫面時會自動核對按鈕與欄位綁的名字是否真的存在，打錯字就會在開發階段被擋下來。這部分沒有任何畫面或行為改動。
+
 ## [0.17.18] - 2026-10-23
 
 > 這版零畫面改動，只整理背後的測試套件：刪除約 9,400 支壞了也不影響使用者的離線測試。
