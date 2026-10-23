@@ -278,7 +278,23 @@ class TestConvertedHandlersAreDef:
                 return type(node)
         raise AssertionError(f"{filename}:{func_name} not found")
 
-    # T1 — hot path
+    # 以下 5 支是主 AST 守衛的盲區（回退 async def 後 body 內的 rmtree／reset_config_file／
+    # mutate_config 等不在偵測清單 → 主守衛仍綠，但會卡 event loop）；Codex PR#248，mutation 實測。
+    def test_t3_71_thumb_clear_is_def(self):
+        # 71b-T2：DB-safe 清空端點。def → Starlette threadpool（rmtree 不阻塞 loop）。
+        assert self._func_type("gallery_media.py", "thumb_clear") is ast.FunctionDef
+
+    def test_t3_reset_config_is_def(self):
+        assert self._func_type("config.py", "reset_config") is ast.FunctionDef
+
+    def test_t3_mark_tutorial_completed_is_def(self):
+        assert self._func_type("config.py", "mark_tutorial_completed") is ast.FunctionDef
+
+    def test_t3_reset_tutorial_is_def(self):
+        assert self._func_type("config.py", "reset_tutorial") is ast.FunctionDef
+
+    def test_t3_update_general_field_is_def(self):
+        assert self._func_type("config.py", "update_general_field") is ast.FunctionDef
 
 
     # T2 — 純讀 DB 路由
@@ -300,6 +316,46 @@ class TestT4OffloadHousePattern:
     @staticmethod
     def _src(filename: str) -> str:
         return (ROUTERS_DIR / filename).read_text(encoding="utf-8")
+
+    # 以下 4 支是主 AST 守衛的盲區（helper 名不在偵測清單，或 nested sync def 不被下潛）：
+    # 把 offload 改回直接呼叫時主守衛仍綠，但批次／設定頁會卡住整個 event loop。
+    # Codex PR#248，mutation 實測（見 feature/178-test-diet-2/overrides-178.tsv）。
+    def test_connect_uses_to_thread_helper(self):
+        src = self._src("settings_metatube.py")
+        assert "asyncio.to_thread(_connect_sync" in src
+        assert "def _connect_sync(" in src
+        assert "MetatubeHttpClient" in src
+        assert "_verify_token_canary" in src
+
+    def test_actress_crop_uses_to_thread(self):
+        src = self._src("actress.py")
+        assert "asyncio.to_thread(_check_cover_path" in src
+        assert "asyncio.to_thread(crop_video_cover" in src
+
+    def test_set_actress_photo_uses_to_thread(self):
+        src = self._src("actress.py")
+        assert "asyncio.to_thread(_load_actress" in src
+        assert "asyncio.to_thread(_get_actress_videos" in src
+        assert "asyncio.to_thread(_write_actress_photo" in src
+
+    def test_batch_enrich_readonly_route_offloaded(self):
+        # [lint-guard: pytest-justified] Python 源碼 async-offload 架構契約——
+        # 「阻塞 helper 必須經 run_in_executor 包裝」是 event-loop 語意，eslint/
+        # static_guard 無法表達；沿用本檔 TestT4OffloadHousePattern 既有 house-pattern。
+        """TASK-104-T3/T5：batch-enrich 唯讀項改道（resolve_owning_output_root →
+        resolve_ingest_plan → _produce_one，皆阻塞 I/O）須包在 nested sync helper
+        `_do_readonly` 內、經 `run_in_executor` offload，不可在 async event_generator
+        直接 body 裸跑。AST 主守衛（test_no_bare_blocking_in_async_routes）會抓「inline
+        進直接 body」的回退，但「移除 executor 改 bare-call nested def」是 AST 掃描盲區
+        （nested def 名不在偵測清單）→ 此正向 substring 鎖補位。"""
+        src = self._src("scraper.py")
+        assert "def _do_readonly(" in src, (
+            "batch-enrich 唯讀改道須抽 nested sync helper `_do_readonly` 承載阻塞 I/O"
+        )
+        assert "run_in_executor(None, _ro_ctx.run, _do_readonly)" in src, (
+            "`_do_readonly` 必須經 loop.run_in_executor offload —— 不可在 event_generator "
+            "直接 body 呼叫（會卡 event loop）"
+        )
 
 
 # ============================================================
