@@ -77,7 +77,7 @@ test('dangling names fail', () => {
   for (const [name, html] of cases) {
     const r = run(html);
     assert.equal(r.status, 1, r.output);
-    assert.match(r.output, new RegExp(`p\\.html:\\d+\\s+${name}\\b`));
+    assert.match(r.output, new RegExp(`p\\.html:\\d+[^\\n]*\\n\\s+${name} 不在`));
   }
 });
 
@@ -94,4 +94,43 @@ test('unreadable input exits 2', () => {
     assert.equal(r.status, 2, r.output);
     assert.ok(r.output.includes(kw), r.output);
   }
+});
+
+test('jinja and macros expand at the call site', () => {
+  const pill = "{% macro pill(loading_expr='false', attrs='') %}\n<button x-show=\"{{ loading_expr }}\" {{ attrs|safe }}></button>\n{% endmacro %}\n";
+  const panel = (fn) => `{% macro panel() %}\n<div x-show="open" @keydown.escape.window="open && ${fn}()"></div>\n{% endmacro %}\n`;
+  const page = (close) => `{% from '_macros/pill.html' import pill %}\n{% from '_macros/panel.html' import panel %}\n{# <b @click="gooo()"></b> #}\n<!-- <b @click="gooo()"></b> -->\n<div x-data="demoPage" class="{{ x|default('light') }}">\n  {% if a %}<b></b>{% else %}<i></i>{% endif %}\n  <i data-x-show="gooo"></i>\n  {{ pill(loading_expr='a', attrs='@click="go()"') }}\n  <div x-data="{ open: false, ${close}() {} }">\n    {{ panel() }}\n  </div>\n</div>\n`;
+  const macros = (fn) => ({ 'web/templates/_macros/pill.html': pill, 'web/templates/_macros/panel.html': panel(fn) });
+  const ok = run(page('close'), macros('close'));
+  assert.equal(ok.status, 0, ok.output);
+  const red = run(page('shut'), macros('close'));
+  assert.equal(red.status, 1, red.output);
+  const callLine = page('shut').split('\n').findIndex((l) => l.includes('{{ panel() }}')) + 1;
+  const first = red.output.split('\n').find((l) => l.startsWith('✗ '));
+  assert.ok(first.startsWith(`✗ web/templates/p.html:${callLine}`) && first.includes('(macro: '), red.output);
+  assert.ok(!red.output.split('\n').some((l) => l.startsWith('✗ web/templates/_macros/')), red.output);
+});
+
+test('uncovered templates exit 2', () => {
+  const orphan = '<b @click="zzz()"></b>\n';
+  const n = (o) => Number((/(\d+) 模板/.exec(o) || [])[1]);
+  const base = run('');
+  assert.equal(base.status, 0, base.output);
+  const failures = [];
+  const cells = [['cell A', '_orphan.html'], ['cell B', 'foo/x.html']];
+  for (const [label, rel] of cells) {
+    const r = run('', { [`web/templates/${rel}`]: orphan });
+    if (r.status !== 2 || !r.output.includes(rel)) failures.push(`${label}: ${r.status}\n${r.output}`);
+  }
+  const g = run('', { 'web/templates/newpage.html': '<div x-data="demoPage"></div>\n' });
+  if (g.status !== 0 || n(g.output) !== n(base.output) + 1) failures.push(`cell green: ${g.status}\n${g.output}`);
+  assert.deepEqual(failures, []);
+});
+
+test('exit code follows findings', () => {
+  assert.equal(run('<div x-data="demoPage"><i x-text="list"></i></div>').status, 0);
+  const r = run('<div x-data="demoPage"><i x-text="lisst"></i></div>');
+  assert.equal(r.status, 1, r.output);
+  assert.match(r.output, /lisst 不在 p 頁任何狀態來源/);
+  assert.match(r.output, /相近：[^\n]*\blist\b/);
 });

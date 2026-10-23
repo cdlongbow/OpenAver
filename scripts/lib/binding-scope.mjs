@@ -115,6 +115,9 @@ export function walkEntry(doc, opts) {
     return null;
   }
 
+  // 未解析引用才用得到：本元件→祖先順序、去重的可見名稱（供「相近名字」）
+  const visibleNames = (stack) => [...new Set([...stack].reverse().flatMap((sc) => [...sc.keys]))];
+
   function checkAttrExpr(value, ctxEl, attr, stack, extra = {}) {
     const parsed = parseExpr(value);
     const o = originOf(attr.line);
@@ -139,6 +142,7 @@ export function walkEntry(doc, opts) {
         entry: opts.entry,
         scopeLabel: res ? res.scope.label : null,
         tag: ctxEl.tagName,
+        ...(res ? {} : { visible: visibleNames(stack) }),
       };
       opts.record(rec);
       results.push(rec);
@@ -227,6 +231,7 @@ export function walkEntry(doc, opts) {
             const res = lookup(nm, st);
             opts.record({
               name: nm, cat: res ? res.cat : null, origin: o, attrName: 'x-for(default)', attrValue: xf.value, entry: opts.entry,
+              ...(res ? {} : { visible: visibleNames(st) }),
             });
           }
           childStack = [...st, { keys: new Set(lv.names), cat: 7, label: `x-for ${lv.names.join(',')}`, loop: true }];

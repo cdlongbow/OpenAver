@@ -1,5 +1,5 @@
 /**
- * jinja-lite.mjs — SPIKE（plan-179 T1，CD-179-2）
+ * jinja-lite.mjs（plan-179 CD-179-2）
  *
  * 封閉子集 Jinja 展開器：把 web/templates 的模板展開成「瀏覽器收到的 HTML 文字」，
  * 並建「輸出行 → 來源 {file,line,via}」行來源表。
@@ -220,8 +220,6 @@ export class Expander {
     this.root = templatesRoot;
     this.cache = new Map();
     this.expandedFragments = new Set(); // 被 include / macro 展開到的檔（rel）
-    this.macroCalls = new Map();        // 'file#name' → 次數
-    this.stats = { macroExpansions: 0, includeExpansions: 0, exprReplaced: 0, dropped: 0 };
   }
 
   load(rel, fromFile = null, fromLine = null) {
@@ -284,7 +282,6 @@ export class Expander {
           out.push(n.raw, file, n.line, ctx.via);
           break;
         case 'drop':
-          this.stats.dropped++;
           out.push('\n'.repeat(countNl(n.raw)), file, n.line, ctx.via);
           break;
         case 'expr':
@@ -306,7 +303,6 @@ export class Expander {
         case 'include': {
           const inc = this.load(n.path, file, n.line);
           this.expandedFragments.add(inc.rel);
-          this.stats.includeExpansions++;
           const via = { kind: 'include', file, line: n.line, parent: ctx.via };
           this.render(inc.tree.children, {
             tpl: inc, overrides: null, params: null, via, depth: ctx.depth + 1, out,
@@ -346,7 +342,6 @@ export class Expander {
         throw new ToolError('unsupported', `macro param "${hit}" used in complex expression: {{ ${body.slice(0, 60)} }}`, file, n.line);
       }
     }
-    this.stats.exprReplaced++;
     out.push('0' + '\n'.repeat(nl), file, n.line, ctx.via);
   }
 
@@ -400,10 +395,7 @@ export class Expander {
         params.set(order[pos++], lit(a, `positional arg ${pos}`));
       }
     }
-    this.stats.macroExpansions++;
     this.expandedFragments.add(mtpl.rel);
-    const key = `${mtpl.rel}#${name}`;
-    this.macroCalls.set(key, (this.macroCalls.get(key) || 0) + 1);
     const via = { kind: 'macro', name, file, line: n.line, macroFile: mtpl.rel, macroLine: macro.line, parent: ctx.via };
     this.render(macro.children, {
       tpl: mtpl, overrides: null, params, via, depth: ctx.depth + 1, out: ctx.out,
