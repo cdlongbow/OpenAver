@@ -1416,6 +1416,23 @@ class TestOrganizeSubtitle:
         # 原字幕不應在原位（已搬移）
         assert not sub.exists(), "原始字幕應已搬離原位置"
 
+    def test_subtitle_with_lang_suffix_moves_correctly(self, tmp_path):
+        """帶語言後綴的字幕搬移後名稱正確（new-name.cht.srt）"""
+        src = tmp_path / "SONE-205.mp4"
+        src.write_bytes(b"fake mp4")
+        sub = tmp_path / "SONE-205.cht.srt"
+        sub.write_text("subtitle cht")
+
+        config = self._make_config(tmp_path)
+        metadata = self._make_metadata()
+
+        result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        target_dir = Path(result["new_filename"]).parent
+        new_video_stem = Path(result["new_filename"]).stem
+        expected_sub = target_dir / f"{new_video_stem}.cht.srt"
+        assert expected_sub.exists(), f"帶語言後綴的字幕應搬移到 {expected_sub}"
 
     def test_subtitle_not_moved_on_duplicate(self, tmp_path):
         """organize 影片 duplicate → 字幕留原處不搬"""
