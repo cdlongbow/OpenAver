@@ -216,14 +216,34 @@ of truth:
 - Front-end static string guards (formerly the classes in `test_frontend_lint.py`, incl.
   `TestPathContract`) now live in `scripts/static_guard_lint.mjs` (and `css-guard.mjs`).
   New front-end guards go there, not into a new pytest class.
-- **`[lint-guard: pytest-justified]`-tagged tests** elsewhere keep their tag with the reason
-  stated; the tag rule below still applies.
+- **`[lint-guard: pytest-justified]`-tagged tests** elsewhere are **not** KEEPs. The tag
+  only answers *where* an assertion may live ("lint cannot express this, so pytest is
+  allowed"), never *whether* the test must exist. While such a test exists it keeps its tag
+  with the reason stated (the tag rule below still applies); deleting one is judged like any
+  other test deletion (see "Reviewing test deletions" below).
 
 Only read a KEEP test when the changed hunk touches the contract's producer, consumer, or
 the contract test itself — do not routinely sweep all KEEPs.
 
 (Anything outside the lint layer's expressed rules — formatting, dead code not caught by
 ruff `F`, logic — is still in code-review scope.)
+
+### Reviewing test deletions
+
+A PR that deletes tests is judged by the same question as any finding: **if this deleted
+test's behavior regresses later, what does a real user see, lose, leak, or have to redo?**
+"This was the only test guarding X", "it carried a pytest-justified tag", or "a future
+refactor could drift" is not a finding by itself. A request to restore a deleted test must
+state both:
+1. the user flow — *user does A → B happens → cost C* (traced to the final sink, same bar
+   as any P-level finding); and
+2. why the remaining tests / lint would stay green on that regression (name the regression
+   and the surviving tests you checked).
+
+If the only consequence is "maintainers would have to converge again" (code-shape drift,
+log volume, error surfaced later but still logged), it is not a finding. Deletions whose
+reason is recorded in the PR body's accepted-residual list are not violations; challenge the
+recorded reason only with the two items above.
 
 ### Test bloat policy
 
