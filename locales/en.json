@@ -166,6 +166,9 @@
       "running": "Currently running",
       "config_failed": "Action failed, please try again later"
     },
+    "maker_latest": {
+      "title": "Latest from Makers"
+    },
     "empty": {
       "hint": "Enter an ID to search, or add video files",
       "drag_hint": "You can also drag and drop files or folders",
@@ -189,6 +192,7 @@
       "tag_nfo_not_written": "Tag saved, but the NFO your media server reads wasn't updated",
       "tag_nfo_write_blocked": "Tag saved, but there's no permission to write the NFO",
       "no_data": "No data found",
+      "maker_not_found": "Couldn't find a works page for \"{maker}\"",
       "search_failed": "Search failed",
       "network_error": "Network error, please retry",
       "no_translation_needed": "No translation needed for this title",
@@ -284,7 +288,8 @@
       "prefix": "Series Search",
       "actress": "Fuzzy Search",
       "keyword": "Full-text Search",
-      "uncensored": "Uncensored Search"
+      "uncensored": "Uncensored Search",
+      "maker": "Latest from Maker"
     },
     "filelist": {
       "search_all_title": "Search all files not yet searched",
@@ -1284,6 +1289,13 @@
       "tag_api_failed": "Failed to save tag, please try again",
       "tag_nfo_not_written": "Tag saved, but the NFO your media server reads wasn't updated",
       "tag_nfo_write_blocked": "Tag saved, but there's no permission to write the NFO",
+      "translate_tooltip": "Translate title",
+      "translate_done": "Title translated",
+      "translate_undo": "Undo",
+      "translate_skipped": "Nothing in the title needs translating",
+      "translate_undone": "Title restored",
+      "translate_write_failed": "Couldn't save the title. Please try again later",
+      "translate_no_nfo": "This title has no NFO yet. Enrich it first, then translate the title",
       "user_tags_label": "Custom Tags",
       "alias_label": "Aliases",
       "alias_source_hint": "Synced from Scanner",
@@ -1418,6 +1430,7 @@
       "ai_instruction": "Paste to AI agent to control OpenAver",
       "ai_hint_unsupported": "Not supported in web chat",
       "ai_tools": "Paste to any AI agent to operate OpenAver — Claude Code · Cursor · Codex etc.",
+      "ai_actress_watch": "Want to keep up with new releases from actresses you follow? Ask your agent to check regularly using the search + wishlist APIs; results show up in the Wishlist tab on the Search page. Quick-explore search only uses JavBus, so it finds nothing when JavBus is blocked or turned off in Settings.",
       "this_computer_unavailable": "Cannot read this computer's update info right now. Please reopen the Help page and try again",
       "client_up_to_date": "OpenAver on this computer is up to date",
       "client_update_available_prefix": "This computer has a new version",
@@ -1470,6 +1483,7 @@
       "method_partial": "<strong>Partial ID</strong>: e.g. <code>SONE-0</code>, searches 001–009",
       "method_series": "<strong>Series Search</strong>: e.g. <code>SONE</code>, finds latest in series",
       "method_actress": "<strong>Actress Name</strong>: e.g. <code>Kaho Imai</code>, finds her works",
+      "method_maker": "<strong>Latest from Makers</strong>: when the Search page is empty, it lists the makers you collected most over the last 12 months. Click one to see its latest works (including the maker's own compilations). You can also type a maker name straight into the search box. The answer comes from the highest-ranked source in Settings that knows this maker; if it's blocked or turned off, the next source is asked (\"Load more\" keeps the same source)",
       "drag_auto": "Drag video files into the window to auto-extract ID and search",
       "drag_batch": "Supports batch processing of multiple files (up to 20 at once)",
       "drag_generate": "After a successful search, click 'Organize' to rename files, download covers, create folders and write NFO",
@@ -1599,6 +1613,7 @@
       "other_lightbox_detail": "Lightbox shows director, duration, series, label and more",
       "other_table_cols": "Table mode adds 'Director' and 'Duration' columns",
       "other_gallery": "Lightbox can open sample image gallery (click 'Stills' button)",
+      "other_translate_title": "<strong>Translate title</strong>: for titles already in your library whose title contains Japanese and has no original saved yet, a translate icon appears next to the title in the Lightbox (only when translation is enabled in Settings; the title needs an NFO). The translated title is written to the NFO, and the original stays in the NFO's <code>originaltitle</code>. Not happy with it? Press \"Undo\" on the notice at the bottom of the screen, or the icon at the end of the original line to translate again.",
       "other_per_page": "Items per page can be adjusted on the <strong>Settings page</strong>"
     },
     "similar": {
