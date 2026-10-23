@@ -25,9 +25,11 @@ English | **[繁體中文](README.md)**
 
 Point OpenAver at the folder where you keep your videos and it turns them into a cover wall: click a cover to see stills and tags, click an actress to see all her titles, click a tag to find similar ones; whatever's missing, one click fills it in from the web.
 
-**Videos another tool already organized get read in as-is — no re-scraping needed.** If a video already has a data file next to it (NFO — a small file that holds the title, actress, and tags) and a cover image, scanning reads it in and leaves your files untouched. Videos organized by JavSP, MDCX, EverAver, or Jellyfin/Emby are recognized, and so are those from any other tool that writes a standard NFO + cover.
+**The "Open" in OpenAver means you're never locked in:**
 
-OpenAver can also generate the data files and covers Jellyfin/Emby/Kodi need, so you can play on your TV. If you'd rather not install those, OpenAver alone can browse your whole collection.
+- **Open to come in**: collections already organized by JavSP, MDCX, or EverAver are read as-is — no re-scraping. If a video has a data file next to it (NFO — a small file that holds the title, actress, and tags) and a cover image, scanning reads it in and leaves your files untouched; the same goes for Jellyfin/Emby or any other tool that writes a standard NFO + cover.
+- **Open to leave**: the data files and covers it writes are recognized by Jellyfin/Emby/Kodi, so you can play on your TV; if you ever stop using OpenAver, everything is still in your own folders.
+- **Open source**: MIT licensed and free — anyone can read or change the code.
 
 **By default, nothing about your videos is changed, moved, or deleted.** Filling in missing metadata only adds a data file and images next to the video. Only when you press "Organize" does it rename or move files, following the rules you set, and it never deletes. It runs on your own computer; no account needed.
 
@@ -173,9 +175,9 @@ Want to plug a NAS or cloud mount into Jellyfin/Emby/Kodi without copying teraby
 
 In Advanced Settings you can connect your self-hosted [Metatube](https://github.com/metatube-community/metatube-sdk-go) for 30+ more sources, covering uncensored titles and niche makers.
 
-### 🧩 Custom sources: any website can become a source
+### 🧩 Custom sources: add a website as a source
 
-For titles the built-in sources don't cover — Chinese-made (國產) videos, ACG, a studio's own official site — you can add the site as a source, as long as each title has its own ID page and it's viewable without logging in.
+For titles the built-in sources don't cover — Chinese-language videos, anime, a studio's own official site — you can add the site as a source, as long as each title has its own ID page and it's viewable without logging in.
 
 - **Just tell an AI**: "Add https://… as a custom source for OpenAver." The AI writes the rule file, uploads it, runs the check, and turns it on if it passes.
 - **The rule file is only settings**: it just says where the title, cover, and actress are, and runs no code. To write one by hand, see [`docs/custom-sources.md`](docs/custom-sources.md).
@@ -244,7 +246,7 @@ Yes. On the same Wi-Fi, turn on "Server" in Settings and open the URL in your ph
 **What if one of the built-in scrape sources stops working?**
 The 8 sources fill in for each other, so if one fails the rest can still find the title. JavDB also has an app channel, so it usually still works even when blocked. You can also connect Metatube, or ask an AI to add a source.
 
-**Can I get metadata for titles the built-in sources don't have (Chinese-made videos, ACG)?**
+**Can I get metadata for titles the built-in sources don't have (Chinese-language videos, anime)?**
 Yes. If each title on that site has its own ID page and needs no login, ask an AI to add it as a custom source. After the title is in your library, pick it when you re-scrape with ⚙ in the lightbox.
 
 **Can I still get metadata for titles the official sites have taken down?**
