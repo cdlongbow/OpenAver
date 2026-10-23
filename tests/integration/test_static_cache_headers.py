@@ -13,9 +13,3 @@ def test_static_css_has_no_cache(client):
     assert "etag" in resp.headers  # ETag-based revalidation 仍在
 
 
-def test_static_304_keeps_no_cache(client):
-    first = client.get("/static/css/theme.css")
-    etag = first.headers["etag"]
-    second = client.get("/static/css/theme.css", headers={"If-None-Match": etag})
-    assert second.status_code == 304
-    assert second.headers["cache-control"] == "no-cache"

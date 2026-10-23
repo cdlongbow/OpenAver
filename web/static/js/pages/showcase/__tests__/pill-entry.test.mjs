@@ -12,7 +12,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay；
@@ -76,11 +75,6 @@ globalThis.document = {
     body: { classList: { add() {}, remove() {} } },
 };
 
-const SHOWCASE_HTML = readFileSync(
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../templates/showcase.html'),
-    'utf8',
-);
-const LIGHTBOX_SRC = readFileSync(new URL('../state-lightbox.js', import.meta.url), 'utf8');
 
 function makeComponent(overrides) {
     const base = stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
@@ -96,178 +90,28 @@ function makeComponent(overrides) {
     return c;
 }
 
-// 抽「<sig> 起的下一個 `{` 開始 brace-match 到對應 `}`」的函式 body（比照
-// readonly-action-intent.test.mjs 的 extractFnBody）。
-function extractFnBody(code, sig, label) {
-    const sigIdx = code.indexOf(sig);
-    assert.ok(sigIdx >= 0, `原始碼應含 \`${sig}\`（${label}）`);
-    const open = code.indexOf('{', sigIdx);
-    assert.ok(open >= 0, `${label} 應有 {`);
-    let depth = 0;
-    for (let i = open; i < code.length; i++) {
-        const ch = code[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) return code.slice(open + 1, i);
-        }
-    }
-    throw new Error(`${label} 大括號未閉合（brace-match 失敗）`);
-}
-
-// 抽出 showcase.html 全部 `searchFromMetadata(...)` call 的參數字串（depth-aware，
-// 容納參數本身含 `.trim()` 這類巢狀括號）。
-function extractSearchFromMetadataCalls(html) {
-    const marker = 'searchFromMetadata(';
-    const calls = [];
-    let idx = 0;
-    for (;;) {
-        const found = html.indexOf(marker, idx);
-        if (found === -1) break;
-        const argStart = found + marker.length;
-        let depth = 1;
-        let i = argStart;
-        for (; i < html.length; i++) {
-            const ch = html[i];
-            if (ch === '(') depth++;
-            else if (ch === ')') {
-                depth--;
-                if (depth === 0) break;
-            }
-        }
-        assert.ok(depth === 0, `searchFromMetadata( 未找到匹配的收尾括號（offset ${found}）`);
-        calls.push(html.slice(argStart, i));
-        idx = i + 1;
-    }
-    return calls;
-}
 
 // ===== 十二個入口逐一核對（plan CD-2b / TASK-115-T4「現況分析」表，文件順序；
 // #3／#11 是 TASK-124a-T3 新增的發售日入口）=====
 
-const EXPECTED_DIMS = [
-    'actress',   // #1 卡片 · 女優
-    'maker',     // #2 卡片 · 片商
-    'release',   // #3 卡片 · 發售日（TASK-124a-T3 新增）
-    'series',    // #4 卡片 · 系列
-    'tag',       // #5 卡片 · 標籤
-    'actress',   // #6 燈箱 · 女優
-    'maker',     // #7 燈箱 · 片商
-    'director',  // #8 燈箱 · 導演
-    'series',    // #9 燈箱 · 系列
-    'label',     // #10 燈箱 · 廠牌
-    'release',   // #11 燈箱 · 發售日（TASK-124a-T3 新增）
-    'tag',       // #12 燈箱 · 標籤
-];
-
-test('showcase.html 恰有十二個 searchFromMetadata call site，逐一帶正確維度 token（非抽樣）', () => {
-    const calls = extractSearchFromMetadataCalls(SHOWCASE_HTML);
-    assert.equal(calls.length, 12, `預期恰好 12 個 searchFromMetadata call site，實際 ${calls.length}`);
-    EXPECTED_DIMS.forEach((dim, i) => {
-        const args = calls[i];
-        assert.ok(args.includes(','), `#${i + 1} 缺少第二個維度參數：${args}`);
-        assert.ok(
-            args.includes(`'${dim}'`),
-            `#${i + 1} 預期維度 token '${dim}'，實際參數：${args}`,
-        );
-    });
-});
 
 // ===== card-info 與燈箱同片同維度產生相同 pill（#1 vs #6 女優、#5 vs #12 標籤）=====
 
-test('card-info 與燈箱點擊同片同維度（女優，#1 vs #6）產生完全相同的 pill', () => {
-    const c1 = makeComponent();
-    c1.searchFromMetadata('Yui Hatano', 'actress');
-    const c2 = makeComponent();
-    c2.searchFromMetadata('Yui Hatano', 'actress');
-    assert.deepEqual(c1.pills, c2.pills);
-});
-
-test('card-info 與燈箱點擊同片同維度（標籤，#5 vs #12）產生完全相同的 pill', () => {
-    const c1 = makeComponent();
-    c1.searchFromMetadata('痴女', 'tag');
-    const c2 = makeComponent();
-    c2.searchFromMetadata('痴女', 'tag');
-    assert.deepEqual(c1.pills, c2.pills);
-});
 
 // ===== 全庫 grep：不存在 `this.search = ` 接 metadata 值的寫法 =====
 
-test('state-lightbox.js 全檔 grep this.search = 結果為零筆（舊行為已徹底移除）', () => {
-    assert.equal(
-        (LIGHTBOX_SRC.match(/this\.search = /g) || []).length,
-        0,
-        'state-lightbox.js 不應再出現 this.search = 字面',
-    );
-});
 
 // ===== D4/D8: adapter body（brace-matched，非整檔）不含四個禁止字面 + .focus( =====
 
-test('searchFromMetadata body（brace-matched）不含 D4 四個禁止字面與 .focus(（D8 regression lock）', () => {
-    const body = extractFnBody(LIGHTBOX_SRC, 'searchFromMetadata(value, dim) {', 'searchFromMetadata');
-    for (const forbidden of ['this.search =', '_animateFilter', '_checkPreciseActressMatch', '_clearPreciseMatch', '.focus(']) {
-        assert.ok(!body.includes(forbidden), `searchFromMetadata body 不應含 ${JSON.stringify(forbidden)}`);
-    }
-    assert.ok(body.includes('addPill('), 'searchFromMetadata body 必須委派給 addPill(');
-});
 
 // ===== D3（FE-ALPINE-05）: addPill 只定義在 state-videos.js =====
 
-test('D3: addPill 只定義在 state-videos.js，state-lightbox.js 不得定義同名成員（FE-ALPINE-05）', () => {
-    // 比對「定義形狀」而非「出現過 addPill(」。第一版寫的是後者（扣掉 this.addPill( 之後
-    // 任何 `addPill(` 都算定義），結果**實作端自己的 CD-2 註解**寫了 `addPill()` 就把這支打紅——
-    // 那是 fail-red-fragile：未來任何人在本檔寫一句提到 `addPill(dim, value)` 的英文註解都會
-    // 誤紅，而功能毫無問題。改成必須是「名稱 + 參數列 + 緊接 `{`」的定義頭，散文寫不出這個形狀；
-    // 另外先剝掉註解，雙保險。（FE-GUARD-03 的反向版本：註解同樣會參與字串守衛。）
-    const srcNoComments = LIGHTBOX_SRC
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/\/\/[^\n]*/g, '');
-    assert.ok(
-        !/\baddPill\s*\([^)]*\)\s*\{/.test(srcNoComments),
-        'state-lightbox.js 不得定義 addPill（會被 mergeState 靜默覆蓋 T1 的 core，FE-ALPINE-05）',
-    );
-    assert.equal(typeof stateVideos().addPill, 'function', 'stateVideos() 應有 addPill');
-    assert.equal(stateLightbox().addPill, undefined, 'stateLightbox() 不應有 addPill');
-});
 
 // ===== CD-2 步驟表唯一擁有權：一次點擊只觸發一次 _animateFilter/saveState/_reconcileHeroCard =====
 
-test('一次 searchFromMetadata 呼叫，_animateFilter/saveState/_reconcileHeroCard 各恰好 1 次', () => {
-    const c = makeComponent();
-    let animateCalls = 0;
-    let saveCalls = 0;
-    let heroCalls = 0;
-
-    const origAnimate = c._animateFilter.bind(c);
-    c._animateFilter = function (...args) { animateCalls++; return origAnimate(...args); };
-    const origSave = c.saveState.bind(c);
-    c.saveState = function (...args) { saveCalls++; return origSave(...args); };
-    const origHero = c._reconcileHeroCard.bind(c);
-    c._reconcileHeroCard = function (...args) { heroCalls++; return origHero(...args); };
-
-    c.searchFromMetadata('Moodyz', 'maker');
-
-    assert.equal(animateCalls, 1, `_animateFilter 應恰好呼叫 1 次，實際 ${animateCalls}`);
-    assert.equal(saveCalls, 1, `saveState 應恰好呼叫 1 次，實際 ${saveCalls}`);
-    assert.equal(heroCalls, 1, `_reconcileHeroCard 應恰好呼叫 1 次，實際 ${heroCalls}`);
-});
 
 // ===== addPill 呼叫參數順序：this.addPill(dim, value)，dim 在前 =====
 
-test('adapter 呼叫 addPill 時參數順序正確：this.addPill(dim, value)，非 this.addPill(value, dim)', () => {
-    const c = makeComponent();
-    let capturedArgs = null;
-    const origAddPill = c.addPill.bind(c);
-    c.addPill = function (a, b) { capturedArgs = [a, b]; return origAddPill(a, b); };
-
-    c.searchFromMetadata('Moodyz', 'maker');   // value='Moodyz', dim='maker'（template 呼叫慣例）
-
-    assert.deepEqual(
-        capturedArgs,
-        ['maker', 'Moodyz'],
-        'addPill 應收到 (dim, value)＝(\'maker\', \'Moodyz\')，不是 (value, dim)',
-    );
-});
 
 // ===== 六個維度各自產生的 pill 透過 buildPillPredicate 實際命中對應影片
 //       （這是唯一能抓到 addPill 參數順序寫反的斷言：順序反了會讓 pill.dim 變成

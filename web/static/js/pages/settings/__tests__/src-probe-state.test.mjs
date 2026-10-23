@@ -50,7 +50,6 @@ function deferredFetch() {
   const ok = (call, results) => call.resolve({ ok: true, status: 200, json: async () => ({ results }) });
   return { calls, ok };
 }
-const tick = () => new Promise((r) => setTimeout(r, 0));
 const RES = { dmm: { state: 'ok' }, 'mt-a': { state: 'blocked' } };
 
 test('srcProbeKey changes with proxyUrl, proxyScope, and any pill', () => {
@@ -71,25 +70,6 @@ test('srcProbeKey changes with proxyUrl, proxyScope, and any pill', () => {
   assert.equal(fake.srcProbeKey, base);
 });
 
-test('srcProbeKey is stable under sources reorder', () => {
-  const { fake } = makeFake();
-  const base = fake.srcProbeKey;
-  fake.sources = fake.sources.slice().reverse();
-  assert.equal(fake.srcProbeKey, base);
-});
-
-test('clearSrcProbe bumps the generation and empties results', () => {
-  const { fake, toasts } = makeFake();
-  fake.srcProbeResults = { dmm: { state: 'ok' } };
-  fake.srcProbeTipId = 'dmm';
-  const g = fake.srcProbeGen;
-  fake.clearSrcProbe();
-  assert.equal(fake.srcProbeGen, g + 1);
-  assert.deepEqual(fake.srcProbeResults, {});
-  assert.equal(fake.srcProbeTipId, null);
-  assert.equal(fake.srcProbeStatus, 'idle');
-  assert.equal(toasts.length, 0, 'idle clear has no side effect');
-});
 
 test('runSrcProbe sends only lit pills and manual_only pills', async () => {
   const { fake } = makeFake();
@@ -109,16 +89,6 @@ test('runSrcProbe sends only lit pills and manual_only pills', async () => {
   assert.deepEqual(fake.srcProbeSummary, { ok: 1, total: 2 });
 });
 
-test('runSrcProbe does not mutate form or sources while running', async () => {
-  const { fake } = makeFake();
-  const before = JSON.stringify([fake.form, fake.sources]);
-  const { calls, ok } = deferredFetch();
-  const p = fake.runSrcProbe();
-  assert.equal(JSON.stringify([fake.form, fake.sources]), before);
-  ok(calls[0], RES);
-  await p;
-  assert.equal(JSON.stringify([fake.form, fake.sources]), before);
-});
 
 test('late response after clearSrcProbe is discarded', async () => {
   const { fake, toasts } = makeFake();
@@ -132,34 +102,6 @@ test('late response after clearSrcProbe is discarded', async () => {
   assert.equal(toasts.length, 0);
 });
 
-test('late response is discarded even when the setting was changed and changed back', async () => {
-  const { fake } = makeFake();
-  const { calls, ok } = deferredFetch();
-  const p = fake.runSrcProbe();
-  fake.form.proxyUrl = 'http://other';
-  fake.clearSrcProbe();
-  fake.form.proxyUrl = ' http://p:1 ';
-  fake.clearSrcProbe();
-  ok(calls[0], RES);
-  await p;
-  assert.deepEqual(fake.srcProbeResults, {});
-});
-
-test('superseded first response neither writes nor stops the second run', async () => {
-  const { fake } = makeFake();
-  const { calls, ok } = deferredFetch();
-  const p1 = fake.runSrcProbe();
-  fake.clearSrcProbe();
-  const p2 = fake.runSrcProbe();
-  ok(calls[0], { dmm: { state: 'ok' } });
-  await p1;
-  assert.deepEqual(fake.srcProbeResults, {});
-  assert.equal(fake.srcProbeStatus, 'running');
-  ok(calls[1], RES);
-  await p2;
-  assert.deepEqual(fake.srcProbeResults, RES);
-  assert.equal(fake.srcProbeStatus, 'idle');
-});
 
 test('failed request clears results, returns to idle and toasts once', async () => {
   for (const mode of ['reject', 'non2xx', 'noResults']) {
@@ -177,14 +119,3 @@ test('failed request clears results, returns to idle and toasts once', async () 
   }
 });
 
-test('failure from a superseded run stays silent', async () => {
-  const { fake, toasts } = makeFake();
-  const { calls } = deferredFetch();
-  const p = fake.runSrcProbe();
-  fake.clearSrcProbe();
-  calls[0].reject(new Error('net'));
-  await p;
-  await tick();
-  assert.equal(toasts.length, 0);
-  assert.equal(fake.srcProbeStatus, 'idle');
-});

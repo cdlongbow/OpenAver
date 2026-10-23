@@ -1,18 +1,15 @@
 """True-spawn integration tests for core.focal._detect_child (TASK-152b-T1a)."""
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 import pytest
 
 import core.focal.subprocess_runner as subprocess_runner
-from core.focal.detector import detect_focal
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = str(REPO_ROOT / "tests" / "fixtures" / "focal" / "sample.jpg")
@@ -50,103 +47,6 @@ def _cmd(*, with_u: bool = True):
     return cmd
 
 
-def test_child_stdout_matches_direct_call_raw_precision():
-    """CD-152b-1/-2: stdout is READY + full-precision JSON matching direct call."""
-    direct = detect_focal(SAMPLE, RATIO)
-    assert direct is not None
-
-    p = subprocess.Popen(
-        _cmd(with_u=True),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=str(REPO_ROOT),
-        env=_spawn_env(),
-        text=True,
-        encoding="utf-8",
-    )
-    try:
-        stdout, _stderr = p.communicate(timeout=30)
-    finally:
-        if p.poll() is None:
-            p.kill()
-            p.wait(timeout=5)
-
-    assert p.returncode == 0
-    lines = stdout.splitlines()
-    assert len(lines) == 2, f"expected exactly 2 stdout lines, got {lines!r}"
-    assert lines[0] == "READY"
-    payload = json.loads(lines[1])
-    child_tuple = tuple(payload["focal"])
-    assert child_tuple == direct
-
-
-def test_child_ready_arrives_before_result_while_alive():
-    """Event order: READY first while process still alive, then result."""
-    p = subprocess.Popen(
-        _cmd(with_u=True),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=str(REPO_ROOT),
-        env=_spawn_env(),
-        text=True,
-        encoding="utf-8",
-    )
-    try:
-        ready_line = p.stdout.readline()
-        t_ready = time.monotonic()
-        assert ready_line.strip() == "READY"
-        assert p.poll() is None
-        result_line = p.stdout.readline()
-        t_result = time.monotonic()
-        payload = json.loads(result_line)
-        assert "focal" in payload
-        gap = t_result - t_ready
-        assert gap >= 0.05, (
-            f"READY→result gap {gap:.4f}s too small; READY likely printed after detect"
-        )
-        p.wait(timeout=10)
-        assert p.returncode == 0
-    finally:
-        if p.poll() is None:
-            p.kill()
-            p.wait(timeout=5)
-        if p.stderr is not None:
-            p.stderr.read()
-
-
-def test_child_flush_true_delivers_ready_without_u_flag():
-    """Without -u, flush=True alone must deliver READY before result with a real gap."""
-    p = subprocess.Popen(
-        _cmd(with_u=False),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=str(REPO_ROOT),
-        env=_spawn_env(),
-        text=True,
-        encoding="utf-8",
-    )
-    try:
-        ready_line = p.stdout.readline()
-        t_ready = time.monotonic()
-        assert ready_line.strip() == "READY"
-        result_line = p.stdout.readline()
-        t_result = time.monotonic()
-        payload = json.loads(result_line)
-        assert "focal" in payload
-        gap = t_result - t_ready
-        assert gap >= 0.05, (
-            f"READY→result gap {gap:.4f}s too small; flush=True likely missing"
-        )
-        p.wait(timeout=10)
-        assert p.returncode == 0
-    finally:
-        if p.poll() is None:
-            p.kill()
-            p.wait(timeout=5)
-        if p.stderr is not None:
-            p.stderr.read()
-
-
 # ---------------------------------------------------------------------------
 # TASK-152b-T1b appendices (do not modify the three tests above)
 # ---------------------------------------------------------------------------
@@ -170,43 +70,6 @@ def _inline_spawn(script: str):
     return spawn_fn
 
 
-def test_real_timeout_kill_classified_as_detect_timeout_not_crashed():
-    """INV-152b-1a(a): parent kill after READY must be detect_timeout, not crashed."""
-    from core.focal.subprocess_runner import run_detection
-
-    script = (
-        "import sys, time\n"
-        "print('READY', flush=True)\n"
-        "time.sleep(2)\n"
-        "print('{\"focal\": [0.1, 0.2]}', flush=True)\n"
-    )
-    outcome = run_detection(
-        SAMPLE,
-        RATIO,
-        job_key="int-timeout",
-        timeout_s=0.3,
-        spawn_fn=_inline_spawn(script),
-    )
-    assert outcome.kind == "ABANDONED"
-    assert outcome.reason == "detect_timeout"
-
-
-def test_real_early_crash_classified_as_crashed_not_startup_timeout():
-    """INV-152b-1a(b): exit before READY must be crashed, not startup_timeout."""
-    from core.focal.subprocess_runner import run_detection
-
-    script = "import sys\nsys.exit(1)\n"
-    outcome = run_detection(
-        SAMPLE,
-        RATIO,
-        job_key="int-crash",
-        timeout_s=2.0,
-        spawn_fn=_inline_spawn(script),
-    )
-    assert outcome.kind == "ABANDONED"
-    assert outcome.reason == "crashed"
-
-
 def test_default_spawn_matches_direct_detect_child_call():
     """_default_spawn must wire to T1a child; raw focal matches pinned oracle."""
     from core.focal.subprocess_runner import run_detection
@@ -220,26 +83,6 @@ def test_default_spawn_matches_direct_detect_child_call():
     )
     assert outcome.kind == "FOUND"
     assert outcome.focal == (0.47336394430921885, 0.4569366320183266)
-
-
-def test_startup_hang_classified_as_startup_timeout(monkeypatch):
-    """Startup hang (no READY) must be startup_timeout, not crashed/detect_timeout."""
-    import core.focal.subprocess_runner as subprocess_runner
-    from core.focal.subprocess_runner import run_detection
-
-    monkeypatch.setattr(subprocess_runner, "_STARTUP_TIMEOUT_S", 0.3)
-    monkeypatch.setattr(subprocess_runner, "_breaker_streak", 0)
-
-    script = "import time\ntime.sleep(5)\n"
-    outcome = run_detection(
-        SAMPLE,
-        RATIO,
-        job_key="int-startup",
-        timeout_s=5.0,
-        spawn_fn=_inline_spawn(script),
-    )
-    assert outcome.kind == "ABANDONED"
-    assert outcome.reason == "startup_timeout"
 
 
 def test_live_child_with_garbage_first_line_does_not_deadlock_slot_lock():

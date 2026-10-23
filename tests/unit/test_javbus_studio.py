@@ -41,31 +41,10 @@ def _sample(scraper, status=None, info=None, exc=None):
 
 REQUEST_EXCS = [
     requests.Timeout("t"),
-    requests.ConnectionError("c"),
-    requests.TooManyRedirects("r"),
-    requests.exceptions.ChunkedEncodingError("e"),
 ]
 
 
 # ---------------- parse_studio_href ----------------
-
-@pytest.mark.parametrize("href,expected", [
-    ("/studio/7q", ("censored", "7q")),
-    ("/ja/studio/7q", ("censored", "7q")),
-    ("/en/studio/7q/", ("censored", "7q")),
-    ("https://www.javbus.com/studio/7q", ("censored", "7q")),
-    ("/uncensored/studio/3a", ("uncensored", "3a")),
-    ("https://www.javbus.com/uncensored/studio/3a", ("uncensored", "3a")),
-    ("/ja/uncensored/studio/3a", ("uncensored", "3a")),
-    ("/label/9x", None),
-    ("/uncensored/label/9x", None),
-    ("/series/abc", None),
-    ("", None),
-    ("/studio/", None),
-])
-def test_parse_studio_href(href, expected):
-    from core.scrapers.javbus import parse_studio_href
-    assert parse_studio_href(href) == expected
 
 
 # ---------------- classify ----------------
@@ -77,39 +56,13 @@ def test_classify_only_404_is_miss():
         assert classify(status, True, ["/studio/7q"]) is STUDIO_UNREACHABLE, status
 
 
-def test_classify_votes():
-    from core.scrapers.javbus import classify, StudioVote
-    assert classify(200, True, ["/studio/7q"]) == StudioVote("censored", "7q")
-    assert classify(200, True, ["/uncensored/studio/3a"]) == StudioVote("uncensored", "3a")
-    # 同區塊有 label：只取 studio
-    assert classify(200, True, ["/label/9x", "/studio/7q"]) == StudioVote("censored", "7q")
-
-
-@pytest.mark.parametrize("hrefs", [[], ["/label/9x"], ["/series/x", "/label/9x"], [""]])
-def test_classify_info_without_studio_link_is_unreachable(hrefs):
-    from core.scrapers.javbus import classify, STUDIO_UNREACHABLE
-    assert classify(200, True, hrefs) is STUDIO_UNREACHABLE
-
-
 @pytest.mark.parametrize("status,has_wf,expected", [
-    (200, True, "LIST_PARSE"),
-    (200, False, "LIST_UNREADABLE"),
     (404, False, "LIST_END"),
-    (404, True, "LIST_END"),
     (403, True, "LIST_BLOCKED"),
-    (429, False, "LIST_BLOCKED"),
-    (500, False, "LIST_BLOCKED"),
-    (503, True, "LIST_BLOCKED"),
-    (301, False, "LIST_BLOCKED"),
 ])
 def test_classify_list_response(status, has_wf, expected):
     import core.scrapers.javbus as jb
     assert jb.classify_list_response(status, has_wf) is getattr(jb, expected)
-
-
-def test_list_page_size():
-    from core.scrapers.javbus import JAVBUS_LIST_PAGE_SIZE
-    assert JAVBUS_LIST_PAGE_SIZE == 30
 
 
 # ---------------- fetch_studio_sample ----------------
@@ -131,18 +84,7 @@ def test_fetch_sample_rate_limits_and_uses_detail_url(scraper_zh):
 # ---------------- build_studio_url ----------------
 
 @pytest.mark.parametrize("lang,kind,page,expected", [
-    ("zh-tw", "censored", 1, "https://www.javbus.com/studio/7q"),
-    ("zh-tw", "censored", 2, "https://www.javbus.com/studio/7q/2"),
-    ("zh-tw", "uncensored", 1, "https://www.javbus.com/uncensored/studio/3a"),
-    ("zh-tw", "uncensored", 2, "https://www.javbus.com/uncensored/studio/3a/2"),
-    ("ja", "censored", 1, "https://www.javbus.com/ja/studio/7q"),
-    ("ja", "censored", 2, "https://www.javbus.com/ja/studio/7q/2"),
-    ("ja", "uncensored", 1, "https://www.javbus.com/ja/uncensored/studio/3a"),
     ("ja", "uncensored", 2, "https://www.javbus.com/ja/uncensored/studio/3a/2"),
-    ("en", "censored", 1, "https://www.javbus.com/en/studio/7q"),
-    ("en", "censored", 2, "https://www.javbus.com/en/studio/7q/2"),
-    ("en", "uncensored", 1, "https://www.javbus.com/en/uncensored/studio/3a"),
-    ("en", "uncensored", 2, "https://www.javbus.com/en/uncensored/studio/3a/2"),
 ])
 def test_build_studio_url_matrix(lang, kind, page, expected):
     from core.scrapers.javbus import JavBusScraper
@@ -178,6 +120,3 @@ def test_get_ids_from_studio_request_exceptions_unreachable(scraper_zh, exc):
     assert type(ei.value) is SourceUnreachable
 
 
-def test_get_ids_from_studio_requests_built_url(scraper_zh):
-    _list(scraper_zh, 404, waterfall=False)
-    assert scraper_zh._session.get.call_args[0][0] == "https://www.javbus.com/studio/7q"

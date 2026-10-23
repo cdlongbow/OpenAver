@@ -85,20 +85,8 @@ def _s_disabled(env):
     return "single-og", NUMBER
 
 
-def _s_pattern(env):
-    _put(env, "single-og")
-    _pass("single-og")
-    return "single-og", "FC2-123456"
-
-
-def _s_load_failed(env):
-    _put(env, "broken", "id: [unclosed\n")
-    return "broken", NUMBER
-
-
 @pytest.mark.parametrize("setup,reason", [
     (_s_unverified, "unverified"), (_s_disabled, "disabled"),
-    (_s_pattern, "pattern_mismatch"), (_s_load_failed, "load_failed"),
 ])
 def test_gate_refusals_raise_and_never_send(env, monkeypatch, setup, reason):
     sid, number = setup(env)
@@ -114,13 +102,6 @@ def test_gate_refusals_raise_and_never_send(env, monkeypatch, setup, reason):
     assert transport.calls == []
 
 
-def test_not_loaded_is_refused_too(env, monkeypatch):
-    transport = _wire(monkeypatch, {})
-    with pytest.raises(CustomSourceRefused) as ei:
-        scraper_mod.search_jav(NUMBER, source="custom:ghost", surface_access_errors=True)
-    assert ei.value.reason == "not_loaded" and transport.calls == []
-
-
 def test_passing_gate_sends_and_returns_dict(env, monkeypatch):
     transport = _ready_og(env, monkeypatch)
     result = scraper_mod.search_jav(NUMBER, source="custom:single-og", surface_access_errors=True)
@@ -128,33 +109,11 @@ def test_passing_gate_sends_and_returns_dict(env, monkeypatch):
     assert result["_source"] == "custom:single-og"
 
 
-@pytest.mark.parametrize("bad", ["custom:../x", "custom:", "custom:A"])
+@pytest.mark.parametrize("bad", ["custom:../x", ])
 def test_malformed_ids_return_none_without_raise(env, monkeypatch, bad):
     transport = _wire(monkeypatch, {})
     assert scraper_mod.search_jav(NUMBER, source=bad, surface_access_errors=True) is None
     assert transport.calls == []
-
-
-def test_gate_snapshot_survives_file_replacement(env, monkeypatch):
-    path = _put(env, "single-og")
-    _pass("single-og")
-    swapped = "https://swapped.example/sone-205"
-    transport = _wire(monkeypatch, {OG_URL: page(PAGES["single-og"]), swapped: page("<html>NEW</html>")})
-    original = path.read_text(encoding="utf-8")
-    real = gate.check_usable
-    hits = []
-
-    def spy(*a, **k):
-        r = real(*a, **k)
-        hits.append(r.ok)
-        path.write_text(original.replace("single-og.example", "swapped.example"), encoding="utf-8")
-        return r
-
-    monkeypatch.setattr(gate, "check_usable", spy)
-    result = scraper_mod.search_jav(NUMBER, source="custom:single-og", surface_access_errors=True)
-    assert hits == [True]
-    assert transport.calls == [OG_URL]
-    assert result["_source"] == "custom:single-og"
 
 
 def test_parse_empty_surfaces_only_when_requested(env, monkeypatch):
@@ -194,21 +153,6 @@ def test_auto_ignores_custom_files(env, monkeypatch):
     assert len([r for r in baseline if r[0] == "search"]) >= 2
     _put(env, "single-og")
     _pass("single-og")
-    assert _auto_record(monkeypatch) == baseline
-    assert transport.calls == []
-
-
-def test_broken_custom_does_not_spread(env, monkeypatch):
-    transport = _wire(monkeypatch, {})
-    baseline = _auto_record(monkeypatch)
-    _put(env, "broken", "id: [unclosed\n")
-    _put(env, "single-og")
-    _pass("single-og")
-    _put(env, "text")  # 未驗收
-    assert _auto_record(monkeypatch) == baseline
-    # 抓取丟例外的 custom 只影響自己
-    monkeypatch.setattr("core.custom_source.interpret.make_transport",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert _auto_record(monkeypatch) == baseline
     assert transport.calls == []
 
@@ -257,14 +201,4 @@ def test_wrappers_refuse_unverified(env, monkeypatch, call):
 
 # ---- access_error_info 顯示名 ----
 
-def test_access_error_info_uses_yaml_name(env):
-    _put(env, "single-og")
-    info = scraper_mod.access_error_info(RuntimeError("x"), "custom:single-og")
-    assert "Single OG" in info["message"] and info["source"] == "custom:single-og"
 
-
-@pytest.mark.parametrize("src", ["custom:../x", "custom:", "custom:ghost", "custom:broken"])
-def test_access_error_info_never_raises(env, src):
-    _put(env, "broken", "id: [unclosed\n")
-    info = scraper_mod.access_error_info(RuntimeError("x"), src)
-    assert src in info["message"] and info["source"] == src

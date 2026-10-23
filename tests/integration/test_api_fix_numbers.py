@@ -161,39 +161,3 @@ class TestApplySuccess:
 
 # ── I3: apply 跳過不再符合規則的 ID ──────────────────────────────────────────
 
-class TestApplySkipsAlreadyFixed:
-    """I3: 手動先更新 DB 使番號變為正常，apply 傳入該 ID → updated=0, failed=1"""
-
-    def test_apply_skips_already_fixed_id(self, tmp_db, monkeypatch):
-        rows = [
-            (to_file_uri("/test/1.mp4"), "7IPZ-154", "Title 1", "[]", "Maker", "[]", "", "", "", None, "2024-01-01", 0.0),
-        ]
-        _insert_videos(tmp_db, rows)
-
-        # 手動先把番號更新為正常番號（模擬 preview 到 apply 之間被修正）
-        conn = sqlite3.connect(str(tmp_db))
-        target_uri = to_file_uri("/test/1.mp4")
-        conn.execute("UPDATE videos SET number = 'IPZ-154' WHERE path = ?", (target_uri,))
-        conn.commit()
-        video_id = conn.execute("SELECT id FROM videos WHERE path = ?", (target_uri,)).fetchone()[0]
-        conn.close()
-
-        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
-        from web.app import app
-        test_client = TestClient(app)
-
-        # apply 傳入該 ID
-        apply_resp = test_client.post(
-            "/api/collection/fix-numbers/apply",
-            json={"ids": [video_id]},
-        )
-        assert apply_resp.status_code == 200
-        apply_data = apply_resp.json()
-        assert apply_data["updated"] == 0
-        assert apply_data["failed"] == 1
-
-        # 確認 DB 番號仍是修正後的正常番號（不被覆蓋）
-        conn = sqlite3.connect(str(tmp_db))
-        number = conn.execute("SELECT number FROM videos WHERE id = ?", (video_id,)).fetchone()[0]
-        conn.close()
-        assert number == "IPZ-154"

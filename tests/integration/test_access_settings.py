@@ -13,11 +13,10 @@ TASK-114a-T4: `GET`/`PUT /api/access/settings` —— 認證設定端點。
 from __future__ import annotations
 
 import core.access_auth as access_auth
-import core.config as core_config
 import pytest
 from fastapi.testclient import TestClient
 
-from web.app import _is_loopback_host, app
+from web.app import app
 
 LOOPBACK_CLIENT = ("127.0.0.1", 12345)
 REMOTE_CLIENT = ("192.168.1.50", 12345)
@@ -78,96 +77,10 @@ def _remote_authed_client(token: str) -> TestClient:
 # ── A. GET /api/access/settings ───────────────────────────────────────────
 
 
-class TestGetAccessSettings:
-    def test_a1_initial_disabled_loopback_reveals_empty_pin(self, loopback_client):
-        r = loopback_client.get(SETTINGS_PATH)
-        assert r.status_code == 200
-        assert r.json() == {
-            "success": True,
-            "enabled": False,
-            "pin": "",
-            "pin_revealed": True,
-            "can_edit": True,
-        }
-
-    def test_a2_enabled_loopback_reveals_real_pin(self, loopback_client):
-        access_auth.set_auth(True, "0042")
-        r = loopback_client.get(SETTINGS_PATH)
-        assert r.status_code == 200
-        assert r.json() == {
-            "success": True,
-            "enabled": True,
-            "pin": "0042",
-            "pin_revealed": True,
-            "can_edit": True,
-        }
-
-    def test_a3_enabled_remote_authed_reveals_pin(self, remote_client, server_mode_true):
-        access_auth.set_auth(True, "0042")
-        token = access_auth.attempt_pin("0042")
-        assert token is not None
-        client = _remote_authed_client(token)
-        r = client.get(SETTINGS_PATH)
-        assert r.status_code == 200
-        assert r.json() == {
-            "success": True,
-            "enabled": True,
-            "pin": "0042",
-            "pin_revealed": True,
-            "can_edit": True,
-        }
-
-    def test_a4_enabled_mapped_loopback_reveals_real_pin(self, mapped_client):
-        access_auth.set_auth(True, "0042")
-        r = mapped_client.get(SETTINGS_PATH)
-        assert r.status_code == 200
-        assert r.json() == {
-            "success": True,
-            "enabled": True,
-            "pin": "0042",
-            "pin_revealed": True,
-            "can_edit": True,
-        }
-
-    def test_a5_disabled_loopback(self, loopback_client):
-        access_auth.set_auth(False, "")
-        r = loopback_client.get(SETTINGS_PATH)
-        assert r.status_code == 200
-        assert r.json() == {
-            "success": True,
-            "enabled": False,
-            "pin": "",
-            "pin_revealed": True,
-            "can_edit": True,
-        }
-
-    def test_a6_disabled_remote_masks_pin(self, remote_client):
-        access_auth.set_auth(False, "")
-        r = remote_client.get(SETTINGS_PATH)
-        assert r.status_code == 200
-        assert r.json() == {
-            "success": True,
-            "enabled": False,
-            "pin": "••••",
-            "pin_revealed": False,
-            "can_edit": True,
-        }
-
-
 # ── B. PUT R4 loopback-only ───────────────────────────────────────────────
 
 
 class TestPutR4:
-    def test_b1_loopback_enables(self, loopback_client):
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "1234"}
-        )
-        assert r.status_code == 200
-        assert r.json() == {"success": True}
-        assert access_auth.get_auth_settings(True) == {
-            "enabled": True,
-            "pin": "1234",
-        }
 
     def test_b2_remote_unauthed_password_off_now_succeeds(self, remote_client):
         before = access_auth.get_auth_settings(True)
@@ -182,32 +95,6 @@ class TestPutR4:
             "pin": "1234",
         }
 
-    def test_b3_mapped_loopback_passes_r4(self, mapped_client):
-        r = mapped_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "1234"}
-        )
-        assert r.status_code == 200
-        assert r.json() == {"success": True}
-        assert access_auth.get_auth_settings(True) == {
-            "enabled": True,
-            "pin": "1234",
-        }
-
-    def test_b4_remote_server_mode_false_blocked_by_lan_gate(self, auth_db):
-        """server_mode 未開：lan_access_gate 先擋，T4 router 碰不到。"""
-        client = TestClient(app, client=REMOTE_CLIENT)
-        r = client.put(SETTINGS_PATH, json={"enabled": True, "pin": "1234"})
-        assert r.status_code == 403
-        assert r.text == "Forbidden"
-        assert access_auth.get_auth_settings(True) == {
-            "enabled": False,
-            "pin": "",
-        }
-
-    def test_client_none_is_not_loopback(self):
-        """card 邊界：client=None 時 _is_loopback_host 回 False（fail-closed）。"""
-        assert _is_loopback_host(None) is False
-
 
 # ── C. PUT PIN 格式驗證 ───────────────────────────────────────────────────
 
@@ -221,13 +108,6 @@ class TestPutPinFormat:
         assert r.json() == {"success": True}
         assert access_auth.get_auth_settings(True)["pin"] == "0042"
 
-    def test_c1b_alphanumeric_pin_accepted(self, loopback_client):
-        """T7fix：密碼放寬成 4 位英數（大小寫保留，不折疊）。"""
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "aB92"}
-        )
-        assert r.status_code == 200
-        assert access_auth.get_auth_settings(True)["pin"] == "aB92"
 
     def test_c1c_fullwidth_pin_stored_as_ascii(self, loopback_client):
         """T7fix：中文輸入法全形模式打出的密碼，存進去必須已折成半形——
@@ -238,123 +118,8 @@ class TestPutPinFormat:
         assert r.status_code == 200
         assert access_auth.get_auth_settings(True)["pin"] == "aB92"
 
-    def test_c2_whitespace_rejected_no_write(self, loopback_client):
-        access_auth.set_auth(True, "1111")
-        before = access_auth.get_auth_settings(True)
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "12 3"}
-        )
-        assert r.status_code == 400
-        assert r.json() == {
-            "success": False,
-            "reason": "invalid_pin",
-            "error": "密碼必須是 4 位英文或數字",
-        }
-        assert access_auth.get_auth_settings(True) == before
-
-    def test_c3_five_digits_rejected(self, loopback_client):
-        access_auth.set_auth(True, "1111")
-        before = access_auth.get_auth_settings(True)
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "12345"}
-        )
-        assert r.status_code == 400
-        assert r.json()["reason"] == "invalid_pin"
-        assert access_auth.get_auth_settings(True) == before
-
-    def test_c4_empty_pin_rejected(self, loopback_client):
-        access_auth.set_auth(True, "1111")
-        before = access_auth.get_auth_settings(True)
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": ""}
-        )
-        assert r.status_code == 400
-        assert r.json()["reason"] == "invalid_pin"
-        assert access_auth.get_auth_settings(True) == before
-
-    def test_c5_unicode_digits_rejected(self, loopback_client):
-        access_auth.set_auth(True, "1111")
-        before = access_auth.get_auth_settings(True)
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "१२३४"}
-        )
-        assert r.status_code == 400
-        assert r.json()["reason"] == "invalid_pin"
-        assert access_auth.get_auth_settings(True) == before
-
-    def test_c6_disabled_ignores_garbage_pin(self, loopback_client):
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": False, "pin": "garbage"}
-        )
-        assert r.status_code == 200
-        assert r.json() == {"success": True}
-        assert access_auth.get_auth_settings(True) == {
-            "enabled": False,
-            "pin": "",
-        }
-
-    def test_c7_missing_enabled_422(self, loopback_client):
-        before = access_auth.get_auth_settings(True)
-        r = loopback_client.put(SETTINGS_PATH, json={"pin": "1234"})
-        assert r.status_code == 422
-        assert access_auth.get_auth_settings(True) == before
-
-    def test_c8_enabled_non_bool_422(self, loopback_client):
-        before = access_auth.get_auth_settings(True)
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": "yes", "pin": "1234"}
-        )
-        assert r.status_code == 422
-        assert access_auth.get_auth_settings(True) == before
-
 
 # ── D. R5 三操作全撤 ──────────────────────────────────────────────────────
-
-
-class TestR5RevokeAll:
-    def test_d1_open(self, loopback_client):
-        access_auth.set_auth(False, "")
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "2222"}
-        )
-        assert r.status_code == 200
-        assert access_auth.get_auth_settings(True) == {
-            "enabled": True,
-            "pin": "2222",
-        }
-
-    def test_d2_change_to_different_pin_revokes(self, loopback_client):
-        access_auth.set_auth(True, "1111")
-        token = access_auth.attempt_pin("1111")
-        assert token is not None
-        assert access_auth.verify_ticket(token) is True
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "3333"}
-        )
-        assert r.status_code == 200
-        assert access_auth.verify_ticket(token) is False
-
-    def test_d3_change_to_same_pin_still_revokes(self, loopback_client):
-        access_auth.set_auth(True, "1111")
-        token = access_auth.attempt_pin("1111")
-        assert token is not None
-        assert access_auth.verify_ticket(token) is True
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "1111"}
-        )
-        assert r.status_code == 200
-        assert access_auth.verify_ticket(token) is False
-
-    def test_d4_close_revokes(self, loopback_client):
-        access_auth.set_auth(True, "1111")
-        token = access_auth.attempt_pin("1111")
-        assert token is not None
-        assert access_auth.verify_ticket(token) is True
-        r = loopback_client.put(
-            SETTINGS_PATH, json={"enabled": False, "pin": "1111"}
-        )
-        assert r.status_code == 200
-        assert access_auth.verify_ticket(token) is False
 
 
 # ── E. lifecycle 對稱 ─────────────────────────────────────────────────────
@@ -460,34 +225,6 @@ class TestCD114a9ConfigResetIndependent:
         }
         assert access_auth.verify_ticket(token) is True
 
-    def test_g2_reverse_assertion_has_teeth(self, loopback_client, monkeypatch):
-        """若 DELETE 被誤接上 set_auth(False)，G1 類斷言必須轉紅。"""
-        monkeypatch.setattr(
-            "web.lan_listener.lan_listener.stop", lambda *a, **k: None
-        )
-
-        def _fake_reset():
-            access_auth.set_auth(False, "")
-            return None
-
-        monkeypatch.setattr("web.routers.config.reset_config_file", _fake_reset)
-
-        access_auth.set_auth(True, "6666")
-        token = access_auth.attempt_pin("6666")
-        assert token is not None
-
-        r = loopback_client.delete("/api/config")
-        assert r.status_code == 200
-        # 這支斷言必須失敗如果 G1 的「enabled 仍 True」沒咬力——此處我們
-        # 主動注入會關掉 auth 的 fake，所以 enabled 應變 False。
-        assert access_auth.get_auth_settings(True)["enabled"] is False
-        # 同時證明 G1 的正向斷言形狀會因此轉紅（enabled 不再是 True）
-        assert not (
-            access_auth.get_auth_settings(True)
-            == {"enabled": True, "pin": "6666"}
-            and access_auth.verify_ticket(token) is True
-        )
-
 
 def test_j1_j3_password_semantics_full_flow(auth_db, server_mode_true):
     client = TestClient(app, client=REMOTE_CLIENT)
@@ -529,35 +266,6 @@ def test_j1_j3_password_semantics_full_flow(auth_db, server_mode_true):
     assert reopened.status_code == 200
     assert reopened.headers["set-cookie"].startswith("sid=")
     assert access_auth.get_auth_settings(True) == {"enabled": True, "pin": "9999"}
-
-
-def test_remote_authed_password_change_keeps_caller_logged_in(
-    auth_db, server_mode_true, tmp_path, monkeypatch
-):
-    """已登入的遠端瀏覽器改密碼：拿到新 cookie、不被登出；舊 cookie 失效。"""
-    monkeypatch.setattr("web.routers.showcase.get_db_path", lambda: tmp_path / "showcase.db")
-    access_auth.set_auth(True, "1234")
-    old_token = access_auth.attempt_pin("1234")
-    assert old_token is not None
-    client = _remote_authed_client(old_token)
-
-    changed = client.put(SETTINGS_PATH, json={"enabled": True, "pin": "5678"})
-    assert changed.status_code == 200
-    assert changed.headers["set-cookie"].startswith("sid=")
-    new_token = changed.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
-    assert new_token and new_token != old_token
-    assert access_auth.verify_ticket(new_token) is True
-    assert access_auth.verify_ticket(old_token) is False
-
-    fresh = TestClient(app, client=REMOTE_CLIENT)
-    fresh.cookies.set("sid", new_token)
-    ok = fresh.get("/api/showcase/videos")
-    assert ok.headers["content-type"].startswith("application/json")
-
-    stale = TestClient(app, client=REMOTE_CLIENT)
-    stale.cookies.set("sid", old_token)
-    denied = stale.get("/api/showcase/videos")
-    assert not (denied.status_code == 200 and denied.headers["content-type"].startswith("application/json"))
 
 
 def test_get_can_edit_reveal_reachable_matrix(

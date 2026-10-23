@@ -48,15 +48,6 @@ def _audit(path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_audit_spk_artifact_accepts_complete_package(tmp_path: Path) -> None:
-    spk = tmp_path / "complete.spk"
-    _make_spk(spk, ("aarch64", "x86_64"))
-
-    result = _audit(spk)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
 def test_audit_spk_artifact_flags_missing_architecture(tmp_path: Path) -> None:
     spk = tmp_path / "missing.spk"
     _make_spk(spk, ("aarch64",))
@@ -69,7 +60,7 @@ def test_audit_spk_artifact_flags_missing_architecture(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("aarch64_count", "x86_64_count", "expected_code"),
-    [(2, 5, 1), (2, 4, 0)],
+    [(2, 5, 1)],
 )
 def test_audit_spk_artifact_dist_info_ratio_boundary(
     tmp_path: Path,

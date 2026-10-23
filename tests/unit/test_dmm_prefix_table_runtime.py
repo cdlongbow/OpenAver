@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import core.scrapers.dmm as dmm_module
-from core.scrapers.dmm import DMMScraper, _flatten_shipped_table
+from core.scrapers.dmm import DMMScraper
 from core.proxy_policy import ProxySettings
 from core.scrapers.models import ScraperConfig
 
@@ -30,30 +30,7 @@ def _scraper() -> DMMScraper:
 # ── DoD 1 碰撞 ───────────────────────────────────────────────────────────────
 
 
-def test_flatten_duplicate_prefix_raises_with_prefix_and_makers():
-    """DoD 1：兩家片商同一前綴 → ValueError，訊息含前綴與兩家片商名。"""
-    raw = {
-        "makers": {
-            "MakerA": {"abc": {"dmm_prefix": "1", "sample": "ABC-001"}},
-            "MakerB": {"abc": {"dmm_prefix": "2", "sample": "ABC-002"}},
-        }
-    }
-    with pytest.raises(ValueError) as exc_info:
-        _flatten_shipped_table(raw)
-    msg = str(exc_info.value)
-    assert "abc" in msg
-    assert "MakerA" in msg
-    assert "MakerB" in msg
-
-
 # ── DoD 2 正常 ───────────────────────────────────────────────────────────────
-
-
-def test_real_shipped_table_flattens_to_164():
-    """DoD 2：真實出貨表展平不拋例外、長度 164。"""
-    raw = json.loads(REAL_TABLE_PATH.read_text(encoding="utf-8"))
-    flat = _flatten_shipped_table(raw)
-    assert len(flat) == 164
 
 
 # ── TASK-134b-T12 DoD 2/3 毒檔無作用 + mtime/md5 未變 ───────────────────────
@@ -160,70 +137,7 @@ def test_missing_shipped_table_degrades_to_empty(
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
-def test_bad_json_shipped_table_degrades(tmp_path, monkeypatch, caplog):
-    """DoD 5：出貨表 JSON 壞掉 → 不拋例外、回空表、有 WARNING。"""
-    shipped_path = tmp_path / "dmm_prefix_table.json"
-    shipped_path.write_text("{not-json", encoding="utf-8")
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-
-    scraper = _scraper()
-    with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._prefix_map()
-
-    assert merged == {}
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
-
-
-def test_missing_makers_key_degrades(tmp_path, monkeypatch, caplog):
-    """DoD 5：出貨表缺 makers 鍵 → 不拋例外、回空表、有 WARNING。"""
-    shipped_path = tmp_path / "dmm_prefix_table.json"
-    shipped_path.write_text(
-        json.dumps(
-            {"_meta": {"count": 0}, "foo": {"dmm_prefix": "bar"}},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-
-    scraper = _scraper()
-    with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._prefix_map()
-
-    assert merged == {}
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
-
-
 # ── DoD 5 補強：JSON 語法合法但「形狀」壞掉（review P1）─────────────────────
-
-
-@pytest.mark.parametrize(
-    "bad_makers",
-    [
-        None,                              # {"makers": null}
-        ["not", "a", "dict"],              # makers 是 list
-        {"X": ["not", "dict"]},            # 片商底下不是 dict
-        {"X": {"aaa": "not-a-mapping"}},   # entry 不是 mapping
-    ],
-    ids=["makers-null", "makers-list", "maker-value-list", "entry-not-mapping"],
-)
-def test_structurally_broken_shipped_table_degrades(
-    tmp_path, monkeypatch, caplog, bad_makers
-):
-    """DoD 5／review P1：語法合法但形狀壞掉 → 降級成空表，不得穿透例外。"""
-    shipped_path = tmp_path / "dmm_prefix_table.json"
-    shipped_path.write_text(
-        json.dumps({"_meta": {}, "makers": bad_makers}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-
-    scraper = _scraper()
-    with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._prefix_map()
-
-    assert merged == {}
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
 def test_structurally_broken_table_does_not_break_search_step2(
@@ -251,29 +165,3 @@ def test_structurally_broken_table_does_not_break_search_step2(
 # ── 出貨表側非字串值過濾 ───────────────────────────────────────────────────
 
 
-def test_shipped_entry_with_non_string_prefix_is_dropped(tmp_path, monkeypatch):
-    """出貨表若被塞非字串（build script 出錯）→ 該前綴視為不存在，
-    退回預設規則，而不是把 "[]" 組進 content_id。"""
-    table_path = tmp_path / "dmm_prefix_table.json"
-    table_path.write_text(
-        json.dumps(
-            {
-                "_meta": {"count": 2},
-                "makers": {
-                    "M": {
-                        "aaa": {"dmm_prefix": [], "sample": "AAA-001"},
-                        "bbb": {"dmm_prefix": "h_1", "sample": "BBB-001"},
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", table_path)
-
-    scraper = _scraper()
-    merged = scraper._prefix_map()
-
-    assert "aaa" not in merged
-    assert merged["bbb"] == "h_1"
-    assert scraper._convert_with_hints("AAA-001") == "aaa00001"

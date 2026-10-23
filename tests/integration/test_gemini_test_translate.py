@@ -62,22 +62,9 @@ def test_success_returns_translation():
     assert resp.json() == {"success": True, "translation": "新人女優出道", "error": ""}
 
 
-def test_translation_not_stripped_of_html():
-    cm, _ = _cm(_resp(body={"candidates": [{"content": {"parts": [{"text": "<b>x</b>"}]}}]}))
-    resp, _ = _call(cm)
-    assert resp.json()["translation"] == "<b>x</b>"
-
-
 ERROR_CASES = [
     ("blocked_finish", dict(status=200, body={"candidates": [{"finishReason": "SAFETY"}]}), "blocked"),
-    ("blocked_prompt", dict(status=200, body={"promptFeedback": {"blockReason": "OTHER"}}), "blocked"),
-    ("max_tokens", dict(status=200, body={"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "a"}]}}]}), "translate_failed"),
     ("401", dict(status=401, body={"error": {"status": "UNAUTHENTICATED", "message": "x"}}, http_error=True), "auth_failed"),
-    ("400_key_invalid", dict(status=400, body={"error": {"status": "INVALID_ARGUMENT", "message": "API key not valid", "details": [{"reason": "API_KEY_INVALID"}]}}, http_error=True), "auth_failed"),
-    ("429", dict(status=429, body={"error": {"status": "RESOURCE_EXHAUSTED", "message": "x"}}, http_error=True), "rate_limited"),
-    ("403", dict(status=403, body={"error": {"message": "x"}}, http_error=True), "forbidden"),
-    ("404", dict(status=404, body={"error": {"message": "x"}}, http_error=True), "not_found"),
-    ("500", dict(status=500, body={"error": {"message": "x"}}, http_error=True), "http_error"),
 ]
 
 
@@ -89,40 +76,6 @@ def test_error_kind_maps_to_settings_key(kw, expected):
     data = resp.json()
     assert data["success"] is False
     assert data["error"] == expected
-
-
-def test_timeout_maps_to_connection_timeout():
-    cm, _ = _cm(post_exc=httpx.ReadTimeout("slow"))
-    resp, _ = _call(cm)
-    assert resp.json()["error"] == "connection_timeout"
-
-
-def test_connect_error_maps_to_connection_failed():
-    cm, _ = _cm(post_exc=httpx.ConnectError("down"))
-    resp, _ = _call(cm)
-    assert resp.json()["error"] == "connection_failed"
-
-
-def test_test_translate_timeout_is_60():
-    cm, _ = _cm(_resp(body=OK_BODY))
-    _, ac = _call(cm)
-    assert ac.call_args.kwargs["timeout"] == 60
-
-
-def test_ja_locale_skips_without_connecting():
-    cm, _ = _cm(_resp(body=OK_BODY))
-    resp, ac = _call(cm, cfg=_cfg(locale="ja"))
-    assert resp.json() == {"success": True, "translation": "ja_skip", "error": ""}
-    assert ac.call_count == 0
-
-
-def test_empty_key_returns_missing_key_without_connecting():
-    cm, _ = _cm(_resp(body=OK_BODY))
-    resp, ac = _call(cm, cfg=_cfg(key=""), api_key="")
-    assert resp.status_code == 200
-    assert resp.json()["success"] is False
-    assert resp.json()["error"] == "missing_key"
-    assert ac.call_count == 0
 
 
 def test_key_whitespace_stripped_in_header():

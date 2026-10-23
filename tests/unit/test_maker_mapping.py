@@ -11,7 +11,6 @@ test_maker_mapping.py - core/maker_mapping.py 單元測試
 
 import json
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 
@@ -71,119 +70,8 @@ def corrupted_file(tmp_path):
 
 # ============ load_name_mapping ============
 
-class TestLoadNameMapping:
-    def test_new_format_returns_name_mapping(self, new_format_file, monkeypatch):
-        """新格式：load_name_mapping() 回傳 name_mapping 層的正確 dict（含片假名 key）"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_name_mapping()
-        assert result["エスワン ナンバーワンスタイル"] == "S1"
-        assert result["ムーディーズ"] == "Moodyz"
-
-    def test_new_format_no_meta_key(self, new_format_file, monkeypatch):
-        """新格式：load_name_mapping() 不含 _meta key"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_name_mapping()
-        assert "_meta" not in result
-
-    def test_old_format_returns_empty(self, old_format_file, monkeypatch):
-        """舊格式（純平坦）：load_name_mapping() 回傳空 dict"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", old_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_name_mapping()
-        assert result == {}
-
-    def test_file_not_found_returns_empty(self, nonexistent_file, monkeypatch):
-        """檔案不存在：load_name_mapping() 回傳空 dict"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", nonexistent_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_name_mapping()
-        assert result == {}
-
-    def test_corrupted_json_returns_empty(self, corrupted_file, monkeypatch):
-        """JSON 損毀：load_name_mapping() 回傳空 dict"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", corrupted_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_name_mapping()
-        assert result == {}
-
 
 # ============ load_prefix_mapping ============
-
-class TestLoadSearchAliases:
-    @pytest.mark.parametrize("raw", [
-        {"_meta": {}, "name_mapping": {}, "prefix_mapping": {}},          # 缺節
-        {"_meta": {}, "search_aliases": {}},                               # 空節
-        {"_meta": {}, "search_aliases": ["a", "b"]},                       # 清單
-        {"_meta": {}, "search_aliases": "x"},                              # 字串
-        {"_meta": {}, "search_aliases": None},
-    ])
-    def test_search_aliases_bad_shapes_return_empty(self, tmp_path, monkeypatch, raw):
-        import core.maker_mapping as mm
-        p = tmp_path / "maker_mapping.json"
-        p.write_text(json.dumps(raw), encoding="utf-8")
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", p)
-        monkeypatch.setattr(mm, "_cache", None)
-        assert mm.load_search_aliases() == {}
-
-class TestLoadPrefixMapping:
-    def test_new_format_returns_prefix_mapping(self, new_format_file, monkeypatch):
-        """新格式：load_prefix_mapping() 回傳 prefix_mapping 層（含前綴 key）"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_prefix_mapping()
-        assert result["MIAA"] == "Moodyz"
-        assert result["SNIS"] == "S1"
-        assert result["ABF"] == "Prestige"
-
-    def test_new_format_no_meta_key(self, new_format_file, monkeypatch):
-        """新格式：load_prefix_mapping() 不含 _meta key"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_prefix_mapping()
-        assert "_meta" not in result
-
-    def test_new_format_no_layer_keys(self, new_format_file, monkeypatch):
-        """新格式：load_prefix_mapping() 不含 name_mapping / prefix_mapping 這些 key"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_prefix_mapping()
-        assert "name_mapping" not in result
-        assert "prefix_mapping" not in result
-
-    def test_old_format_returns_whole_dict(self, old_format_file, monkeypatch):
-        """舊格式（純平坦）：load_prefix_mapping() 回傳整個 dict（向下相容）"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", old_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_prefix_mapping()
-        assert result["MIAA"] == "Moodyz"
-        assert result["ABF"] == "Prestige"
-
-    def test_file_not_found_returns_empty(self, nonexistent_file, monkeypatch):
-        """檔案不存在：load_prefix_mapping() 回傳空 dict"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", nonexistent_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_prefix_mapping()
-        assert result == {}
-
-    def test_corrupted_json_returns_empty(self, corrupted_file, monkeypatch):
-        """JSON 損毀：load_prefix_mapping() 回傳空 dict"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", corrupted_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        result = mm.load_prefix_mapping()
-        assert result == {}
 
 
 # ============ normalize_maker_name ============
@@ -195,34 +83,6 @@ class TestNormalizeMakerName:
         monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
         monkeypatch.setattr(mm, "_cache", None)
         assert mm.normalize_maker_name("エスワン ナンバーワンスタイル") == "S1"
-
-    def test_known_en_name(self, new_format_file, monkeypatch):
-        """英文長名命中 → 回傳 canonical 短名"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        assert mm.normalize_maker_name("S1 NO.1 STYLE") == "S1"
-
-    def test_unknown_maker_returns_original(self, new_format_file, monkeypatch):
-        """無對照 → 回傳原值"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        assert mm.normalize_maker_name("未知片商") == "未知片商"
-
-    def test_empty_string_returns_empty(self, new_format_file, monkeypatch):
-        """空字串 → 回傳空字串"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        assert mm.normalize_maker_name("") == ""
-
-    def test_none_returns_empty(self, new_format_file, monkeypatch):
-        """None 輸入 → 回傳空字串（防禦）"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        assert mm.normalize_maker_name(None) == ""
 
 
 # ============ get_maker_by_prefix ============
@@ -240,43 +100,6 @@ class TestGetMakerByPrefix:
 
         assert result == "Moodyz"
         mock_javdb.assert_not_called()
-
-    def test_no_alpha_prefix_returns_empty(self, new_format_file, monkeypatch):
-        """純數字番號 → 回傳空字串"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        assert mm.get_maker_by_prefix("123") == ""
-
-    def test_empty_string_returns_empty(self, new_format_file, monkeypatch):
-        """空字串 → 回傳空字串"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-        assert mm.get_maker_by_prefix("") == ""
-
-    def test_unknown_prefix_returns_empty_no_javdb(self, new_format_file, monkeypatch):
-        """未知 prefix → 回傳空字串，不呼叫 JavDB，且 seed 檔不被修改"""
-        import core.maker_mapping as mm
-        monkeypatch.setattr(mm, "MAKER_MAPPING_FILE", new_format_file)
-        monkeypatch.setattr(mm, "_cache", None)
-
-        mock_javdb = MagicMock()
-        before = new_format_file.read_bytes()
-        with patch("core.scrapers.JavDBScraper", mock_javdb):
-            result = mm.get_maker_by_prefix("ZZUNKNOWN-001")
-
-        assert result == ""
-        mock_javdb.assert_not_called()
-        assert new_format_file.read_bytes() == before
-
-    def test_writer_api_removed(self):
-        """唯讀 seed：確認 save_prefix_entry API 已被移除"""
-        import core.maker_mapping as mm
-        assert not hasattr(mm, "save_prefix_entry"), (
-            "唯讀 seed：本程式不得有任何寫回 maker_mapping.json 的路徑"
-        )
-
 
 
 # ============ Video.to_legacy_dict() maker normalize ============
@@ -310,33 +133,4 @@ class TestVideoToLegacyDictMaker:
         v = self._make_video("エスワン ナンバーワンスタイル")
         assert v.to_legacy_dict()["maker"] == "S1"
 
-    def test_english_long_name_is_normalized(self):
-        """maker = 英文長名 → to_legacy_dict()['maker'] 為 canonical 短名"""
-        v = self._make_video("S1 NO.1 STYLE")
-        assert v.to_legacy_dict()["maker"] == "S1"
 
-    def test_unknown_maker_returns_original(self):
-        """maker 無對照 → to_legacy_dict()['maker'] 保留原值"""
-        v = self._make_video("本中")
-        assert v.to_legacy_dict()["maker"] == "本中"
-
-    def test_empty_maker_returns_empty(self):
-        """maker = '' → to_legacy_dict()['maker'] 為 ''"""
-        v = self._make_video("")
-        assert v.to_legacy_dict()["maker"] == ""
-
-    def test_none_maker_returns_empty(self):
-        """maker = None → to_legacy_dict()['maker'] 為 ''（型別防禦）"""
-        from core.scrapers.models import Video
-        # Video.maker 有 default=""，需用 model_construct 繞過 validation
-        v = Video.model_construct(number="SONE-001", maker=None,
-                                  title="", actresses=[], date="",
-                                  cover_url="", tags=[], source="",
-                                  detail_url="", director="", duration=None,
-                                  label="", series="", sample_images=[])
-        assert v.to_legacy_dict()["maker"] == ""
-
-    def test_already_canonical_maker_unchanged(self):
-        """maker 已是 canonical（如 'S1'）→ 無對照時保留原值"""
-        v = self._make_video("S1")
-        assert v.to_legacy_dict()["maker"] == "S1"

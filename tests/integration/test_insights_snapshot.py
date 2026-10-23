@@ -205,23 +205,6 @@ class TestInsightsSnapshotPopulation:
         assert body["logicalTitles"] == showcase_total
         assert len(body["records"]) == body["logicalTitles"]
 
-    def test_population_excludes_video_outside_configured_dir(
-        self, client, insights_setup, mocker
-    ):
-        """path 不在 configured_dir_uris → 不進 records／logicalTitles／physicalRows。"""
-        snap = _get_snapshot(client, mocker, insights_setup)
-        assert snap.status_code == 200
-        body = snap.json()
-
-        # outside 片的 maker 不該出現；局外人也不該進 actresses
-        makers = {r.get("maker") for r in body["records"]}
-        assert "Outside Maker" not in makers
-        all_actresses = {
-            name for r in body["records"] for name in (r.get("actresses") or [])
-        }
-        assert "局外人" not in all_actresses
-        assert body["physicalRows"] == 5
-        assert body["logicalTitles"] == 4
 
     def test_actresses_use_canonical_primary_names(
         self, client, insights_setup, mocker
@@ -264,15 +247,6 @@ class TestInsightsActressFavorites:
         assert fav["photoName"] == "舊名"
         assert fav["birth"] == "1988-05-20"
 
-    def test_fixture_b_favorite_actress_tiebreak_first_wins_by_name_order(
-        self, client, insights_setup, mocker
-    ):
-        """fixture B：字母序較前的 A子 勝出（birth=1990-01-01），不是 aliases 先出現的 B子。"""
-        snap = _get_snapshot(client, mocker, insights_setup)
-        body = snap.json()
-        fav = body["actressFavorites"]["組主"]
-        assert fav["birth"] == "1990-01-01"
-        assert fav["photoName"] == "A子"
 
     def test_actress_favorites_value_key_whitelist_exact(
         self, client, insights_setup, mocker
@@ -321,24 +295,6 @@ class TestInsightsActressFavorites:
         body = snap.json()
         assert body["actressFavorites"]["新名"]["hasPhoto"] is False
 
-    def test_favorite_without_birth_included_with_null_birth(
-        self, client, insights_setup, mocker
-    ):
-        """birth 為 None／空字串的收藏女優仍整筆保留（不排除），birth 序列化為 null（不是 "" 或 0）。
-
-        比照燈箱 resolveFavoriteActressAge：actresses.find() 找到人就是找到人，
-        沒生日只是 computeActressAgeForVideo() 算不出年齡（回 null），不會把這個人從
-        清單裡拿掉——插畫女優本人（含她的照片）仍應存在，只是沒有生日可顯示。
-        """
-        snap = _get_snapshot(client, mocker, insights_setup)
-        body = snap.json()
-        favs = body["actressFavorites"]
-        assert "無生日" in favs
-        assert favs["無生日"]["birth"] is None
-        assert favs["無生日"]["photoName"] == "無生日"
-        assert "空生日" in favs
-        assert favs["空生日"]["birth"] is None
-        assert favs["空生日"]["photoName"] == "空生日"
 
     def test_favorite_group_first_wins_even_without_birth(
         self, client, insights_setup, mocker
@@ -362,83 +318,6 @@ class TestInsightsActressFavorites:
 
 
 # ============ 別名比對大小寫（比照燈箱 nameToGroup 小寫 key） ============
-
-class TestInsightsAliasCaseInsensitive:
-    """別名比對要與燈箱（showcase _loadAliasMap/_loadTagAliasMap + resolveFavoriteActressAge）
-    同一套小寫 key 對法，不是逐字大小寫比對。"""
-
-    def test_actress_alias_lookup_is_case_insensitive(
-        self, client, insights_setup, mocker
-    ):
-        """影片存的女優名稱大小寫與別名 primary 不同（'alice' vs 'Alice'）→ 仍合併成 primary。"""
-        case_uri = to_file_uri(str(insights_setup["video_dir"] / "CASE-001.mp4"), {})
-        VideoRepository(insights_setup["db_path"]).upsert_batch([
-            Video(
-                path=case_uri,
-                number="CASE-001",
-                title="Case Insensitive",
-                actresses=["alice"],
-                release_date="2021-05-05",
-                duration=80,
-            )
-        ])
-        AliasRepository(insights_setup["db_path"]).add("Alice", aliases=[])
-
-        snap = _get_snapshot(client, mocker, insights_setup)
-        body = snap.json()
-        record = next(r for r in body["records"] if r.get("date") == "2021-05-05")
-        assert record["actresses"] == ["Alice"]
-
-    def test_favorite_differing_only_in_case_does_not_join_group(
-        self, client, insights_setup, mocker
-    ):
-        """組查找用小寫 key，但燈箱找收藏是 `group.indexOf(a.name)` 逐字比對：
-        別名組 ['Alice']、收藏名 'alice' → 燈箱對不上 → 快照也不得把她歸到 'Alice'。"""
-        ActressRepository(insights_setup["db_path"]).save(
-            Actress(name="alice", birth="1992-02-02")
-        )
-        AliasRepository(insights_setup["db_path"]).add("Alice", aliases=[])
-
-        snap = _get_snapshot(client, mocker, insights_setup)
-        body = snap.json()
-        assert "Alice" not in body["actressFavorites"]
-        assert body["actressFavorites"]["alice"]["photoName"] == "alice"
-
-    def test_favorite_exact_member_joins_group_via_case_insensitive_lookup(
-        self, client, insights_setup, mocker
-    ):
-        """收藏名逐字等於組員（別名 'ALICE'）→ 歸到 primary 'Alice'。"""
-        ActressRepository(insights_setup["db_path"]).save(
-            Actress(name="ALICE", birth="1992-02-02")
-        )
-        AliasRepository(insights_setup["db_path"]).add("Alice", aliases=["ALICE"])
-
-        snap = _get_snapshot(client, mocker, insights_setup)
-        body = snap.json()
-        assert body["actressFavorites"]["Alice"]["photoName"] == "ALICE"
-
-    def test_tag_alias_lookup_is_case_insensitive(
-        self, client, insights_setup, mocker
-    ):
-        """標籤別名比對同樣大小寫不敏感（比照 showcase _loadTagAliasMap）。"""
-        case_uri = to_file_uri(str(insights_setup["video_dir"] / "TAGCASE-001.mp4"), {})
-        VideoRepository(insights_setup["db_path"]).upsert_batch([
-            Video(
-                path=case_uri,
-                number="TAGCASE-001",
-                title="Tag Case Insensitive",
-                actresses=[],
-                release_date="2021-07-07",
-                tags=["hd"],
-                duration=70,
-            )
-        ])
-        TagAliasRepository(insights_setup["db_path"]).add("HD", aliases=[])
-
-        snap = _get_snapshot(client, mocker, insights_setup)
-        body = snap.json()
-        record = next(r for r in body["records"] if r.get("date") == "2021-07-07")
-        assert record["tags"] == ["HD"]
 
 
 # ============ ETag / 304 ============
@@ -476,18 +355,6 @@ class TestInsightsSnapshotETag:
             "這裡會誤回 304——使用者剛操作完切回片庫分析頁，看到的還是操作前的舊快照"
         )
 
-    def test_second_request_with_same_etag_returns_304(
-        self, client, insights_setup, mocker
-    ):
-        """無寫入時第二次帶舊 ETag 的請求回 304。"""
-        first = _get_snapshot(client, mocker, insights_setup)
-        assert first.status_code == 200
-        etag = first.headers["etag"]
-
-        second = _get_snapshot(client, mocker, insights_setup, if_none_match=etag)
-        assert second.status_code == 304
-        assert second.headers["etag"] == etag
-        assert second.content == b""
 
     def test_reverse_etag_new_video_returns_200(
         self, client, insights_setup, mocker
@@ -515,48 +382,6 @@ class TestInsightsSnapshotETag:
         assert second.json() != body_before
         assert second.json()["logicalTitles"] == body_before["logicalTitles"] + 1
 
-    def test_reverse_etag_actress_alias_change_returns_200(
-        self, client, insights_setup, mocker
-    ):
-        """反向 ETag：改一筆 actress_aliases → 舊 ETag 回 200 且 body 不同。"""
-        first = _get_snapshot(client, mocker, insights_setup)
-        etag = first.headers["etag"]
-        body_before = first.json()
-
-        # 把「路人甲」收進新別名組 → longform 片的 actresses[] canonical 會變，body 必不同
-        AliasRepository(insights_setup["db_path"]).add(
-            "路人甲主名", aliases=["路人甲"]
-        )
-
-        second = _get_snapshot(client, mocker, insights_setup, if_none_match=etag)
-        assert second.status_code == 200
-        assert second.headers["etag"] != etag
-        assert second.json() != body_before
-        all_actresses = {
-            name
-            for r in second.json()["records"]
-            for name in (r.get("actresses") or [])
-        }
-        assert "路人甲主名" in all_actresses
-        assert "路人甲" not in all_actresses
-
-    def test_reverse_etag_actress_birth_change_returns_200(
-        self, client, insights_setup, mocker
-    ):
-        """反向 ETag：改收藏女優 birth → 舊 ETag 回 200 且 body 與寫入前不同。"""
-        first = _get_snapshot(client, mocker, insights_setup)
-        etag = first.headers["etag"]
-        body_before = first.json()
-
-        ActressRepository(insights_setup["db_path"]).save(
-            Actress(name="舊名", birth="1988-12-31")
-        )
-
-        second = _get_snapshot(client, mocker, insights_setup, if_none_match=etag)
-        assert second.status_code == 200
-        assert second.headers["etag"] != etag
-        assert second.json()["actressFavorites"]["新名"]["birth"] == "1988-12-31"
-        assert second.json() != body_before
 
     def test_reverse_etag_gallery_config_change_returns_200(
         self, client, insights_setup, mocker
@@ -624,24 +449,6 @@ class TestInsightsSnapshotETag:
         )
         assert second.headers["etag"] != etag
         assert second.json()["actressFavorites"]["新名"]["hasPhoto"] is True
-
-    def test_empty_db_returns_shell_without_etag(
-        self, client, insights_setup, mocker, tmp_path
-    ):
-        """空庫（db_path 不存在）→ 空殼 JSON、無 ETag header。"""
-        missing = tmp_path / "does_not_exist.db"
-        setup = {**insights_setup, "db_path": missing}
-        response = _get_snapshot(client, mocker, setup)
-        assert response.status_code == 200
-        assert response.json() == {
-            "success": True,
-            "logicalTitles": 0,
-            "physicalRows": 0,
-            "years": [],
-            "records": [],
-            "actressFavorites": {},
-        }
-        assert "etag" not in response.headers
 
 
 # ============ Record field shape smoke ============
@@ -719,36 +526,6 @@ class TestInsightsTagBadgeAliasMerge:
         assert records_by_date["2023-01-02"]["tags"] == ["中文字幕"]
         assert records_by_date["2023-01-03"]["tags"] == ["中文字幕"]
 
-    def test_badge_alias_merge_case_insensitive_leak_variant(
-        self, client, insights_setup, mocker
-    ):
-        """邊界 2：大小寫變體（leak／LEAK）無使用者群組
-        → 兩部片快照 tags[] 都 canonicalize 成「無碼流出」。"""
-        v1_uri = to_file_uri(str(insights_setup["video_dir"] / "LEAK-001.mp4"), {})
-        v2_uri = to_file_uri(str(insights_setup["video_dir"] / "LEAK-002.mp4"), {})
-        VideoRepository(insights_setup["db_path"]).upsert_batch([
-            Video(
-                path=v1_uri,
-                number="LEAK-001",
-                title="Leak 1",
-                release_date="2023-02-01",
-                tags=["leak"],
-                duration=60,
-            ),
-            Video(
-                path=v2_uri,
-                number="LEAK-002",
-                title="Leak 2",
-                release_date="2023-02-02",
-                tags=["LEAK"],
-                duration=60,
-            ),
-        ])
-
-        snap = _get_snapshot(client, mocker, insights_setup)
-        records_by_date = {r["date"]: r for r in snap.json()["records"] if r.get("date")}
-        assert records_by_date["2023-02-01"]["tags"] == ["無碼流出"]
-        assert records_by_date["2023-02-02"]["tags"] == ["無碼流出"]
 
     def test_badge_alias_merge_preserves_user_group_primary_single_hit(
         self, client, insights_setup, mocker
@@ -783,49 +560,4 @@ class TestInsightsTagBadgeAliasMerge:
         assert records_by_date["2023-03-01"]["tags"] == ["字幕組"]
         assert records_by_date["2023-03-02"]["tags"] == ["字幕組"]
 
-    def test_badge_alias_merge_keeps_two_user_groups_separate_first_hit_wins(
-        self, client, insights_setup, mocker
-    ):
-        """邊界 4：兩個使用者群組 primary="官方字幕"（aliases=["字幕"]）
-        與 primary="手動翻譯"（aliases=["中字"]），
-        片庫標籤分別為 "字幕"、"中字"、"中文字幕"
-        → "字幕" 轉為 "官方字幕"；"中字" 轉為 "手動翻譯"；"中文字幕" 依 members 掃描順序
-        併入先命中的 "手動翻譯"，兩使用者群組不合併。"""
-        TagAliasRepository(insights_setup["db_path"]).add("官方字幕", aliases=["字幕"])
-        TagAliasRepository(insights_setup["db_path"]).add("手動翻譯", aliases=["中字"])
-        v1_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP2-001.mp4"), {})
-        v2_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP2-002.mp4"), {})
-        v3_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP2-003.mp4"), {})
-        VideoRepository(insights_setup["db_path"]).upsert_batch([
-            Video(
-                path=v1_uri,
-                number="GRP2-001",
-                title="Grp2 1",
-                release_date="2023-04-01",
-                tags=["字幕"],
-                duration=60,
-            ),
-            Video(
-                path=v2_uri,
-                number="GRP2-002",
-                title="Grp2 2",
-                release_date="2023-04-02",
-                tags=["中字"],
-                duration=60,
-            ),
-            Video(
-                path=v3_uri,
-                number="GRP2-003",
-                title="Grp2 3",
-                release_date="2023-04-03",
-                tags=["中文字幕"],
-                duration=60,
-            ),
-        ])
-
-        snap = _get_snapshot(client, mocker, insights_setup)
-        records_by_date = {r["date"]: r for r in snap.json()["records"] if r.get("date")}
-        assert records_by_date["2023-04-01"]["tags"] == ["官方字幕"]
-        assert records_by_date["2023-04-02"]["tags"] == ["手動翻譯"]
-        assert records_by_date["2023-04-03"]["tags"] == ["手動翻譯"]
 

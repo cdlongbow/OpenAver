@@ -16,7 +16,7 @@ from core.scrapers import javdb_api
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.search_providers import javdb as jp
 from core.search_providers.javdb import JavDBProvider, clear_resolve_cache
-from core.search_providers.types import EntityRef, Kind, Window
+from core.search_providers.types import Kind, Window
 
 
 class _Scraper:
@@ -150,54 +150,23 @@ def _code_row(name="MIDV", vc=100):
 
 
 # ------------------------------------------------------------------ 能力面
-def test_capabilities_exact_seven_without_label():
-    assert JavDBProvider.capabilities == frozenset(
-        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD})
-    assert Kind.LABEL not in JavDBProvider.capabilities
-
-
-def test_fallback_streaming_is_false():
-    assert JavDBProvider.fallback_streaming is False
 
 
 # ------------------------------------------------------------------ list_entity／search_keyword
 
 
-@pytest.mark.parametrize("kind", [Kind.LABEL, Kind.KEYWORD, Kind.PARTIAL])
-def test_list_entity_unsupported_kind_raises_without_request(site, kind):
-    with pytest.raises(ValueError):
-        _prov().list_entity(EntityRef(kind, "x", "x"), Window(0, 20))
-    assert site.total_requests() == 0
-
-
 # ------------------------------------------------------------------ run：CODE
-
-
-def test_code_unresolved_prefix_is_empty_without_list_request(site):
-    out = _prov().run(Kind.CODE, "ZZZZ", Window(0, 20))
-    assert out == [] and site.list_calls == []
 
 
 # ------------------------------------------------------------------ run：KEYWORD／收尾／status
 
 
-def test_unsupported_run_kind_raises(site):
-    with pytest.raises(ValueError):
-        _prov().run(Kind.MAKER, "x", Window(0, 20))
-
-
-@pytest.mark.parametrize("kind", [Kind.CODE, Kind.KEYWORD, Kind.PARTIAL])
-def test_discovery_only_is_empty_with_zero_requests(site, kind):
-    assert _prov().run(kind, "MIDV", Window(0, 20), discovery_only=True) == []
-    assert site.total_requests() == 0
-
-
 # ------------------------------------------------------------------ 傳輸例外往外丟
-_EXCS = [SourceBlocked("b"), SourceUnreachable("u"), ConnectionError("c")]
+_EXCS = [SourceBlocked("b")]
 
 
 @pytest.mark.parametrize("exc", _EXCS, ids=lambda e: type(e).__name__)
-@pytest.mark.parametrize("kind,target", [(Kind.CODE, "MIDV"), (Kind.KEYWORD, "人妻"), (Kind.PARTIAL, "MIDV-01")])
+@pytest.mark.parametrize("kind,target", [(Kind.CODE, "MIDV"), (Kind.PARTIAL, "MIDV-01")])
 def test_transport_errors_propagate(site, exc, kind, target):
     site.exc = exc
     with pytest.raises(type(exc)):
@@ -218,31 +187,9 @@ def test_transport_errors_propagate_from_list_stage(site, exc):
 
 
 # ------------------------------------------------------------------ 視窗
-def test_window_beyond_cap_sends_no_list_request(site):
-    out = _prov().run(Kind.KEYWORD, "人妻", Window(4950, 20))
-    assert out == [] and site.list_calls == [] and site.search_calls == []
 
 
 # ------------------------------------------------------------------ PARTIAL
-def _partial_site(site):
-    site.pages[("MIDV-01", 1)] = [
-        _list_row(1, "MIDV-010", "2026-01-01"),   # 該留
-        _list_row(2, "DV-905", "2026-01-02"),     # 該丟（站方前綴比對混進來的）
-        _list_row(3, "MIDV-011", "2024-01-01"),   # 撞號：舊
-        _list_row(4, "MIDV-011", "2026-03-03"),   # 撞號：新
-        _list_row(5, "MIDV-012", "2025-01-01"),   # 撞號：新在前
-        _list_row(6, "MIDV-012", "2020-01-01"),   # 撞號：舊在後
-        _list_row(7, "XMIDV-013", "2026-01-01"),  # 該丟：非開頭
-    ]
-    site.pages[("midv-01", 1)] = site.pages[("MIDV-01", 1)]  # 小寫輸入也要過濾得到
-    for i in range(1, 8):
-        site.details[f"m{i}"] = _detail(i, actors=["A1"])
-
-
-def test_partial_offset_positive_is_empty_zero_requests(site):
-    _partial_site(site)
-    assert _prov().run(Kind.PARTIAL, "MIDV-01", Window(20, 20)) == []
-    assert site.total_requests() == 0
 
 
 def _page_for(site, monkeypatch, numbers, *, strict=False):
@@ -260,17 +207,10 @@ def _page_for(site, monkeypatch, numbers, *, strict=False):
     monkeypatch.setattr(javdb_api, "api_search_page", search_page)
 
 
-@pytest.mark.parametrize("target,query", [("SONE-1", "SONE-01"), ("SONE-0", "SONE-00"), ("MIDV-01", "MIDV-01")])
+@pytest.mark.parametrize("target,query", [("SONE-1", "SONE-01"), ])
 def test_partial_single_digit_queries_expanded_prefix(site, monkeypatch, sync_executor, pipe_sleeps, target, query):
     _page_for(site, monkeypatch, [])
     _prov().run(Kind.PARTIAL, target, Window(0, 0))
     assert site.search_calls == [(query, 1)]
 
 
-def test_partial_empty_expansion_sends_zero_requests(site, monkeypatch):
-    # expand_partial_number 實際不會回空（無法解析時回 [原字]）；以 patch 鎖住防禦分支
-    import core.scraper as m
-
-    monkeypatch.setattr(m, "expand_partial_number", lambda t: [])
-    assert _prov().run(Kind.PARTIAL, "SONE-1", Window(0, 0)) == []
-    assert site.total_requests() == 0

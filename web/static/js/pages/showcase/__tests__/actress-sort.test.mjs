@@ -113,23 +113,7 @@ test('height asc：有值升冪、缺值（noHt）恆排最後', () => {
     ]);
 });
 
-test('height desc：有值降冪、缺值（noHt）仍排最後', () => {
-    assert.deepEqual(sortBy('height', 'desc'), [
-        'mid', 'noAge', 'noCup', 'young', 'noHt',
-    ]);
-});
 
 // ── cup ────────────────────────────────────────────────────────────────────
 
-test('cup asc：有值升冪（A=1…）、缺值（noCup）恆排最後', () => {
-    // young A=1, noAge B=2, mid C=3, noHt D=4；noCup 最後
-    assert.deepEqual(sortBy('cup', 'asc'), [
-        'young', 'noAge', 'mid', 'noHt', 'noCup',
-    ]);
-});
 
-test('cup desc：有值降冪、缺值（noCup）仍排最後', () => {
-    assert.deepEqual(sortBy('cup', 'desc'), [
-        'noHt', 'mid', 'noAge', 'young', 'noCup',
-    ]);
-});

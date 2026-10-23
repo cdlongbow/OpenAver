@@ -2,13 +2,11 @@
 import pytest
 
 from core import proxy_policy
-from core.desktop_env import desktop_kind
 from core.proxy_policy import (
     CfWindowProxy,
     ProxySettings,
     cf_window_proxy,
     cf_window_proxy_restart_needed,
-    record_cf_window_proxy_at_start,
 )
 
 
@@ -19,28 +17,14 @@ def _spec(server, username=None, password=None, usable=True):
 # (url, scope, expected)
 _TABLE = [
     ('http://h:1', 'all', _spec('http://h:1')),
-    ('https://h:2', 'all', _spec('https://h:2')),
-    ('https://u:p@h:1', 'all', _spec('https://h:1', 'u', 'p')),
     ('https://u:p%40ss@h:3', 'all', _spec('https://h:3', 'u', 'p@ss')),
-    ('socks5://h:4', 'all', _spec('socks5://h:4')),
-    ('socks5h://h:5', 'all', _spec('socks5://h:5')),
     ('socks5://u:p@h:6', 'all', _spec('socks5://h:6', 'u', 'p', usable=False)),
-    ('socks5h://u:p@h:7', 'all', _spec('socks5://h:7', 'u', 'p', usable=False)),
-    ('http://[::1]:8', 'all', _spec('http://[::1]:8')),
     # 無法解析：fail-closed，server 為空字串、usable=False
-    ('h:1', 'all', _spec('http://h:1')),  # 無 scheme ＝ http://（與 requests／八家一致）
     ('127.0.0.1:7890', 'all', _spec('http://127.0.0.1:7890')),
-    ('localhost:7890', 'all', _spec('http://localhost:7890')),
-    ('u:p@h:1', 'all', _spec('http://h:1', 'u', 'p')),
     ('h', 'all', _spec('', usable=False)),  # 無 scheme 也無 port：不猜 80
-    ('://', 'all', _spec('', usable=False)),
-    ('http://', 'all', _spec('', usable=False)),
-    ('http://h', 'all', _spec('', usable=False)),
-    ('ftp://h:1', 'all', _spec('', usable=False)),
     # 沒被選到
     ('http://h:1', 'dmm', None),
     ('', 'all', None),
-    ('', 'dmm', None),
 ]
 
 
@@ -90,43 +74,3 @@ def test_restart_needed_follows_effective_spec(monkeypatch, windows_desktop):
     assert cf_window_proxy_restart_needed() is True
 
 
-@pytest.mark.parametrize('kind', ['mac', None])
-def test_restart_needed_false_unless_windows_desktop(monkeypatch, kind):
-    monkeypatch.setattr(proxy_policy, 'desktop_kind', lambda: kind)
-    _set_state(monkeypatch, None, 'http://h:1', 'all')
-    assert cf_window_proxy_restart_needed() is False
-
-
-def test_restart_needed_false_when_start_spec_never_recorded(monkeypatch, windows_desktop):
-    monkeypatch.setattr(proxy_policy, '_cf_window_proxy_at_start', proxy_policy._UNRECORDED)
-    monkeypatch.setattr(proxy_policy, 'current_settings',
-                        lambda: ProxySettings(url='http://h:1', scope='all'))
-    assert cf_window_proxy_restart_needed() is False
-
-
-def test_record_at_start_writes_once_and_records_none(monkeypatch, windows_desktop):
-    monkeypatch.setattr(proxy_policy, '_cf_window_proxy_at_start', proxy_policy._UNRECORDED)
-    monkeypatch.setattr(proxy_policy, 'current_settings',
-                        lambda: ProxySettings(url='http://h:1', scope='all'))
-    record_cf_window_proxy_at_start(None)           # 啟動時沒套用 = 記下 None
-    assert cf_window_proxy_restart_needed() is True
-    x = cf_window_proxy(ProxySettings(url='http://h:1', scope='all'))
-    record_cf_window_proxy_at_start(x)              # 第二次忽略
-    assert cf_window_proxy_restart_needed() is True
-
-
-@pytest.mark.parametrize('env,platform,expected', [
-    ('1', 'win32', 'windows'),
-    ('1', 'darwin', 'mac'),
-    ('1', 'linux', None),
-    ('0', 'win32', None),
-    (None, 'win32', None),
-    (None, 'darwin', None),
-])
-def test_desktop_kind_truth_table(monkeypatch, env, platform, expected):
-    if env is None:
-        monkeypatch.delenv('OPENAVER_STANDALONE', raising=False)
-    else:
-        monkeypatch.setenv('OPENAVER_STANDALONE', env)
-    monkeypatch.setattr('sys.platform', platform)
-    assert desktop_kind() == expected

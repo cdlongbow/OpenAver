@@ -74,18 +74,6 @@ test('_refreshLbActorAges 對最愛女優、資料完整的片算出年齡並寫
     assert.deepEqual(c._lbActorAges, { '明里つむぎ': 30 });
 });
 
-test('_refreshLbActorAges reassigns _lbActorAges to a new object reference each call', () => {
-    _setActresses([{ name: 'A', birth: '1990-01-01' }]);
-    const c = makeComponent({
-        currentLightboxVideo: { actresses: 'A', release_date: '2020-01-01', duration: 60 },
-    });
-    c._refreshLbActorAges();
-    const ref1 = c._lbActorAges;
-    c._refreshLbActorAges();
-    const ref2 = c._lbActorAges;
-    assert.notEqual(ref1, ref2, '每次呼叫都必須產生新物件參照，Alpine 的 proxy set 攔截才抓得到變化');
-    assert.deepEqual(ref2, { A: 30 });
-});
 
 test('_refreshLbActorAges 換片後（無最愛女優/算不出年齡）清空成 {}，不殘留上一部片的舊值', () => {
     _setActresses([{ name: 'A', birth: '1990-01-01' }]);

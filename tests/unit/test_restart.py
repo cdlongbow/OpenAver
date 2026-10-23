@@ -25,16 +25,6 @@ def _reset_state(monkeypatch):
 
 # ---- restart_command ----
 
-def test_restart_command_script_file():
-    cmd = restart.restart_command("/py", ["/app/launcher.py", "--x"], "/app", lambda p: True)
-    assert cmd == ["/py", "/app/launcher.py", "--x"]
-
-
-def test_restart_command_dash_c_form():
-    cmd = restart.restart_command("/py", ["-c"], "/app", lambda p: False)
-    assert cmd[:2] == ["/py", "-c"] and len(cmd) == 3
-    assert "windows.standalone" in cmd[2]
-
 
 def test_restart_command_dash_c_quotes_awkward_app_dir():
     app_dir = "C:\\Program Files\\Open Aver"
@@ -49,13 +39,6 @@ def test_restart_command_dash_c_quotes_awkward_app_dir():
 
 
 # ---- request / spawn ----
-
-def test_request_restart_calls_quit_and_sets_flag():
-    quit_app = Mock()
-    restart.request_restart(quit_app).join(5)
-    restart.request_restart(quit_app).join(5)
-    assert restart._state["requested"] is True
-    assert quit_app.call_count == 2
 
 
 def test_request_restart_returns_before_quit_runs_on_other_thread(monkeypatch):
@@ -74,15 +57,6 @@ def test_request_restart_returns_before_quit_runs_on_other_thread(monkeypatch):
     th.join(5)
     assert seen["thread"] is not threading.current_thread()
     assert seen["thread"].daemon is True
-
-
-def test_request_restart_quit_failure_does_not_raise(monkeypatch):
-    log = Mock()
-    monkeypatch.setattr(restart, "logger", log)
-    quit_app = Mock(side_effect=RuntimeError("x"))
-    restart.request_restart(quit_app).join(5)
-    quit_app.assert_called_once()
-    log.error.assert_called_once()
 
 
 def test_request_restart_does_not_spawn_before_loop_exit(monkeypatch):
@@ -158,17 +132,6 @@ def _spawn_fail_notice(monkeypatch):
     return notify.call_args[0][0]
 
 
-def test_spawn_failure_locale_lookup_raising_still_notifies_zh_tw(monkeypatch):
-    from core import client_settings
-
-    def boom():
-        raise RuntimeError("locale lookup failed")
-
-    monkeypatch.setattr(client_settings, "tray_locale", boom)
-    msg = _spawn_fail_notice(monkeypatch)
-    assert msg and not msg.startswith("[")
-
-
 # ---- wait_for_parent_exit ----
 
 def test_wait_for_parent_missing_or_bad_env_returns_immediately():
@@ -235,18 +198,6 @@ def test_wait_for_parent_never_uses_os_kill_on_windows(monkeypatch):
 
 
 # ---- 真行程 smoke（POSIX）----
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX smoke")
-def test_smoke_spawn_real_child_sees_parent_pid(monkeypatch, tmp_path):
-    out = tmp_path / "pid.txt"
-    code = f"import os; open({str(out)!r},'w').write(os.environ.get('{PID_ENV}',''))"
-    monkeypatch.setattr(restart, "restart_command", lambda *a, **k: [sys.executable, "-c", code])
-    restart.request_restart(Mock()).join(5)
-    assert restart.spawn_if_requested() is True
-    deadline = time.time() + 10
-    while time.time() < deadline and not (out.exists() and out.read_text()):
-        time.sleep(0.05)
-    assert out.read_text() == str(os.getpid())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX smoke")

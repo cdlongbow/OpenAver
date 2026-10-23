@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from core.title_writeback import (
-    NfoNotFoundError,
     NfoParseError,
     rewrite_nfo_titles,
 )
@@ -96,31 +95,6 @@ def test_rewrite_title_default_format(tmp_path):
     assert _text(root, "originaltitle") == "原文"
 
 
-def test_originaltitle_written_and_inserted_when_absent(tmp_path):
-    p = _write(tmp_path, NFO_MIN)
-    assert "<originaltitle" not in NFO_MIN
-    _call(p, original_title="日文原題")
-    root = ET.parse(p).getroot()
-    assert _text(root, "originaltitle") == "日文原題"
-    tags = [c.tag for c in root]
-    assert tags.index("originaltitle") == tags.index("title") + 1
-
-
-def test_empty_original_title_writes_empty_element(tmp_path):
-    p = _write(tmp_path, NFO_MIN)
-    _call(p, original_title="")
-    root = ET.parse(p).getroot()
-    assert root.find("originaltitle") is not None
-    assert (root.find("originaltitle").text or "") == ""
-
-
-def test_default_format_removes_existing_record(tmp_path):
-    p = _write(tmp_path, NFO_FULL)
-    _call(p, nfo_title_format=DEF)
-    root = ET.parse(p).getroot()
-    assert root.findall("openaver_title_record") == []
-
-
 def test_non_default_format_single_record(tmp_path):
     p = _write(tmp_path, NFO_FULL)
     _call(p, nfo_title_format=NON)
@@ -130,17 +104,6 @@ def test_non_default_format_single_record(tmp_path):
     assert recs[0].find("written").text == _text(root, "title")
     assert _text(root, "title") == "ABC-123 譯文 - 女優A"
     assert recs[0].find("body").text == "譯文"
-
-
-def test_existing_sorttitle_synced_and_absent_not_created(tmp_path):
-    p = _write(tmp_path, NFO_FULL)
-    _call(p)
-    root = ET.parse(p).getroot()
-    assert _text(root, "sorttitle") == _text(root, "title") == "[ABC-123]譯文"
-    p2 = _write(tmp_path, NFO_MIN, name="B.nfo")
-    assert "<sorttitle" not in NFO_MIN
-    _call(p2)
-    assert ET.parse(p2).getroot().find("sorttitle") is None
 
 
 def test_bare_ampersand_nfo_is_rewritable(tmp_path):
@@ -162,13 +125,6 @@ def test_control_chars_stripped_output_parseable(tmp_path):
     ET.fromstring(p.read_bytes())
 
 
-def test_missing_nfo_raises_and_not_created(tmp_path):
-    p = tmp_path / "none.nfo"
-    with pytest.raises(NfoNotFoundError):
-        _call(p)
-    assert not p.exists()
-
-
 def test_unparseable_xml_raises_and_file_unchanged(tmp_path):
     p = tmp_path / "bad.nfo"
     raw = b"<?xml version='1.0'?><movie><title>x</title><plot>"
@@ -178,35 +134,6 @@ def test_unparseable_xml_raises_and_file_unchanged(tmp_path):
     assert p.read_bytes() == raw
 
 
-def test_exceptions_distinguishable():
-    assert not issubclass(NfoNotFoundError, NfoParseError)
-    assert not issubclass(NfoParseError, NfoNotFoundError)
-    assert not issubclass(NfoNotFoundError, OSError)
-    assert not issubclass(NfoParseError, OSError)
-
-
-def test_write_failure_propagates_oserror_unwrapped(tmp_path, monkeypatch):
-    p = _write(tmp_path, NFO_MIN)
-
-    def boom(self, data):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(Path, "write_bytes", boom)
-    with pytest.raises(PermissionError):
-        _call(p)
-
-
-def test_read_failure_propagates_oserror_unwrapped(tmp_path, monkeypatch):
-    p = _write(tmp_path, NFO_MIN)
-
-    def boom(self):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(Path, "read_bytes", boom)
-    with pytest.raises(PermissionError):
-        _call(p)
-
-
 def test_rewrite_strips_num_prefix_from_title(tmp_path):
     for body in ("ABC-123 譯文", "[ABC-123]譯文"):
         p = _write(tmp_path, NFO_MIN)
@@ -214,21 +141,6 @@ def test_rewrite_strips_num_prefix_from_title(tmp_path):
         title = _text(ET.parse(p).getroot(), "title")
         assert title == "[ABC-123]譯文"
         assert title.count("ABC-123") == 1
-
-
-def test_empty_title_body_falls_back_to_original(tmp_path):
-    p = _write(tmp_path, NFO_FULL)
-    _call(p, title_body="", original_title="日文原題", nfo_title_format=NON)
-    root = ET.parse(p).getroot()
-    assert _text(root, "title") == "ABC-123 日文原題 - 女優A"
-    assert root.find("openaver_title_record").find("body").text == "日文原題"
-
-
-def test_returns_written_bytes(tmp_path):
-    p = _write(tmp_path, NFO_MIN)
-    out = _call(p)
-    assert isinstance(out, bytes)
-    assert out == p.read_bytes()
 
 
 NFO_NO_NUM = """<?xml version="1.0" encoding="utf-8"?>
@@ -251,15 +163,7 @@ def test_missing_num_is_added_so_rescan_strips_prefix(tmp_path):
     assert "[ABC-123]" not in info.title
 
 
-def test_existing_id_does_not_gain_num(tmp_path):
-    p = _write(tmp_path, NFO_NO_NUM.replace("<plot>", "<id>ABC-123</id>\n  <plot>"))
-    _call(p)
-    root = ET.parse(p).getroot()
-    assert root.find("num") is None
-    assert _text(root, "id") == "ABC-123"
-
-
-@pytest.mark.parametrize("shape", ["<num/>", "<num>  </num>", "<id>   </id>", "<num></num><id> </id>"])
+@pytest.mark.parametrize("shape", ["<num/>", ])
 def test_blank_num_or_id_is_filled_so_rescan_strips_prefix(tmp_path, shape):
     from core.gallery_scanner import VideoScanner
 

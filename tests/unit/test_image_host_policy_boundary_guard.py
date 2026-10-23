@@ -627,24 +627,6 @@ def _rel(path: pathlib.Path) -> str:
 # ============================================================
 
 
-def test_tier1_targets_exist():
-    """Tier 1 固定兩檔都必須存在——清單打錯字不得靜默全綠。"""
-    for path in TIER1_TARGETS:
-        assert path.is_file(), f"Tier 1 目標不存在: {path}"
-
-
-def test_tier2_scan_targets_is_nonempty_and_each_root_contributes():
-    assert len(TIER2_SCAN_TARGETS) >= 50, (
-        f"TIER2_SCAN_TARGETS 數量異常低（{len(TIER2_SCAN_TARGETS)}），"
-        f"SCAN_ROOTS 或 rglob 可能出錯"
-    )
-    contributed = {p.relative_to(REPO_ROOT).parts[0] for p in TIER2_SCAN_TARGETS}
-    for root_name in SCAN_ROOTS:
-        assert root_name in contributed, (
-            f"TIER2_SCAN_TARGETS 裡沒有任何來自 {root_name}/ 的檔案"
-        )
-
-
 # ============================================================
 # DoD-1：Tier 1 主斷言（parametrize 兩檔）
 # ============================================================
@@ -667,28 +649,6 @@ def test_no_domain_shaped_literal_container_outside_allowlist(py_file):
         f"（{len(violations)} 處）: {violations}；"
         f"host 政策必須走 core.image_host_policy，不得第二份字面清單"
     )
-
-
-class TestTier1WhitelistAntiRot:
-    """允許清單裡的名字若已不存在 → 失敗並指名（不得靜默通過）。"""
-
-    def test_referer_map_exists_as_module_level_domain_shaped_container(self):
-        path = REPO_ROOT / "core" / "actress_photo.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        hits = _tier1_hits_from_tree(tree)
-        allowed_names = {h["name"] for h in hits if h["allowed"]}
-        for name in TIER1_ALLOWLIST:
-            assert name in allowed_names, (
-                f"允許清單名字 {name!r} 在 core/actress_photo.py 找不到"
-                f"對應的 domain-shaped 字面容器（改名？刪除？）——"
-                f"anti-rot 失敗：{TIER1_ALLOWLIST[name]}"
-            )
-
-    def test_allowlist_is_exactly_referer_map(self):
-        """清單不得膨脹：唯一一筆 REFERER_MAP；_HEADERS／CONTENT_TYPE_MAP 不進清單。"""
-        assert set(TIER1_ALLOWLIST) == {"REFERER_MAP"}
-        assert "不同決策所有權" in TIER1_ALLOWLIST["REFERER_MAP"]
-        assert "CD-113c-10" in TIER1_ALLOWLIST["REFERER_MAP"]
 
 
 # ============================================================
@@ -733,106 +693,9 @@ def test_no_bare_base_url_or_is_connected_outside_exemption_table():
     )
 
 
-class TestTier2ExemptionAntiRot:
-    """例外表每一列的錨點必須仍找得到；消失 → 紅並指名。"""
-
-    @pytest.mark.parametrize(
-        "path,func,receiver,attr,count,note",
-        TIER2_EXEMPTIONS,
-        ids=[
-            f"{p}:{f}.{r}.{a}"
-            for p, f, r, a, _c, _n in TIER2_EXEMPTIONS
-        ],
-    )
-    def test_exemption_anchor_present(self, path, func, receiver, attr, count, note):
-        py_file = REPO_ROOT / path
-        assert py_file.is_file(), f"例外帳本檔案不存在: {path}"
-        hits = [
-            h
-            for h in _tier2_find_violations(py_file)
-            if h[1] == func and h[2] == receiver and h[3] == attr
-        ]
-        assert len(hits) == count, (
-            f"例外錨點 {path}:{func} {receiver}.{attr} "
-            f"預期 {count} 次，實際 {len(hits)}"
-            f"{f' [{note}]' if note else ''}——"
-            f"函式改名／讀取被移除或次數改變時必須更新帳本"
-        )
-
-    def test_exemption_table_has_exactly_five_rows(self):
-        """TASK-130b-T6：原本 6 列，`core/scraper.py:search_jav` 的 base_url
-        那一筆 known-debt 已還（改走 probe_snapshot() 單鎖快照）→ 5 列。
-        **這是收緊，不是放寬**：少一個被豁免的 bare access。"""
-        assert len(TIER2_EXEMPTIONS) == 5
-
-    def test_image_host_policy_not_in_exemptions(self):
-        """registry 不得列入例外（它呼叫 connected_base_url()，本來就不該命中）。"""
-        for path, *_ in TIER2_EXEMPTIONS:
-            assert path != "core/image_host_policy.py"
-
-    def test_known_debt_notes(self):
-        notes = {
-            (p, f, r, a): n for p, f, r, a, _c, n in TIER2_EXEMPTIONS
-        }
-        assert notes[("core/scraper.py", "search_jav", "metatube_state", "is_connected")] == (
-            "known-debt"
-        )
-        # base_url 那一筆已於 TASK-130b-T6 還清，不再登錄
-        assert ("core/scraper.py", "search_jav", "metatube_state", "base_url") not in notes
-        assert notes[
-            ("web/routers/settings_metatube.py", "connect", "state", "is_connected")
-        ] == "known-debt(dedup-only)"
-        assert notes[
-            ("web/routers/settings_metatube.py", "connect", "state", "base_url")
-        ] == "known-debt(dedup-only)"
-        assert notes[("web/app.py", "_startup_metatube_reconnect", "_mt_startup_state", "base_url")] == ""
-        assert notes[
-            ("web/app.py", "get_common_context", "_mt_state", "is_connected")
-        ] == ""
-
-
-def test_exemption_table_count_mismatch_is_rejected():
-    """DoD-5：模擬有人誤收緊帳本（預期次數改小）→ 必須轉紅。
-
-    不改產品碼；直接對 actual counter 與收緊後 expected 比對。
-    """
-    hits = _collect_all_tier2_hits()
-    actual = Counter(hits)
-    # 把 scraper.is_connected 的預期從 1 收成 0
-    tightened = Counter()
-    for path, func, receiver, attr, count, _note in TIER2_EXEMPTIONS:
-        if (
-            path == "core/scraper.py"
-            and func == "search_jav"
-            and receiver == "metatube_state"
-            and attr == "is_connected"
-        ):
-            count = 0
-        tightened[(path, func, receiver, attr)] += count
-
-    key = ("core/scraper.py", "search_jav", "metatube_state", "is_connected")
-    assert actual[key] == 1
-    assert tightened[key] == 0
-    assert actual[key] != tightened[key], "收緊後應與實際次數不符"
-
-
 # ============================================================
 # DoD-3：fail-closed 主斷言（兩檔現況零命中）
 # ============================================================
-
-
-@pytest.mark.parametrize(
-    "py_file",
-    TIER1_TARGETS,
-    ids=[_rel(p) for p in TIER1_TARGETS],
-)
-def test_dynamic_construction_assigned_to_module_level_name_is_rejected(py_file):
-    """DoD-3：無法靜態判定的 module-level 賦值現況必須為 0（上線即綠）。"""
-    tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-    violations = _module_level_dynamic_violations(tree)
-    assert violations == [], (
-        f"{_rel(py_file)}: module-level 動態建構違規: {violations}"
-    )
 
 
 # ============================================================

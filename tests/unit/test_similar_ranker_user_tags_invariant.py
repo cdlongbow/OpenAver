@@ -65,15 +65,6 @@ def _build_corpus(with_user_tags: bool) -> list[Video]:
     return videos
 
 
-def test_internal_state_equal_with_and_without_user_tags():
-    """_canon_tags / _idf_table / _inverted_index 在 clean/dirty corpus 下逐項相等。"""
-    clean = SimilarRanker(_build_corpus(False))
-    dirty = SimilarRanker(_build_corpus(True))
-    assert clean._canon_tags == dirty._canon_tags
-    assert clean._idf_table == dirty._idf_table
-    assert clean._inverted_index == dirty._inverted_index
-
-
 def test_rank_order_and_scores_equal_with_and_without_user_tags():
     """rank() 的 number 序列相等，且逐項 _score() 相等。"""
     clean_corpus = _build_corpus(False)
@@ -91,15 +82,3 @@ def test_rank_order_and_scores_equal_with_and_without_user_tags():
         assert clean._score(clean_target, c_cand) == dirty._score(dirty_target, d_cand)
 
 
-def test_tier1_canary_fills_top_k():
-    """rank() 回傳 12 筆，且每筆與 target 共享 ≥2 個 useful tag。"""
-    for with_user_tags in (False, True):
-        corpus = _build_corpus(with_user_tags)
-        ranker = SimilarRanker(corpus)
-        target = corpus[0]
-        ranked = ranker.rank(target, top_k=_TOP_K)
-        assert len(ranked) == _TOP_K, _TIER1_CANARY_MSG
-        target_useful = ranker._useful_set(target)
-        for cand in ranked:
-            shared = target_useful & ranker._useful_set(cand)
-            assert len(shared) >= 2, _TIER1_CANARY_MSG

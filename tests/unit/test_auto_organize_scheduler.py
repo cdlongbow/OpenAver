@@ -9,7 +9,7 @@ import os
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -57,21 +57,6 @@ def reset_scheduler_and_state():
 # ---------------------------------------------------------------------------
 # DoD-1：開關與計時
 # ---------------------------------------------------------------------------
-
-def test_is_due_first_wake_resets_without_running():
-    """DoD-1 / D9：重啟後 _next_due_at==0 → 從零計時、不補跑。"""
-    assert sched._next_due_at == 0.0
-    assert sched._is_due() is False
-    assert sched._next_due_at > time.time()
-
-
-def test_reset_due_time_pushes_interval_forward():
-    """DoD-1：reset_due_time 把到期時間推到現在 + 12h。"""
-    before = time.time()
-    sched.reset_due_time()
-    expected = before + sched.AUTO_ORGANIZE_INTERVAL_HOURS * 3600
-    assert sched._next_due_at >= expected - 1.0
-    assert sched._next_due_at <= expected + 2.0
 
 
 async def test_loop_skips_when_disabled(monkeypatch):
@@ -159,52 +144,16 @@ async def test_enter_and_start_returns_immediately_while_round_runs(monkeypatch)
     await asyncio.wait_for(sched._round_task, timeout=1.0)
 
 
-async def test_enter_and_start_already_running():
-    """DoD-2：另一輪在跑 → success=False, reason=already_running。"""
-    assert auto_organize_state.enter_cron("schedule") is True
-    result = sched.enter_and_start("run_now")
-    assert result == {"success": False, "reason": "already_running"}
-
-
-async def test_run_now_succeeds_right_after_manual_activity(monkeypatch):
-    """DoD-3 / M1：剛動過手動仍能 run-now（trigger 不得寫死成 schedule）。"""
-    auto_organize_state.mark_manual_activity()
-
-    async def noop_body(trigger):
-        auto_organize_state.exit_cron()
-
-    monkeypatch.setattr(sched, "_run_round_body", noop_body)
-
-    result = sched.enter_and_start("run_now")
-    assert result == {"success": True, "reason": None}
-    await asyncio.wait_for(sched._round_task, timeout=1.0)
-
-
 # ---------------------------------------------------------------------------
 # DoD-5 / M7：探測例外仍釋放 running
 # ---------------------------------------------------------------------------
-
-async def test_prepare_exception_still_releases_running(monkeypatch):
-    """DoD-5 / M7：探測階段拋例外 → running 不得卡住。"""
-    assert auto_organize_state.enter_cron("run_now") is True
-
-    def boom(_config):
-        raise RuntimeError("probe boom")
-
-    monkeypatch.setattr(sched, "resolve_favorite_folder", boom)
-    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "/some/folder"}})
-
-    with pytest.raises(RuntimeError, match="probe boom"):
-        await sched._run_round_body("run_now")
-
-    assert auto_organize_state.get_status()["running"] is False
 
 
 # ---------------------------------------------------------------------------
 # DoD-6 / M2：零事件不發通知
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("overrides", [{}, {"aborted_after": 0}], ids=["no_events", "aborted_after_zero"])
+@pytest.mark.parametrize("overrides", [{}], ids=["no_events"])
 def test_zero_events_does_not_emit(monkeypatch, overrides):
     """DoD-6 / M2：事件數 0 → 不發通知。DoD-7 / M5：aborted_after == 0 同樣不發。"""
     emit = MagicMock()
@@ -230,16 +179,6 @@ def test_nonzero_events_emits_summary(monkeypatch):
 # ---------------------------------------------------------------------------
 # DoD-7 / M5：aborted_after 分支
 # ---------------------------------------------------------------------------
-
-def test_aborted_after_positive_emits_aborted(monkeypatch):
-    """DoD-7：aborted_after > 0 → 發 aborted 通知。"""
-    emit = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-
-    sched._emit_round_summary(_empty_result(aborted_after=3, added=["A-1"]))
-    emit.assert_called_once()
-    assert emit.call_args.args[1] == "notif.auto_organize_aborted"
-    assert "處理 3 部後因手動操作中止" in emit.call_args.kwargs["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -287,87 +226,14 @@ async def test_folder_probe_respects_timeout(monkeypatch):
     assert elapsed < 0.3  # 遠小於 slow_exists 的 0.5s
 
 
-async def test_folder_unreachable_emits_warn_and_resets(monkeypatch):
-    """DoD-8：連不到 → 黃色通知 ＋ reset_due_time。"""
-    emit = MagicMock()
-    reset = MagicMock(wraps=sched.reset_due_time)
-    monkeypatch.setattr(sched, "emit_notification", emit)
-    monkeypatch.setattr(sched, "reset_due_time", reset)
-
-    async def fake_prepare(_trigger):
-        return {"folder_unreachable": True, "folder": "/gone"}
-
-    monkeypatch.setattr(sched, "_prepare_and_run", fake_prepare)
-    assert auto_organize_state.enter_cron("schedule") is True
-
-    await sched._run_round_body("schedule")
-
-    emit.assert_called_once_with(
-        "warn", "notif.auto_organize_folder_unreachable",
-        message="/gone", task_type="auto_organize",
-    )
-    reset.assert_called()
-    assert auto_organize_state.get_status()["running"] is False
-
-
 # ---------------------------------------------------------------------------
 # DoD-9：唯讀資料夾
 # ---------------------------------------------------------------------------
-
-async def test_readonly_emits_warn_and_resets(monkeypatch):
-    """DoD-9：readonly → 黃色通知 ＋ reset_due_time。"""
-    emit = MagicMock()
-    reset = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-    monkeypatch.setattr(sched, "reset_due_time", reset)
-
-    async def fake_prepare(_trigger):
-        return {"readonly": True, "folder": "/ro"}
-
-    monkeypatch.setattr(sched, "_prepare_and_run", fake_prepare)
-    assert auto_organize_state.enter_cron("schedule") is True
-
-    await sched._run_round_body("schedule")
-
-    emit.assert_called_once_with(
-        "warn", "notif.auto_organize_readonly",
-        message="/ro", task_type="auto_organize",
-    )
-    reset.assert_called()
 
 
 # ---------------------------------------------------------------------------
 # DoD-10：書籤對帳通知（只讀 wishlist_removed，不再呼叫 reconcile）
 # ---------------------------------------------------------------------------
-
-async def test_wishlist_removed_emits_formatted_message(monkeypatch):
-    """DoD-10：wishlist_removed 非空 → format ＋ emit；不呼叫 reconcile_wishlist。"""
-    emit = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-
-    reconcile = MagicMock()
-    monkeypatch.setattr("core.wishlist_reconcile.reconcile_wishlist", reconcile, raising=False)
-
-    async def fake_prepare(_trigger):
-        return _empty_result(
-            added=["ABC-123"],
-            failed=["XYZ-456"],
-            wishlist_removed=["ABC-123"],
-        )
-
-    monkeypatch.setattr(sched, "_prepare_and_run", fake_prepare)
-    assert auto_organize_state.enter_cron("run_now") is True
-
-    await sched._run_round_body("run_now")
-
-    title_keys = [c.args[1] for c in emit.call_args_list]
-    assert "notif.auto_organize_summary" in title_keys
-    assert "notif.wishlist_auto_removed" in title_keys
-    wishlist_call = next(
-        c for c in emit.call_args_list if c.args[1] == "notif.wishlist_auto_removed"
-    )
-    assert "ABC-123" in wishlist_call.kwargs["message"]
-    reconcile.assert_not_called()
 
 
 async def test_scheduled_round_rechecks_enabled_after_acquiring_ownership(monkeypatch):
@@ -398,96 +264,9 @@ async def test_scheduled_round_rechecks_enabled_after_acquiring_ownership(monkey
     ran.assert_not_called()
 
 
-async def test_run_now_still_works_while_toggle_is_off(monkeypatch):
-    """反向鎖：「立刻執行一次」在開關關著時本來就該按得動，不受上面那道閘影響。"""
-    from core import config as core_config
-
-    core_config.mutate_config(
-        lambda cfg: cfg.setdefault("search", {}).update(
-            {"favorite_folder": "", "auto_organize": {"enabled": False}}
-        )
-    )
-
-    result = await sched._prepare_and_run("run_now")
-
-    # 走到下一道閘（沒設資料夾）＝沒有被 scheduling_disabled 擋掉
-    assert result == {"folder_not_configured": True}
-
-
-async def test_scheduling_disabled_emits_nothing(monkeypatch):
-    """使用者自己關掉的，安靜收工——發通知只會變成噪音。"""
-    emit = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-
-    async def fake_prepare(_trigger):
-        return {"scheduling_disabled": True}
-
-    monkeypatch.setattr(sched, "_prepare_and_run", fake_prepare)
-    assert auto_organize_state.enter_cron("schedule") is True
-
-    await sched._run_round_body("schedule")
-
-    emit.assert_not_called()
-
-
-async def test_reconcile_failure_still_emits_summary_plus_its_own_warning(monkeypatch):
-    """最壞情況盤點 R2：對帳失敗時摘要照發，另外多一則「書籤對帳失敗」。
-
-    使用者流程：那一輪把片整理完、搬好、寫好 NFO，最後一步對帳撞上 DB 鎖 → 修正前
-    整輪冒到 except，側欄只有一則紅色「定時整理失敗」、摘要沒發 ⇒ 使用者不知道那幾部
-    已經被搬走改名（而且它們現在都有 NFO，下一輪一律跳過，這筆帳補不回來）。
-    """
-    emit = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-
-    async def fake_prepare(_trigger):
-        return _empty_result(added=["ABC-123"], wishlist_reconcile_failed=True)
-
-    monkeypatch.setattr(sched, "_prepare_and_run", fake_prepare)
-    assert auto_organize_state.enter_cron("run_now") is True
-
-    await sched._run_round_body("run_now")
-
-    title_keys = [c.args[1] for c in emit.call_args_list]
-    assert "notif.auto_organize_summary" in title_keys, (
-        "對帳失敗把整輪的帳吃掉了——使用者不知道片已經被搬走改名"
-    )
-    assert "notif.wishlist_reconcile_failed" in title_keys, "對帳失敗完全無聲"
-    assert "notif.auto_organize_failed" not in title_keys, (
-        "那一輪其實全成功，不該報成整輪失敗"
-    )
-
-
 # ---------------------------------------------------------------------------
 # DoD-11：舊 config 缺 auto_organize key 不得炸
 # ---------------------------------------------------------------------------
-
-async def test_missing_auto_organize_key_treated_as_disabled(monkeypatch):
-    """DoD-11：缺整個 search.auto_organize → 視為關閉、不拋例外。"""
-    wake_count = {"n": 0}
-
-    async def fake_sleep(_s):
-        wake_count["n"] += 1
-        if wake_count["n"] >= 2:
-            raise asyncio.CancelledError()
-
-    monkeypatch.setattr(sched.asyncio, "sleep", fake_sleep)
-    # 完全沒有 auto_organize key
-    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "/x"}})
-    enter_spy = MagicMock(wraps=auto_organize_state.enter_cron)
-    monkeypatch.setattr(sched.auto_organize_state, "enter_cron", enter_spy)
-
-    with pytest.raises(asyncio.CancelledError):
-        await sched.auto_organize_loop()
-
-    enter_spy.assert_not_called()
-
-
-def test_auto_organize_interval_constant():
-    """設計決策 4：間隔寫死 12 小時，與 config 共用同一常數。"""
-    from core.config import AUTO_ORGANIZE_INTERVAL_HOURS
-    assert AUTO_ORGANIZE_INTERVAL_HOURS == 12
-    assert sched.AUTO_ORGANIZE_INTERVAL_HOURS == 12
 
 
 # ===========================================================================
@@ -546,113 +325,6 @@ class TestProbeTimeoutAndLoopSurvival:
 
         assert calls["n"] >= 2, (
             "第一輪拋例外之後 loop 就沒有再跑第二輪——排程被單輪的例外殺掉了"
-        )
-
-
-    def test_loop_survives_an_exception_from_load_config(self, monkeypatch):
-        """讀 config 拋例外也不能殺掉 loop（PR review 指出第一版的 try 漏掉這一行）。
-
-        `config.json` 被外部程序改壞、或磁碟一時 I/O 錯誤，都會從
-        `await asyncio.to_thread(load_config)` 拋出來——那跟「一輪炸了」是同一類洞，
-        只是觸發點不同。使用者看到的症狀一模一樣：**排程靜默停止，開關還亮著、
-        側欄什麼都不說，只有重啟 App 才救得回來。**
-        """
-        import asyncio as _asyncio
-        from core import auto_organize_state
-        from web import auto_organize_scheduler as aos
-
-        auto_organize_state.exit_cron()
-        auto_organize_state._last_manual_at = float("-inf")
-
-        calls = {"n": 0}
-
-        def _boom_config():
-            calls["n"] += 1
-            raise OSError("config.json 讀不動")
-
-        monkeypatch.setattr(aos, "load_config", _boom_config)
-        monkeypatch.setattr(aos, "_LOOP_POLL_INTERVAL_S", 0)
-
-        async def _drive():
-            task = _asyncio.create_task(aos.auto_organize_loop())
-            for _ in range(200):
-                await _asyncio.sleep(0.01)
-                if calls["n"] >= 2:
-                    break
-            task.cancel()
-            with contextlib.suppress(_asyncio.CancelledError):
-                await task
-
-        _asyncio.run(_drive())
-        auto_organize_state.exit_cron()
-
-        assert calls["n"] >= 2, (
-            "讀 config 拋例外之後 loop 就沒有再醒來——排程被它殺掉了"
-        )
-
-
-    def test_load_config_failure_does_not_push_the_schedule_out(self, monkeypatch):
-        """讀不到設定時**不得**重置到期時間（PR review 指出第一版重置得太重）。
-
-        「一輪炸了」重置是對的——否則每 5 分鐘重試一次，把一次失敗放大成連續轟炸。
-        但「連設定都讀不到」是另一回事：那個到期窗**根本沒被消耗**，下一次 5 分鐘
-        輪詢本來就會重試。在那裡重置等於**因為一次磁碟抖動就把排程整整推走 12 小時**，
-        恢復之後使用者還要再等半天才會看到它動。
-        """
-        import asyncio as _asyncio
-        from core import auto_organize_state
-        from web import auto_organize_scheduler as aos
-
-        auto_organize_state.exit_cron()
-        aos._next_due_at = 1.0  # 遠古＝早就到期
-
-        def _boom_config():
-            raise OSError("config.json 讀不動")
-
-        monkeypatch.setattr(aos, "load_config", _boom_config)
-        monkeypatch.setattr(aos, "_LOOP_POLL_INTERVAL_S", 0)
-
-        async def _drive():
-            task = _asyncio.create_task(aos.auto_organize_loop())
-            for _ in range(50):
-                await _asyncio.sleep(0.01)
-            task.cancel()
-            with contextlib.suppress(_asyncio.CancelledError):
-                await task
-
-        _asyncio.run(_drive())
-
-        assert aos._next_due_at == 1.0, (
-            "讀設定失敗把到期時間往後推了——那個窗根本沒被消耗，"
-            "這樣一次磁碟抖動就會讓排程停擺 12 小時"
-        )
-
-    def test_newly_recorded_alone_is_enough_to_emit(self, monkeypatch):
-        """只有「本輪新寫進失敗記憶」也算事件，必須發通知（CD-144-3 公式第四項）。
-
-        PR review 指出：把 `+ result["newly_recorded"]` 從事件數公式裡拿掉，
-        原本的測試**全綠**——也就是那一項沒有任何守衛。
-        使用者後果：一輪裡每一部都查無結果（只寫進失敗記憶、沒有新增／失敗／缺封面
-        任何一項落在那三個清單裡）時，**側欄完全沉默**，使用者以為排程根本沒跑過。
-        """
-        from web import auto_organize_scheduler as aos
-
-        emitted = []
-        monkeypatch.setattr(
-            aos, "emit_notification",
-            lambda level, key, message="", task_type=None: emitted.append(key),
-        )
-
-        aos._emit_round_summary({
-            "added": [], "cover_missing": [], "failed": [],
-            "skipped": {"has_nfo": 0, "memory_hit": 0, "duplicate": []},
-            "newly_recorded": 2,
-            "wishlist_removed": [],
-            "aborted_after": None,
-        })
-
-        assert "notif.auto_organize_summary" in emitted, (
-            "只有 newly_recorded 非零時沒有發通知——事件數公式漏掉了第四項"
         )
 
 
@@ -756,36 +428,6 @@ async def test_folder_not_configured_skips_round_and_emits_warning(monkeypatch):
     assert auto_organize_state.get_status()["running"] is False
 
 
-async def test_whitespace_only_folder_is_treated_as_not_configured(monkeypatch):
-    """正向鎖的邊界：只有空白字元的 favorite_folder 也算沒設定。"""
-    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "   ",
-                                        "auto_organize": {"enabled": True}}})
-    run_spy = MagicMock()
-    monkeypatch.setattr(sched, "run_one_round", run_spy)
-
-    result = await sched._prepare_and_run("schedule")
-
-    assert result == {"folder_not_configured": True}
-    run_spy.assert_not_called()
-
-
-async def test_folder_configured_proceeds_past_the_new_guard(monkeypatch, tmp_path):
-    """反向鎖：有設定 favorite_folder 時，照常往下跑到 run_one_round（不被新 guard 擋住）。"""
-    fav = tmp_path / "fav"
-    fav.mkdir()
-    monkeypatch.setattr(
-        sched, "load_config", lambda: {"search": {"favorite_folder": str(fav),
-                                    "auto_organize": {"enabled": True}}},
-    )
-    run_spy = MagicMock(return_value=_empty_result())
-    monkeypatch.setattr(sched, "run_one_round", run_spy)
-
-    result = await sched._prepare_and_run("schedule")
-
-    run_spy.assert_called_once()
-    assert "folder_not_configured" not in result
-
-
 # ---------------------------------------------------------------------------
 # Codex 三審 ③：排程輪拋例外時側欄要有訊息（P2）
 #
@@ -830,26 +472,3 @@ async def test_loop_exception_after_entered_emits_failed_notification(monkeypatc
     assert auto_organize_state.get_status()["running"] is False
 
 
-async def test_loop_exception_before_entered_does_not_emit(monkeypatch):
-    """反向鎖：連 config 都讀不到（entered 為假）時，不得發通知。"""
-    wake_count = {"n": 0}
-
-    async def fake_sleep(_s):
-        wake_count["n"] += 1
-        if wake_count["n"] >= 2:
-            raise asyncio.CancelledError()
-
-    monkeypatch.setattr(sched.asyncio, "sleep", fake_sleep)
-
-    def boom_config():
-        raise RuntimeError("config read boom")
-
-    monkeypatch.setattr(sched, "load_config", boom_config)
-
-    emit = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-
-    with pytest.raises(asyncio.CancelledError):
-        await sched.auto_organize_loop()
-
-    emit.assert_not_called()

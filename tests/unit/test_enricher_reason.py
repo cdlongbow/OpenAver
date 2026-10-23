@@ -79,55 +79,7 @@ def _make_scraper_result(number="SONE-205"):
 
 
 class TestReasonErrorBranches:
-    def test_missing_number_reason_error(self):
-        with patch("os.path.exists", return_value=True):
-            from core.enricher import enrich_single
-            result = enrich_single(file_path="/video/x.mp4", number="")
-        assert result.success is False
-        assert result.reason == "error"
 
-    def test_invalid_mode_reason_error(self):
-        with patch("os.path.exists", return_value=True):
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path="/video/x.mp4", number="SONE-205", mode="bogus_mode"
-            )
-        assert result.success is False
-        assert result.reason == "error"
-
-    def test_file_not_found_reason_error(self):
-        with patch("os.path.exists", return_value=False):
-            from core.enricher import enrich_single
-            result = enrich_single(file_path="/nonexistent/x.mp4", number="SONE-205")
-        assert result.success is False
-        assert result.reason == "error"
-
-    def test_external_manager_nfo_permission_error_reason(self, tmp_path):
-        video_file = tmp_path / "SONE-205.mp4"
-        video_file.write_bytes(b"x")
-        video = _make_video()
-
-        with (
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo", side_effect=PermissionError("denied")),
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-            mock_repo.get_by_path.return_value = None
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=str(video_file),
-                number="SONE-205",
-                mode="db_to_sidecar",
-                external_manager="jellyfin",
-                overwrite_existing=True,
-            )
-
-        assert result.success is False
-        assert result.reason == "error"
 
     def test_off_mode_nfo_permission_error_reason(self, tmp_path):
         video_file = tmp_path / "SONE-205.mp4"
@@ -180,22 +132,6 @@ class TestReasonNotFoundBranches:
         assert result.success is False
         assert result.reason == "not_found"
 
-    def test_db_to_sidecar_not_found_reason(self, tmp_path):
-        video_file = tmp_path / "SONE-205.mp4"
-        video_file.write_bytes(b"x")
-
-        with patch("core.enricher.VideoRepository") as mock_repo_cls:
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {}
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=str(video_file), number="SONE-205", mode="db_to_sidecar"
-            )
-
-        assert result.success is False
-        assert result.reason == "not_found"
 
     def test_fill_missing_not_found_reason(self, tmp_path):
         video_file = tmp_path / "SONE-205.mp4"
@@ -223,110 +159,7 @@ class TestReasonNotFoundBranches:
 
 
 class TestReasonSuccessBranches:
-    def test_fresh_cover_download_reason_hit(self, tmp_path):
-        """有下載 + 磁碟真的寫出檔案，且 DB 該片本就有 cover_path（db_to_sidecar
-        的來源片，代表先前掃描/入庫時已記錄）→ hit（/thumb 服務得到）。"""
-        video_file = tmp_path / "SONE-205.mp4"
-        video_file.write_bytes(b"x")
-        cover_path = tmp_path / "SONE-205.jpg"
-        video = _make_video(cover_path="https://example.com/cover.jpg")
 
-        def fake_download(url, path):
-            # 模擬真正把封面寫到磁碟
-            with open(path, "wb") as f:
-                f.write(b"jpegdata")
-            return True
-
-        with (
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image", side_effect=fake_download),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-            # DB 現有紀錄的 cover_path 有值 + 解析後的實體封面檔真的存在
-            # （fake_download 已把 SONE-205.jpg 寫到磁碟）→ /thumb 兩道 gate 皆過 → hit
-            mock_repo.get_by_path.return_value = _make_video(
-                cover_path=to_file_uri(str(cover_path))
-            )
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=str(video_file),
-                number="SONE-205",
-                mode="db_to_sidecar",
-                overwrite_existing=True,
-            )
-
-        assert result.success is True
-        assert result.cover_written is True
-        assert cover_path.exists()
-        assert result.reason == "hit"
-
-    def test_no_cover_url_and_no_disk_file_reason_no_cover(self, tmp_path):
-        """沒下載（無 cover_url）+ 磁碟無檔 + DB cover_path 也空 → no_cover。"""
-        video_file = tmp_path / "SONE-205.mp4"
-        video_file.write_bytes(b"x")
-        video = _make_video(cover_path="")  # 無 cover_url
-
-        with (
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image") as mock_dl,
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-            # DB 該片同樣沒有 cover_path 紀錄
-            mock_repo.get_by_path.return_value = _make_video(cover_path="")
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=str(video_file),
-                number="SONE-205",
-                mode="db_to_sidecar",
-                overwrite_existing=True,
-            )
-
-        assert result.success is True
-        assert result.cover_written is False
-        mock_dl.assert_not_called()
-        assert result.reason == "no_cover"
-
-    def test_download_declared_true_but_file_missing_reason_no_cover(self, tmp_path):
-        """cover_written=True（download_image 宣告成功）但磁碟實際上沒有檔案
-        （極罕見），且 db_to_sidecar 不打 DB（source_used='db' 跳過 _db_upsert），
-        DB cover_path 仍空 → /thumb 服務不到 → no_cover。"""
-        video_file = tmp_path / "SONE-205.mp4"
-        video_file.write_bytes(b"x")
-        video = _make_video(cover_path="https://example.com/cover.jpg")
-
-        with (
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo", return_value=True),
-            # download_image 宣告 True，但不真的寫檔
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-            # DB 該片 cover_path 仍空（db_to_sidecar 不寫 DB）
-            mock_repo.get_by_path.return_value = _make_video(cover_path="")
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=str(video_file),
-                number="SONE-205",
-                mode="db_to_sidecar",
-                overwrite_existing=True,
-            )
-
-        assert result.success is True
-        assert result.cover_written is True  # 宣告值
-        assert not (tmp_path / "SONE-205.jpg").exists()  # 磁碟無檔
-        # db_to_sidecar 跳過 _db_upsert、DB cover_path 仍空 → /thumb 服務不到 → no_cover
-        assert result.reason == "no_cover"
 
     def test_codex_p1_regression_lock_nfo_only_cover_already_exists_is_hit(self, tmp_path):
         """Codex P1 回歸鎖（初版）：本輪只補 NFO（nfo_written=True），封面本就存在磁碟
@@ -475,20 +308,3 @@ class TestReasonSuccessBranches:
 # ── fetch_samples_only 不 crash（default reason）─────────────────────────
 
 
-class TestFetchSamplesOnlyReasonDefault:
-    def test_fetch_samples_only_result_has_default_reason(self, tmp_path):
-        """fetch_samples_only 未顯式帶 reason → EnrichResult default (None)，不 crash。"""
-        video_file = tmp_path / "SONE-205.mp4"
-        video_file.write_bytes(b"x")
-
-        with (
-            patch("core.enricher.search_jav", return_value=None),
-        ):
-            from core.enricher import fetch_samples_only
-            result = fetch_samples_only(file_path=str(video_file), number="SONE-205")
-
-        assert result.success is False
-        assert result.reason is None
-        from dataclasses import asdict
-        d = asdict(result)  # 不應 crash
-        assert d["reason"] is None

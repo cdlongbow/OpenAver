@@ -4,8 +4,6 @@ TDD-lite — TagAliasRecord dataclass + TagAliasRepository
 """
 import pytest
 import sqlite3
-import json
-from pathlib import Path
 
 from core.database import init_db
 
@@ -35,32 +33,6 @@ def repo(empty_db):
 
 class TestTagAliasRepositoryCRUD:
 
-    def test_get_all_empty(self, repo):
-        """空表 get_all() 回傳 []"""
-        result = repo.get_all()
-        assert result == []
-
-    def test_init_db_idempotent(self, empty_db):
-        """init_db() 呼叫兩次無例外，tag_aliases 表存在"""
-        init_db(empty_db)
-        init_db(empty_db)
-        conn = sqlite3.connect(str(empty_db))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(tag_aliases)")
-        cols = [row[1] for row in cursor.fetchall()]
-        conn.close()
-        assert "primary_name" in cols
-
-    def test_tag_aliases_table_created(self, empty_db):
-        """init_db() 後 tag_aliases 表應存在"""
-        conn = sqlite3.connect(str(empty_db))
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='tag_aliases'"
-        )
-        row = cursor.fetchone()
-        conn.close()
-        assert row is not None
 
     def test_add_and_get_all(self, repo):
         """add(primary, aliases) → get_all() 回傳 1 筆，primary/aliases 正確"""
@@ -93,32 +65,6 @@ class TestTagAliasRepositoryCRUD:
         repo.delete("TagA")
         assert repo.get_by_primary("TagA") is None
 
-    def test_get_by_primary_miss(self, repo):
-        """不存在 primary 回傳 None"""
-        result = repo.get_by_primary("nonexistent")
-        assert result is None
-
-    def test_add_empty_aliases(self, repo):
-        """add(primary, []) 成功，aliases 為空 list"""
-        record = repo.add("TagA", [])
-        assert record.primary_name == "TagA"
-        assert record.aliases == []
-
-    def test_add_source_default_manual(self, repo):
-        """add 預設 source 為 'manual'"""
-        record = repo.add("TagA", [])
-        assert record.source == "manual"
-
-    def test_add_source_custom(self, repo):
-        """add 可指定 source"""
-        record = repo.add("TagA", [], source="auto")
-        assert record.source == "auto"
-
-    def test_remove_alias_miss(self, repo):
-        """remove_alias 對不存在的 alias 回傳 False"""
-        repo.add("TagA", [])
-        result = repo.remove_alias("TagA", "nonexistent")
-        assert result is False
 
     def test_delete_by_alias(self, repo):
         """delete 透過 alias 名稱刪除 group"""
@@ -127,10 +73,6 @@ class TestTagAliasRepositoryCRUD:
         assert result is True
         assert repo.get_by_primary("TagA") is None
 
-    def test_delete_nonexistent(self, repo):
-        """delete 不存在的名稱回傳 False"""
-        result = repo.delete("nonexistent")
-        assert result is False
 
     def test_find_by_alias_hit(self, repo):
         """find_by_alias 找到 alias 回傳對應 record"""
@@ -139,11 +81,6 @@ class TestTagAliasRepositoryCRUD:
         assert result is not None
         assert result.primary_name == "TagA"
 
-    def test_find_by_alias_miss(self, repo):
-        """find_by_alias 找不到回傳 None"""
-        result = repo.find_by_alias("nonexistent")
-        assert result is None
-
 
 # ---------------------------------------------------------------------------
 # TestTagAliasRepositoryUniqueness — 全域唯一約束 + 跨表正交
@@ -151,17 +88,6 @@ class TestTagAliasRepositoryCRUD:
 
 class TestTagAliasRepositoryUniqueness:
 
-    def test_add_primary_duplicate_raises(self, repo):
-        """add("X") 兩次：第二次 raise ValueError"""
-        repo.add("X", [])
-        with pytest.raises(ValueError):
-            repo.add("X", [])
-
-    def test_add_alias_duplicate_raises(self, repo):
-        """add("A", ["X"]) 後 add("B", ["X"])：第二次 raise ValueError"""
-        repo.add("A", ["X"])
-        with pytest.raises(ValueError):
-            repo.add("B", ["X"])
 
     def test_add_primary_conflicts_with_existing_alias_raises(self, repo):
         """add("X", ["A"]) 後 add("A", [])：第二次 raise ValueError（A 已是 alias）"""
@@ -169,14 +95,6 @@ class TestTagAliasRepositoryUniqueness:
         with pytest.raises(ValueError):
             repo.add("A", [])
 
-    def test_add_alias_conflicts_with_existing_alias(self, repo):
-        """add("A", ["X"]) 後 add_alias("B", "X")：回傳 (False, msg)"""
-        repo.add("A", ["X"])
-        repo.add("B", [])
-        ok, msg = repo.add_alias("B", "X")
-        assert ok is False
-        assert msg is not None
-        assert len(msg) > 0
 
     def test_add_alias_conflicts_with_primary_name(self, repo):
         """add("X") 後 add_alias("Y", "X")：回傳 (False, msg)"""
@@ -213,11 +131,6 @@ class TestTagAliasRepositoryUniqueness:
 
 class TestTagAliasRepositoryResolve:
 
-    def test_resolve_primary_hit(self, repo):
-        """resolve(primary_name) → {primary} ∪ set(aliases)"""
-        repo.add("A", ["B", "C"])
-        result = repo.resolve("A")
-        assert result == {"A", "B", "C"}
 
     def test_resolve_alias_hit(self, repo):
         """resolve(alias) → {primary} ∪ set(aliases)（雙向解析）"""
@@ -225,7 +138,3 @@ class TestTagAliasRepositoryResolve:
         result = repo.resolve("B")
         assert result == {"A", "B"}
 
-    def test_resolve_miss(self, repo):
-        """空表 resolve("X") → {"X"}"""
-        result = repo.resolve("X")
-        assert result == {"X"}

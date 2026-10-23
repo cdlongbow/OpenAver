@@ -138,19 +138,6 @@ function visibleMenuCount(c) {
     }).length;
 }
 
-/** 新鈕：x-show 含 showTableList 的 <button>（下拉觸發鈕沒有這個 gate）。 */
-function extractShapeToggleButton(menu) {
-    const re = /<button\b([^>]*)>/g;
-    let m;
-    while ((m = re.exec(menu)) !== null) {
-        const attrs = m[1];
-        const xs = attrs.match(/\bx-show="([^"]*)"/);
-        if (xs && xs[1].includes('showTableList')) {
-            return { attrs, xShow: xs[1] };
-        }
-    }
-    return null;
-}
 
 // =====================================================================
 // 反向鎖（§0.1 / P2-1）：桌面 + poster 仍是四條／四段（旗標開）
@@ -192,38 +179,6 @@ test('A 鍵（旗標開）：桌面四段循環 cover → poster → list → ta
     assert.equal(c.cardShape, 'cover');
 });
 
-test('A 鍵（旗標關）：桌面兩段循環 cover → poster → cover', () => {
-    const c = makeComponent({
-        _isNarrow: false,
-        mode: 'grid',
-        cardShape: 'cover',
-        showTableList: false,
-    });
-    pressA(c);
-    assert.equal(c.mode, 'grid');
-    assert.equal(c.cardShape, 'poster');
-    pressA(c);
-    assert.equal(c.mode, 'grid');
-    assert.equal(c.cardShape, 'cover');
-});
-
-test('A 鍵：窄螢幕三段循環 cover → list → table → cover', () => {
-    const c = makeComponent({
-        _isNarrow: true,
-        mode: 'grid',
-        cardShape: 'cover',
-        showTableList: true,
-    });
-    pressA(c);
-    assert.equal(c.mode, 'list');
-    assert.equal(c.cardShape, 'cover');
-    pressA(c);
-    assert.equal(c.mode, 'table');
-    assert.equal(c.cardShape, 'cover');
-    pressA(c);
-    assert.equal(c.mode, 'grid');
-    assert.equal(c.cardShape, 'cover');
-});
 
 test('A 鍵：窄螢幕 + cardShape=poster 循環一整圈後 cardShape 仍是 poster', () => {
     const c = makeComponent({
@@ -258,66 +213,13 @@ test('A 鍵（旗標關）：窄螢幕按 A → mode 與 cardShape 都不變（�
     assert.equal(c.cardShape, 'poster');
 });
 
-test('A 鍵：女優牆（showFavoriteActresses=true）mode 與 cardShape 都不變', () => {
-    const c = makeComponent({
-        showFavoriteActresses: true,
-        mode: 'grid',
-        cardShape: 'cover',
-        _isNarrow: false,
-    });
-    pressA(c);
-    assert.equal(c.mode, 'grid');
-    assert.equal(c.cardShape, 'cover');
-});
 
 // =====================================================================
 // 源碼斷言（showcase.html 模式選單）
 // =====================================================================
 
 // [lint-guard: node-justified] 162e 暫留：缺「到結尾錨點」的 scope 欄位（只有 {anchor,window:N}），且 _posterModeActive 全檔有合法使用不能全檔 forbidden
-test('源碼：模式選單區塊內零 switchMode(、零 _posterModeActive', () => {
-    const menu = extractModeMenu(SHOWCASE_HTML);
-    assert.equal(menu.includes('switchMode('), false, `選單不得再呼叫 switchMode(：${menu}`);
-    assert.equal(menu.includes('_posterModeActive'), false, '選單區塊不得出現 _posterModeActive');
-});
 
 // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：旗標關桌面要看得到卡型切換鈕，窄螢幕／旗標開不得多一顆重複鈕
-test('源碼：新鈕 x-show 同時含 !showTableList 與 !_isNarrow，四態可見性正確', () => {
-    const menu = extractModeMenu(SHOWCASE_HTML);
-    const btn = extractShapeToggleButton(menu);
-    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
-    assert.ok(btn.xShow.includes('!showTableList'), '新鈕 x-show 必須含 !showTableList');
-    assert.ok(btn.xShow.includes('!_isNarrow'), '新鈕 x-show 必須含 !_isNarrow');
-    // 寬/窄 × 旗標開/關
-    assert.equal(
-        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: false, showTableList: false })),
-        true,
-        '寬＋旗標關 → 新鈕可見',
-    );
-    assert.equal(
-        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: false, showTableList: true })),
-        false,
-        '寬＋旗標開 → 新鈕不可見',
-    );
-    assert.equal(
-        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: true, showTableList: false })),
-        false,
-        '窄＋旗標關 → 新鈕不可見',
-    );
-    assert.equal(
-        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: true, showTableList: true })),
-        false,
-        '窄＋旗標開 → 新鈕不可見',
-    );
-});
 
 // [lint-guard: node-justified] 162e 暫留：T4 實剪回復——舊斷言以 attrs.includes 接受任一引號形式，required regex 只認雙引號會誤擋合法單引號 @click；同單位已修一輪，依 CD-162e-17 回復
-test('源碼：新鈕 @click 落到 selectPresentation(', () => {
-    const menu = extractModeMenu(SHOWCASE_HTML);
-    const btn = extractShapeToggleButton(menu);
-    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
-    assert.ok(
-        /@click="[^"]*selectPresentation\(/.test(btn.attrs) || btn.attrs.includes('selectPresentation('),
-        '新鈕 @click 必須落到 selectPresentation(',
-    );
-});

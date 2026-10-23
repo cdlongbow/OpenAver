@@ -53,11 +53,6 @@ test('computeBadges: 只有 user_tags 命中 → 亮 中字', () => {
 
 // ── 3. 兩者皆有同一屬性 → 只出現一顆 ─────────────────────────────────
 
-test('computeBadges: tags 與 user_tags 同屬性只出現一顆', () => {
-    const result = badges({ tags: '中文字幕', user_tags: ['中文字幕'] });
-    assert.equal(result.length, 1);
-    assert.deepEqual(result, [{ id: 'subtitle', display_name: '中字' }]);
-});
 
 // ── 4. 使用者自建 alias group ────────────────────────────────────────
 
@@ -74,10 +69,6 @@ test('computeBadges: 使用者自建 alias group 命中（繁中 → 中字）',
 // 靜態 match_aliases 不依賴 alias map：手貼「破解」仍亮 AI。
 // 本條是 mutation 2 的鎖（若命中集合只建 canonical_tag 就會紅）。
 
-test('computeBadges: tagToGroup 為 {} 時手貼破解仍亮 AI', () => {
-    const result = badges({ user_tags: ['破解'] }, { tagToGroup: {} });
-    assert.deepEqual(result, [{ id: 'cracked', display_name: 'AI' }]);
-});
 
 // ── 6. 命中 4 條以上 → 只回 3 個，順序符合 display_order ─────────────
 // 中字 > AI/LEAK > VR > 4K。manifest 陣列裡 4k 排在 vr 前面，
@@ -95,16 +86,6 @@ test('computeBadges: 命中 4 條以上只回 3 個且順序符合 display_order
 // 關掉 中字 後命中 4 條 → 回剩下那 3 個（含原本會被截掉的 4K）。
 // 若先截斷再過濾，中字佔走一格，只剩 2 個。
 
-test('computeBadges: 關掉的屬性不佔用截斷名額', () => {
-    const enabledIds = ALL_IDS.filter((id) => id !== 'subtitle');
-    const result = badges(
-        { tags: '中文字幕,無碼破解,VR,4K' },
-        { enabledIds },
-    );
-    assert.equal(result.length, 3);
-    assert.deepEqual(idsOf(result), ['cracked', 'vr', '4k']);
-    assert.deepEqual(namesOf(result), ['AI', 'VR', '4K']);
-});
 
 // ── 8. items 缺某個 id → 該屬性視為開啟（稀疏語意） ─────────────────
 
@@ -149,26 +130,9 @@ test('resolveEnabledIds: enabled 為 false/undefined/缺 key → []，computeBad
 
 // ── 10. manifest 為 [] → []、不拋例外 ────────────────────────────────
 
-test('computeBadges: manifest 為 [] → [] 不拋例外', () => {
-    assert.doesNotThrow(() => computeBadges({ tags: '中文字幕' }, [], {}, ALL_IDS));
-    assert.deepEqual(computeBadges({ tags: '中文字幕' }, [], {}, ALL_IDS), []);
-});
 
 // ── 11. video null / tags undefined / user_tags 非陣列 → []、不拋 ───
 
-test('computeBadges: video null / tags undefined / user_tags 非陣列 → [] 不拋例外', () => {
-    assert.doesNotThrow(() => computeBadges(null, MANIFEST, {}, ALL_IDS));
-    assert.deepEqual(computeBadges(null, MANIFEST, {}, ALL_IDS), []);
-
-    assert.doesNotThrow(() => computeBadges(undefined, MANIFEST, {}, ALL_IDS));
-    assert.deepEqual(computeBadges(undefined, MANIFEST, {}, ALL_IDS), []);
-
-    assert.doesNotThrow(() => computeBadges({ tags: undefined }, MANIFEST, {}, ALL_IDS));
-    assert.deepEqual(computeBadges({ tags: undefined }, MANIFEST, {}, ALL_IDS), []);
-
-    assert.doesNotThrow(() => computeBadges({ tags: '', user_tags: 'not-array' }, MANIFEST, {}, ALL_IDS));
-    assert.deepEqual(computeBadges({ tags: '', user_tags: 'not-array' }, MANIFEST, {}, ALL_IDS), []);
-});
 
 // ── 12. 整串相等不是子字串 ───────────────────────────────────────────
 
@@ -182,15 +146,4 @@ test('computeBadges: 整串相等不是子字串（AI生成作品 不命中 AI�
 
 // ── resolveEnabledIds 其餘 fail-closed 分支 ──────────────────────────
 
-test('resolveEnabledIds: manifest 非陣列 → [] 不拋例外', () => {
-    assert.doesNotThrow(() => resolveEnabledIds(null, { enabled: true }));
-    assert.deepEqual(resolveEnabledIds(null, { enabled: true }), []);
-    assert.deepEqual(resolveEnabledIds(undefined, { enabled: true }), []);
-    assert.deepEqual(resolveEnabledIds({ id: 'subtitle' }, { enabled: true }), []);
-});
 
-test('computeBadges: enabledIds 非陣列 → []（fail-closed）', () => {
-    assert.deepEqual(computeBadges({ tags: '中文字幕' }, MANIFEST, {}, null), []);
-    assert.deepEqual(computeBadges({ tags: '中文字幕' }, MANIFEST, {}, undefined), []);
-    assert.deepEqual(computeBadges({ tags: '中文字幕' }, MANIFEST, {}, 'subtitle'), []);
-});

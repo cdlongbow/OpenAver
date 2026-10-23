@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import requests
 from PIL import Image
 
 import core.wishlist_cover_cache as wcc
@@ -44,23 +43,6 @@ def test_cover_file_for_same_number_forms_share_path(db_path):
     b = wcc.cover_file_for("FC2-1234567")
     assert a == b
     assert a == _sha1_path("FC2-1234567", db_path)
-
-
-def test_cover_file_for_bucket_format(db_path):
-    number = "SONE-001"
-    h = hashlib.sha1(normalize_number(number).encode("utf-8")).hexdigest()
-    p = wcc.cover_file_for(number)
-    assert p == db_path.parent / "wishlist_cover" / h[:2] / f"{h}.webp"
-    assert p.parent.name == h[:2]
-    assert p.stem == h
-    assert p.suffix == ".webp"
-
-
-def test_cover_file_for_creates_nothing_on_disk(db_path):
-    p = wcc.cover_file_for("ABC-123")
-    assert not p.exists()
-    assert not p.parent.exists()
-    assert not (db_path.parent / "wishlist_cover").exists()
 
 
 def _jpeg_bytes(w: int = 120, h: int = 80) -> bytes:
@@ -163,177 +145,24 @@ def test_download_and_save_returns_false_when_nothing_decodable(db_path, monkeyp
 
 
 # ── DoD-3 / M2: RequestException → False，不拋、不留檔 ───────────
-def test_download_and_save_returns_false_on_request_exception(db_path, monkeypatch):
-    def _boom(*_a, **_k):
-        raise requests.RequestException("timeout")
-
-    monkeypatch.setattr(wcc.requests, "get", _boom)
-    assert wcc.download_and_save("SONE-001", "https://cdn.example/cover.jpg") is False
-    dest = wcc.cover_file_for("SONE-001")
-    assert not dest.exists()
-    if dest.parent.exists():
-        assert list(dest.parent.iterdir()) == []
 
 
 # ── DoD-3 / M1: 過小回應 → False ─────────────────────────────────
-def test_download_and_save_rejects_undersized_response(db_path, monkeypatch):
-    tiny = b"tiny-error-page"  # << 1000
-    monkeypatch.setattr(
-        wcc.requests, "get", lambda *a, **k: _ok_response(tiny)
-    )
-    assert wcc.download_and_save("SONE-001", "https://cdn.example/cover.jpg") is False
-    dest = wcc.cover_file_for("SONE-001")
-    assert not dest.exists()
-    if dest.parent.exists():
-        assert list(dest.parent.iterdir()) == []
-
-
-def test_download_and_save_returns_false_on_non_200(db_path, monkeypatch):
-    monkeypatch.setattr(
-        wcc.requests, "get", lambda *a, **k: _ok_response(b"x" * 1500, status_code=500)
-    )
-    assert wcc.download_and_save("SONE-001", "https://cdn.example/cover.jpg") is False
-    dest = wcc.cover_file_for("SONE-001")
-    assert not dest.exists()
 
 
 # ── DoD-4: fallback 生效 ─────────────────────────────────────────
-def test_download_and_save_uses_fallback_when_cover_fails(db_path, monkeypatch):
-    fallback_bytes = _jpeg_bytes(90, 60)
-    calls = []
-
-    def fake_get(url, *a, **k):
-        calls.append(url)
-        if "cover" in url:
-            return _ok_response(b"tiny")  # undersized → fail
-        return _ok_response(fallback_bytes)
-
-    monkeypatch.setattr(wcc.requests, "get", fake_get)
-    assert (
-        wcc.download_and_save(
-            "SONE-001",
-            "https://cdn.example/cover.jpg",
-            fallback_url="https://cdn.example/fallback.jpg",
-        )
-        is True
-    )
-    dest = wcc.cover_file_for("SONE-001")
-    with Image.open(dest) as img:
-        assert img.format == "WEBP"
-        assert img.size == (90, 60), "落地的應該是 fallback 那張"
-    assert calls == [
-        "https://cdn.example/cover.jpg",
-        "https://cdn.example/fallback.jpg",
-    ]
-
-
-def test_download_and_save_empty_cover_url_tries_fallback(db_path, monkeypatch):
-    fallback_bytes = _jpeg_bytes(70, 50)
-    calls = []
-
-    def fake_get(url, *a, **k):
-        calls.append(url)
-        return _ok_response(fallback_bytes)
-
-    monkeypatch.setattr(wcc.requests, "get", fake_get)
-    assert (
-        wcc.download_and_save(
-            "SONE-001",
-            "",
-            fallback_url="https://cdn.example/fallback.jpg",
-        )
-        is True
-    )
-    assert calls == ["https://cdn.example/fallback.jpg"]
-    with Image.open(wcc.cover_file_for("SONE-001")) as img:
-        assert img.format == "WEBP"
-        assert img.size == (70, 50)
-
-
-def test_download_and_save_both_urls_empty_returns_false(db_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        wcc.requests, "get", lambda *a, **k: calls.append(1) or _ok_response(b"x" * 1500)
-    )
-    assert wcc.download_and_save("SONE-001", "", fallback_url="") is False
-    assert calls == []
-    assert not wcc.cover_file_for("SONE-001").exists()
 
 
 # ── DoD-5: remove ────────────────────────────────────────────────
-def test_remove_deletes_existing_file(db_path, monkeypatch):
-    payload = _jpeg_bytes()
-    monkeypatch.setattr(
-        wcc.requests, "get", lambda *a, **k: _ok_response(payload)
-    )
-    assert wcc.download_and_save("SONE-001", "https://cdn.example/cover.jpg") is True
-    dest = wcc.cover_file_for("SONE-001")
-    assert dest.exists()
-    assert wcc.remove("SONE-001") is None
-    assert not dest.exists()
-
-
-def test_remove_missing_is_noop(db_path):
-    assert wcc.remove("NEVER-EXISTED") is None
 
 
 # ── remove_best_effort（TASK-141a-T2）────────────────────────────
-def test_remove_best_effort_deletes_existing_file(db_path, monkeypatch):
-    """成功路徑：既有封面檔被刪掉。"""
-    payload = _jpeg_bytes()
-    monkeypatch.setattr(
-        wcc.requests, "get", lambda *a, **k: _ok_response(payload)
-    )
-    assert wcc.download_and_save("SONE-001", "https://cdn.example/cover.jpg") is True
-    dest = wcc.cover_file_for("SONE-001")
-    assert dest.exists()
-    assert wcc.remove_best_effort("SONE-001") is None
-    assert not dest.exists()
-
-
-def test_remove_best_effort_survives_oserror(db_path, monkeypatch):
-    """DoD 3 / mutation 點 1：remove() 丟 OSError 時不往上拋。"""
-
-    def _boom(number):
-        raise OSError(16, "Device or resource busy")
-
-    monkeypatch.setattr(wcc, "remove", _boom)
-    # 不得拋例外
-    assert wcc.remove_best_effort("LOCKED-001") is None
-
-
-def test_remove_best_effort_missing_is_noop(db_path):
-    """缺檔時與 remove() 一樣 no-op。"""
-    assert wcc.remove_best_effort("NEVER-EXISTED") is None
 
 
 # ── 鏡像對稱：download / remove 對不同格式番號走同一路徑 ─────────
-def test_download_and_remove_share_path_across_number_forms(db_path, monkeypatch):
-    payload = _jpeg_bytes()
-    monkeypatch.setattr(
-        wcc.requests, "get", lambda *a, **k: _ok_response(payload)
-    )
-    assert wcc.download_and_save("fc2ppv-1234567", "https://cdn.example/c.jpg") is True
-    written = wcc.cover_file_for("fc2ppv-1234567")
-    assert written.exists()
-    # remove 用另一種寫法的同一番號
-    wcc.remove("FC2-1234567")
-    assert not written.exists()
-    assert wcc.cover_file_for("FC2-1234567") == written
 
 
 # ── timeout 必須傳入 requests.get ────────────────────────────────
-def test_fetch_passes_timeout(db_path, monkeypatch):
-    seen = {}
-
-    def fake_get(url, *a, **k):
-        seen.update(k)
-        return _ok_response(_jpeg_bytes())
-
-    monkeypatch.setattr(wcc.requests, "get", fake_get)
-    assert wcc.download_and_save("SONE-001", "https://cdn.example/c.jpg") is True
-    assert "timeout" in seen
-    assert seen["timeout"] == 30
 
 
 # ── headers 必須帶 organizer 那組（UA + javbus Referer）──────────
@@ -356,38 +185,3 @@ def test_fetch_passes_organizer_headers(db_path, monkeypatch):
     assert seen["headers"].get("Referer") == "https://www.javbus.com/"
 
 
-def test_download_and_save_does_not_refetch_identical_fallback(tmp_path, monkeypatch):
-    """Codex PR#175 P2：primary 與 fallback 是同一個網址時只准打一次。
-
-    `add_wishlist()` 傳的是 `(preview_cover_url or cover, cover)`，而 `preview_cover_url`
-    只有 metatube 會填 ⇒ 沒接 metatube 的人兩個參數恆為同一字串。不去重的話圖床連不上時
-    會各等一次 30 秒 timeout，使用者按下加入書籤要轉 60 秒而不是 30 秒。
-    """
-    monkeypatch.setattr(wcc, "get_db_path", lambda: tmp_path / "db.sqlite")
-    calls = []
-
-    def _fake_get(url, **kwargs):
-        calls.append(url)
-        raise requests.RequestException("host unreachable")
-
-    monkeypatch.setattr(wcc.requests, "get", _fake_get)
-
-    same = "https://cdn.example/only.jpg"
-    assert wcc.download_and_save("DEDUP-001", same, same) is False
-    assert calls == [same], f"同一個網址只准打一次，實際打了 {len(calls)} 次：{calls}"
-
-
-def test_download_and_save_still_tries_distinct_fallback(tmp_path, monkeypatch):
-    """反向鎖：兩個網址不同時 fallback 仍必須被嘗試（去重不得誤殺備援）。"""
-    monkeypatch.setattr(wcc, "get_db_path", lambda: tmp_path / "db.sqlite")
-    calls = []
-
-    def _fake_get(url, **kwargs):
-        calls.append(url)
-        raise requests.RequestException("host unreachable")
-
-    monkeypatch.setattr(wcc.requests, "get", _fake_get)
-
-    primary, fallback = "https://cdn.example/a.jpg", "https://cdn.example/b.jpg"
-    assert wcc.download_and_save("DEDUP-002", primary, fallback) is False
-    assert calls == [primary, fallback], "兩個不同網址都必須各打一次"

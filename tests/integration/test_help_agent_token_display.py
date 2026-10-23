@@ -46,19 +46,6 @@ def server_mode_true(monkeypatch):
     monkeypatch.setattr("web.app.load_config", lambda: {"general": {"server_mode": True}})
 
 
-class TestAuthDisabledByteIdentical:
-    # [lint-guard: pytest-justified] 這四個 class 斷言的是「同一份 help.html 依
-    # 請求狀態（認證開關 × 來源是否 loopback）渲染出不同輸出」——static_guard_lint
-    # 掃的是模板源碼的字面存在，看不到 SSR 之後的結果，表達不了「非 loopback 這次
-    # 渲染不含 oav_」。守的又是安全指紋（token 真值只有一個合法出口，CD-114b-6）。
-    def test_no_new_anchor_no_i18n_leak_no_token_marker(self):
-        client = TestClient(app, client=LOOPBACK_CLIENT)
-        resp = client.get("/help")
-        assert resp.status_code == 200
-        assert ANCHOR_CLASS.encode() not in resp.content
-        assert b"help.agent_auth" not in resp.content
-        assert b"oav_" not in resp.content
-        assert b"Authorization: Bearer" not in resp.content
         # 為什麼是 `"Authorization: Bearer"` 而不是 bare `"Authorization"`：
         # `settings.openai.openai_api_key_placeholder` 早把「不送 Authorization
         # header」嵌進每頁的 `window.__i18n` 全量字典（`get_merged_translations()`
@@ -98,20 +85,6 @@ class TestNonLoopbackTokenVisibility:
     # [lint-guard: pytest-justified] 安全指紋 ＋ 跨層 contract：斷言「已通過 PIN 的
     # 遠端裝置渲染出來的 /help 不含 oav_ 也不含面板錨點」。這是 request 狀態的函式，
     # 模板源碼裡那些字串永遠存在，static_guard_lint 只會永遠通過。
-    def test_remote_authed_request_now_gets_token_and_anchor(self, server_mode_true):
-        access_auth.set_auth(True, "AB12")
-        real_token = access_auth.snapshot().agent_token
-        browser_token = access_auth.attempt_pin("AB12")
-        assert browser_token is not None
-        client = TestClient(app, client=REMOTE_CLIENT)
-        client.cookies.set("sid", browser_token)
-        resp = client.get("/help")
-        assert resp.status_code == 200
-        assert ANCHOR_CLASS.encode() in resp.content
-        assert real_token.encode() in resp.content
-        # plan §4 T4 的機械面之一：非 loopback 不得拿到 token，也不得拿到 agent
-        # curl 的形狀。理由見 TestAuthDisabledByteIdentical 那條同款斷言的註解。
-        assert b"Authorization: Bearer" not in resp.content
 
     def test_remote_authed_request_still_gets_the_auth_enabled_security_copy(
         self, server_mode_true

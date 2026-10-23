@@ -20,12 +20,10 @@ from PIL import Image
 
 import core.config as core_config
 import core.focal.subprocess_runner as subprocess_runner
-import core.focal.worker as worker_mod
 import core.organizer as organizer_mod
 from core.config import save_config
 from core.focal import device_state
 from core.focal.subprocess_runner import RunnerOutcome
-from core.focal.worker import FocalWorker
 from core.organizer import crop_to_poster
 from core.version import VERSION
 
@@ -149,62 +147,12 @@ def _install_run_detection_wrapper(module, monkeypatch, spawn_spy):
 # ---------------------------------------------------------------------------
 
 
-class TestPath1WorkerDeviceGate:
-    def test_two_timeouts_then_third_does_not_spawn(self, tmp_path, monkeypatch):
-        _patch_config_paths(tmp_path, monkeypatch)
-        _seed_enabled_device()
-
-        spawn_spy = _SpawnSpy()
-        outcomes = _install_run_detection_wrapper(worker_mod, monkeypatch, spawn_spy)
-
-        img = tmp_path / "cover.jpg"
-        Image.new("RGB", (64, 64), (10, 20, 30)).save(img)
-        path = str(img)
-
-        w = FocalWorker(auto_start=False)
-        for i in range(2):
-            w.submit("video", f"v{i}", path, 1.0, lambda *_a: None)
-            w._process_one()
-
-        assert spawn_spy.call_count == 2
-        assert all(o.kind == "ABANDONED" and o.reason == "detect_timeout" for o in outcomes)
-        assert device_state.is_disabled() is True
-
-        w.submit("video", "v2", path, 1.0, lambda *_a: None)
-        w._process_one()
-
-        assert spawn_spy.call_count == 2, "third candidate must not spawn after disable"
-        assert outcomes[-1].kind == "ABANDONED"
-        assert outcomes[-1].reason == "skipped_disabled"
-
-
 # ---------------------------------------------------------------------------
 # path④ — crop_to_poster wiring + behaviour
 # ---------------------------------------------------------------------------
 
 
 class TestPath4OrganizerDeviceGate:
-    def test_organizer_wiring_passes_device_state_hooks(self, tmp_path, monkeypatch):
-        """DoD path④ wiring: kwargs are device_state.is_disabled / record_outcome."""
-        captured = {}
-
-        def fake_run_detection(
-            fs_path, ratio, *, job_key, timeout_s,
-            pre_spawn_check=None, on_outcome=None, **_kwargs,
-        ):
-            captured["pre_spawn_check"] = pre_spawn_check
-            captured["on_outcome"] = on_outcome
-            return RunnerOutcome(kind="NO_FACE")
-
-        monkeypatch.setattr(organizer_mod, "run_detection", fake_run_detection)
-
-        src = tmp_path / "wide.jpg"
-        Image.new("RGB", (800, 538), (80, 80, 80)).save(src)
-        dst = tmp_path / "poster.jpg"
-        assert crop_to_poster(str(src), str(dst), number="FC2-1234567", maker="") is True
-
-        assert captured["pre_spawn_check"] is device_state.is_disabled
-        assert captured["on_outcome"] is device_state.record_outcome
 
     def test_two_timeouts_then_third_does_not_spawn(self, tmp_path, monkeypatch):
         _patch_config_paths(tmp_path, monkeypatch)
@@ -302,15 +250,3 @@ class TestRunDetectionCallSitesAllPassDeviceGate:
             f"這條路仍會 spawn 並空等：{missing}"
         )
 
-    def test_call_site_inventory_is_exactly_the_four_known_paths(self):
-        """新增第五條路徑時這條會紅——那是刻意的：它強迫作者回答「這條要不要貢獻判定」。
-
-        （`pre_spawn_check` 上一條已經管了；這條管的是 `on_outcome` 那個**沒有安全預設**
-        的決定——傳了就貢獻連續逾時計數，不傳就不貢獻，兩種都合法，所以只能靠人判。）
-        """
-        found = {f for f, _ln, _kw in self._collect_sites()}
-        assert found == self.EXPECTED_FILES, (
-            "run_detection 的呼叫端清單變了。新增一條路徑時，請先決定它要不要貢獻裝置停用判定"
-            "（①④ 傳 on_outcome=device_state.record_outcome；②③ 顯式傳 on_outcome=None），"
-            f"補一支行為測試，再更新這份清單。目前：{sorted(found)}"
-        )

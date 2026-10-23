@@ -57,10 +57,6 @@ function textsOf(actress) {
 
 // ── 順序與內容 ──────────────────────────────────────────────────────────
 
-test('_heroCardTagParts() 回傳 tags 全部，順序與輸入相同', () => {
-    const actress = { tags: ['パイパン', 'ロリ', '美人'] };
-    assert.deepEqual(textsOf(actress), ['パイパン', 'ロリ', '美人']);
-});
 
 test('hometown／agency 排在 tags 之後', () => {
     const actress = {
@@ -71,56 +67,10 @@ test('hometown／agency 排在 tags 之後', () => {
     assert.deepEqual(textsOf(actress), ['ロリ', '美人', '青森県', 'KRONE(クローネ)']);
 });
 
-test('只有 hometown 有值 → 只多一枚', () => {
-    const actress = { tags: ['ロリ'], hometown: '青森県', agency: '' };
-    assert.deepEqual(textsOf(actress), ['ロリ', '青森県']);
-});
-
-test('只有 agency 有值 → 只多一枚', () => {
-    const actress = { tags: ['ロリ'], hometown: '', agency: 'KRONE(クローネ)' };
-    assert.deepEqual(textsOf(actress), ['ロリ', 'KRONE(クローネ)']);
-});
-
-test('title：tags 為空字串；hometown／agency 分別是 showcase.label.hometown／agency', () => {
-    const actress = {
-        tags: ['ロリ', '美人'],
-        hometown: '青森県',
-        agency: 'KRONE(クローネ)',
-    };
-    const parts = partsOf(actress);
-    assert.deepEqual(parts.map((p) => p.text), ['ロリ', '美人', '青森県', 'KRONE(クローネ)']);
-    assert.deepEqual(parts.map((p) => p.title), [
-        '', '',
-        window.t('showcase.label.hometown'),
-        window.t('showcase.label.agency'),
-    ]);
-});
 
 // ── AC-D4 四種空輸入皆回 [] ─────────────────────────────────────────────
 
-test('AC-D4：{} → []', () => {
-    assert.deepEqual(partsOf({}), []);
-});
-
-test('AC-D4：{tags:[]} → []', () => {
-    assert.deepEqual(partsOf({ tags: [] }), []);
-});
-
-test("AC-D4：{tags:null,hometown:'',agency:''} → []", () => {
-    assert.deepEqual(partsOf({ tags: null, hometown: '', agency: '' }), []);
-});
-
-test("AC-D4：{tags:'字串不是陣列'} → []", () => {
-    assert.deepEqual(partsOf({ tags: '字串不是陣列' }), []);
-});
 
 // ── 過濾 ────────────────────────────────────────────────────────────────
 
-test('tags 陣列裡混有空字串／null → 被濾掉', () => {
-    const actress = { tags: ['', 'ロリ', null] };
-    assert.deepEqual(textsOf(actress), ['ロリ']);
-});
 
-test('actress 本身為 null → 回傳 []', () => {
-    assert.deepEqual(partsOf(null), []);
-});

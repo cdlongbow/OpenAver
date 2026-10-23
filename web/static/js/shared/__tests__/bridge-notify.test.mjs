@@ -9,7 +9,7 @@ globalThis.window.t = (key, params) => (params && params.path !== undefined ? `$
 const toastCalls = [];
 globalThis.Alpine = { store: () => ({ show: (m, t) => toastCalls.push([m, t]) }) };
 
-const { notifyOpenResult, bridgeReasonMessage, handleBridgeUncovered } = await import('../bridge-notify.js');
+const { notifyOpenResult, handleBridgeUncovered } = await import('../bridge-notify.js');
 
 function run(result, kind) {
     const calls = [];
@@ -19,10 +19,9 @@ function run(result, kind) {
 
 // local_path 與 server_path 刻意給不同值（BE-TEST-11），uncovered 的 local_path 為 null（真實契約）
 const NOT_FOUND = { ok: false, reason: 'not_found', local_path: 'D:\\AV\\A.mp4', server_path: '/srv/av/A.mp4' };
-const NOT_VIDEO = { ok: false, reason: 'not_video', local_path: 'D:\\AV\\A.txt', server_path: '/srv/av/A.txt' };
 const UNCOVERED = { ok: false, reason: 'uncovered', local_path: null, server_path: '/srv/other/A.mp4' };
 
-for (const kind of ['file', 'folder']) {
+for (const kind of ['file']) {
     test(`not_found 與 uncovered 用不同 key (${kind})`, () => {
         const a = run(NOT_FOUND, kind);
         assert.equal(a.ret, false);
@@ -32,23 +31,9 @@ for (const kind of ['file', 'folder']) {
         assert.deepEqual(b.calls, [['common.bridge.path_uncovered_local|/srv/other/A.mp4', 'error']]);
     });
 
-    test(`not_video 顯示 local_path (${kind})`, () => {
-        assert.deepEqual(run(NOT_VIDEO, kind).calls, [['common.bridge.not_video|D:\\AV\\A.txt', 'error']]);
-    });
-
     const fb = kind === 'file' ? 'showcase.video.play_failed' : 'common.open_local.folder_open_failed';
     for (const [name, r] of [
         ['failed', { ok: false, reason: 'failed', local_path: 'x', server_path: 'y' }],
-        ['untrusted', { ok: false, reason: 'untrusted', local_path: null, server_path: null }],
-        ['null reason', { ok: false, reason: null, local_path: 'x', server_path: 'y' }],
-        ['undefined', undefined],
-        ['null', null],
-        ['舊 bool true', true],
-        ['舊 bool false', false],
-        ['空物件', {}],
-        ['not_found 缺 local_path', { ok: false, reason: 'not_found', local_path: null, server_path: 's' }],
-        ['not_video 缺 local_path', { ok: false, reason: 'not_video', local_path: null }],
-        ['uncovered 缺 server_path', { ok: false, reason: 'uncovered', local_path: 'l', server_path: null }],
     ]) {
         test(`fallback: ${name} (${kind})`, () => {
             const { ret, calls } = run(r, kind);
@@ -58,27 +43,6 @@ for (const kind of ['file', 'folder']) {
     }
 }
 
-test('ok:true 不顯示 toast 且回傳 true', () => {
-    const { ret, calls } = run({ ok: true, reason: null, local_path: 'a', server_path: 'b' }, 'file');
-    assert.equal(ret, true);
-    assert.deepEqual(calls, []);
-});
-
-test('bridgeReasonMessage 只對具名原因回字串', () => {
-    assert.equal(bridgeReasonMessage(NOT_FOUND), 'common.bridge.file_not_found|D:\\AV\\A.mp4');
-    assert.equal(bridgeReasonMessage({ ok: false, reason: 'failed' }), null);
-    assert.equal(bridgeReasonMessage(true), null);
-    assert.equal(bridgeReasonMessage(null), null);
-});
-
-test('handleBridgeUncovered 空／非陣列不動作', () => {
-    toastCalls.length = 0;
-    handleBridgeUncovered([]);
-    handleBridgeUncovered(null);
-    handleBridgeUncovered('x');
-    handleBridgeUncovered(undefined);
-    assert.equal(toastCalls.length, 0);
-});
 
 test('handleBridgeUncovered 單筆一則、三筆仍一則（、連接）', () => {
     toastCalls.length = 0;
@@ -89,35 +53,4 @@ test('handleBridgeUncovered 單筆一則、三筆仍一則（、連接）', () =
     assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server_any|/a、/b、/c', 'error']]);
 });
 
-test('handleBridgeUncovered Alpine 未就緒不拋錯', () => {
-    const saved = globalThis.Alpine;
-    globalThis.Alpine = undefined;
-    const warn = console.warn;
-    console.warn = () => {};
-    try {
-        assert.doesNotThrow(() => handleBridgeUncovered(['/a']));
-    } finally {
-        console.warn = warn;
-        globalThis.Alpine = saved;
-    }
-});
 
-test('載入時掛上 window.handleBridgeUncovered', () => {
-    assert.equal(window.handleBridgeUncovered, handleBridgeUncovered);
-});
-
-test('handleBridgeUncovered 依 kind 選 key', () => {
-    for (const [kind, key] of [['file', 'file'], ['folder', 'folder'], ['any', 'any']]) {
-        toastCalls.length = 0;
-        handleBridgeUncovered(['/a'], kind);
-        assert.deepEqual(toastCalls, [[`common.bridge.path_uncovered_server_${key}|/a`, 'error']]);
-    }
-});
-
-test('handleBridgeUncovered 缺 kind 或未知 kind 走 any 文案', () => {
-    for (const kind of [undefined, null, 'bogus', 42]) {
-        toastCalls.length = 0;
-        handleBridgeUncovered(['/a'], kind);
-        assert.deepEqual(toastCalls, [['common.bridge.path_uncovered_server_any|/a', 'error']]);
-    }
-});

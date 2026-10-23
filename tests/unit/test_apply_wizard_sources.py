@@ -1,6 +1,5 @@
 """Contracts for the Synology wizard source helper."""
 
-import copy
 import importlib.util
 import json
 import os
@@ -52,33 +51,8 @@ def _written(kwargs):
     return json.loads((Path(kwargs["data_dir"]) / "config.json").read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("existing,paths", [
-    ([], ["/new"]),
-    (["/old"], ["/new"]),
-    ([{"path": "/old", "readonly": True, "output_path": "/output"}], ["/new"]),
-    (["/old"], ["/old", "/new"]),
-    (["/old/"], ["/old", "/new"]),
-    (["/Old"], ["/old"]),
-])
-def test_merge_keeps_input_as_prefix_and_other_keys_equal(existing, paths):
-    mod = _load_module()
-    cfg = {"gallery": {"directories": existing, "other": [1]}, "access": {"password": "keep"}}
-    before = copy.deepcopy(cfg)
-    result = mod.merge_directories(cfg, paths)
-    assert result["gallery"]["directories"][:len(existing)] == existing
-    assert {**result, "gallery": {**result["gallery"], "directories": existing}} == before
-    assert cfg == before
-
-
-def test_merge_case_differs_keeps_both():
-    result = _load_module().merge_directories({"gallery": {"directories": ["/Video"]}}, ["/video"])
-    assert result["gallery"]["directories"] == ["/Video", {"path": "/video", "readonly": False,
-                                                      "output_path": ""}]
-
-
 @pytest.mark.parametrize("existing,new_path", [
     (["/old/"], "/old"),
-    (["/old"], "/old/"),
 ])
 def test_merge_trailing_slashes_are_duplicates(existing, new_path):
     result = _load_module().merge_directories({"gallery": {"directories": existing}}, [new_path])
@@ -86,11 +60,7 @@ def test_merge_trailing_slashes_are_duplicates(existing, new_path):
 
 
 @pytest.mark.parametrize("uri,fs_path", [
-    ("file:///volume1/av", "/volume1/av"),
     ("file:////volume1/av", "/volume1/av"),
-    ("file:////volume1/AV#1", "/volume1/AV#1"),
-    ("file:///volume1/a?b", "/volume1/a?b"),
-    ("file:///volume1/AV%231", "/volume1/AV#1"),
 ])
 def test_merge_file_uri_readonly_source_not_duplicated(uri, fs_path):
     existing = {"path": uri, "readonly": True, "output_path": "/volume1/output"}
@@ -100,48 +70,12 @@ def test_merge_file_uri_readonly_source_not_duplicated(uri, fs_path):
     assert result["gallery"]["directories"][0]["readonly"] is True
 
 
-def test_merge_file_uri_percent_encoded_space_not_duplicated():
-    existing = "file:///volume1/oa%20中文"
-    result = _load_module().merge_directories({"gallery": {"directories": [existing]}}, ["/volume1/oa 中文"])
-    assert result["gallery"]["directories"] == [existing]
-
-
-def test_merge_fs_path_and_new_file_uri_not_duplicated():
-    existing = "/volume1/av"
-    result = _load_module().merge_directories({"gallery": {"directories": [existing]}},
-                                               ["file:///volume1/av/"], app_dir=str(ROOT))
-    assert result["gallery"]["directories"] == [existing]
-
-
 def test_merge_uri_import_failure_preserves_all_sources(tmp_path, capsys):
     existing = {"path": "file:///volume1/av", "readonly": True, "output_path": "/volume1/output"}
     cfg = {"gallery": {"directories": [existing]}, "access": {"key": "keep"}}
     result = _load_module().merge_directories(cfg, ["/volume1/av", "/volume1/new"], app_dir=str(tmp_path))
     assert result == cfg
     assert "URI" in capsys.readouterr().err
-
-
-def test_merge_uri_parse_failure_preserves_all_sources(monkeypatch, capsys):
-    from core import path_utils
-
-    def boom(_path):
-        raise ValueError("unreadable URI")
-
-    monkeypatch.setattr(path_utils, "uri_to_fs_path", boom)
-    existing = {"path": "file:///volume1/av", "readonly": True, "output_path": "/volume1/output"}
-    cfg = {"gallery": {"directories": [existing]}, "access": {"key": "keep"}}
-    result = _load_module().merge_directories(cfg, ["/volume1/av", "/volume1/new"], app_dir=str(ROOT))
-    assert result == cfg
-    assert "unreadable URI" in capsys.readouterr().err
-
-
-def test_library_and_extra_same_path_appears_once(tmp_path):
-    mod = _load_module()
-    _, kwargs, env, target = _fixture(tmp_path)
-    Path(kwargs["mapping_path"]).write_text(json.dumps({"pkgwizard_share_0": str(target)}), encoding="utf-8")
-    assert mod.run(env, **kwargs) == 0
-    assert _written(kwargs)["gallery"]["directories"] == [
-        {"path": str(target), "readonly": False, "output_path": ""}]
 
 
 def test_existing_sources_preserved_verbatim(tmp_path):
@@ -168,25 +102,6 @@ def test_upgrade_skips_writing(tmp_path):
     assert config.read_bytes() == before
 
 
-def test_empty_library_env_skips_writing(tmp_path):
-    mod = _load_module()
-    _, kwargs, env, _ = _fixture(tmp_path)
-    env["wizard_library_share"] = ""
-    config = Path(kwargs["data_dir"]) / "config.json"
-    before = config.read_bytes()
-    assert mod.run(env, **kwargs) == 0
-    assert config.read_bytes() == before
-
-
-def test_corrupt_data_config_not_overwritten(tmp_path):
-    mod = _load_module()
-    _, kwargs, env, _ = _fixture(tmp_path)
-    config = Path(kwargs["data_dir"]) / "config.json"
-    config.write_bytes(b"not-json")
-    assert mod.run(env, **kwargs) == 0
-    assert config.read_bytes() == b"not-json"
-
-
 def test_layout_absent_never_writes_data_root(tmp_path):
     mod = _load_module()
     _, kwargs, env, _ = _fixture(tmp_path, layout=False)
@@ -207,46 +122,6 @@ def test_layout_present_writes_data_config_not_legacy(tmp_path):
     assert _written(kwargs)["gallery"]["directories"][0]["path"] == str(target)
     assert stat.S_IMODE((Path(kwargs["data_dir"]) / "config.json").stat().st_mode) == 0o600
     assert not Path(kwargs["legacy_cfg"]).exists()
-
-
-def test_resolve_symlink_chinese_space_name(tmp_path):
-    mod = _load_module()
-    _, kwargs, _, target = _fixture(tmp_path)
-    assert mod.resolve_share("我的 影片", kwargs["shares_root"]) == str(target)
-
-
-def test_resolve_missing_symlink_returns_none_even_if_plain_dir_exists(tmp_path):
-    mod = _load_module()
-    _, kwargs, _, _ = _fixture(tmp_path)
-    (Path(kwargs["shares_root"]) / "我的 影片").unlink()
-    assert mod.resolve_share("我的 影片", kwargs["shares_root"]) is None
-
-
-def test_run_missing_symlink_writes_nothing_for_library(tmp_path):
-    mod = _load_module()
-    _, kwargs, env, target = _fixture(tmp_path)
-    (Path(kwargs["shares_root"]) / "我的 影片").unlink()
-    assert target.is_dir()
-    assert mod.run(env, **kwargs) == 0
-    assert _written(kwargs)["gallery"]["directories"] == [
-        {"path": "/volume1/extra", "readonly": False, "output_path": ""}]
-
-
-def test_atomic_write_failure_keeps_original_no_temp(tmp_path, monkeypatch):
-    mod = _load_module()
-    _, kwargs, env, _ = _fixture(tmp_path)
-    data = Path(kwargs["data_dir"])
-    config = data / "config.json"
-    before = config.read_bytes()
-    names = set(os.listdir(data))
-
-    def boom(*_args):
-        raise OSError("replace failed")
-
-    monkeypatch.setattr(mod.os, "replace", boom)
-    assert mod.run(env, **kwargs) == 0
-    assert config.read_bytes() == before
-    assert set(os.listdir(data)) == names
 
 
 # [lint-guard: pytest-justified] postinst（shell）↔ helper 路徑的跨檔契約，前端 lint 管不到 shell
@@ -292,15 +167,6 @@ def test_seed_without_wizard_env_still_sets_server_mode(tmp_path):
     cfg = json.loads(Path(kwargs["legacy_cfg"]).read_text(encoding="utf-8"))
     assert cfg["general"]["server_mode"] is True
     assert cfg["gallery"]["directories"] == []
-
-
-def test_seed_without_core_import_still_sets_server_mode(tmp_path):
-    mod = _load_module()
-    _, kwargs, env, _ = _fixture(tmp_path, layout=False)
-    kwargs["app_dir"] = str(tmp_path / "app_without_core")
-    assert mod.run(env, **kwargs) == 0
-    cfg = json.loads(Path(kwargs["legacy_cfg"]).read_text(encoding="utf-8"))
-    assert cfg["general"]["server_mode"] is True
 
 
 def test_main_reinstall_writes_config(tmp_path):

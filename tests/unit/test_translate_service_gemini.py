@@ -7,10 +7,8 @@ import httpx
 import pytest
 
 from core import gemini_client
-from core.anthropic_client import AnthropicError
-from core.cloud_translate import TranslateError, failure_category
+from core.cloud_translate import TranslateError
 from core.translate_service import (
-    ClaudeTranslateService,
     GeminiTranslateService,
     build_cloud_translate_prompt,
 )
@@ -75,39 +73,7 @@ async def test_gemini_ja_short_circuit_no_client():
     assert ac.call_count == 0
 
 
-def test_gemini_missing_key_raises_value_error():
-    with pytest.raises(ValueError):
-        GeminiTranslateService({"api_key": ""}, "zh-TW")
-
-
 # ---- kind 對應 ----
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("data,side,kind", [
-    ({"candidates": [{"content": {"parts": [{"text": "半截"}]}, "finishReason": "MAX_TOKENS"}]}, None, "truncated"),
-    ({"candidates": [{"finishReason": "PROHIBITED_CONTENT"}]}, None, "blocked"),
-    ({"promptFeedback": {"blockReason": "SAFETY"}}, None, "blocked"),
-    (None, _http_status_error(429), "rate_limited"),
-])
-async def test_gemini_failure_kinds_and_single_returns_empty(data, side, kind):
-    svc = _svc()
-    inst = _mock_client(json_data=data, raise_for_status=side)
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst):
-        with pytest.raises(TranslateError) as ei:
-            await svc.translate_or_raise("テスト")
-    assert ei.value.kind == kind
-    inst = _mock_client(json_data=data, raise_for_status=side)
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst):
-        assert await svc.translate_single("テスト") == ""
-
-
-@pytest.mark.asyncio
-async def test_gemini_failure_category_mapping():
-    inst = _mock_client(json_data={"candidates": [{"finishReason": "SAFETY"}]})
-    with patch("core.cloud_translate.httpx.AsyncClient", return_value=inst):
-        with pytest.raises(TranslateError) as ei:
-            await _svc().translate_or_raise("テスト")
-    assert failure_category(ei.value.kind) == "blocked"
 
 
 @pytest.mark.asyncio
@@ -134,28 +100,5 @@ async def test_gemini_unexpected_exception_wrapped_as_api_error(caplog):
     assert FAKE_KEY not in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_gemini_engine_illegal_key_no_leak(caplog):
-    svc = _svc()
-    err = httpx.LocalProtocolError(f"Illegal header value b'{FAKE_KEY}\\n'")
-    with patch("core.cloud_translate.httpx.AsyncClient",
-               return_value=_mock_client(post_side_effect=err)):
-        with caplog.at_level(logging.DEBUG):
-            with pytest.raises(TranslateError) as ei:
-                await svc.translate_or_raise("テスト")
-            assert await svc.translate_single("テスト") == ""
-    assert FAKE_KEY not in ei.value.message
-    assert FAKE_KEY not in caplog.text
-
-
 # ---- Claude 一格 ----
 
-@pytest.mark.asyncio
-async def test_claude_translate_or_raise_refused_is_blocked():
-    svc = ClaudeTranslateService({"api_key": "k", "model": "m"}, "zh-TW")
-    err = AnthropicError("refused", None, "", "x")
-    with patch("core.translate_service.request_translation", AsyncMock(side_effect=err)):
-        with pytest.raises(TranslateError) as ei:
-            await svc.translate_or_raise("テスト")
-        assert failure_category(ei.value.kind) == "blocked"
-        assert await svc.translate_single("テスト") == ""

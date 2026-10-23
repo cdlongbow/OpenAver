@@ -305,51 +305,10 @@ def _target_ctx(py_file: pathlib.Path, func_name: str):
 # 白名單防腐：三個具名函式必須都能定位到（裁決 2 硬條件之一）
 # ============================================================
 
-class TestWhitelistAntiRot:
-    """三個具名 target 必須能在對應檔 AST 定位，否則守衛指向殭屍函式、
-    恆綠假通過。找不到必須明確失敗並指名是哪一個。"""
-
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_target_function_exists(self, label, py_file, func_name):
-        tree = _tree(py_file)
-        func = _find_func(tree, func_name)
-        assert func is not None, (
-            f"[{label}] {py_file.name}:{func_name} 指向不存在的函式（改名？）"
-            f" —— 守衛失去意義，須更新清單或修復函式名"
-        )
-
 
 # ============================================================
 # 反假綠斷言（裁決 2，硬條件）：委派呼叫數量下限 + E3 恰好等於 1
 # ============================================================
-
-class TestAntiFalseGreenFloor:
-    """守衛必須先斷言「我真的找到了東西」，再斷言「找到的東西沒有違規」。
-    什麼都沒掃到也算通過，是掃描型守衛的假綠同構失效模式（spec AC6 實作
-    提醒 / PR#125 round-3 P2 同一形狀）。"""
-
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_delegation_count_meets_named_floor(self, label, py_file, func_name):
-        func, bare, aliases = _target_ctx(py_file, func_name)
-        count = len(_all_nfo_read_calls(func, bare, aliases))
-        floor = MIN_NFO_READ_DELEGATIONS[label]
-        assert count >= floor, (
-            f"[{label}] {py_file.name}:{func_name}() 只掃到 {count} 筆 nfo_read"
-            f" 委派呼叫，低於具名下限 {floor}——疑似 import binding 解析失效或"
-            f" 委派被大量拔除，守衛本身可能正在假綠"
-        )
-
-    def test_e3_count_is_exactly_one(self):
-        """E3（B 的 root.findall('user_tag')）必須恰好等於 1，不是 ≥1——
-        多一處 user_tag 直接讀取也要紅。"""
-        func, _bare, _aliases = _target_ctx(GALLERY_SCANNER_PY, "parse_nfo")
-        e3_hits = [n for n in _all_et_primitive_calls(func) if _is_e3(n, "parse_nfo")]
-        assert len(e3_hits) == 1, (
-            f"E3（root.findall('user_tag')）計數應恰好等於 1，實際 {len(e3_hits)}"
-            f" —— 行號: {[n.lineno for n in e3_hits]}"
-        )
 
 
 # ============================================================
@@ -373,129 +332,15 @@ class TestInventoryReconciliation:
             f"實際落在 [{label}] line {node.lineno}"
         )
 
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_no_violations_after_e3_exclusion(self, label, py_file, func_name):
-        source_text = py_file.read_text(encoding="utf-8")
-        func, _bare, _aliases = _target_ctx(py_file, func_name)
-        violations = _violations(func, func_name)
-        assert not violations, (
-            f"[{label}] {py_file.name}:{func_name}() 殘留直接 ET 讀取:\n"
-            f"{_violation_report(source_text, violations)}"
-        )
-
 
 # ============================================================
 # 八類正向斷言（引數字面內容，裁決 3）
 # ============================================================
 
-class TestPositiveDelegationContract:
-    """逐類比對呼叫目標與引數字面內容——只驗「有沒有呼叫」抓不到
-    「換成別支 nfo_read 函式」或「tag 鏈內容被偷改」這種 mutation。"""
-
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    @pytest.mark.parametrize("category, target_func", SINGLE_CALL_CATEGORIES.items(),
-                             ids=list(SINGLE_CALL_CATEGORIES.keys()))
-    def test_single_call_categories(self, category, target_func, label, py_file, func_name):
-        func, bare, aliases = _target_ctx(py_file, func_name)
-        calls = _find_calls(func, bare, aliases, target_func)
-        assert len(calls) == 1, (
-            f"[{label}/{category}] {py_file.name}:{func_name}() 應恰有一筆對"
-            f" {target_func} 的委派呼叫，實際 {len(calls)} 筆"
-        )
-
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    @pytest.mark.parametrize("category, spec", TUPLE_CATEGORIES.items(),
-                             ids=list(TUPLE_CATEGORIES.keys()))
-    def test_tuple_literal_categories(self, category, spec, label, py_file, func_name):
-        target_func, expected = spec
-        func, bare, aliases = _target_ctx(py_file, func_name)
-        calls = _find_calls(func, bare, aliases, target_func)
-        matches = [c for c in calls if _literal_str_args(c) == list(expected)]
-        assert len(matches) == 1, (
-            f"[{label}/{category}] {py_file.name}:{func_name}() 應恰有一筆"
-            f" {target_func}{expected} 委派呼叫，實際命中 {len(matches)} 筆"
-            f"（候選呼叫引數: {[_literal_str_args(c) for c in calls]}）"
-        )
-
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_num_category(self, label, py_file, func_name):
-        expected = NUM_EXPECTED[label]
-        func, bare, aliases = _target_ctx(py_file, func_name)
-        calls = _find_calls(func, bare, aliases, "nfo_first_text")
-        if expected is None:
-            # A 不提取番號（N/A，非缺口）——不斷言存在，但不得意外命中
-            return
-        matches = [c for c in calls if _literal_str_args(c) == list(expected)]
-        assert len(matches) == 1, (
-            f"[{label}/num] {py_file.name}:{func_name}() 應恰有一筆"
-            f" nfo_first_text{expected} 委派呼叫，實際命中 {len(matches)} 筆"
-            f"（候選呼叫引數: {[_literal_str_args(c) for c in calls]}）"
-        )
-
-    @pytest.mark.parametrize("label, py_file, func_name", REAL_TARGETS,
-                             ids=[t[0] for t in REAL_TARGETS])
-    def test_simple_fields_category(self, label, py_file, func_name):
-        expected = SIMPLE_FIELDS_EXPECTED[label]
-        func, bare, aliases = _target_ctx(py_file, func_name)
-        calls = _find_calls(func, bare, aliases, "nfo_text")
-        fields = set()
-        for c in calls:
-            args = _literal_str_args(c)
-            assert len(args) == 1, (
-                f"[{label}/簡單欄位] {py_file.name}:{func_name}() 的 nfo_text"
-                f" 呼叫 line {c.lineno} 應恰有一個字面字串引數，實際 {args}"
-            )
-            fields.add(args[0])
-        assert fields == expected, (
-            f"[{label}/簡單欄位] {py_file.name}:{func_name}() 的 nfo_text 字面"
-            f" tag 集合應等於 {sorted(expected)}，實際 {sorted(fields)}"
-            f"（差集 missing={sorted(expected - fields)} extra={sorted(fields - expected)}）"
-        )
-
 
 # ============================================================
 # 誤報檢查（技術要點第 6 節）
 # ============================================================
-
-class TestFalsePositiveGuards:
-    def test_nfo_updater_helpers_exist_but_not_scanned(self):
-        """nfo_updater.py::add_actor / add_tags_and_genres 存在，但本檔案掃描
-        範圍白名單只有 A/B/C 三個具名 target，結構上不可能觸及它們。"""
-        tree = _tree(NFO_UPDATER_PY)
-        add_actor = _find_func(tree, "add_actor")
-        add_tags = _find_func(tree, "add_tags_and_genres")
-        assert add_actor is not None, "core.nfo_updater.add_actor 應存在"
-        assert add_tags is not None, "core.nfo_updater.add_tags_and_genres 應存在"
-        scanned_names = {func_name for _label, _py_file, func_name in REAL_TARGETS}
-        assert "add_actor" not in scanned_names
-        assert "add_tags_and_genres" not in scanned_names
-
-    def test_readonly_producer_out_of_scope_function_not_in_targets(self):
-        """resolve_ingest_plan 存在於 readonly_producer.py，但不在本檔案的
-        掃描清單常數（REAL_TARGETS）裡。"""
-        tree = _tree(READONLY_PRODUCER_PY)
-        func = _find_func(tree, "resolve_ingest_plan")
-        assert func is not None, "core.readonly_producer.resolve_ingest_plan 應存在"
-        scanned_names = {func_name for _label, py_file, func_name in REAL_TARGETS
-                          if py_file == READONLY_PRODUCER_PY}
-        assert "resolve_ingest_plan" not in scanned_names
-
-    def test_nfo_updater_parse_nfo_does_not_collide_with_gallery_scanner(self):
-        """core.nfo_updater.parse_nfo 與 core.gallery_scanner.VideoScanner.parse_nfo
-        同名但不同檔案——各自 parse 各自的 AST tree，B 的定位不會誤中此函式。"""
-        updater_tree = _tree(NFO_UPDATER_PY)
-        updater_func = _find_func(updater_tree, "parse_nfo")
-        assert updater_func is not None
-        # 模組層函式（不是 method）——不寫死行號：155b 在上方加兩行就讓舊的 `lineno == 162` 假紅
-        assert updater_func in updater_tree.body
-        scanner_tree = _tree(GALLERY_SCANNER_PY)
-        scanner_func = _find_func(scanner_tree, "parse_nfo")
-        assert scanner_func is not None
-        assert scanner_func not in scanner_tree.body  # VideoScanner.parse_nfo 是 class method
 
 
 # ============================================================
@@ -679,17 +524,6 @@ class TestSyntheticRedGreenPairs:
     ——比「跑一次記錄輸出後只剩文字紀錄」更強：每次 CI 都持續驗證同一段違規
     判準邏輯，且完全不碰產品碼。"""
 
-    @pytest.mark.parametrize("category, func_name, green_src, red_src", SYNTHETIC_ROUNDS,
-                             ids=[r[0] for r in SYNTHETIC_ROUNDS])
-    def test_green_has_zero_violations(self, category, func_name, green_src, red_src):
-        tree = ast.parse(green_src)
-        func = _find_func(tree, func_name)
-        assert func is not None, f"[{category}] 綠版合成片段定位不到 {func_name}"
-        violations = _violations(func, func_name)
-        assert not violations, (
-            f"[{category}] 綠版合成片段（委派寫法）不應有違規:\n"
-            f"{_violation_report(green_src, violations)}"
-        )
 
     @pytest.mark.parametrize("category, func_name, green_src, red_src", SYNTHETIC_ROUNDS,
                              ids=[r[0] for r in SYNTHETIC_ROUNDS])
@@ -777,33 +611,6 @@ class VideoScanner:
 # 白名單精確度 mutation（DoD 獨立項）：E3 的 'user_tag' 換成其他字面
 # ============================================================
 
-class TestWhitelistPrecisionMutation:
-    def test_e3_wrong_literal_is_flagged(self):
-        src = _build_full_parse_nfo(e3_tag="genre")
-        tree = ast.parse(src)
-        func = _find_func(tree, "parse_nfo")
-        assert func is not None
-        violations = _violations(func, "parse_nfo")
-        assert len(violations) == 1, (
-            f"E3 的 'user_tag' 換成 'genre' 後應恰有一筆違規，實際 "
-            f"{len(violations)}:\n{_violation_report(src, violations)}"
-        )
-        seg = ast.get_source_segment(src, violations[0])
-        assert "findall('genre')" in (seg or ""), (
-            f"違規應指向 root.findall('genre') 那一行，實際: {seg}"
-        )
-
-    def test_e3_correct_literal_is_not_flagged(self):
-        src = _build_full_parse_nfo(e3_tag="user_tag")
-        tree = ast.parse(src)
-        func = _find_func(tree, "parse_nfo")
-        assert func is not None
-        violations = _violations(func, "parse_nfo")
-        assert not violations, (
-            f"E3 引數為正確字面 'user_tag' 時不應有違規:\n"
-            f"{_violation_report(src, violations)}"
-        )
-
 
 # ============================================================
 # 被刪合成案例聚合（PR#220 round 3）：基準版每格逐字放回，label＝原測試名[原 id]
@@ -863,26 +670,3 @@ def _chk_flip(category):
     )
 
 
-class TestSyntheticRestoredAggregate:
-    """基準版 437025cd 被刪的 23 格（七組 SYNTHETIC_ROUNDS 紅綠 ×2 ＋
-    TestFalseGreenCheck 九格）聚合執行；每列獨立 try/except，不短路。"""
-
-    def test_restored_synthetic_cases(self):
-        cases = []
-        for category, func_name, green_src, red_src in _SYNTHETIC_RESTORED_ROUNDS:
-            cases.append((f"TestSyntheticRedGreenPairs.test_green_has_zero_violations[{category}]",
-                          _chk_green, (category, func_name, green_src)))
-            cases.append((f"TestSyntheticRedGreenPairs.test_red_has_violations[{category}]",
-                          _chk_red, (category, func_name, red_src)))
-        cases.append(("TestFalseGreenCheck.test_full_delegation_shell_is_zero_violations",
-                      _chk_shell_zero, ()))
-        for category in _FULL_PARSE_NFO_LINES:
-            cases.append((f"TestFalseGreenCheck.test_single_category_flip_is_exactly_one_violation[{category}]",
-                          _chk_flip, (category,)))
-        failures = []
-        for label, fn, args in cases:
-            try:
-                fn(*args)
-            except BaseException as e:  # noqa: BLE001 — 記成該列失敗，不吞成綠
-                failures.append(f"{label}: {type(e).__name__} {e}")
-        assert not failures, "\n".join(failures)

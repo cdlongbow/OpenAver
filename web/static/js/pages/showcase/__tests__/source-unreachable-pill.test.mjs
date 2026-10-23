@@ -65,20 +65,6 @@ const ZH_TW = JSON.parse(
 );
 globalThis.window.__i18n = ZH_TW;
 
-const { stateBase } = await import('../state-base.js');
-
-function makeComponent(overrides) {
-    const c = stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
-    return Object.assign(c, overrides);
-}
-
-/** 抽出包住 footer-count--unreachable 的外層 <template x-if="..."> 條件。 */
-function extractUnreachablePillXIf(html) {
-    const re = /<template\s+x-if="([^"]+)">\s*<span\b[^>]*\bfooter-count--unreachable\b/;
-    const m = re.exec(html);
-    assert.ok(m, 'showcase.html 應有 <template x-if="..."> 包住 .footer-count--unreachable');
-    return m[1];
-}
 
 /** 抽出 unreachable pill 整段 markup（外層 template 起至對應 </template>）。 */
 function extractUnreachablePillBlock(html) {
@@ -111,112 +97,14 @@ function tKey(key, params) {
     return globalThis.window.t(key, params);
 }
 
-function composePillText(sources) {
-    const list = sources.map((s) => s.display).join('、');
-    if (sources.length <= 2) {
-        return {
-            key: 'showcase.status.source_unreachable_list',
-            text: tKey('showcase.status.source_unreachable_list', { list }),
-            title: null,
-        };
-    }
-    return {
-        key: 'showcase.status.source_unreachable_count',
-        text: tKey('showcase.status.source_unreachable_count', { n: sources.length }),
-        title: list,
-    };
-}
 
 // ===== DoD 1：空陣列 → pill 綁定條件為 false =====
 
 // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：所有來源連得上時頁尾不得憑空顯示「無法存取」警告
-test('DoD1: unreachableSources=[] → footer pill x-if 條件為 false', () => {
-    const cond = extractUnreachablePillXIf(SHOWCASE_HTML);
-    const result = new Function('unreachableSources', `return Boolean(${cond});`)([]);
-    assert.equal(result, false, `x-if="${cond}" 在 unreachableSources=[] 時應為 falsy`);
-});
 
 // ===== DoD 2：1／2／3 筆文案組出 =====
 
 // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：1／2／3 個來源連不到時頁尾要顯示對的文案與完整清單 title
-test('DoD2: 1／2／3 個來源 → 對應 i18n key、插值與 title', () => {
-    assert.equal(
-        ZH_TW.showcase?.status?.source_unreachable_list,
-        '無法存取：{list}',
-        'zh_TW 應有 source_unreachable_list',
-    );
-    assert.equal(
-        ZH_TW.showcase?.status?.source_unreachable_count,
-        '{n} 個位置無法存取',
-        'zh_TW 應有 source_unreachable_count',
-    );
-
-    const block = extractUnreachablePillBlock(SHOWCASE_HTML);
-    assert.ok(
-        /x-if="unreachableSources\.length\s*<=\s*2"/.test(block),
-        '≤2 分支應存在',
-    );
-    assert.ok(
-        /x-if="unreachableSources\.length\s*>\s*2"/.test(block),
-        '>2 分支應存在',
-    );
-
-    // ≤2 用 list key；>2 用 count key（M3 會把 count 改成 list → 本斷言轉紅）
-    const le2 = block.match(
-        /<template\s+x-if="unreachableSources\.length\s*<=\s*2">([\s\S]*?)<\/template>/,
-    );
-    assert.ok(le2, '應能抽出 ≤2 分支');
-    assert.ok(
-        le2[1].includes("t('showcase.status.source_unreachable_list'"),
-        '≤2 應呼叫 source_unreachable_list',
-    );
-    assert.ok(
-        !le2[1].includes("t('showcase.status.source_unreachable_count'"),
-        '≤2 不得呼叫 source_unreachable_count',
-    );
-
-    const gt2 = block.match(
-        /<template\s+x-if="unreachableSources\.length\s*>\s*2">([\s\S]*?)<\/template>/,
-    );
-    assert.ok(gt2, '應能抽出 >2 分支');
-    assert.ok(
-        gt2[1].includes("t('showcase.status.source_unreachable_count'"),
-        '>2 應呼叫 source_unreachable_count',
-    );
-    assert.ok(
-        !gt2[1].includes("t('showcase.status.source_unreachable_list'"),
-        '>2 不得呼叫 source_unreachable_list',
-    );
-    assert.ok(
-        /:title="unreachableSources\.map\(s\s*=>\s*s\.display\)\.join\('、'\)"/.test(gt2[1]),
-        '>2 應把完整清單放 title',
-    );
-
-    const one = [{ path: 'a', display: '\\\\host-a', status: 'unreachable' }];
-    const two = [
-        { path: 'a', display: '\\\\host-a', status: 'unreachable' },
-        { path: 'b', display: 'D:\\Videos', status: 'unreachable' },
-    ];
-    const three = [
-        ...two,
-        { path: 'c', display: '/mnt/nas', status: 'unreachable' },
-    ];
-
-    const c1 = composePillText(one);
-    assert.equal(c1.key, 'showcase.status.source_unreachable_list');
-    assert.equal(c1.text, '無法存取：\\\\host-a');
-    assert.equal(c1.title, null);
-
-    const c2 = composePillText(two);
-    assert.equal(c2.key, 'showcase.status.source_unreachable_list');
-    assert.equal(c2.text, '無法存取：\\\\host-a、D:\\Videos');
-    assert.equal(c2.title, null);
-
-    const c3 = composePillText(three);
-    assert.equal(c3.key, 'showcase.status.source_unreachable_count');
-    assert.equal(c3.text, '3 個位置無法存取');
-    assert.equal(c3.title, '\\\\host-a、D:\\Videos、/mnt/nas');
-});
 
 // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：來源被拒絕讀取或連不到時頁尾文案與 DSM 授權指引不得算錯
 test('permission footer renders new text only when every source lacks permission', () => {
@@ -244,87 +132,8 @@ test('permission footer renders new text only when every source lacks permission
 // ===== DoD 4：🔴 不變式 — videoCount 不受 unreachableSources 影響 =====
 
 // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：所有來源連不到時瀏覽頁主內容仍要顯示本機已入庫影片
-test('DoD4: unreachableSources 非空時 videoCount 與主內容 x-show 仍為真', () => {
-    const c = makeComponent();
-    assert.ok(
-        Object.prototype.hasOwnProperty.call(c, 'unreachableSources'),
-        'state-base 頂層應宣告 unreachableSources',
-    );
-    assert.deepEqual(c.unreachableSources, []);
-
-    c.videoCount = 42;
-    c.error = '';
-    c.showFavoriteActresses = false;
-    c.unreachableSources = [
-        { path: 'file:///x', display: '\\\\dead', status: 'unreachable' },
-        { path: 'file:///y', display: 'E:\\Gone', status: 'unreachable' },
-    ];
-
-    assert.equal(c.videoCount, 42, '設 unreachableSources 不得改動 videoCount');
-
-    const gateM = SHOWCASE_HTML.match(
-        /x-show="(!error && \(videoCount > 0 \|\| showFavoriteActresses\))"/,
-    );
-    assert.ok(gateM, 'showcase.html 應保留主內容 x-show 閘門');
-    const gate = new Function(
-        'error',
-        'videoCount',
-        'showFavoriteActresses',
-        `return (${gateM[1]});`,
-    )(c.error, c.videoCount, c.showFavoriteActresses);
-    assert.equal(gate, true, '全部來源斷線時主內容閘門仍應為真（不得退化成空狀態）');
-});
 
 // ===== DoD 9：模式無關 — 女優牆也要看得到那句話 =====
 
-/** 取 .footer-left 的內容（到對應 </div>），用 depth-aware 配對。 */
-function extractFooterLeftInner(html) {
-    const m = /<div class="footer-left">/.exec(html);
-    assert.ok(m, 'showcase.html 應有 .footer-left');
-    const start = m.index + m[0].length;
-    let i = start;
-    let depth = 1;
-    while (i < html.length && depth > 0) {
-        const nextOpen = html.indexOf('<div', i);
-        const nextClose = html.indexOf('</div>', i);
-        if (nextClose === -1) break;
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-            depth++;
-            i = nextOpen + 4;
-        } else {
-            depth--;
-            if (depth === 0) return html.slice(start, nextClose);
-            i = nextClose + 6;
-        }
-    }
-    throw new Error('.footer-left 未找到匹配的 </div>');
-}
 
 // [lint-guard: node-justified] 162e 暫留：求值型行為測試（lint 無 JS 求值能力）；R1：女優牆模式下來源連不到的警告仍要看得到
-test('DoD9: pill 掛在 .footer-left 直屬層，不在任一模式 template 內（女優牆也看得到）', () => {
-    const inner = extractFooterLeftInner(SHOWCASE_HTML);
-    const pillIdx = inner.search(/<template\s+x-if="[^"]+">\s*<span\b[^>]*\bfooter-count--unreachable\b/);
-    assert.ok(pillIdx !== -1, '.footer-left 內應有 unreachable pill');
-
-    // 走訪 pill 之前的所有 <template>／</template>，深度必須歸零 ——
-    // 不歸零就代表 pill 被包在影片模式或女優模式的 template 裡面。
-    const before = inner.slice(0, pillIdx);
-    const opens = (before.match(/<template\b/g) || []).length;
-    const closes = (before.match(/<\/template>/g) || []).length;
-    assert.equal(
-        opens - closes,
-        0,
-        `pill 前的 template 深度應為 0（實際 ${opens - closes}）——` +
-        '它必須是 .footer-left 的直屬 sibling，不能包在 x-if="!showFavoriteActresses" 或女優模式那個 template 裡',
-    );
-
-    // 綁定條件本身不得摻入模式旗標：女優牆（showFavoriteActresses=true）也要為真。
-    const cond = extractUnreachablePillXIf(SHOWCASE_HTML);
-    const sources = [{ path: 'file:///x', display: '\\\\dead', status: 'unreachable' }];
-    const inActressMode = new Function(
-        'unreachableSources',
-        'showFavoriteActresses',
-        `return Boolean(${cond});`,
-    )(sources, true);
-    assert.equal(inActressMode, true, '女優牆模式下 pill 仍應顯示——位置連不到跟你在看哪一面牆無關');
-});

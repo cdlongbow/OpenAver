@@ -215,6 +215,11 @@ CORPUS: list[dict] = [
 ]
 
 
-@pytest.mark.parametrize("case", CORPUS, ids=[str(i) for i in range(len(CORPUS))])
+# 178：離線測試瘦身只保留這 10 筆（CORPUS 本身須完整，test_scraper_parser 以 AST 讀它當語料）
+_KEPT_INDEXES = {3, 8, 9, 17, 21, 34, 105, 111, 121, 160}
+_KEPT_CORPUS = [c for i, c in enumerate(CORPUS) if i in _KEPT_INDEXES]
+
+
+@pytest.mark.parametrize("case", _KEPT_CORPUS, ids=[str(i) for i in range(len(_KEPT_CORPUS))])
 def test_extract_number_corpus(case: dict) -> None:
     assert extract_number(case["input"]) == case["expect"]

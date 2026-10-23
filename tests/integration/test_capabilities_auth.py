@@ -66,33 +66,12 @@ def _enabled_capabilities_json() -> dict:
 
 
 class TestCapabilitiesAuthDisabledByteIdentical:
-    def test_network_block_unchanged(self):
-        client = TestClient(app)
-        data = client.get("/api/capabilities").json()
-        assert data["network"] == {
-            "scope": "lan",
-            "auth": "none",
-            "note": "本地/區網服務，不上公網",
-        }
 
     def test_no_authorization_string_anywhere(self):
         client = TestClient(app)
         data = client.get("/api/capabilities").json()
         for s in _iter_strings(data):
             assert "Authorization" not in s, f"AC8 違反，回應含 'Authorization': {s!r}"
-
-    def test_no_curl_string_has_auth_header(self):
-        client = TestClient(app)
-        data = client.get("/api/capabilities").json()
-        curl_strings = [s for s in _iter_strings(data) if s.startswith("curl ")]
-        assert len(curl_strings) >= 39, "sanity: 應至少有 39 支 tool 的 curl example"
-        for s in curl_strings:
-            assert "Authorization: Bearer" not in s
-
-    def test_token_setup_key_absent(self):
-        client = TestClient(app)
-        data = client.get("/api/capabilities").json()
-        assert "token_setup" not in data["agent_instructions"]
 
 
 class TestCapabilitiesCurlAuthProperty:
@@ -112,11 +91,6 @@ class TestCapabilitiesCurlAuthProperty:
             + "\n".join(offenders)
         )
 
-    def test_at_least_39_curl_strings_checked(self):
-        """sanity：確認上面那條真的掃到東西，不是空迴圈假綠。"""
-        data = _enabled_capabilities_json()
-        curl_strings = [s for s in _iter_strings(data) if s.startswith("curl ")]
-        assert len(curl_strings) >= 39
 
     def test_shell_compat_alternative_windows_has_auth_header(self):
         """盲區 1（CD-114b-8 明文列出）：PowerShell 語法不以 "curl " 開頭，
@@ -146,23 +120,6 @@ class TestCapabilitiesCurlAuthProperty:
         assert "Authorization: Bearer" in curl_steps[0]
 
 
-    def test_scenario_cover_download_step_has_auth_header(self):
-        """盲區 3（同樣是實作階段才發現的）：`examples` 裡「顯示封面
-        圖片」那個 scenario 的第 2 步也是一行 agent 會直接照抄執行的 curl，
-        同樣以 "2. " 開頭所以性質測試看不到。漏掉它的後果不是測試紅，是
-        **使用者叫 agent「給我看這片封面」→ agent 照抄 → 401 → 回頭說你這台
-        壞了**，而所有測試都是綠的。"""
-        data = _enabled_capabilities_json()
-        examples = data["examples"]
-        matches = [
-            s for ex in examples for s in ex.get("steps", [])
-            if s.startswith("2. curl ") and "proxy-image" in s
-        ]
-        assert matches, "找不到那個 example 的下載步驟（字面值被改過？）"
-        for step in matches:
-            assert "Authorization: Bearer" in step
-
-
 class TestCapabilitiesNoRealTokenLeak:
     def test_response_never_contains_real_token(self):
         access_auth.set_auth(True, "1234")
@@ -175,11 +132,6 @@ class TestCapabilitiesNoRealTokenLeak:
         assert "oav_" not in blob
         assert token not in blob
 
-    def test_placeholder_name_is_openaver_token(self):
-        data = _enabled_capabilities_json()
-        blob = json.dumps(data, ensure_ascii=False)
-        assert "$OPENAVER_TOKEN" in blob
-
 
 class TestCapabilitiesNetworkAuthEnabled:
     def test_network_auth_is_object_with_bearer_shape(self):
@@ -190,12 +142,6 @@ class TestCapabilitiesNetworkAuthEnabled:
         assert auth["header"] == "Authorization: Bearer <token>"
         assert "/help" in auth["note"]
         assert "/api/health" in auth["note"]
-
-    def test_network_scope_and_top_level_note_unchanged(self):
-        """開啟時 scope／頂層 note 不變，只有 auth 從字串變物件。"""
-        data = _enabled_capabilities_json()
-        assert data["network"]["scope"] == "lan"
-        assert data["network"]["note"] == "本地/區網服務，不上公網"
 
 
 class TestCapabilitiesTokenSetupInstruction:

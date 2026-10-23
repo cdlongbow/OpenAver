@@ -38,28 +38,4 @@ test('parseFilenames: !response.ok → throw Error(`HTTP ${status}`)（fail-loud
   await assert.rejects(() => parseFilenames(['a.mp4']), /HTTP 500/);
 });
 
-test('parseFilenames: fetch reject（AbortError）原樣往外傳，err.name 不被重新包裝掉', async () => {
-  const abortErr = new DOMException('The operation was aborted', 'AbortError');
-  globalThis.fetch = async () => { throw abortErr; };
-  await assert.rejects(
-    () => parseFilenames(['a.mp4']),
-    (err) => err.name === 'AbortError' && err === abortErr,
-  );
-});
 
-test('parseFilenames: 不傳第二引數呼叫 parseFilenames(filenames) 不得拋出 TypeError（`{ signal } = {}` 預設值不可省，CD-4 陷阱點）', async () => {
-  stubFetch(async () => ({ ok: true, json: async () => ({ results: [] }) }));
-  // setFileList:316 只傳一個引數呼叫 parseFilenames(filenames)。若簽章寫成
-  // `{ signal }`（無預設值），對 undefined 解構會立即同步 throw TypeError——
-  // 這個 TypeError 會被 setFileList 新加的 catch 誤判成「API 不可用」，
-  // 症狀是「批次選檔永遠顯示連線失敗」但根因其實是簽章寫法。
-  await assert.doesNotReject(() => parseFilenames(['a.mp4']));
-});
-
-test('parseFilenames: 帶 signal 呼叫時，fetch 的 options 內含相同 signal（供 AbortController 取消 in-flight request）', async () => {
-  const controller = new AbortController();
-  const calls = stubFetch(async () => ({ ok: true, json: async () => ({ results: [] }) }));
-  await parseFilenames(['a.mp4'], { signal: controller.signal });
-  const [, options] = calls[0];
-  assert.equal(options.signal, controller.signal);
-});

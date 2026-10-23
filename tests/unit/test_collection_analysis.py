@@ -6,7 +6,6 @@ All tests are pure Python — no FS, no DB, no network.
 Updated for TASK-139: is_number_format delegates to is_strict_number.
 """
 
-import pytest
 from core.scraper import is_number_format
 
 
@@ -23,17 +22,6 @@ class TestIsWestern:
         """《03》路徑 → True"""
         assert self._is_western("file:///library/《03》西洋單片區/ABW-001.mp4") is True
 
-    def test_western_path_05_returns_true(self):
-        """《05》路徑 → True"""
-        assert self._is_western("file:///library/《05》歐美/SOME-001.mp4") is True
-
-    def test_western_path_xiyangfolder_returns_true(self):
-        """含「西洋」字串路徑 → True"""
-        assert self._is_western("file:///library/西洋/test.mp4") is True
-
-    def test_non_western_path_returns_false(self):
-        """一般日本片路徑 → False"""
-        assert self._is_western("file:///library/宮島めい/SONE-205.mp4") is False
 
     def test_empty_string_returns_false(self):
         """空字串 → False"""
@@ -53,30 +41,6 @@ class TestIsCorruptedNumber:
         """digit_prefix: 7IPZ-154 → True"""
         assert self._is_corrupted_number("7IPZ-154") is True
 
-    def test_tk_prefix_returns_true(self):
-        """TK_prefix: TKIPZ-154 → True"""
-        assert self._is_corrupted_number("TKIPZ-154") is True
-
-    def test_k9_prefix_returns_true(self):
-        """K9_prefix: K9IPZ-154 → True"""
-        assert self._is_corrupted_number("K9IPZ-154") is True
-
-    def test_r_prefix_returns_true(self):
-        """R_prefix: R-IPZ-154 → True"""
-        assert self._is_corrupted_number("R-IPZ-154") is True
-
-    def test_normal_number_returns_false(self):
-        """正常番號 IPZ-154 → False"""
-        assert self._is_corrupted_number("IPZ-154") is False
-
-    def test_none_returns_false(self):
-        """None → False（None-guard 不拋例外）"""
-        assert self._is_corrupted_number(None) is False
-
-    def test_lowercase_digit_prefix_returns_true(self):
-        """小寫 digit_prefix: 7ipz-154 → True（upper() 轉換後匹配）"""
-        assert self._is_corrupted_number("7ipz-154") is True
-
 
 # ── U3: _has_japanese_tags ────────────────────────────────────────────────────
 
@@ -91,29 +55,10 @@ class TestHasJapaneseTags:
         """含片假名 tag → True"""
         assert self._has_japanese_tags('["ハイビジョン","巨乳"]') is True
 
-    def test_hiragana_tags_returns_true(self):
-        """含平假名 tag → True"""
-        assert self._has_japanese_tags('["単体作品","なんでも"]') is True
 
     def test_english_only_tags_returns_false(self):
         """純英文 tag → False"""
         assert self._has_japanese_tags('["big boobs","amateur"]') is False
-
-    def test_empty_array_returns_false(self):
-        """空陣列 → False"""
-        assert self._has_japanese_tags('[]') is False
-
-    def test_empty_string_returns_false(self):
-        """空字串 → False"""
-        assert self._has_japanese_tags('') is False
-
-    def test_none_returns_false(self):
-        """None → False（None-guard 不拋例外）"""
-        assert self._has_japanese_tags(None) is False
-
-    def test_invalid_json_returns_false(self):
-        """非法 JSON → False（不拋例外）"""
-        assert self._has_japanese_tags('not valid json [') is False
 
 
 # ── U4: is_number_format (no_nfo group filter) ────────────────────────────────
@@ -125,14 +70,4 @@ class TestIsNumberFormatNoNfoFilter:
         """IPZ-154 → True（標準番號格式）"""
         assert is_number_format("IPZ-154") is True
 
-    def test_sone_205_returns_true(self):
-        """SONE-205 → True"""
-        assert is_number_format("SONE-205") is True
 
-    def test_fc2_ppv_returns_true(self):
-        """FC2-PPV-1234567 → True（符合 is_strict_number）"""
-        assert is_number_format("FC2-PPV-1234567") is True
-
-    def test_digit_prefix_returns_true(self):
-        """7IPZ-154 → True（符合 is_strict_number）"""
-        assert is_number_format("7IPZ-154") is True

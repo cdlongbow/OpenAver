@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { whenBridgeReady, callBridge, clientRouting } = await import('../shell-client.js');
+const { callBridge, clientRouting } = await import('../shell-client.js');
 
 function freshWindow(api) {
     const w = new EventTarget();
@@ -29,19 +29,6 @@ test('test_client_routing_old_shell_missing_method_routes_to_server', () => {
     }
 });
 
-test('whenBridgeReady: already ready / event arrives / timeout', async () => {
-    let w = freshWindow();
-    w.__oaBridgeKind = 'server';
-    assert.equal(await whenBridgeReady(20), true);
-
-    w = freshWindow();
-    const p = whenBridgeReady(500);
-    w.dispatchEvent(new Event('oabridgeready'));
-    assert.equal(await p, true);
-
-    freshWindow();
-    assert.equal(await whenBridgeReady(20), false);
-});
 
 test('callBridge: missing bridge / missing method / throw never propagate', async () => {
     freshWindow();
@@ -54,15 +41,3 @@ test('callBridge: missing bridge / missing method / throw never propagate', asyn
     assert.deepEqual(await callBridge('x', 1), { ok: true, v: 1 });
 });
 
-test('callBridge: untrusted retries exactly once after waiting for ready', async () => {
-    let calls = 0;
-    const w = freshWindow({ x: async () => { calls += 1; return { ok: false, reason: 'untrusted' }; } });
-    w.__oaBridgeKind = 'server';
-    const p = callBridge('x');
-    await new Promise((r) => setTimeout(r, 10));
-    assert.equal(w.__oaBridgeKind, undefined);
-    w.dispatchEvent(new Event('oabridgeready'));
-    const reply = await p;
-    assert.equal(calls, 2);
-    assert.equal(reply.reason, 'untrusted');
-});

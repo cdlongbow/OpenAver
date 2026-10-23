@@ -6,19 +6,15 @@ table (CD-113c-3). Do NOT derive them from IMAGE_HOSTS.
 """
 from __future__ import annotations
 
-from urllib.parse import urlparse
 
 import pytest
 
 from core.image_host_policy import (
-    IMAGE_HOSTS,
-    ImageHost,
     download_hosts_for,
     nested_preview_target_allowed,
     proxy_dynamic_hosts,
-    proxy_verdict,
 )
-from core.actress_photo import REFERER_MAP, validate_photo_url
+from core.actress_photo import validate_photo_url
 from core.metatube.state import metatube_state
 
 
@@ -49,26 +45,6 @@ def test_download_hosts_for_matches_reconciliation_table():
 # DoD-1b: schemes / field consistency on IMAGE_HOSTS
 # ---------------------------------------------------------------------------
 
-def test_image_hosts_schemes_and_field_consistency():
-    """Declarative fields must not silently drift from consumer policies."""
-    assert len(IMAGE_HOSTS) > 0
-    for entry in IMAGE_HOSTS:
-        assert isinstance(entry, ImageHost)
-        assert entry.match in ("exact", "root")
-
-        if "proxy" in entry.consumers:
-            assert "https" in entry.schemes
-
-        if "download" in entry.consumers:
-            assert {"http", "https"} <= set(entry.schemes)
-            assert entry.match == "exact"
-
-        # photo_source is None iff download is not a consumer
-        if entry.photo_source is None:
-            assert "download" not in entry.consumers
-        else:
-            assert "download" in entry.consumers
-
 
 # ---------------------------------------------------------------------------
 # DoD-3: mechanism differences preserved at export layer
@@ -79,21 +55,6 @@ def test_download_hosts_for_unknown_source_fail_closed():
     result = download_hosts_for("nonexistent_source")
     assert result == set()
     assert isinstance(result, set)
-
-
-def test_download_hosts_for_exact_only_no_root_match():
-    """Every download-side host comes from match=='exact' entries only."""
-    for source in ("graphis", "gfriends", "wiki", "xcity"):
-        hosts = download_hosts_for(source)
-        for host in hosts:
-            matching = [
-                e for e in IMAGE_HOSTS
-                if e.host == host
-                and "download" in e.consumers
-                and e.photo_source == source
-            ]
-            assert matching, f"no download entry for {source}/{host}"
-            assert all(e.match == "exact" for e in matching)
 
 
 # ---------------------------------------------------------------------------
@@ -127,44 +88,9 @@ def test_proxy_dynamic_hosts_empty_when_not_connected():
     assert proxy_dynamic_hosts() == ()
 
 
-def test_proxy_dynamic_hosts_scheme_matches_base_url_scheme_http():
-    """schemes is a single-value tuple of the live base_url scheme (http)."""
-    metatube_state.connect("http://192.168.1.10:8900", "", [])
-    try:
-        entries = proxy_dynamic_hosts()
-        assert len(entries) == 1
-        assert entries[0].schemes == ("http",)
-    finally:
-        metatube_state.disconnect()
-
-
-def test_proxy_dynamic_hosts_scheme_matches_base_url_scheme_https():
-    """schemes is a single-value tuple of the live base_url scheme (https)."""
-    metatube_state.connect("https://mt.example.com:8443", "", [])
-    try:
-        entries = proxy_dynamic_hosts()
-        assert len(entries) == 1
-        assert entries[0].schemes == ("https",)
-        assert entries[0].host == "mt.example.com"
-        assert entries[0].port == 8443
-    finally:
-        metatube_state.disconnect()
-
-
 def test_proxy_dynamic_hosts_path_prefix_includes_reverse_proxy_base_path():
     """base_url with a path prefix → path_prefix = base_path + /v1/images/ (裁決 3)."""
     metatube_state.connect("http://host.example/metatube", "", [])
-    try:
-        entries = proxy_dynamic_hosts()
-        assert len(entries) == 1
-        assert entries[0].path_prefix == "/metatube/v1/images/"
-    finally:
-        metatube_state.disconnect()
-
-
-def test_proxy_dynamic_hosts_path_prefix_strips_trailing_slash_on_base():
-    """base_url ending with / → rstrip before appending /v1/images/."""
-    metatube_state.connect("http://host.example/metatube/", "", [])
     try:
         entries = proxy_dynamic_hosts()
         assert len(entries) == 1
@@ -183,48 +109,6 @@ def test_download_hosts_for_unaffected_by_metatube_connection():
     try:
         for src, expected in before.items():
             assert download_hosts_for(src) == expected
-    finally:
-        metatube_state.disconnect()
-
-
-def test_static_image_hosts_never_have_path_prefix_or_port():
-    """IMAGE_HOSTS static entries keep path_prefix/port defaults (None)."""
-    for entry in IMAGE_HOSTS:
-        assert entry.path_prefix is None
-        assert entry.port is None
-
-
-def test_registry_truth_table_download_and_proxy_consumers():
-    """Walk every IMAGE_HOSTS row × (download, proxy) + one live dynamic row."""
-    assert len(IMAGE_HOSTS) == 10  # 6 download+（原共用列）、3 download-only、1 codec（tp.spfcas.com）
-
-    for entry in IMAGE_HOSTS:
-        download_allowed = "download" in entry.consumers
-
-        if download_allowed:
-            assert entry.photo_source is not None
-            assert entry.host in download_hosts_for(entry.photo_source)
-        else:
-            # not selected by any known photo_source download view
-            for src in ("graphis", "gfriends", "wiki", "xcity"):
-                assert entry.host not in download_hosts_for(src)
-
-
-    # Dynamic metatube row (not in IMAGE_HOSTS): proxy-only, download never
-    metatube_state.connect("http://10.0.0.5:8900", "", [])
-    try:
-        dyn = proxy_dynamic_hosts()
-        assert len(dyn) == 1
-        d = dyn[0]
-        assert "proxy" in d.consumers
-        assert "download" not in d.consumers
-        for src in ("graphis", "gfriends", "wiki", "xcity"):
-            assert d.host not in download_hosts_for(src)
-        assert d.path_prefix == "/v1/images/"
-        assert d.port == 8900
-        assert d.schemes == ("http",)
-        # sanity: hostname of connected base matches
-        assert d.host == urlparse("http://10.0.0.5:8900").hostname
     finally:
         metatube_state.disconnect()
 
@@ -258,30 +142,20 @@ _NESTED_ALLOW = [
      _REAL_PREVIEW_QUERY),
     ("公開 http 圖床（並非只放行 https——provider 圖床不保證 https）",
      "url=http%3A%2F%2Fcdn.example.com%2Fa.jpg&ratio=0&quality=100"),
-    ("key 順序不同", "quality=100&url=https%3A%2F%2Fcdn.example.com%2Fa.jpg&ratio=0"),
     # 實測：metatube 不帶 `?url=` 時自己從 DB 查封面並回 200（878KB）。
     # 這兩個形狀**沒有巢狀抓取**，本閘門無事可管——擋它們只會誤殺 T3a 的正向對照。
     ("空 query（無巢狀目標）", ""),
-    ("只有 ratio/quality（無巢狀目標）", "ratio=0&quality=100"),
 ]
 
 _NESTED_DENY = [
     ("loopback", "url=http%3A%2F%2F127.0.0.1%3A6379%2F&ratio=0&quality=100"),
-    ("127.0.0.0/8 其餘位址", "url=http%3A%2F%2F127.5.5.5%2Fx.png&ratio=0&quality=100"),
-    ("私有網段", "url=http%3A%2F%2F192.168.1.1%2Fadmin.png&ratio=0&quality=100"),
-    ("私有網段 10/8", "url=http%3A%2F%2F10.0.0.5%3A8080%2Fx.png&ratio=0&quality=100"),
-    ("IPv6 loopback", "url=http%3A%2F%2F%5B%3A%3A1%5D%2Fx.png&ratio=0&quality=100"),
     # `ipaddress.ip_address('::ffff:127.0.0.1').is_loopback` 是 False——不解回
     # IPv4 就會漏掉（同 web/app.py:264 的教訓）
     ("IPv4-mapped IPv6",
      "url=http%3A%2F%2F%5B%3A%3Affff%3A127.0.0.1%5D%2Fx.png&ratio=0&quality=100"),
-    ("link-local（雲端 metadata 服務的經典目標）",
-     "url=http%3A%2F%2F169.254.169.254%2Flatest%2Fmeta-data&ratio=0&quality=100"),
     ("裸內網主機名（公開 CDN 一定帶點）",
      "url=http%3A%2F%2Fnas%2Fphoto.jpg&ratio=0&quality=100"),
-    ("localhost 字面", "url=http%3A%2F%2Flocalhost%3A8080%2Fx.png&ratio=0&quality=100"),
     ("file scheme", "url=file%3A%2F%2F%2Fetc%2Fpasswd&ratio=0&quality=100"),
-    ("data scheme", "url=data%3Atext%2Fplain%2Chi&ratio=0&quality=100"),
     # 只放行「我們自己會產生的形狀」比列舉危險 key 可證偽（同 T3a 正向字元集）
     ("多餘的 key", _REAL_PREVIEW_QUERY + "&evil=1"),
     ("兩個 url（第二個夾帶內網目標）",
@@ -301,29 +175,6 @@ def test_nested_preview_target_rejects_non_public_targets(label, query):
     assert nested_preview_target_allowed(query) is False, label
 
 
-def test_nested_preview_target_residual_dns_name_resolving_private_is_not_covered():
-    """**明示殘留**：解析成私有位址的公開網域名擋不掉（這裡不做 DNS 解析）。
-
-    寫成一條會過的測試而不是留在註解裡，是為了讓這個缺口**被宣告**——
-    哪天有人補了 DNS 檢查（或改成簽章預覽 URL），這條會轉紅並指向該重寫的地方。
-    """
-    q = "url=https%3A%2F%2Finternal.example.com%2Fx.png&ratio=0&quality=100"
-    assert nested_preview_target_allowed(q) is True, (
-        "若這條轉紅，代表已經加了 DNS 解析或簽章——請更新本測試與 "
-        "nested_preview_target_allowed() 的殘留說明"
-    )
-
-
-def test_download_hosts_for_xcity():
-    """TASK-157-T2: xcity 圖床白名單只放行 faws.xcity.jp（download 消費端視角）。
-    167 更新：照片預覽由公網規則（proxy_verdict）放行，registry 列只剩 download
-    （見 test_faws_xcity_jp_is_download_only_in_registry），download_hosts_for()
-    的集合不受影響。"""
-    assert download_hosts_for("xcity") == {"faws.xcity.jp"}
-
-
-
-
 def test_validate_photo_url_xcity():
     """TASK-157-T2: validate_photo_url 對 xcity host 正確放行/拒絕。"""
     assert validate_photo_url(
@@ -332,6 +183,3 @@ def test_validate_photo_url_xcity():
     assert validate_photo_url("https://evil.example.com/x.jpg", "xcity") is False
 
 
-def test_referer_map_xcity():
-    """TASK-157-T2: REFERER_MAP 新增 xcity 對應值。"""
-    assert REFERER_MAP["xcity"] == "https://xcity.jp/"

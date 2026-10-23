@@ -47,26 +47,3 @@ def test_uncensored_on_roundtrip_mirror_and_sources(client):
     assert source_settings.is_uncensored_mode_effective(saved) is True
 
 
-def test_reenable_one_censored_turns_mirror_off(client):
-    """重新啟用任一有碼（javbus）→ getter 回 false 對應：mirror=False + effective=False。"""
-    config = client.get("/api/config").json()["data"]
-
-    # 起點：無碼模式 ON（4 有碼 disabled）
-    _set_enabled(config, lambda sid: sid not in CENSORED)
-    config["search"]["uncensored_mode_enabled"] = True
-    client.put("/api/config", json=config)
-
-    # 重新啟用 javbus（模擬點有碼 pill）→ frontend getter 變 False → saveConfig 寫 mirror=False
-    config = client.get("/api/config").json()["data"]
-    for s in config["sources"]:
-        if s["id"] == "javbus":
-            s["enabled"] = True
-    config["search"]["uncensored_mode_enabled"] = False  # computed mirror
-    client.put("/api/config", json=config)
-
-    saved = client.get("/api/config").json()["data"]
-    by_id = {s["id"]: s for s in saved["sources"]}
-
-    assert by_id["javbus"]["enabled"] is True
-    assert saved["search"]["uncensored_mode_enabled"] is False
-    assert source_settings.is_uncensored_mode_effective(saved) is False

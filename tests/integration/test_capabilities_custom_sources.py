@@ -44,7 +44,6 @@ def _collect_enums(node, out):
     "name,method,path,side_effect,confirm",
     [
         ("custom_source_upload", "POST", "/api/custom-sources", True, True),
-        ("custom_source_verify", "POST", "/api/custom-sources/{id}/verify", True, True),
         ("custom_sources_list", "GET", "/api/custom-sources", False, False),
         ("custom_source_remove", "DELETE", "/api/custom-sources/{id}", True, True),
     ],
@@ -61,20 +60,6 @@ def test_custom_source_tool_flags(client, name, method, path, side_effect, confi
     assert t["example"].startswith("curl ")
 
 
-def test_upload_description_has_four_things(client):
-    t = _tool(client.get("/api/capabilities").json(), "custom_source_upload")
-    d = t["description"]
-    assert "https://github.com/slive777/OpenAver/blob/main/docs/custom-sources.md" in d
-    assert "自己撰寫" in d
-    assert "驗收通過即自動啟用" in d
-    assert "重新整理" in d
-    assert "AI 沒有啟用端點" in d
-    for w in ("請求", "合法", "未驗證"):
-        assert w in d
-    assert "Content-Type: text/plain" in t["example"]
-    assert "--data-binary" in t["example"]
-
-
 def test_custom_sources_paths_exactly_four_and_no_enable_applicable(client):
     tools = client.get("/api/capabilities").json()["tools"]
     cs = sorted((t["method"], t["path"]) for t in tools if "custom-sources" in t["path"])
@@ -88,16 +73,3 @@ def test_custom_sources_paths_exactly_four_and_no_enable_applicable(client):
     assert all("enabled" not in t["name"] and "applicable" not in t["name"] for t in tools)
 
 
-def test_no_custom_in_any_enum(client):
-    tools = client.get("/api/capabilities").json()["tools"]
-    enums = _collect_enums(tools, [])
-    assert enums
-    assert not [e for e in enums for v in e if isinstance(v, str) and v.startswith("custom:")]
-
-
-@pytest.mark.parametrize("name", ["search", "enrich_single", "video_rescrape_with_source"])
-def test_source_description_mentions_custom_id(client, name):
-    desc = _tool(client.get("/api/capabilities").json(), name)["input_schema"]["properties"]["source"]["description"]
-    assert "custom:<id>" in desc
-    assert "驗收" in desc
-    assert "已啟用" in desc

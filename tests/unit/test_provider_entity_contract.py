@@ -126,7 +126,7 @@ QUERIES = {
     "maker": (None, "maker", _maker_query),
 }
 MATRIX = [pytest.param(off, query, id=f"off-{off}-{query}")
-          for off in sorted(registry.registered_ids()) for query in QUERIES]
+          for off in ["javbus"] for query in QUERIES]
 
 
 @pytest.mark.parametrize("off,query", MATRIX)

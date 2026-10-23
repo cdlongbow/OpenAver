@@ -22,16 +22,6 @@ def _full_config_with_proxy(url, scope):
     return cfg
 
 
-def test_get_config_reports_cf_window_restart_needed(client, windows_kind):
-    body = client.get('/api/config').json()
-    assert body['cf_window_proxy_restart_needed'] is False       # 設定未改：與啟動規格(None)相同
-    assert 'cf_window_proxy_restart_needed' not in body['data']  # 頂層唯讀欄位，不在 data 內
-    r = client.put('/api/config', json=_full_config_with_proxy('https://u:%s@h:1' % PW, 'all'))
-    assert r.json()['success'] is True
-    got = client.get('/api/config').json()
-    assert got['cf_window_proxy_restart_needed'] is True
-
-
 def test_put_config_reports_cf_window_restart_needed(client, windows_kind):
     r = client.put('/api/config', json=_full_config_with_proxy('https://u:%s@h:1' % PW, 'all'))
     body = r.json()

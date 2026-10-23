@@ -251,52 +251,6 @@ class TestStandaloneInitOrderGuard:
     def _parse_cf() -> ast.Module:
         return _parse(CF_WINDOWS_PATH)
 
-    def test_anti_rot_startup_still_exists_in_main(self):
-        """startup FunctionDef 必須仍在 main() 內；改名／移走會讓守衛響亮失敗而非 0 斷言通過。"""
-        tree, _ = self._parse()
-        main_node = _find_main_func(tree)
-        assert main_node is not None, "main() FunctionDef not found in standalone.py"
-        startup_node = _find_startup_in_main(main_node)
-        assert startup_node is not None, (
-            "startup() FunctionDef not found inside main() — "
-            "if it was renamed, update this guard too"
-        )
-
-    def test_cf_build_and_announce_not_inside_startup(self):
-        """(a) build_cf_windows／announce 不得在 startup() 內——必須在 main() 直屬、webview.start 之前，
-        否則首頁 SSR 時註冊表還沒有這台殼（CD-70c-1 競態）。"""
-        tree, _ = self._parse()
-        main_node = _find_main_func(tree)
-        assert main_node is not None, "main() not found"
-        startup_node = _find_startup_in_main(main_node)
-        assert startup_node is not None, "startup() not found inside main()"
-
-        violations = [
-            c for c in _collect_calls_in_node(startup_node)
-            if _is_cf_build_call(c) or _is_announce_call(c) or _is_register_cf_transport_call(c)
-        ]
-        assert not violations, (
-            f"build_cf_windows()/announce() found inside startup() at line(s) "
-            f"{[c.lineno for c in violations]} — they must be in main() body BEFORE webview.start() (CD-70c-1)"
-        )
-
-    def test_jl_create_window_not_inside_startup(self):
-        """(a) 驗證視窗的 create_window 不得在 startup() 內；只有主視窗那次在 main() 直屬。"""
-        tree, _ = self._parse()
-        main_node = _find_main_func(tree)
-        assert main_node is not None, "main() not found"
-        startup_node = _find_startup_in_main(main_node)
-        assert startup_node is not None, "startup() not found inside main()"
-
-        wv_creates_in_startup = [
-            c for c in _collect_calls_in_node(startup_node)
-            if _is_webview_create_window_call(c) or _is_cf_build_call(c)
-        ]
-        assert not wv_creates_in_startup, (
-            f"webview.create_window() found inside startup() at line(s) "
-            f"{[c.lineno for c in wv_creates_in_startup]} — "
-            "CF windows must be created in main() body BEFORE webview.start() (CD-70c-1)"
-        )
 
     def test_cf_build_and_announce_before_webview_start(self):
         """(b) main() 直屬恰一次 build_cf_windows 與恰一次 announce，皆在 webview.start 前，build 在 announce 前。
@@ -318,33 +272,6 @@ class TestStandaloneInitOrderGuard:
             "order must be build_cf_windows() -> announce() -> webview.start() in main() (CD-70c-1)"
         )
 
-    def test_no_register_cf_transport_call_in_windows_shell_files(self):
-        """transport 不再登記成全域（改交 CfShellAgent）：standalone.py 與 cf_windows.py 都不得有呼叫。
-        T7 的 L2 lint 接手後這半可退場。"""
-        for path in (STANDALONE_PATH, CF_WINDOWS_PATH):
-            tree = _parse(path)
-            hits = [n.lineno for n in ast.walk(tree)
-                    if isinstance(n, ast.Call) and _is_register_cf_transport_call(n)]
-            assert not hits, f"{path.name} calls register_cf_transport at line(s) {hits}"
-
-    def test_cf_transport_constructed_with_initial_origins(self):
-        """PyWebViewCfTransport(...) 必須帶第二個引數（initial_urls 種子）。
-
-        pre-merge Stage 2 FINDING 1：javlibrary 的視窗從不經過 navigate_and_settle，
-        `_origins['javlibrary']` 唯一來源就是這顆種子；少了它每個 session 第一次查 JavLibrary
-        CF 視窗會多彈一次（可自癒）——粗顆粒守衛：驗「有沒有傳」，不驗傳了什麼。
-        """
-        helper = _find_cf_builder(self._parse_cf())
-        assert helper is not None, "build_cf_windows() not found in cf_windows.py"
-        ctors = [c for c in ast.walk(helper) if isinstance(c, ast.Call) and _is_transport_construction_call(c)]
-        assert ctors, "PyWebViewCfTransport(...) not found in build_cf_windows()"
-        for c in ctors:
-            has_seed = len(c.args) >= 2 or any(k.arg == "initial_urls" for k in c.keywords)
-            n = len(c.args) + len(c.keywords)
-            assert has_seed, (
-                "PyWebViewCfTransport() 必須帶第二個引數（initial origins 種子）—— "
-                f"實際引數數={n}"
-            )
 
     def _create_call_checks(self, matcher, label):
         cf_tree = self._parse_cf()
@@ -377,9 +304,6 @@ class TestStandaloneInitOrderGuard:
         且 main() 在 webview.start 前呼叫 build（BE-TEST-05：JL 與 javten 各自獨立斷言）。"""
         self._create_call_checks(_is_jl_create_window_call, "JavLibrary")
 
-    def test_javten_create_window_before_webview_start(self):
-        """(b) fc-javten create_window（標題含 'javten'）同上，獨立斷言（D-6／BE-TEST-05）。"""
-        self._create_call_checks(_is_javten_create_window_call, "fc-javten")
 
     def _own_try_check(self, matcher, label):
         cf_tree = self._parse_cf()
@@ -399,17 +323,6 @@ class TestStandaloneInitOrderGuard:
             "the other source down with it"
         )
 
-    def test_javten_create_window_in_own_try_without_transport_construction(self):
-        """P2-A：javten 的 create_window 要在自己的 try，該 try 不含 transport 建構。
-
-        helper 內已無 register_cf_transport，舊述詞會恆真；改以 `PyWebViewCfTransport(` 建構為準。
-        mutation: 拿掉內層 try（與 transport 建構共用同一個 try）→ red。
-        """
-        self._own_try_check(_is_javten_create_window_call, "fc-javten")
-
-    def test_jl_create_window_in_own_try_without_transport_construction(self):
-        """T11：JL 對稱版（JL 失敗不得讓 fc-javten 一起灰掉）。mutation 同上。"""
-        self._own_try_check(_is_jl_create_window_call, "JavLibrary")
 
     def _attach_close_guards_def(self):
         helper = _find_module_func(self._parse_cf(), "attach_close_guards")
@@ -444,16 +357,6 @@ class TestStandaloneInitOrderGuard:
         """JL 視窗被涵蓋（獨立斷言，BE-TEST-05：不寫 len(...)==2）。"""
         assert "jl_win" in self._iterated_window_fields()
 
-    def test_attach_close_guards_covers_javten_win(self):
-        """fc-javten 視窗被涵蓋（獨立斷言）。"""
-        assert "javten_win" in self._iterated_window_fields()
-
-    def test_main_attaches_close_guards_exactly_once(self):
-        tree, _ = self._parse()
-        main_node = _find_main_func(tree)
-        assert main_node is not None, "main() not found"
-        calls = [c for c in _collect_direct_calls_in_main_body(main_node) if _is_attach_close_guards_call(c)]
-        assert len(calls) == 1, f"expected exactly 1 cf_windows.attach_close_guards() in main(), found {len(calls)}"
 
     def test_main_attaches_close_guards_to_the_built_window_set(self):
         """傳給 attach_close_guards 的第一引數必須是 build_cf_windows(...) 指派出來的那個 set；

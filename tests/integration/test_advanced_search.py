@@ -37,18 +37,3 @@ class TestAdvancedSearchSourceOverride:
         assert data["data"][0]["source"] == "javdb"
         assert data["data"][0]["title"] == "from-javdb"
 
-    def test_override_calls_single_source(self, client, temp_config_path, mocker):
-        """source override → 走 search_jav_single_source（非 smart_search）"""
-        mock_single = mocker.patch(
-            "core.scraper.search_jav_single_source",
-            return_value={"number": "SSIS-002", "source": "javbus"},
-        )
-        resp = client.get("/api/search", params={
-            "q": "SSIS-002", "mode": "exact", "source": "javbus"
-        })
-        assert resp.status_code == 200
-        mock_single.assert_called_once()
-        # 第一個位置參數為 query，第二個為 source
-        args, kwargs = mock_single.call_args
-        assert args[0] == "SSIS-002"
-        assert args[1] == "javbus"

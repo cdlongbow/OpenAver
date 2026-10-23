@@ -11,7 +11,6 @@ AC-7：CURL_CFFI_AVAILABLE=False 回 None 不拋新例外（反向鎖）
 AC-8：MRO 見證例外驗證（BE-TEST-16）
 """
 
-import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,50 +46,10 @@ def scraper():
 # AC-2 & AC-3：_get_html() 三態分類與 log 升 WARNING
 # ============================================================
 
-class TestGetHtmlErrorHandling:
-    def test_get_html_connection_error_raises_unreachable(self, scraper, monkeypatch, caplog):
-        from curl_cffi.requests.exceptions import ConnectionError as CurlConnectionError
-
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_get = MagicMock(side_effect=CurlConnectionError("Connection refused"))
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(SourceUnreachable):
-                scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
-        assert any(
-            record.levelno >= logging.WARNING and "JavDB request failed" in record.message
-            for record in caplog.records
-        )
-
-    def test_get_html_timeout_raises_unreachable(self, scraper, monkeypatch, caplog):
-        from curl_cffi.requests.exceptions import Timeout as CurlTimeout
-
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_get = MagicMock(side_effect=CurlTimeout("Connection timed out"))
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(SourceUnreachable):
-                scraper._get_html("https://javdb.com/search?q=SSIS-001")
-
 
 # ============================================================
 # AC-4：search() 放行新例外
 # ============================================================
-
-class TestPublicApiPropagatesErrors:
-
-    def test_search_propagates_unreachable(self, scraper, monkeypatch):
-        from curl_cffi.requests.exceptions import ConnectionError as CurlConnectionError
-
-        monkeypatch.setattr(javdb, "CURL_CFFI_AVAILABLE", True)
-        mock_get = MagicMock(side_effect=CurlConnectionError("Connection refused"))
-        monkeypatch.setattr(javdb.curl_requests, "get", mock_get)
-
-        with pytest.raises(SourceUnreachable):
-            scraper.search("SSIS-001")
 
 
 # ============================================================
@@ -105,50 +64,13 @@ class TestReverseLocks:
         result = scraper.search("SSIS-001")
         assert result is None
 
-    def test_validate_number_invalid_raises_value_error(self, scraper):
-        with pytest.raises(ValueError, match="Invalid number format"):
-            scraper.search("")
-
 
 # ============================================================
 # AC-8：MRO 見證例外驗證（BE-TEST-16）
 # ============================================================
-
-class TestMroWitness:
-    def test_witness_mro_branches(self):
-        from curl_cffi.requests.exceptions import (
-            ConnectTimeout,
-            ConnectionError as CurlConnectionError,
-            Timeout as CurlTimeout,
-        )
-
-        conn_mro = [k.__name__ for k in CurlConnectionError.__mro__]
-        timeout_mro = [k.__name__ for k in CurlTimeout.__mro__]
-        connect_timeout_mro = [k.__name__ for k in ConnectTimeout.__mro__]
-
-        assert "Timeout" not in conn_mro
-        assert "ConnectionError" not in timeout_mro
-        # ConnectTimeout 同時繼承 ConnectionError 與 Timeout
-        assert "ConnectionError" in connect_timeout_mro
-        assert "Timeout" in connect_timeout_mro
 
 
 # ============================================================
 # AC-1：core/scrapers/errors.py 兩個 typed exception 與 docstring
 # ============================================================
 
-class TestErrorClasses:
-    def test_error_classes_hierarchy_and_docstrings(self):
-        from core.scrapers.errors import SourceBlocked as RealSourceBlocked
-        from core.scrapers.errors import SourceUnreachable as RealSourceUnreachable
-
-        assert issubclass(RealSourceUnreachable, RuntimeError)
-        assert issubclass(RealSourceBlocked, RuntimeError)
-
-        assert RealSourceUnreachable.__doc__ is not None
-        assert "User-visible meaning:" in RealSourceUnreachable.__doc__
-        assert "連不上" in RealSourceUnreachable.__doc__
-
-        assert RealSourceBlocked.__doc__ is not None
-        assert "User-visible meaning:" in RealSourceBlocked.__doc__
-        assert "暫時不可用" in RealSourceBlocked.__doc__

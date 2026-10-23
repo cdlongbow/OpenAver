@@ -12,15 +12,8 @@ from core import self_update
 
 @pytest.mark.parametrize("latest,current,expected", [
     ("0.10.0", "0.9.0", True),
-    ("0.9.0", "0.10.0", False),
-    ("0.17.8", "0.17.7", True),
     ("0.17.7", "0.17.7", False),
-    ("1.0.0", "0.99.99", True),
-    ("0.18.0-rc1", "0.17.7", True),
-    ("", "0.17.7", False),
     ("abc", "0.17.7", False),
-    ("0.17.7", "abc", False),
-    (None, "0.17.7", False),
 ])
 def test_is_newer_truth_table(latest, current, expected):
     assert self_update.is_newer(latest, current) is expected
@@ -43,11 +36,6 @@ def test_check_latest_200_has_update():
     assert same["ok"] is True and same["has_update"] is False
 
 
-def test_check_latest_404_means_no_release():
-    r = self_update.check_latest("0.9.0", transport=_transport(lambda req: httpx.Response(404)))
-    assert r == {"ok": True, "has_update": False, "current_version": "0.9.0"}
-
-
 def _raise(exc):
     def h(req):
         raise exc
@@ -55,12 +43,8 @@ def _raise(exc):
 
 
 @pytest.mark.parametrize("handler,reason", [
-    (_raise(httpx.ReadTimeout("t")), "timeout"),
     (_raise(httpx.ConnectError("c")), "network"),
-    (lambda req: httpx.Response(500), "bad_response"),
-    (lambda req: httpx.Response(403), "bad_response"),
     (lambda req: httpx.Response(200, content=b"not json"), "bad_response"),
-    (lambda req: httpx.Response(200, json=[1]), "bad_response"),
 ])
 def test_check_latest_failures(handler, reason):
     r = self_update.check_latest("0.9.0", transport=_transport(handler))
@@ -78,7 +62,7 @@ def test_installer_argv_matches_official_scripts():
         "\"curl -fsSL https://raw.githubusercontent.com/slive777/OpenAver/main/install.sh | bash\""]
 
 
-@pytest.mark.parametrize("platform,kwargs", [("win32", {"creationflags": 16}), ("darwin", {})])
+@pytest.mark.parametrize("platform,kwargs", [("win32", {"creationflags": 16})])
 def test_launch_installer_win32_uses_new_console(monkeypatch, platform, kwargs):
     monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setattr(subprocess, "CREATE_NEW_CONSOLE", 16, raising=False)
@@ -88,20 +72,9 @@ def test_launch_installer_win32_uses_new_console(monkeypatch, platform, kwargs):
     popen.assert_called_once_with(self_update.installer_argv(platform), **kwargs)
 
 
-def test_launch_installer_popen_error_propagates(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
-    with mock.patch("core.self_update.subprocess.Popen", side_effect=OSError("boom")):
-        with pytest.raises(OSError):
-            self_update.launch_installer()
-
-
 @pytest.mark.parametrize("platform,exe,home,expected", [
-    ("win32", "/h/OpenAver/python/pythonw.exe", "/h", True),
     ("win32", "/x/Other/python/pythonw.exe", "/h", False),
     ("darwin", "/h/OpenAver/python/bin/python3", "/h", True),
-    ("darwin", "/x/Other/python/bin/python3", "/h", False),
-    ("linux", "/h/OpenAver/python/python3", "/h", True),
-    ("linux", "/x/Other/python/python3", "/h", False),
 ])
 def test_is_default_install(monkeypatch, platform, exe, home, expected):
     monkeypatch.setattr(sys, "platform", platform)

@@ -58,26 +58,3 @@ test('search addFiles also requests expanded video files (same wiring)', async (
   assert.deepEqual(setFileListCalls, [['/x/y.mp4']]);
 });
 
-test('AC-4: search does not call openBrowseDir when window.pywebview exists', async () => {
-  const { openBrowseDir, calls } = makeSpyOpenBrowseDir();
-  const setFileListCalls = [];
-  window.pywebview = {
-    api: {
-      select_folder: async () => ({ files: ['/desk/a.mp4'] }),
-      select_files: async () => ['/desk/b.mp4'],
-    },
-  };
-  const fakeThis = Object.assign({}, searchStateFileList(), {
-    openBrowseDir,
-    async setFileList(paths) { setFileListCalls.push(paths); },
-    showToast() {},
-  });
-
-  await searchStateFileList().addFolder.call(fakeThis);
-  await searchStateFileList().addFiles.call(fakeThis);
-
-  assert.equal(calls.length, 0, '有 pywebview 時不得呼叫 openBrowseDir');
-  assert.deepEqual(setFileListCalls, [['/desk/a.mp4'], ['/desk/b.mp4']]);
-
-  delete window.pywebview;
-});

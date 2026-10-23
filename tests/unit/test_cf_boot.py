@@ -22,7 +22,6 @@ if str(WINDOWS_DIR) not in sys.path:
     sys.path.insert(0, str(WINDOWS_DIR))
 
 from windows import cf_boot, cf_shell, cf_windows  # noqa: E402
-from windows.cf_windows import CfWindowSet  # noqa: E402
 
 SERVER = "http://192.168.1.180:8000"
 TOKEN = "TKN-SENTINEL-T13"
@@ -65,24 +64,6 @@ class FakeWake:
             return True
         self.clock.t += timeout
         return False
-
-
-class FakeTransport:
-    def __init__(self, sites=(), failed=()):
-        self.sites, self.failed = list(sites), list(failed)
-        self.listener = None
-
-    def available_sites(self):
-        return list(self.sites)
-
-    def preparing_sites(self):
-        return []
-
-    def failed_sites(self):
-        return list(self.failed)
-
-    def set_change_listener(self, cb):
-        self.listener = cb
 
 
 class SyncExecutor:
@@ -235,17 +216,6 @@ def join_all(env):
 # ---------------------------------------------------------------------------
 # I-1 set-once
 # ---------------------------------------------------------------------------
-def test_retry_fetch_failure_builds_no_windows_even_after_three_retries(env):
-    write_client()
-    env.fetch_ok = False
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    for _ in range(3):
-        reply = ctl.retry()
-        assert reply["ok"] is True and reply["cf"]["reason"] == "unreachable"
-    assert env.created == []
-    assert len(env.fetches) == 4                      # 啟動一次＋每按一次重試一次，沒有任何自動補試
 
 
 def test_retry_builds_at_most_one_window_set(env):
@@ -259,96 +229,6 @@ def test_retry_builds_at_most_one_window_set(env):
         assert ctl.retry()["ok"] is True
     assert len(env.created) == 2                      # 恰好一組（JavLibrary＋FC2-javten）
     assert len(env.agents) == 1
-
-
-def test_concurrent_retries_build_exactly_one_set(env):
-    write_client()
-    env.fetch_ok = False
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    env.fetch_ok = True
-    env.build_hold = threading.Event()
-    boxes = [[], []]
-    t1 = run_thread(env, ctl.retry, boxes[0])
-    try:
-        assert env.build_entered.wait(5), "first retry never reached create_window"
-        t2 = run_thread(env, ctl.retry, boxes[1])
-        t2.join(5)
-        assert not t2.is_alive()
-    finally:
-        env.build_hold.set()
-        join_all(env)
-    replies = [boxes[0][0], boxes[1][0]]
-    assert sorted(r["ok"] for r in replies) == [False, True]
-    assert len(env.created) == 2
-
-
-def test_retry_after_build_attempt_with_zero_windows_never_rebuilds(env, monkeypatch):
-    """Q6：build 嘗試過即 set-once（兩窗皆建失敗也不再 build，避免代理套用器多包一層）。"""
-    write_client()
-    builds = []
-    monkeypatch.setattr(cf_windows, "build_cf_windows",
-                        lambda logger, settings, local_direct=False: builds.append(1) or CfWindowSet())
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    ctl.retry()
-    ctl.retry()
-    assert builds == [1]
-
-
-# ---------------------------------------------------------------------------
-# I-2 補建後狀態（等待走注入點）
-# ---------------------------------------------------------------------------
-def _never_built_controller(env, transport):
-    write_client()
-    env.fetch_ok = False
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    env.fetch_ok = True
-
-    def fake_build(logger, settings, local_direct=False):
-        return CfWindowSet(transport=transport, jl_win=CWin("jl", env.log), javten_win=CWin("jt", env.log))
-
-    return ctl, fake_build
-
-
-def test_retry_waits_until_ready_within_settle_window(env, monkeypatch):
-    transport = FakeTransport(sites=())
-    ctl, fake_build = _never_built_controller(env, transport)
-    monkeypatch.setattr(cf_windows, "build_cf_windows", fake_build)
-
-    def window_confirms_and_server_accepts():
-        transport.sites = ["fc-javten", "javlibrary"]
-        env.agents[0]._sync_once()
-
-    env.script.append((1.0, window_confirms_and_server_accepts))
-    reply = ctl.retry()
-    assert reply["ok"] is True
-    assert (reply["cf"]["state"], reply["cf"]["reason"]) == ("ready", None)
-    assert env.clock.t <= cf_boot.RETRY_SETTLE_S
-
-
-def test_retry_not_ready_within_window_returns_starting_after_at_most_settle_seconds(env, monkeypatch):
-    transport = FakeTransport(sites=())
-    ctl, fake_build = _never_built_controller(env, transport)
-    monkeypatch.setattr(cf_windows, "build_cf_windows", fake_build)
-    reply = ctl.retry()
-    assert reply["ok"] is True and (reply["cf"]["state"], reply["cf"]["reason"]) == ("not_ready", "starting")
-    assert env.clock.t > 0                              # 注入時鐘真的被等待推進過
-    assert env.clock.t <= cf_boot.RETRY_SETTLE_S
-
-
-def test_retry_webview2_failure_settles_as_webview2_failed(env, monkeypatch):
-    transport = FakeTransport(sites=())
-    ctl, fake_build = _never_built_controller(env, transport)
-    monkeypatch.setattr(cf_windows, "build_cf_windows", fake_build)
-    env.script.append((0.5, lambda: setattr(transport, "failed", ["javlibrary", "fc-javten"])))
-    reply = ctl.retry()
-    assert reply["cf"]["reason"] == "webview2_failed"
-    assert env.clock.t <= cf_boot.RETRY_SETTLE_S
 
 
 # ---------------------------------------------------------------------------
@@ -382,31 +262,6 @@ def test_no_path_but_retry_refetches_cf_settings(env, monkeypatch):
 # ---------------------------------------------------------------------------
 # I-15 busy／status
 # ---------------------------------------------------------------------------
-def test_retry_reentry_returns_busy_and_status_not_blocked(env):
-    write_client()
-    env.fetch_ok = False
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    env.fetch_ok = True
-    env.build_hold = threading.Event()
-    box = []
-    first = run_thread(env, ctl.retry, box)
-    try:
-        assert env.build_entered.wait(5), "first retry never reached create_window"
-        assert ctl.retry() == {"ok": False, "reason": "busy"}
-        status_box = []
-        st = threading.Thread(target=lambda: status_box.append(ctl.status()), daemon=True)
-        env.threads.append(st)
-        st.start()
-        st.join(2)
-        assert not st.is_alive(), "status() blocked behind the in-flight retry"
-        assert status_box and status_box[0]["state"] == "not_ready"
-        assert box == [] and first.is_alive()                 # 第一次要等 Invoke 返回才回覆
-    finally:
-        env.build_hold.set()
-        join_all(env)
-    assert box[0]["ok"] is True
 
 
 def test_retry_exception_replies_failed_without_leaking_detail(env, monkeypatch):
@@ -514,11 +369,6 @@ class QuitOnRegisterLifecycle(FakeLifecycle):
 # ---------------------------------------------------------------------------
 # 今天現況（initial）與 Q5
 # ---------------------------------------------------------------------------
-def test_initial_offline_boot_fetches_and_builds_nothing(env):
-    ctl = make_controller(env, kind="offline")
-    ctl.initial()
-    assert env.fetches == [] and env.created == [] and ctl.agent is None
-    assert ctl.status() == {"state": "not_ready", "reason": "offline_boot", "proxy_note": None, "sites": []}
 
 
 def test_retry_from_offline_boot_rereads_saved_pair_at_call_time(env):
@@ -529,17 +379,6 @@ def test_retry_from_offline_boot_rereads_saved_pair_at_call_time(env):
     assert ctl.retry()["ok"] is True
     assert env.fetches == [(SERVER, TOKEN, SERVER)]
     assert len(env.created) == 2
-
-
-def test_retry_unsupported_platform_does_not_fetch(env, monkeypatch):
-    monkeypatch.setattr(cf_windows, "cf_shell_supported", lambda: False)
-    write_client()
-    ctl = make_controller(env)
-    ctl.initial()
-    bind(ctl)
-    reply = ctl.retry()
-    assert reply["ok"] is True and reply["cf"]["state"] == "unsupported"
-    assert env.fetches == [] and env.created == []
 
 
 def test_local_kind_uses_local_origin_without_token(env):

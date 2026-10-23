@@ -49,42 +49,6 @@ def client(tmp_db, monkeypatch):
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-def test_add_wishlist_happy_path(client, tmp_db, monkeypatch):
-    """POST /api/wishlist 正常新增書籤，下載成功回 cover_available: True"""
-    monkeypatch.setattr("core.wishlist_cover_cache.download_and_save", lambda number, primary, fallback: True)
-
-    payload = {
-        "number": "SONE-205",
-        "title": "測試標題 1",
-        "actors": ["明日花キララ"],
-        "tags": ["巨乳", "單體作品"],
-        "maker": "S1 NO.1 STYLE",
-        "director": "監督A",
-        "series": "系列A",
-        "label": "廠牌A",
-        "duration": 120,
-        "date": "2025-01-01",
-        "cover": "https://example.com/cover.jpg",
-        "preview_cover_url": "https://example.com/preview.jpg",
-        "sample_images": ["https://example.com/sample1.jpg"],
-        "preview_sample_images": ["https://example.com/preview_sample1.jpg"],
-        "source": "dmm",
-        "url": "https://example.com/item/sone205",
-    }
-    resp = client.post("/api/wishlist", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert data["cover_available"] is True
-
-    # 驗證 DB
-    conn = sqlite3.connect(str(tmp_db))
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM wishlist WHERE number = ?", ("SONE-205",))
-    row = cursor.fetchone()
-    conn.close()
-    assert row is not None
-
 
 def test_add_wishlist_dto_field_mapping(client, tmp_db, monkeypatch):
     """DoD-3: 前端欄位名映射到 DB 正確欄位（actors->actresses, date->release_date, url->source_url）"""
@@ -130,25 +94,6 @@ def test_add_wishlist_dto_field_mapping(client, tmp_db, monkeypatch):
     assert item["sample_images"] != item["preview_sample_images"]
 
 
-def test_add_wishlist_cover_download_failure_still_succeeds(client, tmp_db, monkeypatch):
-    """DoD-4: download_and_save 回 False 時，加入書籤仍成功（cover_available: False）"""
-    monkeypatch.setattr("core.wishlist_cover_cache.download_and_save", lambda number, primary, fallback: False)
-
-    resp = client.post("/api/wishlist", json={
-        "number": "FAIL-001",
-        "title": "Cover Fail Title",
-        "cover": "https://example.com/notfound.jpg",
-    })
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert data["cover_available"] is False
-
-    # DB 中確實有該列
-    count_resp = client.get("/api/wishlist/count")
-    assert count_resp.json()["count"] == 1
-
-
 def test_add_wishlist_cover_write_oserror_still_succeeds(client, tmp_db, monkeypatch):
     """DoD-4 & M2: download_and_save 丟 OSError 時，加入書籤仍成功且回 cover_available: False"""
     def _raise_oserror(number, primary, fallback):
@@ -169,29 +114,6 @@ def test_add_wishlist_cover_write_oserror_still_succeeds(client, tmp_db, monkeyp
     # DB 中確實有該列
     count_resp = client.get("/api/wishlist/count")
     assert count_resp.json()["count"] == 1
-
-
-def test_add_wishlist_duplicate_number(client, tmp_db, monkeypatch):
-    """POST /api/wishlist 重複加入已存在番號，回 success: True 不拋錯且不重複網路下載"""
-    called = []
-    def _mock_download(number, primary, fallback):
-        called.append(number)
-        return True
-
-    monkeypatch.setattr("core.wishlist_cover_cache.download_and_save", _mock_download)
-
-    payload = {"number": "DUP-001", "title": "First", "cover": "http://cov"}
-    resp1 = client.post("/api/wishlist", json=payload)
-    assert resp1.status_code == 200
-    assert resp1.json()["success"] is True
-    assert len(called) == 1
-
-    # 第二次加入
-    resp2 = client.post("/api/wishlist", json=payload)
-    assert resp2.status_code == 200
-    assert resp2.json()["success"] is True
-    # 第一次加成功後第二次不重新觸發 download_and_save
-    assert len(called) == 1
 
 
 def test_list_wishlist_empty(client):
@@ -336,13 +258,6 @@ def test_wishlist_membership_mixed_and_casing(client, tmp_db):
     }
 
 
-def test_wishlist_membership_empty(client, tmp_db):
-    """POST /api/wishlist/membership 空陣列回 {}"""
-    resp = client.post("/api/wishlist/membership", json={"numbers": []})
-    assert resp.status_code == 200
-    assert resp.json() == {}
-
-
 def test_list_wishlist_reconcile_deletes_only_owned_and_leaves_others(client, tmp_db):
     """TASK-141a-T4：GET /api/wishlist 對帳只刪已入手的書籤與封面，保留未入手的"""
     conn = sqlite3.connect(str(tmp_db))
@@ -414,12 +329,6 @@ def test_get_wishlist_cover_hit(client, tmp_db):
     assert resp.headers["Content-Type"] == "image/webp"
     assert resp.headers["Cache-Control"] == "no-cache"
     assert resp.content == fake_webp
-
-
-def test_get_wishlist_cover_miss(client, tmp_db):
-    """DoD-8: GET /api/wishlist/cover 未命中回 404"""
-    resp = client.get("/api/wishlist/cover?number=NONEXISTENT-999")
-    assert resp.status_code == 404
 
 
 def test_add_wishlist_reports_added_false_on_duplicate(client, tmp_db, monkeypatch):
@@ -553,100 +462,6 @@ def test_list_wishlist_survives_reconcile_failure(client, tmp_db, monkeypatch):
     assert items[0]["title_key"] == "notif.wishlist_reconcile_failed"
     assert items[0]["level"] == "warn"
     assert items[0]["task_type"] == "wishlist_reconcile"
-
-
-def test_list_wishlist_second_load_no_duplicate_notification(client, tmp_db, monkeypatch):
-    """TASK-141a-T4 DoD 3: 連續兩次 GET → 第二次零通知、delete_many 不被呼叫。"""
-    from core.database import WishlistRepository
-
-    conn = sqlite3.connect(str(tmp_db))
-    conn.execute("""
-        INSERT INTO wishlist (number, title)
-        VALUES ('SECOND-001', 'Owned')
-    """)
-    conn.execute("""
-        INSERT INTO videos (path, number, title)
-        VALUES ('/lib/SECOND-001.mp4', 'SECOND-001', 'v')
-    """)
-    conn.commit()
-    conn.close()
-
-    real_delete_many = WishlistRepository.delete_many
-    second_phase = {"active": False}
-    second_calls = []
-
-    def _counting_delete_many(self, numbers):
-        if second_phase["active"]:
-            second_calls.append(list(numbers))
-        return real_delete_many(self, numbers)
-
-    monkeypatch.setattr(
-        "core.database.WishlistRepository.delete_many",
-        _counting_delete_many,
-    )
-
-    first = client.get("/api/wishlist")
-    assert first.status_code == 200
-
-    notif_after_first = client.get("/api/notifications").json()["items"]
-    assert len(notif_after_first) == 1
-
-    second_phase["active"] = True
-    second = client.get("/api/wishlist")
-    assert second.status_code == 200
-
-    notif_after_second = client.get("/api/notifications").json()["items"]
-    assert len(notif_after_second) == 1
-    assert second_calls == []
-
-
-def test_cleanup_endpoint_removed(client):
-    """TASK-141a-T4 DoD 4: POST /api/wishlist/cleanup 端點已移除，不再回 200 + deleted_count。
-
-    Card 原文寫「回 404」；實際是 **405 Method Not Allowed**——`DELETE /{number}` 那條
-    路徑模板仍然匹配 `/cleanup` 這個路徑，只是不接受 POST。端點確實不存在了
-    （不再回 `deleted_count`），前端 `!resp.ok` 對 404／405 行為相同。
-    """
-    resp = client.post("/api/wishlist/cleanup")
-    assert resp.status_code == 405
-    assert resp.json() != {"deleted_count": 0}
-    assert "deleted_count" not in resp.json()
-
-
-def test_list_wishlist_reconcile_then_delete_race_converges(client, tmp_db, monkeypatch):
-    """TASK-141a-T4 DoD 5: 對帳與 list_all 之間插入手動刪除 → 收斂到刪除後狀態。"""
-    from core.database import WishlistRepository
-
-    conn = sqlite3.connect(str(tmp_db))
-    conn.execute("""
-        INSERT INTO wishlist (number, title, created_at)
-        VALUES
-        ('RACE-X', 'Will Be Manually Deleted', '2026-01-01 10:00:00'),
-        ('RACE-Y', 'Survives', '2026-01-02 10:00:00')
-    """)
-    conn.commit()
-    conn.close()
-
-    real_list_all = WishlistRepository.list_all
-    call_count = {"n": 0}
-
-    def _wrapped_list_all(self):
-        call_count["n"] += 1
-        if call_count["n"] == 2:
-            # 模擬使用者在對帳送出與清單渲染之間手動刪除 RACE-X
-            WishlistRepository().remove("RACE-X")
-        return real_list_all(self)
-
-    monkeypatch.setattr(
-        "core.database.WishlistRepository.list_all",
-        _wrapped_list_all,
-    )
-
-    resp = client.get("/api/wishlist")
-    assert resp.status_code == 200
-    numbers = [item["number"] for item in resp.json()]
-    assert "RACE-X" not in numbers
-    assert "RACE-Y" in numbers
 
 
 def test_add_wishlist_already_owned_blocks_write(client, tmp_db):

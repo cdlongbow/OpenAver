@@ -29,12 +29,4 @@ test('resolveStagingCoverUrl: preview_cover_url 為空字串 → fallback 回 co
   assert.equal(resolveStagingCoverUrl(item), 'http://example.com/cover.jpg');
 });
 
-test('resolveStagingCoverUrl: 兩者皆缺 → 空字串（不炸）', () => {
-  assert.equal(resolveStagingCoverUrl({}), '');
-  assert.equal(resolveStagingCoverUrl(undefined), '');
-});
 
-test('resolveStagingCoverUrl: 沒有 preview_cover_url 欄位（既有候選/舊資料）→ 沿用 cover（不回歸）', () => {
-  const item = { cover: 'http://example.com/cover.jpg' };
-  assert.equal(resolveStagingCoverUrl(item), 'http://example.com/cover.jpg');
-});

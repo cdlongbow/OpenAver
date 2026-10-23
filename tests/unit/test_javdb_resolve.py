@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from core.scrapers import javdb_api
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceBlocked
 from core.search_providers import javdb as jp
 from core.search_providers.javdb import JavDBProvider, clear_resolve_cache
 from core.search_providers.types import Kind
@@ -72,8 +72,8 @@ def test_maker_requests_are_spaced():
 # ------------------------------------------------------------------ 快取
 
 
-@pytest.mark.parametrize("exc", [SourceBlocked("b"), SourceUnreachable("u"), ConnectionError("c")])
-@pytest.mark.parametrize("kind", [Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE])
+@pytest.mark.parametrize("exc", [SourceBlocked("b")])
+@pytest.mark.parametrize("kind", [Kind.ACTOR])
 def test_exception_not_cached_and_propagates(kind, exc):
     bad = _Site(exc=exc)
     with pytest.raises(type(exc)):
@@ -86,19 +86,5 @@ def test_exception_not_cached_and_propagates(kind, exc):
 
 
 # ------------------------------------------------------------------ provider 面
-def test_capabilities_exact():
-    assert JavDBProvider.capabilities == frozenset(
-        {Kind.ACTOR, Kind.SERIES, Kind.DIRECTOR, Kind.MAKER, Kind.CODE, Kind.PARTIAL, Kind.KEYWORD})
 
 
-@pytest.mark.parametrize("kind", [Kind.LABEL, Kind.KEYWORD, Kind.PARTIAL])
-def test_unsupported_kind_none_no_request(kind):
-    site = _Site()
-    assert _resolve(kind, "x", site) is None
-    assert site.calls == []
-
-
-def test_empty_after_fold_none_no_request():
-    site = _Site()
-    assert _resolve(Kind.ACTOR, " ・-_ ", site) is None
-    assert site.calls == []

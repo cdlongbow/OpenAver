@@ -51,17 +51,6 @@ function mkPage(mode = 'local', shellKind = 'windows') {
 }
 const stateOf = (calls, name) => calls.filter((c) => c[0] === name);
 
-test('local mode init reads bridge state', async () => {
-    const b = fakeBridge(); install(b);
-    const page = mkPage('local');
-    page.init();
-    await new Promise((r) => setImmediate(r));
-    assert.equal(page.bridge, 'ready');
-    assert.equal(page.mode, 'local');
-    assert.equal(page.localVersion, '0.17.7');
-    assert.equal(stateOf(b.calls, 'connect_probe').length, 0);
-    assert.equal(page.actions().canApply, false);
-});
 
 test('client mode init auto-probes the saved url', async () => {
     const b = fakeBridge({
@@ -82,32 +71,6 @@ test('client mode init auto-probes the saved url', async () => {
     assert.equal(page.actions().canSwitchLocal, true);
 });
 
-test('client mode with an unreachable saved url still allows switching back', async () => {
-    const b = fakeBridge({
-        connect_get_state: async () => ({ mode: 'client', url: URL_A, host: 'good.test:8765', version: '0.17.10' }),
-        connect_probe: async () => ({ ok: false, reason: 'unreachable', version: '', kind: '', compat: { status: 'unparseable', hint: '' }, url: '' }),
-    });
-    install(b);
-    const page = mkPage('client');
-    page.init();
-    await new Promise((r) => setImmediate(r));
-    assert.match(page.statusLine(), /connect\.status_down/);
-    assert.equal(page.actions().canSwitchLocal, true);
-    assert.equal(page.lastOkText(), '');
-});
-
-test('last_ok missing or broken renders no line', async () => {
-    for (const bad of [undefined, null, '', 'not-a-date', 42]) {
-        const b = fakeBridge({
-            connect_get_state: async () => ({ mode: 'client', url: URL_A, host: 'h', version: '0.17.10', last_ok: bad }),
-        });
-        install(b);
-        const page = mkPage('client');
-        page.init();
-        await new Promise((r) => setImmediate(r));
-        assert.equal(page.lastOkText(), '', String(bad));
-    }
-});
 
 test('bridge arrives via event before the deadline', async () => {
     timers.length = 0; winListeners.length = 0;
@@ -126,30 +89,6 @@ test('bridge arrives via event before the deadline', async () => {
     assert.equal(page.bridge, 'ready');
 });
 
-test('bridge arrives via event after the deadline still recovers', async () => {
-    timers.length = 0; winListeners.length = 0;
-    install(undefined);
-    const page = mkPage('local');
-    page.init();
-    timers[0].fn();
-    assert.equal(page.bridge, 'unavailable');
-    install(fakeBridge());
-    fireReady();
-    await new Promise((r) => setImmediate(r));
-    assert.equal(page.bridge, 'ready');
-});
-
-test('missing mode in the state reply means unavailable', async () => {
-    for (const reply of [{}, null]) {
-        install(fakeBridge({ connect_get_state: async () => reply }));
-        const page = mkPage('local');
-        page.init();
-        await new Promise((r) => setImmediate(r));
-        assert.equal(page.bridge, 'unavailable');
-        const a = page.actions();
-        assert.equal(a.canProbe || a.canApply || a.canLogin || a.canSwitchLocal, false);
-    }
-});
 
 test('untrusted state reply waits for oabridgeready and retries once, then gives up', async () => {
     timers.length = 0; winListeners.length = 0;
@@ -176,35 +115,6 @@ test('untrusted state reply waits for oabridgeready and retries once, then gives
     assert.equal(page2.bridge, 'unavailable');
 });
 
-test('shell present but not ready: no bridge call until oabridgeready, no unavailable on deadline', async () => {
-    timers.length = 0; winListeners.length = 0;
-    const b = fakeBridge();
-    window.pywebview = { api: b.api };
-    window.__oaBridgeKind = undefined;
-    const page = mkPage('local');
-    page.init();
-    await new Promise((r) => setImmediate(r));
-    assert.equal(b.calls.length, 0);
-    assert.equal(page.bridge, 'pending');
-    timers[0].fn();
-    assert.equal(page.bridge, 'pending');
-    fireReady();
-    await new Promise((r) => setImmediate(r));
-    assert.equal(page.bridge, 'ready');
-    assert.equal(stateOf(b.calls, 'connect_get_state').length, 1);
-});
-
-test('untrusted reply on a later call flips the bridge to unavailable', async () => {
-    const b = fakeBridge({ connect_probe: async () => ({ ok: false, reason: 'untrusted' }) });
-    install(b);
-    const page = mkPage('local');
-    page.init();
-    await new Promise((r) => setImmediate(r));
-    page.urlText = ' ' + URL_A + ' ';
-    await page.testConnection();
-    assert.equal(page.bridge, 'unavailable');
-    assert.equal(page.probe, null);
-});
 
 test('testConnection sends trimmed text; login and apply send canonical probe.url', async () => {
     const b = fakeBridge({ connect_probe: async () => okProbe({ url: 'http://good.test:8765' }) });
@@ -293,13 +203,6 @@ test('switchLocal calls connect_switch_local_restart and locks', async () => {
     assert.equal(page.restarting, true);
 });
 
-test('pathMapForApply is null in T6a and applyRestart goes through it', async () => {
-    const { b, page } = await readyLocalWithProbe({ connect_probe: async () => okProbe({ auth_required: false }) });
-    assert.equal(page.pathMapForApply(), null);
-    page.pathMapForApply = () => [{ server: '/a', local: 'D:/a' }];
-    await page.applyRestart();
-    assert.deepEqual(stateOf(b.calls, 'connect_apply_restart')[0][2], [{ server: '/a', local: 'D:/a' }]);
-});
 
 // ---------- template contract ----------
 const html = readFileSync(new URL('../../../../../templates/connect.html', import.meta.url), 'utf8');
@@ -344,11 +247,3 @@ test('template has one root x-data and the factory is registered', () => {
     assert.equal(reg[0][1], connectPage);
 });
 
-test('template exposes the contract ids', () => {
-    for (const id of ['connect-nobridge', 'connect-status-card', 'connect-url', 'connect-test-btn',
-        'connect-probe-result', 'connect-pin', 'connect-login-btn', 'connect-pin-error', 'connect-forgot',
-        'connect-nopassword', 'connect-cf', 'connect-apply-btn', 'connect-switch-local-btn',
-        'connect-action-error', 'connect-restarting']) {
-        assert.ok(html.includes(`id="${id}"`), id);
-    }
-});

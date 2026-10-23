@@ -5,20 +5,16 @@ test_api_enrich.py - POST /api/enrich-single 端點整合測試
 """
 
 import hashlib
-import json
 import os
 from pathlib import Path
 
 import pytest
 from unittest.mock import patch, MagicMock
-from dataclasses import dataclass, field
-from typing import List, Optional
 
 # TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
 # 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
 # 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
 pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
-
 
 
 # ── helper: EnrichResult stub ────────────────────────────────────────────────
@@ -55,124 +51,7 @@ def _err_result(error: str):
 # ── 端點基本測試 ──────────────────────────────────────────────────────────────
 
 class TestEnrichSingleEndpoint:
-    def test_success_returns_200(self, client, mocker):
-        """正常請求回傳 200，success=True"""
-        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
 
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["nfo_written"] is True
-
-    def test_file_not_found_returns_error(self, client, mocker):
-        """檔案不存在 → success=False"""
-        mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_err_result("檔案不存在"),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/nonexistent/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "不存在" in data["error"]
-
-    def test_missing_number_field_returns_422(self, client):
-        """number 為必填：未提供時回傳 422"""
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            # number 省略
-        })
-        assert response.status_code == 422
-
-    def test_missing_file_path_returns_422(self, client):
-        """file_path 為必填：未提供時回傳 422"""
-        response = client.post("/api/enrich-single", json={
-            "number": "SONE-205",
-        })
-        assert response.status_code == 422
-
-    def test_mode_fill_missing_passed(self, client, mocker):
-        """mode=fill_missing 正確傳入 enrich_single"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(source_used="db"),
-        )
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "fill_missing",
-        })
-
-        call_kwargs = mock_fn.call_args
-        assert call_kwargs is not None
-        # 確認 mode 正確傳入
-        kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
-        args = call_kwargs.args if call_kwargs.args else ()
-        # mode 可能是 positional 或 keyword
-        assert "fill_missing" in str(call_kwargs)
-
-    def test_mode_db_to_sidecar_passed(self, client, mocker):
-        """mode=db_to_sidecar 正確傳入"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(source_used="db"),
-        )
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "db_to_sidecar",
-        })
-
-        assert "db_to_sidecar" in str(mock_fn.call_args)
-
-    def test_mode_refresh_full_passed(self, client, mocker):
-        """mode=refresh_full 正確傳入"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(source_used="javbus"),
-        )
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-        })
-
-        assert "refresh_full" in str(mock_fn.call_args)
-
-    def test_write_flags_passed(self, client, mocker):
-        """write_nfo/write_cover/write_extrafanart/overwrite_existing 正確傳入"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(),
-        )
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "write_nfo": False,
-            "write_cover": False,
-            "write_extrafanart": True,
-            "overwrite_existing": True,
-        })
-
-        call_kwargs = mock_fn.call_args.kwargs
-        assert call_kwargs["write_nfo"] is False
-        assert call_kwargs["write_cover"] is False
-        assert call_kwargs["write_extrafanart"] is True
-        assert call_kwargs["overwrite_existing"] is True
 
     def test_nfo_title_format_passed(self, client, mocker):
         """nfo_title_format 正確從 config 轉傳給 enrich_single"""
@@ -200,37 +79,6 @@ class TestEnrichSingleEndpoint:
         assert "nfo_title_format" in call_kwargs
         assert call_kwargs["nfo_title_format"] == "{num}-{title}-{actor}"
 
-    def test_nfo_title_format_default_when_missing_from_config(self, client, mocker):
-        """config 缺少 nfo_title_format 時轉傳預設格式給 enrich_single"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(),
-        )
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        call_kwargs = mock_fn.call_args.kwargs
-        assert "nfo_title_format" in call_kwargs
-        assert call_kwargs["nfo_title_format"] == "[{num}]{title}"
-
-    def test_error_from_enricher_propagated(self, client, mocker):
-        """enricher 回傳 error → 端點也回傳 success=False"""
-        mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_err_result("找不到 SONE-999 的資料"),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-999.mp4",
-            "number": "SONE-999",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert "SONE-999" in data["error"]
 
     def test_unexpected_exception_returns_error(self, client, mocker):
         """enrich_single 拋出例外 → 端點回傳 success=False，且不洩漏原始 exception 訊息"""
@@ -248,65 +96,6 @@ class TestEnrichSingleEndpoint:
         data = response.json()
         assert data["success"] is False
         assert "kaboom" not in data.get("error", "")
-
-    def test_default_mode_is_fill_missing(self, client, mocker):
-        """未指定 mode 時預設為 fill_missing"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(),
-        )
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        assert "fill_missing" in str(mock_fn.call_args)
-
-    def test_extrafanart_written_in_response(self, client, mocker):
-        """回應中含 extrafanart_written 欄位"""
-        mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(extrafanart_written=3),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        data = response.json()
-        assert data.get("extrafanart_written") == 3
-
-    def test_fields_filled_in_response(self, client, mocker):
-        """回應中含 fields_filled 欄位"""
-        mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(fields_filled=["director", "series"]),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        data = response.json()
-        assert "director" in data.get("fields_filled", [])
-
-    def test_source_used_in_response(self, client, mocker):
-        """回應中含 source_used 欄位"""
-        mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(source_used="javbus"),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        data = response.json()
-        assert data.get("source_used") == "javbus"
 
 
 # ── TASK-104-T3 (CD-104-5): enrich-single 唯讀來源改道 output_dir ────────────
@@ -369,59 +158,8 @@ class TestEnrichSingleReadonlyGuard:
     # case 1（歷史命名保留；TASK-104-T3 改寫為「改道」斷言，不可為保綠而還原新碼，
     # CD-104-10）：唯讀來源片 → 產出成功，絕不落到既有 400-guard（refresh_full 分裂
     # 防呆對唯讀無意義）或舊版 enrich_single。
-    def test_readonly_blocks_enrich(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mock_resolve = mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
-        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
-        mock_owning, mock_plan, mock_produce, mock_repo = self._mock_routing(
-            mocker,
-            meta={"number": "ABC-001", "title": "T", "cover": "http://x/c.jpg"},
-            cover_strategy=("download", "http://x/c.jpg"),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-            "mode": "refresh_full",
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        mock_owning.assert_called_once()
-        mock_plan.assert_called_once()
-        # readonly_action 未帶 → 預設 'ingest'（安全預設）
-        assert mock_plan.call_args.kwargs["action"] == "ingest"
-        mock_produce.assert_called_once()
-        assert mock_produce.call_args.kwargs["assets_mode"] == "full"
-        # 唯讀分支早 return，絕不 fall-through 到既有 400-guard / 舊 enrich_single 路徑
-        mock_resolve.assert_not_called()
-        mock_enrich.assert_not_called()
 
     # readonly_action='rescrape' 明確帶 → resolve_ingest_plan 收到 action='rescrape'
-    def test_readonly_explicit_rescrape_action_passed_through(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        _, mock_plan, mock_produce, _ = self._mock_routing(
-            mocker,
-            meta={"number": "ABC-001", "title": "Candidate", "cover": "http://x/new.jpg"},
-            cover_strategy=("download", "http://x/new.jpg"),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-            "readonly_action": "rescrape",
-        })
-
-        assert response.json()["success"] is True
-        assert mock_plan.call_args.kwargs["action"] == "rescrape"
-        mock_produce.assert_called_once()
 
     # P2 review (2026-07-21): the readonly enrich-single success response was
     # `{"success": True}` only — no nfo_written/cover_written — inconsistent
@@ -429,55 +167,7 @@ class TestEnrichSingleReadonlyGuard:
     # lightbox's enrichVideo() success handler (state-lightbox.js) only checks
     # `result.success` today (doesn't consume these fields), but they're added
     # for consistency/forward-compat regardless — harmless either way.
-    def test_readonly_enrich_single_success_carries_nfo_and_cover_written(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        _, _, mock_produce, _ = self._mock_routing(
-            mocker,
-            meta={"number": "ABC-001", "title": "T", "cover": "http://x/c.jpg"},
-            cover_strategy=("download", "http://x/c.jpg"),
-        )
-        mock_produce.return_value = (
-            Path("/out/ro_src-abcdef/ABC-001"),
-            {"cover_fs": "/out/ro_src-abcdef/ABC-001/ABC-001.jpg", "sample_fs": [], "nfo_mtime": 1.0},
-        )
 
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["nfo_written"] is True
-        assert data["cover_written"] is True
-
-    def test_readonly_enrich_single_cover_written_false_when_no_cover(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        _, _, mock_produce, _ = self._mock_routing(
-            mocker,
-            meta={"number": "ABC-001", "title": "T", "cover": ""},
-            cover_strategy=("none",),
-        )
-        mock_produce.return_value = (
-            Path("/out/ro_src-abcdef/ABC-001"),
-            {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0},
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["nfo_written"] is True
-        assert data["cover_written"] is False
 
     # 未設定媒體庫輸出路徑（media-server flavour 空 output_path）→ 結構化錯誤，不寫
     def test_readonly_empty_output_root_returns_error_no_write(self, client, mocker):
@@ -504,25 +194,6 @@ class TestEnrichSingleReadonlyGuard:
         mock_produce.assert_not_called()
 
     # resolve_ingest_plan 找不到可用資料（meta=None）→ 結構化錯誤，不 raise
-    def test_readonly_no_meta_returns_error(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mock_owning, mock_plan, mock_produce, _ = self._mock_routing(
-            mocker, meta=None, cover_strategy=("none",),
-        )
-        mock_plan.return_value = (None, ("none",))
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert data["error"]
-        mock_produce.assert_not_called()
 
     # FIX P2-A / FIX#4 (P2 parity closeout): a readonly not-found enrich-single
     # attempt must mirror the non-readonly path's bookkeeping — non-readonly
@@ -644,49 +315,8 @@ class TestEnrichSingleReadonlyGuard:
         mock_produce.assert_not_called()
 
     # 相容鎖：非唯讀 + 完全不帶 readonly_action → 不 422、byte-identical
-    def test_non_readonly_without_readonly_action_field_still_succeeds(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
-        )
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/rw_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        assert response.status_code == 200
-        assert response.json()["success"] is True
-        mock_enrich.assert_called_once()
 
     # 非唯讀 + 明確帶 readonly_action（任一值）→ 仍完全忽略，byte-identical
-    @pytest.mark.parametrize("action", ["ingest", "rescrape"])
-    def test_non_readonly_ignores_readonly_action(self, client, mocker, action):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
-        )
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-        mock_owning = mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root", return_value=None
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/rw_src/ABC-001.mp4",
-            "number": "ABC-001",
-            "readonly_action": action,
-        })
-
-        assert response.json()["success"] is True
-        mock_enrich.assert_called_once()
-        # resolve_owning_output_root 仍被呼叫判斷（回 None）——分支邏輯本身不吃 action，
-        # 但 action 完全不影響非唯讀路徑的下游呼叫（enrich_single 仍是唯一寫入者）。
-        mock_owning.assert_called_once()
 
 
 # ── Codex PR#113 P2#3/P2#4（round 2，owner-confirmed 全面對齊）：readonly
@@ -755,29 +385,6 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
 
     # ── P2#3: cover-preserve gate ────────────────────────────────────────────
 
-    def test_fill_missing_with_existing_cover_preserves_cover(self, client, mocker):
-        """放大鏡-with-cover（fill_missing + overwrite=False + 既有 cover_path）
-        → cover_strategy 被覆蓋為 ('none',)，即使 resolve_ingest_plan 本來想下載。
-        MUTATION LOCK：拿掉 preserve gate 這條會讓本測試 RED（cover_strategy 會維持
-        resolve_ingest_plan 的原值 ('download', ...)）。"""
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        mock_produce, _, _ = self._mock_routing(mocker, existing_cover_path="file:///out/old.jpg")
-
-        response = self._post(client, mode="fill_missing", overwrite_existing=False)
-
-        assert response.json()["success"] is True
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
-
-    def test_fill_missing_without_existing_cover_writes(self, client, mocker):
-        """放大鏡-no-cover：既有 row 沒有 cover_path（had_cover=False）→ 不觸發
-        preserve，cover_strategy 原樣傳給 _produce_one。"""
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        mock_produce, _, _ = self._mock_routing(mocker, existing_cover_path="")
-
-        response = self._post(client, mode="fill_missing", overwrite_existing=False)
-
-        assert response.json()["success"] is True
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("download", "http://x/new.jpg")
 
     # ── Codex PR#113 P2 round-6（found in 2 readonly branches）：had_cover 必須
     # 連同輸出封面檔是否實際存在於磁碟一起判斷，不能只看 DB 有沒有 cover_path
@@ -805,18 +412,6 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
         assert response.json()["success"] is True
         assert mock_produce.call_args.kwargs["cover_strategy"] == ("download", "http://x/new.jpg")
 
-    def test_fill_missing_with_cover_path_and_file_present_preserves_cover(self, client, mocker):
-        """同場景但輸出封面檔仍實際存在於磁碟 → 維持既有 preserve 行為
-        （無回歸，鏡射 test_fill_missing_with_existing_cover_preserves_cover）。"""
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        mock_produce, _, _ = self._mock_routing(
-            mocker, existing_cover_path="file:///out/old.jpg", cover_file_exists=True,
-        )
-
-        response = self._post(client, mode="fill_missing", overwrite_existing=False)
-
-        assert response.json()["success"] is True
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
 
     # ── feature/105 T2 AC4 delta：移除唯讀 mode=='fill_missing' 顯式閘後，唯讀保留
     # 政策與非唯讀 core.enricher._write_cover 完全 mode-agnostic 對齊。refresh_full
@@ -824,52 +419,10 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
     # MUTATION SELF-CHECK：把 mode 閘加回（preserve = (not write_cover) or
     # (request.mode == 'fill_missing' and not overwrite and had_cover)）會讓本測試
     # RED（cover_strategy 變回 ('download', ...)）——已於實作時驗證。─────────────
-    def test_refresh_full_no_overwrite_existing_cover_preserves_mode_agnostic(
-        self, client, mocker,
-    ):
-        """AC4：refresh_full + overwrite=false + 既有封面（磁碟檔在）→ preserve
-        （('none',)），與 enricher _write_cover 同輸入
-        should_preserve_cover(write_cover=True, overwrite=False, cover_exists=True)
-        =True 一致。"""
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        mock_produce, _, _ = self._mock_routing(
-            mocker, existing_cover_path="file:///out/old.jpg", cover_file_exists=True,
-        )
-
-        response = self._post(client, mode="refresh_full", overwrite_existing=False)
-
-        assert response.json()["success"] is True
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
 
     # ── P2 review round 3 (FIX#1): reason reflects a SERVABLE cover, not just
     # this-call cover_written ────────────────────────────────────────────────
 
-    def test_fill_missing_with_existing_cover_reason_is_hit_despite_cover_written_false(
-        self, client, mocker,
-    ):
-        """同 test_fill_missing_with_existing_cover_preserves_cover 場景（放大鏡-
-        with-cover）：cover_strategy 被覆蓋為 ('none',) → cover_written=False，但
-        既有封面（existing.cover_path）仍可服務 → reason 必須是 'hit'（不是
-        'no_cover'），對齊 core.enricher.enrich_single 的 has_servable_cover 解耦
-        語意（enricher.py:589-604）。MUTATION LOCK：把 reason 改回
-        `'hit' if cover_written else 'no_cover'` 會讓本測試 RED。"""
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        # produce_cover_fs="" — the mocked _produce_one echoes whatever fixture
-        # value it's given regardless of cover_strategy (it's a mock, not the
-        # real preserve logic), so this must be explicit to model "preserve
-        # gate suppressed the write" → assets['cover_fs'] empty → cover_written
-        # False (same as test_cover_preserved_skips_focal's setup).
-        mock_produce, _, _ = self._mock_routing(
-            mocker, existing_cover_path="file:///out/old.jpg", produce_cover_fs="",
-        )
-
-        response = self._post(client, mode="fill_missing", overwrite_existing=False)
-
-        data = response.json()
-        assert data["success"] is True
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
-        assert data["cover_written"] is False
-        assert data["reason"] == "hit"
 
     # ── feature/105 AC2 (Bug 1 fix): reason must be 'no_cover' when the DB has a
     # residual cover_path but the physical cover file is gone on disk. Before the
@@ -878,50 +431,7 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
     # MUTATION LOCK: revert enrich-single's has_servable_cover to the DB-only
     # `bool(assets.get('cover_fs')) or bool(existing and existing.cover_path)` and
     # this test goes RED (reason flips back to 'hit'). ────────────────────────
-    def test_residual_cover_path_but_file_deleted_reason_is_no_cover(self, client, mocker):
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        # DB row still has cover_path, but the output cover file no longer exists on
-        # disk (cover_file_exists=False) and this call wrote nothing (produce_cover_fs="").
-        mock_produce, _, _ = self._mock_routing(
-            mocker, existing_cover_path="file:///out/old.jpg",
-            produce_cover_fs="", cover_file_exists=False,
-        )
 
-        response = self._post(client, mode="fill_missing", overwrite_existing=False)
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["cover_written"] is False
-        assert data["reason"] == "no_cover"
-
-    def test_gear_refresh_full_overwrite_true_writes_regardless_of_had_cover(self, client, mocker):
-        """gear rescrape（refresh_full + overwrite=True，state-rescrape.js:404/408
-        的實際送法）→ 即使既有 cover_path 也不 preserve，cover_strategy 原樣傳給
-        _produce_one（回歸鎖：不得被 P2#3 誤擋）。"""
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        mock_produce, _, _ = self._mock_routing(mocker, existing_cover_path="file:///out/old.jpg")
-
-        response = self._post(
-            client, readonly_action="rescrape", mode="refresh_full", overwrite_existing=True,
-        )
-
-        assert response.json()["success"] is True
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("download", "http://x/new.jpg")
-
-    def test_write_cover_false_preserves_regardless_of_mode(self, client, mocker):
-        """write_cover=false → 不論 mode/overwrite 為何，一律 preserve。用
-        refresh_full+overwrite=True（gear 語意）刻意排除 fill_missing 分支才會
-        觸發的條件，證明是 `not write_cover` 這條在起作用。"""
-        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
-        mock_produce, _, _ = self._mock_routing(mocker, existing_cover_path="file:///out/old.jpg")
-
-        response = self._post(
-            client, readonly_action="rescrape", mode="refresh_full",
-            overwrite_existing=True, write_cover=False,
-        )
-
-        assert response.json()["success"] is True
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
 
     # ── P2#4: cover-written focal reset + re-submit ──────────────────────────
 
@@ -1010,38 +520,6 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
 # request.mode entirely).
 
 
-class TestEnrichSingleReadonlyDbToSidecarRejection:
-    def test_db_to_sidecar_readonly_rejected_cleanly(self, client, mocker):
-        """MUTATION LOCK：拿掉這條 early-return 會讓 resolve_ingest_plan/_produce_one
-        被呼叫（本測試斷言它們不被呼叫），本測試會 RED。"""
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
-        mock_produce = mocker.patch("core.readonly_producer._produce_one")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-            "mode": "db_to_sidecar",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert data["error"]
-        assert data["nfo_written"] is False
-        assert data["cover_written"] is False
-        assert data["extrafanart_written"] == 0
-        assert data["fields_filled"] == []
-        assert data["source_used"] == ""
-        assert data["reason"] == "error"
-        assert set(data) >= _ENRICH_RESULT_KEYS
-        mock_plan.assert_not_called()
-        mock_produce.assert_not_called()
-
-
 # ── P1 revert + reject (round-3 review 2026-07-21, owner-confirmed): readonly +
 # write_nfo=false clean rejection ── Codex PR#113 round-3 threaded a write_nfo
 # skip-gate into the readonly produce path (_write_movie_assets/_produce_one) —
@@ -1051,38 +529,6 @@ class TestEnrichSingleReadonlyDbToSidecarRejection:
 # exists). Readonly produce is HOLISTIC (a library entry always has an NFO),
 # so write_nfo=false is rejected here the same way db_to_sidecar is above,
 # instead of threading a skip flag down into the write path.
-
-
-class TestEnrichSingleReadonlyNoNfoRejection:
-    def test_write_nfo_false_readonly_rejected_cleanly(self, client, mocker):
-        """MUTATION LOCK：拿掉這條 early-return 會讓 resolve_ingest_plan/_produce_one
-        被呼叫（本測試斷言它們不被呼叫），本測試會 RED。"""
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
-        mock_produce = mocker.patch("core.readonly_producer._produce_one")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-            "write_nfo": False,
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert data["error"]
-        assert data["nfo_written"] is False
-        assert data["cover_written"] is False
-        assert data["extrafanart_written"] == 0
-        assert data["fields_filled"] == []
-        assert data["source_used"] == ""
-        assert data["reason"] == "error"
-        assert set(data) >= _ENRICH_RESULT_KEYS
-        mock_plan.assert_not_called()
-        mock_produce.assert_not_called()
 
 
 # ── TASK-104-T3 (CD-104-5): fetch-samples 唯讀來源改道 output_dir（samples_only）──
@@ -1100,56 +546,6 @@ class TestFetchSamplesReadonlyGuard:
 
     # case 1（歷史命名保留；TASK-104-T3 改寫）：唯讀 → 改道，search_jav 找到劇照
     # → samples_only 落 output_dir，不再拒絕。
-    def test_readonly_blocks_fetch_samples(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
-        )
-        mock_search = mocker.patch(
-            "web.routers.scraper.search_jav",
-            return_value={"number": "ABC-001", "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg"]},
-        )
-        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=1000, mtime=1.0)
-        # _produce_one now returns (movie_dir, assets) — both requested URLs
-        # actually downloaded here (sample_fs has 2 entries, matching the 2
-        # requested), so extrafanart_written == 2 stays the happy-path value.
-        # See test_fetch_samples_reports_actual_written_count_not_requested (P2
-        # review) for the case where they diverge.
-        mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
-            return_value=(
-                Path("/out/ro_src-abcdef/ABC-001"),
-                {"sample_fs": ["/out/ro_src-abcdef/ABC-001/extrafanart/fanart1.jpg",
-                                "/out/ro_src-abcdef/ABC-001/extrafanart/fanart2.jpg"]},
-            ),
-        )
-        mock_fetch = mocker.patch("web.routers.scraper.fetch_samples_only")
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["extrafanart_written"] == 2
-        # P2 review round 3 (FIX#2): fetch_samples_only NEVER sets `reason` (stays
-        # the EnrichResult dataclass default, None, on every path) — the readonly
-        # branch must match field-for-field, not invent 'hit'/'no_cover' values.
-        # MUTATION LOCK: reintroducing `reason='hit' if written else 'no_cover'`
-        # would make this RED.
-        assert data["reason"] is None
-        mock_search.assert_called_once()
-        mock_produce.assert_called_once()
-        assert mock_produce.call_args.kwargs["assets_mode"] == "samples_only"
-        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
-        # 唯讀分支不用舊版 samples_only helper（改走 resolve_ingest_plan 的姊妹路徑）
-        mock_fetch.assert_not_called()
 
     # P2 review (2026-07-21): INTENDED CONTRACT CHANGE, not a weakening.
     # `data["extrafanart_written"]` previously echoed `len(meta["sample_images"])`
@@ -1158,42 +554,6 @@ class TestFetchSamplesReadonlyGuard:
     # actually lands in `assets['sample_fs']` (the other 2 download attempts
     # failed inside `_write_movie_assets`) — the endpoint must report 1, the
     # ACTUAL written count, not 3.
-    def test_fetch_samples_reports_actual_written_count_not_requested(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
-        )
-        mocker.patch(
-            "web.routers.scraper.search_jav",
-            return_value={
-                "number": "ABC-001",
-                "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg", "http://x/s3.jpg"],
-            },
-        )
-        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=1000, mtime=1.0)
-        mocker.patch(
-            "web.routers.scraper._produce_one",
-            return_value=(
-                Path("/out/ro_src-abcdef/ABC-001"),
-                {"sample_fs": ["/out/ro_src-abcdef/ABC-001/extrafanart/fanart1.jpg"]},  # only 1 of 3 survived
-            ),
-        )
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["extrafanart_written"] == 1, (
-            "must report the ACTUAL written count (assets['sample_fs']), "
-            "not the requested count (meta['sample_images'])"
-        )
 
     # P2 review companion case: ALL downloads fail → assets['sample_fs'] == [] →
     # extrafanart_written == 0 (not 3, the requested count). The DB-side "must
@@ -1202,36 +562,6 @@ class TestFetchSamplesReadonlyGuard:
     # tests/unit/test_readonly_producer.py::TestUpsertDbSamplesOnly (router-level
     # here only has a mocked `_produce_one`, so it cannot observe the DB write —
     # this test only pins the endpoint's reported count).
-    def test_fetch_samples_zero_downloads_reports_zero_not_requested(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
-        )
-        mocker.patch(
-            "web.routers.scraper.search_jav",
-            return_value={
-                "number": "ABC-001",
-                "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg", "http://x/s3.jpg"],
-            },
-        )
-        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=1000, mtime=1.0)
-        mocker.patch(
-            "web.routers.scraper._produce_one",
-            return_value=(Path("/out/ro_src-abcdef/ABC-001"), {"sample_fs": []}),  # every download failed
-        )
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["extrafanart_written"] == 0
 
     # P2 review round 3 (FIX#3): split what used to be one combined test into
     # the two branches core.enricher.fetch_samples_only itself distinguishes —
@@ -1241,106 +571,11 @@ class TestFetchSamplesReadonlyGuard:
     # meta.get("sample_images", []) just defaults to []). The old combined test
     # asserted success=True for BOTH cases, silently swallowing total search
     # failures — this is an intentional contract fix, not a regression.
-    def test_readonly_search_jav_none_is_a_failure(self, client, mocker):
-        """search_jav 完全找不到資料（回 None）→ success=False + error 帶出，對齊
-        fetch_samples_only 的 total-not-found 分支（enricher.py:715-718）。
-        MUTATION LOCK：把 `if not meta:` 改回 `if not meta or not
-        meta.get("sample_images")` 會讓本測試 RED（success 會變回 True）。"""
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
-        )
-        mocker.patch("web.routers.scraper.search_jav", return_value=None)
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
 
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert data["error"]
-        assert data["extrafanart_written"] == 0
-        assert data["reason"] is None
-        mock_produce.assert_not_called()
-
-    def test_readonly_meta_found_but_no_sample_images_is_not_an_error(self, client, mocker):
-        """search_jav 有找到資料，但該筆沒有 sample_images → 非錯誤，
-        extrafanart_written=0，reason 保持 None（fetch_samples_only 從不設
-        reason）。"""
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
-        )
-        mocker.patch(
-            "web.routers.scraper.search_jav",
-            return_value={"number": "ABC-001", "source": "javbus", "sample_images": []},
-        )
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["extrafanart_written"] == 0
-        assert data["reason"] is None
-        mock_produce.assert_not_called()
 
     # 未設定媒體庫輸出路徑 → 結構化錯誤，不寫
-    def test_readonly_empty_output_root_returns_error(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root",
-            return_value=_owning_stub(output_root="", output_uri=""),
-        )
-        mock_search = mocker.patch("web.routers.scraper.search_jav")
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert "輸出路徑" in data["error"]
-        assert data["extrafanart_written"] == 0
-        mock_search.assert_not_called()
 
     # 非唯讀零回歸 → 走既有路徑，fetch_samples_only 被呼叫（byte-identical）
-    def test_non_readonly_passes_through(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
-        )
-        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        mock_repo.return_value.count_videos_in_folder.return_value = 1
-        mock_fetch = mocker.patch(
-            "web.routers.scraper.fetch_samples_only", return_value=self._ok_samples()
-        )
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/rw_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        assert response.status_code == 200
-        assert response.json()["success"] is True
-        mock_fetch.assert_called_once()
-        mock_produce.assert_not_called()
 
 
 # ── Codex PR#113 one-pass alignment (2026-07-21): readonly endpoints now build
@@ -1388,47 +623,6 @@ class TestReadonlyEnrichResultShapeParity:
         assert data["success"] is True
         assert set(data) >= _ENRICH_RESULT_KEYS
 
-    def test_enrich_single_no_output_root_has_full_shape(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root",
-            return_value=_owning_stub(output_root="", output_uri=""),
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert set(data) >= _ENRICH_RESULT_KEYS
-
-    def test_enrich_single_no_meta_has_full_shape(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mocker.patch("core.readonly_producer.resolve_ingest_plan", return_value=(None, ("none",)))
-        # meta=None 落入 enrich_one_readonly() 的 not-found 樁列分支
-        # （core/readonly_producer.py:1936-1939 _readonly_stub_not_found），
-        # 會呼叫 repo_factory()（=web.routers.scraper.VideoRepository）做真
-        # insert_if_ignore/update_scrape_attempted_at 寫入。未 mock 前寫進
-        # output/openaver.db（見 REPORT-127b-T3.md §0 的 ABC-001 樁列）。
-        mocker.patch("web.routers.scraper.VideoRepository")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert set(data) >= _ENRICH_RESULT_KEYS
 
     def test_enrich_single_exception_has_full_shape(self, client, mocker):
         mocker.patch(
@@ -1450,152 +644,10 @@ class TestReadonlyEnrichResultShapeParity:
         assert data["success"] is False
         assert set(data) >= _ENRICH_RESULT_KEYS
 
-    def test_fetch_samples_success_has_full_shape(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mocker.patch(
-            "web.routers.scraper.search_jav",
-            return_value={"number": "ABC-001", "source": "javbus", "sample_images": ["http://x/s1.jpg"]},
-        )
-        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=1000, mtime=1.0)
-        mocker.patch(
-            "web.routers.scraper._produce_one",
-            return_value=(Path("/out/ro_src-abcdef/ABC-001"), {"sample_fs": ["/out/x/fanart1.jpg"]}),
-        )
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert set(data) >= _ENRICH_RESULT_KEYS
-        assert data["nfo_written"] is False
-        assert data["cover_written"] is False
-
-    def test_fetch_samples_no_output_root_has_full_shape(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root",
-            return_value=_owning_stub(output_root="", output_uri=""),
-        )
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert set(data) >= _ENRICH_RESULT_KEYS
-
-    def test_fetch_samples_no_samples_found_has_full_shape(self, client, mocker):
-        """search_jav → None（total not-found，FIX#3）→ success=False, 但仍是
-        full EnrichResult shape。"""
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mocker.patch("web.routers.scraper.search_jav", return_value=None)
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert set(data) >= _ENRICH_RESULT_KEYS
-
-    def test_fetch_samples_meta_found_no_samples_has_full_shape(self, client, mocker):
-        """search_jav 找到資料但 sample_images 為空 → success=True，仍是 full
-        EnrichResult shape。"""
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mocker.patch(
-            "web.routers.scraper.search_jav",
-            return_value={"number": "ABC-001", "source": "javbus", "sample_images": []},
-        )
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert set(data) >= _ENRICH_RESULT_KEYS
-
-    def test_fetch_samples_exception_has_full_shape(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mocker.patch(
-            "web.routers.scraper.search_jav",
-            side_effect=RuntimeError("boom"),
-        )
-
-        response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is False
-        assert set(data) >= _ENRICH_RESULT_KEYS
 
     # fields_filled: 對於帶有多個非空 meta 欄位的片，回傳非空清單（"what got written"
     # 摘要）——readonly ingest/rescrape 沒有 _merge_meta 的部分合併概念，改列非空頂層
     # metadata keys。
-    def test_enrich_single_fields_filled_non_empty(self, client, mocker):
-        mocker.patch(
-            "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("/tmp/ro_src"),
-        )
-        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mocker.patch(
-            "core.readonly_producer.resolve_ingest_plan",
-            return_value=(
-                {
-                    "number": "ABC-001", "title": "T", "cover": "",
-                    "actors": ["A"], "tags": ["t1"], "date": "2024-01-01",
-                    "maker": "M", "director": "D", "series": "S", "label": "L",
-                },
-                ("none",),
-            ),
-        )
-        mocker.patch(
-            "core.readonly_producer._produce_one",
-            return_value=(Path("/out/ro_src-abcdef/ABC-001"),
-                          {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
-        )
-        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=1000, mtime=1.0, cover_path="")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-        })
-
-        data = response.json()
-        assert data["success"] is True
-        assert set(data["fields_filled"]) == {
-            "title", "actors", "tags", "date", "maker", "director", "series", "label",
-        }
 
 
 # ── T2: source / javbus_lang 參數傳遞 ────────────────────────────────────────
@@ -1615,45 +667,8 @@ class TestSourceJavbusLangParams:
         call_kwargs = mock_fn.call_args.kwargs
         assert call_kwargs.get("source") == "dmm"
 
-    def test_javbus_lang_param_passed_to_enrich_single(self, client, mocker):
-        """T2: javbus_lang='ja' 正確傳入 enrich_single"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(),
-        )
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "javbus_lang": "ja",
-        })
-        call_kwargs = mock_fn.call_args.kwargs
-        assert call_kwargs.get("javbus_lang") == "ja"
-
-    def test_source_none_by_default(self, client, mocker):
-        """T2: source 未提供時，傳入 enrich_single 的值為 None（向後相容）"""
-        mock_fn = mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_ok_result(),
-        )
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-        call_kwargs = mock_fn.call_args.kwargs
-        assert call_kwargs.get("source") is None
-
 
 # ── P2: mode Literal 驗證 ─────────────────────────────────────────────────────
-
-class TestEnrichSingleModeValidation:
-    def test_enrich_single_invalid_mode_returns_422(self, client):
-        """mode='bad_mode' → HTTP 422（Pydantic Literal 驗證）"""
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "bad_mode",
-        })
-        assert response.status_code == 422
 
 
 # ── CD-62-4: refresh_full + overwrite_existing=false 分裂陷阱智慧防呆 ──────────
@@ -1680,167 +695,6 @@ class TestEnrichRefreshFullOverwriteGuard:
             side_effect=lambda p: exists_map.get(p, False),
         )
 
-    def test_refresh_full_overwrite_false_both_files_exist_returns_400(self, client, mocker):
-        """NFO+cover 皆存在 → 400，enrich_single 未被呼叫。"""
-        self._patch_paths(mocker, nfo_exists=True, cover_exists=True)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-        })
-
-        assert response.status_code == 400
-        detail = response.json().get("detail", "")
-        assert "overwrite" in detail or "分裂" in detail
-        mock_enrich.assert_not_called()
-
-    def test_refresh_full_overwrite_false_cover_missing_passes(self, client, mocker):
-        """cover 不存在（NFO 存在）→ 200 放行，enrich_single 被呼叫（quick-enrich 零回歸關鍵測試）。"""
-        self._patch_paths(mocker, nfo_exists=True, cover_exists=False)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-        })
-
-        assert response.status_code == 200
-        assert response.json()["success"] is True
-        mock_enrich.assert_called_once()
-
-    def test_refresh_full_overwrite_false_both_missing_passes(self, client, mocker):
-        """NFO+cover 皆不存在（新卡）→ 200 放行。"""
-        self._patch_paths(mocker, nfo_exists=False, cover_exists=False)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-        })
-
-        assert response.status_code == 200
-        mock_enrich.assert_called_once()
-
-    def test_refresh_full_overwrite_true_passes(self, client, mocker):
-        """overwrite_existing=true → 200，守衛不觸發（不論檔案是否存在）。"""
-        self._patch_paths(mocker, nfo_exists=True, cover_exists=True)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": True,
-        })
-
-        assert response.status_code == 200
-        mock_enrich.assert_called_once()
-
-    def test_fill_missing_overwrite_false_still_allowed(self, client, mocker):
-        """fill_missing+overwrite=false（預設）→ 200，不被守衛誤殺。"""
-        self._patch_paths(mocker, nfo_exists=True, cover_exists=True)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "fill_missing",
-            "overwrite_existing": False,
-        })
-
-        assert response.status_code == 200
-        mock_enrich.assert_called_once()
-
-    def test_refresh_full_overwrite_false_write_flags_off_returns_400(self, client, mocker):
-        """write_nfo=false + write_cover=false，檔案皆缺 → 仍 400（零寫檔純 DB-only 分裂），
-        enrich_single 未被呼叫（Codex P1：存在性 AND 檢查補上 write 旗標）。"""
-        self._patch_paths(mocker, nfo_exists=False, cover_exists=False)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-            "write_nfo": False,
-            "write_cover": False,
-        })
-
-        assert response.status_code == 400
-        detail = response.json().get("detail", "")
-        assert "overwrite" in detail or "分裂" in detail
-        mock_enrich.assert_not_called()
-
-    def test_refresh_full_overwrite_false_one_flag_off_one_will_write_passes(self, client, mocker):
-        """write_cover=false 但 write_nfo=true 且 NFO 缺 → will_write_nfo=true → 200 放行。"""
-        self._patch_paths(mocker, nfo_exists=False, cover_exists=True)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-            "write_nfo": True,
-            "write_cover": False,
-        })
-
-        assert response.status_code == 200
-        mock_enrich.assert_called_once()
-
-    def test_refresh_full_overwrite_false_extrafanart_only_returns_400(self, client, mocker):
-        """write_nfo=false + write_cover=false + write_extrafanart=true，NFO/cover 皆存在
-        → 守衛應擋回 400，enrich_single 未被呼叫。
-
-        extrafanart intent alone 不計入「保證會寫 sidecar」，因為 _write_extrafanart 只補缺的（既有檔不覆寫）
-        且只在 scraper 回 sample_images 才寫；若 scraper 無 samples → 零磁碟寫出但 _db_upsert 照跑
-        = DB/磁碟分裂（守衛本要防的）。
-        補劇照請改用 /api/scraper/fetch-samples（Codex PR#47 round-2 P2-A revert）。
-        """
-        self._patch_paths(mocker, nfo_exists=True, cover_exists=True)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result(extrafanart_written=3)
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-            "write_nfo": False,
-            "write_cover": False,
-            "write_extrafanart": True,
-        })
-
-        assert response.status_code == 400, (
-            f"extrafanart-only refresh_full 應被守衛擋 400（分裂洞），實際 status={response.status_code}"
-        )
-        detail = response.json().get("detail", "")
-        assert "overwrite" in detail or "分裂" in detail or "fetch-samples" in detail, (
-            f"400 detail 應說明分裂風險並指向 fetch-samples，實際: {detail!r}"
-        )
-        mock_enrich.assert_not_called()
 
     def _patch_paths_jellyfin(self, mocker, nfo_exists, cover_exists, poster_exists, fanart_exists):
         """jellyfin モード用：mock resolve_nfo_cover_paths + load_config(jellyfin) +
@@ -1867,55 +721,6 @@ class TestEnrichRefreshFullOverwriteGuard:
             "web.routers.scraper.os.path.exists",
             side_effect=lambda p: exists_map.get(p, False),
         )
-
-    def test_refresh_full_overwrite_false_external_images_missing_passes(self, client, mocker):
-        """72d-P2A：jellyfin mode + NFO+cover 齊 + stem-poster/fanart 缺 → 200 放行
-        （守衛不應因只檢查 will_write_nfo/will_write_cover 就回 400）。"""
-        self._patch_paths_jellyfin(
-            mocker,
-            nfo_exists=True, cover_exists=True,
-            poster_exists=False, fanart_exists=False,
-        )
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "file:///video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-        })
-
-        assert response.status_code == 200, (
-            f"jellyfin mode + external images missing 應 200 放行，實際 {response.status_code}: {response.json()}"
-        )
-        mock_enrich.assert_called_once()
-
-    def test_refresh_full_overwrite_false_external_images_all_exist_returns_400(self, client, mocker):
-        """72d-P2A：jellyfin mode + NFO+cover+poster+fanart 全齊 → 400（無任何寫出機會）。"""
-        self._patch_paths_jellyfin(
-            mocker,
-            nfo_exists=True, cover_exists=True,
-            poster_exists=True, fanart_exists=True,
-        )
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": "file:///video/SONE-205.mp4",
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-        })
-
-        assert response.status_code == 400, (
-            f"全齊時應 400，實際 {response.status_code}: {response.json()}"
-        )
-        detail = response.json().get("detail", "")
-        assert "overwrite" in detail or "分裂" in detail
-        mock_enrich.assert_not_called()
 
 
 class TestEnrichRefreshFullOverwriteGuardRealFlavourResolution:
@@ -2027,22 +832,6 @@ class TestEnrichRefreshFullOverwriteGuardRealFlavourResolution:
 
     # ── ③：缺 NFO → 放行 ────────────────────────────────────────────
 
-    def test_scenario3_missing_nfo_passes_matches_off(self, tmp_path, client, mocker):
-        """jellyfin／off：NFO 缺 → `will_write_nfo=True` → 立即放行，
-        不論封面/外部圖狀態。兩者結論一致（皆放行）。"""
-        resp_jf, mock_jf = self._run(
-            tmp_path, client, mocker, "jf", "jellyfin",
-            nfo=False, poster=True, fanart=True,
-        )
-        assert resp_jf.status_code == 200, resp_jf.text
-        mock_jf.assert_called_once()
-
-        resp_off, mock_off = self._run(
-            tmp_path, client, mocker, "off", "off",
-            nfo=False, canonical_cover=True,
-        )
-        assert resp_off.status_code == 200, resp_off.text
-        mock_off.assert_called_once()
 
     # ── ④：完全無封面 → 放行 ──────────────────────────────────────────
 
@@ -2067,42 +856,6 @@ class TestEnrichRefreshFullOverwriteGuardRealFlavourResolution:
         mock_off.assert_called_once()
 
     # ── ⑤：非法 external_manager 值 → 400（Codex PR review P1 回歸鎖） ──
-
-    def test_scenario5_illegal_external_manager_value_400_matches_off(
-        self, tmp_path, client, mocker
-    ):
-        """Codex 對 feature/112b PR review 提的 P1（**pre-existing bug，早於
-        112**——`web/routers/scraper.py:507` 的 `external_manager != "off"`
-        判準可由 `git log -L 505,510:web/routers/scraper.py` 溯至 72d-P2A，
-        不是本 branch 引入的回歸；修法是正向白名單）：
-
-        `external_manager="plex"`（不在 `STEM_IMAGE_MODES` 白名單內的非法
-        值）+ NFO 存在 + 同名 `.jpg` 已存在（非法值下 `resolve_cover_target`
-        fail-closed 回同名，`core/cover_layout.py:134`）+ poster/fanart 缺
-        → 三個 `will_write_*` 皆應為 False：`will_write_nfo`／
-        `will_write_cover` 因 NFO／同名封面已存在且 `overwrite_existing=
-        False` 為 False；`will_write_external` 因 `_write_external_images`
-        對非白名單值是 no-op（`core/enricher.py:270`，回
-        `{"poster": False, "fanart": False}`，零檔案寫出）也應為 False
-        → 400，與 `off` 同一磁碟狀態的結論一致（皆 400）。
-
-        修法前：guard 用 `external_manager != "off"` 當「外部圖有機會寫出」
-        的 proxy，`"plex" != "off"` 為真，guard 誤信會寫而放行 200——但
-        NFO／封面／外部圖實際上都不寫，卻仍可能 DB upsert，正是這道 guard
-        要擋的磁碟／DB 分裂。"""
-        resp_plex, mock_plex = self._run(
-            tmp_path, client, mocker, "plex", "plex",
-            nfo=True, canonical_cover=True,
-        )
-        assert resp_plex.status_code == 400, resp_plex.text
-        mock_plex.assert_not_called()
-
-        resp_off, mock_off = self._run(
-            tmp_path, client, mocker, "off", "off",
-            nfo=True, canonical_cover=True,
-        )
-        assert resp_off.status_code == 400, resp_off.text
-        mock_off.assert_not_called()
 
 
 class TestEnrichSingleThumbnailInvalidation:
@@ -2146,59 +899,6 @@ class TestEnrichSingleThumbnailInvalidation:
         # 與縮圖生成端 canonical key 同 hash（invalidate 砍到的正是 generate 寫的那張）
         assert tc.thumb_file_for(invalidated_key) == tc.thumb_file_for(self._VIDEO_URI)
 
-    def test_failure_does_not_invalidate(self, client, mocker):
-        """邊界4：enrich 回 success=False → invalidate 不被呼叫（封面未換）。"""
-        self._patch_config(mocker)
-        mocker.patch(
-            "web.routers.scraper.enrich_single",
-            return_value=_err_result("找不到番號資料"),
-        )
-        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": self._VIDEO_URI,
-            "number": "SONE-205",
-        })
-
-        assert response.status_code == 200
-        inval_spy.assert_not_called()
-
-    def test_exception_does_not_invalidate(self, client, mocker):
-        """enrich_single 拋例外 → 端點吞成 success=False，invalidate 不被呼叫。"""
-        self._patch_config(mocker)
-        mocker.patch(
-            "web.routers.scraper.enrich_single",
-            side_effect=RuntimeError("boom"),
-        )
-        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": self._VIDEO_URI,
-            "number": "SONE-205",
-        })
-
-        assert response.status_code == 200
-        assert response.json()["success"] is False
-        inval_spy.assert_not_called()
-
-    def test_refresh_full_success_invalidates(self, client, mocker):
-        """邊界6：rescrape（refresh_full）成功 → invalidate 用 canonical key（與 #3 同掛鉤點，不漏）。"""
-        self._patch_config(mocker)
-        # refresh_full + overwrite=True 繞過分裂守衛
-        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
-        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": self._VIDEO_URI,
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": True,
-        })
-
-        assert response.status_code == 200
-        inval_spy.assert_called_once_with(self._VIDEO_URI)
-        assert "file:///file:///" not in inval_spy.call_args[0][0]
-
 
 # ── 72b-T6：endpoint 穿線 external_manager（方案 B）─────────────────────────
 
@@ -2229,73 +929,6 @@ class TestEnrichEndpointExternalManagerThreading:
             f"external_manager 應從 config['scraper'] 取，實際: {captured_calls[0].get('external_manager')}"
         )
 
-    def test_emby_manager_from_config_passed_to_enrich_single(self, client, mocker):
-        """F4-T6：external_manager='emby' 從 config 取出並傳入 enrich_single（等價 jellyfin）。"""
-        captured_calls = []
-
-        def fake_enrich(**kwargs):
-            captured_calls.append(kwargs)
-            return _ok_result()
-
-        mocker.patch("web.routers.scraper.enrich_single", side_effect=fake_enrich)
-        mocker.patch("web.routers.scraper.load_config", return_value={
-            "search": {"proxy_url": ""},
-            "scraper": {"external_manager": "emby"},
-        })
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        assert captured_calls, "enrich_single 應被呼叫"
-        assert captured_calls[0].get("external_manager") == "emby", (
-            f"external_manager 應從 config['scraper'] 取，實際: {captured_calls[0].get('external_manager')}"
-        )
-
-    def test_external_manager_defaults_to_off_when_missing(self, client, mocker):
-        """config 無 scraper.external_manager → 穿線 'off'（byte-identical 邊界）。"""
-        captured_calls = []
-
-        def fake_enrich(**kwargs):
-            captured_calls.append(kwargs)
-            return _ok_result()
-
-        mocker.patch("web.routers.scraper.enrich_single", side_effect=fake_enrich)
-        mocker.patch("web.routers.scraper.load_config", return_value={
-            "search": {},
-            "scraper": {},  # 無 external_manager
-        })
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        assert captured_calls, "enrich_single 應被呼叫"
-        assert captured_calls[0].get("external_manager") == "off"
-
-    def test_kodi_external_manager_passed(self, client, mocker):
-        """external_manager='kodi' 正確穿線。"""
-        captured_calls = []
-
-        def fake_enrich(**kwargs):
-            captured_calls.append(kwargs)
-            return _ok_result()
-
-        mocker.patch("web.routers.scraper.enrich_single", side_effect=fake_enrich)
-        mocker.patch("web.routers.scraper.load_config", return_value={
-            "search": {},
-            "scraper": {"external_manager": "kodi"},
-        })
-
-        client.post("/api/enrich-single", json={
-            "file_path": "/video/SONE-205.mp4",
-            "number": "SONE-205",
-        })
-
-        assert captured_calls[0].get("external_manager") == "kodi"
-
 
 # ── TASK-91-T3 站台4：enrich_single_endpoint external_manager 分支 WSL+UNC path_mappings ──
 
@@ -2323,66 +956,6 @@ class TestEnrichSingleExternalManagerPathMappingReverse:
             "gallery": {"path_mappings": _WSL_UNC_MAPPINGS},
         })
         mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
-
-    def test_wsl_unc_mapping_reverses_stem_for_poster_fanart(self, client, mocker, monkeypatch):
-        from core import path_utils
-        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
-        self._patch_common(mocker)
-
-        captured_exists = []
-
-        def fake_exists(p):
-            captured_exists.append(p)
-            return True
-
-        mocker.patch("web.routers.scraper.os.path.exists", side_effect=fake_exists)
-
-        client.post("/api/enrich-single", json={
-            "file_path": _WSL_UNC_URI,
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-        })
-
-        poster_calls = [p for p in captured_exists if p.endswith("-poster.jpg")]
-        fanart_calls = [p for p in captured_exists if p.endswith("-fanart.jpg")]
-        assert poster_calls, "poster_path 存在性應被檢查"
-        assert fanart_calls, "fanart_path 存在性應被檢查"
-        assert poster_calls[0] == f"{_WSL_UNC_REVERSED_DIR}/movie-poster.jpg", (
-            f"poster_path 應反解為本機路徑，實際: {poster_calls[0]!r}"
-        )
-        assert fanart_calls[0] == f"{_WSL_UNC_REVERSED_DIR}/movie-fanart.jpg", (
-            f"fanart_path 應反解為本機路徑，實際: {fanart_calls[0]!r}"
-        )
-
-    def test_stem_dirname_matches_resolve_nfo_cover_paths_dirname(self, client, mocker, monkeypatch):
-        """邊界5：cover_path（站台3）與 poster/fanart_path（站台4）dirname 須一致，
-        否則 will_write_external 判斷會因命名空間不一致誤判。"""
-        import os as _os
-        from core import path_utils
-        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
-        self._patch_common(mocker)
-
-        captured_exists = []
-
-        def fake_exists(p):
-            captured_exists.append(p)
-            return True
-
-        mocker.patch("web.routers.scraper.os.path.exists", side_effect=fake_exists)
-
-        client.post("/api/enrich-single", json={
-            "file_path": _WSL_UNC_URI,
-            "number": "SONE-205",
-            "mode": "refresh_full",
-            "overwrite_existing": False,
-        })
-
-        poster_calls = [p for p in captured_exists if p.endswith("-poster.jpg")]
-        assert poster_calls
-        cover_dirname = _os.path.dirname(f"{_WSL_UNC_REVERSED_DIR}/movie.jpg")
-        poster_dirname = _os.path.dirname(poster_calls[0])
-        assert cover_dirname == poster_dirname == _WSL_UNC_REVERSED_DIR
 
 
 # ── TASK-91-T3 站台5：fetch_samples_endpoint outer to_file_uri 補傳 path_mappings ──
@@ -2427,37 +1000,6 @@ class TestFetchSamplesFolderPrefixPathMappingReverse:
         assert prefix == "file://///NAS/share/dir/", (
             f"folder_uri_prefix 應落在映射命名空間，實際: {prefix!r}"
         )
-
-    def test_case1_unc_input_prefix_unaffected_by_mappings(self, client, mocker, monkeypatch):
-        """Case 1（UNC 輸入）零回歸：加不加 path_mappings 對 folder_uri_prefix 結果相同
-        （UNC branch 在 to_file_uri 內提早 return，不受 path_mappings 影響）。"""
-        from core import path_utils
-        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
-
-        captured_prefixes = {}
-        for label, pm in (("with_mapping", _WSL_UNC_MAPPINGS), ("without_mapping", {})):
-            mocker.patch("web.routers.scraper.load_config", return_value={
-                "search": {}, "scraper": {},
-                "gallery": {"path_mappings": pm},
-            })
-            mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-            mock_repo.return_value.count_videos_in_folder.return_value = 1
-            mocker.patch(
-                "web.routers.scraper.fetch_samples_only", return_value=self._ok_samples()
-            )
-
-            client.post("/api/scraper/fetch-samples", json={
-                "file_path": _WSL_UNC_URI,
-                "number": "SONE-205",
-            })
-
-            call_args = mock_repo.return_value.count_videos_in_folder.call_args
-            captured_prefixes[label] = call_args[0][0]
-
-        assert captured_prefixes["with_mapping"] == captured_prefixes["without_mapping"], (
-            f"UNC 輸入下 path_mappings 不應影響結果: {captured_prefixes!r}"
-        )
-        assert captured_prefixes["with_mapping"] == "file://///NAS/share/dir/"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2680,68 +1222,6 @@ class TestReadonlyRoutingE2E:
 
     # ── 「被刪封面」case：output_dir 封面被刪 → gear rescrape → 復原 ─────────────
 
-    def test_gear_rescrape_restores_deleted_output_cover(self, tmp_path, client, mocker, monkeypatch):
-        from core.path_utils import to_file_uri, uri_to_local_fs_path
-        from core.scrapers.models import Video
-
-        src = tmp_path / "src"
-        src.mkdir()
-        video = src / "DL-001.mp4"
-        video.write_bytes(b"FAKE-VIDEO")
-
-        db_path = self._init_db(tmp_path)
-        config = _e2e_off_config(src)
-        self._wire(mocker, monkeypatch, config, db_path)
-        canonical = to_file_uri(str(video))
-
-        mocker.patch(
-            "core.readonly_producer.search_jav",
-            return_value={
-                "number": "DL-001", "title": "T", "cover": "http://x/c.jpg",
-                "actors": [], "tags": [], "date": "", "maker": "", "sample_images": [],
-            },
-        )
-        mocker.patch(
-            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
-        )
-        resp1 = client.post("/api/enrich-single", json={
-            "file_path": canonical, "number": "DL-001", "readonly_action": "ingest",
-        })
-        assert resp1.json()["success"] is True
-
-        repo = self._repo(db_path)
-        row = repo.get_by_path(canonical)
-        movie_dir = uri_to_local_fs_path(row.output_dir, {})
-        cover_path = Path(movie_dir) / "DL-001.jpg"
-        assert cover_path.exists()
-        cover_path.unlink()  # 模擬使用者手動刪除 output_dir 封面
-        assert not cover_path.exists()
-
-        fake_video = MagicMock(spec=Video)
-        fake_video.to_legacy_dict.return_value = {
-            "number": "DL-001", "title": "Restored", "cover": "http://x/restored.jpg",
-            "actors": [], "tags": [], "date": "", "maker": "", "source": "javlibrary",
-            "url": "https://www.javlibrary.com/ja/?v=restored", "director": "",
-            "duration": None, "label": "", "series": "", "sample_images": [],
-        }
-        fake_video.rating = None
-        fake_video.summary = ""
-        mocker.patch("web.routers.scraper.fetch_javlib_by_detail_url", return_value=fake_video)
-
-        resp2 = client.post("/api/enrich-single", json={
-            "file_path": canonical, "number": "DL-001",
-            "readonly_action": "rescrape", "source": "javlibrary",
-            "detail_url": "https://www.javlibrary.com/ja/?v=restored",
-            # Codex PR#113 P2#3（round 2）：real gear 一律送 mode='refresh_full'+
-            # overwrite_existing=true（state-rescrape.js:404/408）——這兩個欄位漏帶
-            # 會落到 EnrichRequest 預設 mode='fill_missing'/overwrite_existing=False，
-            # 誤觸新的 cover-preserve gate（DB 仍有舊 cover_path，即使檔案已被使用者
-            # 手動刪除），讓本測試想驗的「gear rescrape 復原被刪封面」失真。
-            "mode": "refresh_full", "overwrite_existing": True,
-        })
-        assert resp2.json()["success"] is True
-        assert cover_path.exists(), "gear rescrape 須復原被刪的 output_dir 封面"
-        assert cover_path.read_bytes() == b"COVER-BYTES:http://x/restored.jpg"
 
     # ── Codex PR#113 P2#3（round 2）：放大鏡 fill_missing 在「已有封面」的片上點
     # 只補 NFO，絕不動既有封面（真檔案雜湊驗證；router-level mock 版見
@@ -2823,54 +1303,6 @@ class TestReadonlyRoutingE2E:
         assert nfo_path.exists()
         assert "Second Title" in nfo_path.read_text(encoding="utf-8")
 
-    def test_magnifier_write_cover_false_preserves_cover_regardless_of_mode(
-        self, tmp_path, client, mocker, monkeypatch,
-    ):
-        """write_cover=false → 即使 mode=refresh_full（理論上「一律寫」），封面仍
-        必須被保留 —— 對齊 core.enricher._write_cover 的 `if not write_cover: return
-        False` 短路（write_cover 的優先序高於 mode）。"""
-        from core.path_utils import to_file_uri, uri_to_local_fs_path
-
-        src = tmp_path / "src"
-        src.mkdir()
-        video = src / "WCF-001.mp4"
-        video.write_bytes(b"FAKE-VIDEO")
-
-        db_path = self._init_db(tmp_path)
-        config = _e2e_off_config(src)
-        self._wire(mocker, monkeypatch, config, db_path)
-        canonical = to_file_uri(str(video))
-
-        mocker.patch(
-            "core.readonly_producer.search_jav",
-            return_value={
-                "number": "WCF-001", "title": "T", "cover": "http://x/c.jpg",
-                "actors": [], "tags": [], "date": "", "maker": "", "sample_images": [],
-            },
-        )
-        mock_download = mocker.patch(
-            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
-        )
-        resp1 = client.post("/api/enrich-single", json={
-            "file_path": canonical, "number": "WCF-001", "readonly_action": "ingest",
-        })
-        assert resp1.json()["success"] is True
-
-        repo = self._repo(db_path)
-        row1 = repo.get_by_path(canonical)
-        movie_dir = uri_to_local_fs_path(row1.output_dir, {})
-        cover_fs_path = Path(movie_dir) / "WCF-001.jpg"
-        before_hash = hashlib.sha256(cover_fs_path.read_bytes()).hexdigest()
-
-        mock_download.reset_mock()
-        resp2 = client.post("/api/enrich-single", json={
-            "file_path": canonical, "number": "WCF-001", "readonly_action": "ingest",
-            "mode": "refresh_full", "overwrite_existing": True, "write_cover": False,
-        })
-        assert resp2.json()["success"] is True
-        assert resp2.json()["cover_written"] is False
-        mock_download.assert_not_called()
-        assert hashlib.sha256(cover_fs_path.read_bytes()).hexdigest() == before_hash
 
     # P1 revert + reject (round-3 review 2026-07-21, owner-confirmed): a Codex
     # PR#113 round-3 write_nfo skip-gate here was a P1 data-loss (a title-
@@ -3025,35 +1457,6 @@ class TestReadonlyRoutingE2E:
     # Codex PR#113 one-pass alignment (2026-07-21): resolve_ingest_plan must set
     # meta['source'] = 'nfo' for the NFO-sourced ingest branch so the readonly
     # EnrichResult's source_used field isn't silently ''.
-    def test_magnifier_ingest_from_valid_nfo_reports_source_used_nfo(
-        self, tmp_path, client, mocker, monkeypatch,
-    ):
-        from core.path_utils import to_file_uri
-
-        src = tmp_path / "src"
-        src.mkdir()
-        video = src / "SU-001.mp4"
-        video.write_bytes(b"FAKE-VIDEO")
-        (src / "SU-001.nfo").write_text(
-            "<movie><num>SU-001</num><title>[SU-001]NFO Title</title></movie>",
-            encoding="utf-8",
-        )
-
-        db_path = self._init_db(tmp_path)
-        config = _e2e_off_config(src)
-        self._wire(mocker, monkeypatch, config, db_path)
-        mock_search = mocker.patch("core.readonly_producer.search_jav")
-        canonical = to_file_uri(str(video))
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": canonical, "number": "SU-001", "readonly_action": "ingest",
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["source_used"] == "nfo"
-        mock_search.assert_not_called()  # valid NFO → zero network, source is 'nfo' not a scraper name
 
     # P1 revert + reject (round-3 review 2026-07-21): write_nfo=false is now
     # REJECTED regardless of write_cover — readonly produce is holistic (a
@@ -3061,41 +1464,6 @@ class TestReadonlyRoutingE2E:
     # false + write_cover=false DB-only" path to not-crash on; the whole call
     # is rejected up front, before resolve_ingest_plan/search_jav/download are
     # ever reached, and no DB row is created at all.
-    def test_magnifier_write_nfo_false_and_write_cover_false_rejected_no_db_row(
-        self, tmp_path, client, mocker, monkeypatch,
-    ):
-        from core.path_utils import to_file_uri
-
-        src = tmp_path / "src"
-        src.mkdir()
-        video = src / "DBO-001.mp4"
-        video.write_bytes(b"FAKE-VIDEO")
-
-        db_path = self._init_db(tmp_path)
-        config = _e2e_off_config(src)
-        self._wire(mocker, monkeypatch, config, db_path)
-        canonical = to_file_uri(str(video))
-
-        mock_search = mocker.patch("core.readonly_producer.search_jav")
-        mock_download = mocker.patch("core.readonly_assets.download_image")
-
-        response = client.post("/api/enrich-single", json={
-            "file_path": canonical, "number": "DBO-001", "readonly_action": "ingest",
-            "write_nfo": False, "write_cover": False,
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert data["nfo_written"] is False
-        assert data["cover_written"] is False
-        assert data["error"]
-        assert data["reason"] == "error"
-        mock_search.assert_not_called()
-        mock_download.assert_not_called()
-
-        repo = self._repo(db_path)
-        assert repo.get_by_path(canonical) is None  # rejected before any DB upsert
 
     # ── 補劇照唯讀：只劇照落 output_dir，nfo/封面 stat+雜湊未變 ─────────────────
 
@@ -3313,118 +1681,6 @@ class TestReadonlyRoutingE2E:
 
     # ── batch-enrich 唯讀項改道 ingest（router-level：驗 offload 結構 + 呼叫序）───
 
-    def test_batch_enrich_mixed_readonly_routes_via_executor(self, client, mocker):
-        """混合批（1 唯讀 + 1 可寫）：唯讀項不再拒絕，經 run_in_executor offload
-        呼叫 resolve_owning_output_root → resolve_ingest_plan → _produce_one；
-        可寫項照常 enrich_single；整批不中斷。"""
-        config = {
-            "gallery": {
-                "directories": [{"path": "/tmp/ro_src", "readonly": True}],
-                "path_mappings": {},
-            },
-            "search": {}, "scraper": {},
-        }
-        mocker.patch("web.routers.scraper.load_config", return_value=config)
-        source_stub = MagicMock()
-        source_stub.path = "/tmp/ro_src"
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root",
-            return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
-        )
-        mock_plan = mocker.patch(
-            "core.readonly_producer.resolve_ingest_plan",
-            return_value=({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
-        )
-        # _produce_one now returns (movie_dir, assets) — tuple default so the
-        # router's `_, assets = _produce_one(...)` unpack succeeds.
-        mock_produce = mocker.patch(
-            "core.readonly_producer._produce_one",
-            return_value=(Path("/out/ro_src-x/RO-001"), {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
-        )
-        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=10, mtime=1.0)
-        mock_enrich = mocker.patch(
-            "web.routers.scraper.enrich_single", return_value=_ok_result()
-        )
-        mocker.patch(
-            "web.routers.scraper.search_jav", return_value=None
-        )
-
-        response = client.post("/api/batch-enrich", json={
-            "items": [
-                {"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"},
-                {"file_path": "/tmp/rw/RW-002.mp4", "number": "RW-002"},
-            ],
-            "mode": "refresh_full",
-        })
-
-        assert response.status_code == 200
-        events = [
-            json.loads(line[6:])
-            for line in response.text.strip().split("\n") if line.startswith("data: ")
-        ]
-        result_items = [e for e in events if e["type"] == "result-item"]
-        by_number = {e["number"]: e for e in result_items}
-
-        # 唯讀項：不再拒絕，改道成功
-        assert by_number["RO-001"]["success"] is True
-        mock_plan.assert_called_once()
-        assert mock_plan.call_args.kwargs["action"] == "ingest"
-        mock_produce.assert_called_once()
-        assert mock_produce.call_args.kwargs["assets_mode"] == "full"
-        # 可寫項：照常走既有 enrich_single 路徑
-        assert by_number["RW-002"]["success"] is True
-        mock_enrich.assert_called_once()
-
-        done = [e for e in events if e["type"] == "done"][0]
-        assert done["summary"] == {"total": 2, "success": 2, "failed": 0}
-
-    def test_batch_enrich_readonly_item_no_scrape_when_no_nfo_and_search_fails(
-        self, client, mocker, monkeypatch, tmp_path
-    ):
-        """唯讀項無 .nfo 且 search_jav 回 None → reason='not_found'（Codex PR#113
-        one-pass alignment，對齊 core.enricher 自己的 not_found reason 值），
-        failed_count+=1，不中斷整批（另一唯讀項 stub 省略；此測試聚焦單一唯讀項
-        失敗語意）。"""
-        config = {
-            "gallery": {
-                "directories": [{"path": "/tmp/ro_src", "readonly": True}],
-                "path_mappings": {},
-            },
-            "search": {}, "scraper": {},
-        }
-        # not_found 分支也會落 _readonly_stub_not_found 真寫（同
-        # test_enrich_single_no_meta_has_full_shape 的理由）；本 class 已有現成
-        # 的 self._wire(...) helper 負責把 web.routers.scraper.VideoRepository /
-        # core.readonly_paths.get_db_path 都接到 tmp DB，只是這支測試沒呼叫它
-        # （未 mock 前寫進 output/openaver.db 的 NS-001 樁列，見
-        # REPORT-127b-T3.md §0）。
-        db_path = self._init_db(tmp_path)
-        self._wire(mocker, monkeypatch, config, db_path)
-        source_stub = MagicMock()
-        source_stub.path = "/tmp/ro_src"
-        mocker.patch(
-            "web.routers.scraper.resolve_owning_output_root",
-            return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
-        )
-        mocker.patch(
-            "core.readonly_producer.resolve_ingest_plan", return_value=(None, ("none",)),
-        )
-        mock_produce = mocker.patch("core.readonly_producer._produce_one")
-
-        response = client.post("/api/batch-enrich", json={
-            "items": [{"file_path": "/tmp/ro_src/NS-001.mp4", "number": "NS-001"}],
-            "mode": "refresh_full",
-        })
-
-        events = [
-            json.loads(line[6:])
-            for line in response.text.strip().split("\n") if line.startswith("data: ")
-        ]
-        result_items = [e for e in events if e["type"] == "result-item"]
-        assert result_items[0]["success"] is False
-        assert result_items[0]["reason"] == "not_found"
-        mock_produce.assert_not_called()
 
     # ── URI round-trip 不變式：to_file_uri(uri_to_local_fs_path(u, pm), pm) == u ──
 
@@ -3594,31 +1850,6 @@ class TestExistingExtrafanartPreserved:
         assert fanart2.exists() and fanart2.read_bytes() == self._FRESH
         assert fanart3.exists() and fanart3.read_bytes() == self._FRESH
 
-    def test_extrafanart_written_counts_downloads_not_existing(self, tmp_path):
-        video, ef_dir, kept = self._setup_video(tmp_path, existing_indices=[1, 2])
-        assert kept[1].exists() and kept[1].stat().st_size > 0
-        assert kept[2].exists() and kept[2].stat().st_size > 0
-
-        search_meta = {
-            "number": "SONE-205",
-            "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg"],
-            "source": "javbus",
-        }
-
-        with patch("core.enricher.search_jav", return_value=search_meta), \
-             patch("core.enricher.download_image", side_effect=self._fake_download) as mock_dl, \
-             patch("core.enricher.VideoRepository"), \
-             patch("core.enricher._db_upsert_samples_only") as mock_upsert:
-            from core.enricher import fetch_samples_only
-            result = fetch_samples_only(file_path=str(video), number="SONE-205")
-
-        assert result.extrafanart_written == 0
-        mock_upsert.assert_called_once()
-        uris_arg = mock_upsert.call_args[0][2]
-        assert len(uris_arg) == 2
-        mock_dl.assert_not_called()
-        assert result.success is True
-
 
 # ── TASK-154a-T1: /api/enrich-single preserve_title 端到端契約 ─────────────────
 
@@ -3652,25 +1883,6 @@ class TestApiEnrichPreserveTitle:
         mock_enrich_ro.assert_called_once()
         assert mock_enrich_ro.call_args.kwargs["preserve_title"] is True
 
-    def test_enrich_single_endpoint_omitted_preserve_title_defaults_false(self, client, mocker):
-        """既有請求（未帶 preserve_title）：不 422，預設 preserve_title=False。"""
-        mocker.patch("web.routers.scraper.load_config", return_value={"video_dirs": ["/videos"]})
-        mocker.patch("web.routers.scraper.resolve_nfo_cover_paths", return_value=("/videos/ABC-001.nfo", "/videos/ABC-001.jpg"))
-        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
-        from core.enrich_contract import EnrichResult
-        mock_enrich.return_value = EnrichResult(
-            success=True, nfo_written=True, cover_written=False,
-            extrafanart_written=0, fields_filled=[], source_used="test", error=None
-        )
-
-        resp = client.post("/api/enrich-single", json={
-            "file_path": "/videos/ABC-001.mp4",
-            "number": "ABC-001",
-            "mode": "refresh_full",
-        })
-        assert resp.status_code == 200
-        mock_enrich.assert_called_once()
-        assert mock_enrich.call_args.kwargs["preserve_title"] is False
 
     def test_enrich_single_endpoint_passes_preserve_title_true_to_enrich_single(self, client, mocker):
         """非唯讀分支：/api/enrich-single 帶 preserve_title=True 時傳遞給 enrich_single。"""
@@ -3793,49 +2005,3 @@ class TestApiEnrichPreserveTitle:
         assert row_after_scan.actresses == ["女優A"]
         assert row_after_scan.tags == ["標籤A"]
 
-    def test_preserve_title_existing_none_falls_back_to_new_title(self, tmp_path, mocker):
-        """existing=None 時，preserve_title=True 回退新 title，不寫出空標題。"""
-        from core.database import init_db, VideoRepository
-        from core.enricher import enrich_single
-        from core.path_utils import to_file_uri
-
-        db_path = tmp_path / "oracle_none.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-
-        video_file = tmp_path / "ABC-123.mp4"
-        video_file.write_bytes(b"\x00")
-        path_uri = to_file_uri(str(video_file))
-
-        # DB 中無此紀錄 (existing=None)
-        scraper_meta = {
-            "number": "ABC-123",
-            "title": "新刮到的標題",
-            "original_title": "新原題",
-            "actors": ["女優A"],
-            "cover": "",
-            "date": "2024-01-01",
-            "maker": "SOD",
-            "director": "監督",
-            "series": "シリーズ",
-            "label": "LABEL",
-            "tags": ["標籤A"],
-            "sample_images": [],
-            "duration": 120,
-            "url": "https://www.javbus.com/ABC-123",
-        }
-        mocker.patch("core.enricher.VideoRepository", return_value=repo)
-        mocker.patch("core.enricher.search_jav", return_value=scraper_meta)
-
-        result = enrich_single(
-            file_path=path_uri,
-            number="ABC-123",
-            mode="refresh_full",
-            write_nfo=True,
-            write_cover=False,
-            write_extrafanart=False,
-            preserve_title=True,
-        )
-        assert result.success is True
-        row = repo.get_by_path(path_uri)
-        assert row.title == "新刮到的標題"

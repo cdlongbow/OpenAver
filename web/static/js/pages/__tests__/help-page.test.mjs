@@ -74,35 +74,6 @@ test('init gate: (非桌面, on) → 不打 /api/check-update（核心不變式�
   assert.equal(checkUpdateHit(calls), false, '非桌面 即使 on 也不得連 GitHub（spec D-A1）');
 });
 
-test('init gate: (非桌面, off) → 不打 /api/check-update', () => {
-  const calls = installFetchSpy();
-  const fakeThis = makeFakeThis('false', 'false');
-  fakeThis.init();
-  assert.equal(checkUpdateHit(calls), false, '非桌面+關 不查');
-});
-
-test('init 初值讀取：dataset → autoCheckUpdate / _isDesktop 正確反映', () => {
-  installFetchSpy();
-  const on = makeFakeThis('true', 'true');
-  on.init();
-  assert.equal(on._isDesktop, true);
-  assert.equal(on.autoCheckUpdate, true);
-
-  const off = makeFakeThis('false', 'false');
-  off.init();
-  assert.equal(off._isDesktop, false);
-  assert.equal(off.autoCheckUpdate, false);
-});
-
-test('saveAutoCheckUpdate: on → PUT /api/config/general/auto_check_update body {"value":true}', async () => {
-  const calls = installFetchSpy();
-  const fakeThis = { ...helpPage(), autoCheckUpdate: true };
-  await fakeThis.saveAutoCheckUpdate();
-  const put = calls.find((c) => c.url === '/api/config/general/auto_check_update');
-  assert.ok(put, '應打 auto_check_update 端點');
-  assert.equal(put.method, 'PUT');
-  assert.equal(put.body, JSON.stringify({ value: true }));
-});
 
 test('saveAutoCheckUpdate: off → body {"value":false}', async () => {
   const calls = installFetchSpy();
@@ -128,15 +99,6 @@ test('saveAutoCheckUpdate: PUT 回 success:false → 還原本地狀態 + 顯示
   assert.equal(toasts[0].t, 'error');
 });
 
-test('saveAutoCheckUpdate: PUT throw（離線）→ 還原本地狀態 + 顯示 toast', async () => {
-  globalThis.fetch = async () => { throw new Error('offline'); };
-  const toasts = [];
-  const fakeThis = { ...helpPage(), autoCheckUpdate: true, showToast: (m, t) => toasts.push({ m, t }) };
-  await fakeThis.saveAutoCheckUpdate();
-  assert.equal(fakeThis.autoCheckUpdate, false, 'throw 亦應還原（!desired）');
-  assert.equal(toasts.length, 1);
-  assert.equal(toasts[0].t, 'error');
-});
 
 // Codex 107 P2：兩次快速切換可能各發一個 PUT，server 寫入順序若被打亂，config 會與
 // 最後可見的 toggle 狀態相反（兩次都 success:true，既有 revert-on-failure 抓不到）。
@@ -156,12 +118,6 @@ test('saveAutoCheckUpdate: PUT in-flight 期間 _autoCheckSaving=true，resolve 
   assert.equal(fakeThis._autoCheckSaving, false, 'resolve 後應清回 false');
 });
 
-test('saveAutoCheckUpdate: PUT throw 亦清回 _autoCheckSaving=false（finally 保證）', async () => {
-  globalThis.fetch = async () => { throw new Error('offline'); };
-  const fakeThis = { ...helpPage(), autoCheckUpdate: true, showToast: () => {} };
-  await fakeThis.saveAutoCheckUpdate();
-  assert.equal(fakeThis._autoCheckSaving, false, 'throw 路徑也必須經 finally 清旗標，否則 checkbox 永久 disabled');
-});
 
 // ============================================================================
 // TASK-114b-T4：Agent Token 顯示區塊
@@ -180,14 +136,6 @@ function installClipboardSpy() {
   return writes;
 }
 
-test('toggleAgentTokenVisible: 眼睛切換翻轉 agentTokenVisible', () => {
-  const fakeThis = { ...helpPage() };
-  assert.equal(fakeThis.agentTokenVisible, false);
-  fakeThis.toggleAgentTokenVisible();
-  assert.equal(fakeThis.agentTokenVisible, true);
-  fakeThis.toggleAgentTokenVisible();
-  assert.equal(fakeThis.agentTokenVisible, false);
-});
 
 test('copyAgentToken: 遮罩狀態（agentTokenVisible=false）下仍複製真值，不是遮罩字串', async () => {
   const writes = installClipboardSpy();

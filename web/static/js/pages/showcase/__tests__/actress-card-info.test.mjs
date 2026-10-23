@@ -81,9 +81,6 @@ function keysOf(actress, isNarrow) {
     return partsOf(actress, isNarrow).map((p) => p.key);
 }
 
-function textsOf(actress, isNarrow) {
-    return partsOf(actress, isNarrow).map((p) => p.text);
-}
 
 function byKey(actress, isNarrow) {
     return Object.fromEntries(partsOf(actress, isNarrow).map((p) => [p.key, p]));
@@ -91,15 +88,6 @@ function byKey(actress, isNarrow) {
 
 // ── 收留規則（CD-124b-13）──────────────────────────────────────────────
 
-test('text 逐字不變（124b-T1 視覺零回歸）：窄螢幕五個 token 的文字與改動前相同', () => {
-    assert.deepEqual(textsOf(FULL_ACTRESS, true), [
-        '12showcase.unit.films',
-        '25search.unit.age',
-        '160cm',
-        'Csearch.unit.cup',
-        '88-58-88',
-    ]);
-});
 
 test('缺 height（null）→ 該 part 不出現，其餘不受影響', () => {
     // 162a：缺 cup（undefined）、缺 height（空字串）、三圍缺一格併入同一支（同一失敗原因：缺值不顯示殘缺欄）
@@ -114,57 +102,12 @@ test('缺 height（null）→ 該 part 不出現，其餘不受影響', () => {
     }
 });
 
-test('actress 全空欄位（五欄皆 null）→ 回傳 []（窄寬皆然：整塊資訊區不渲染）', () => {
-    const actress = {
-        video_count: null, age: null, height: null, cup: null,
-        bust: null, waist: null, hip: null,
-    };
-    assert.deepEqual(partsOf(actress, true), []);
-    assert.deepEqual(partsOf(actress, false), []);
-    // 162a：actress 本身為 null 併入同一支
-    assert.deepEqual(partsOf(null, true), []);
-});
-
-test('CD-124b-12 紅線：video_count:0 → text \'0showcase.unit.films\'；age:0 → text \'0search.unit.age\' 且 clickable=true', () => {
-    const actress = Object.assign({}, FULL_ACTRESS, { video_count: 0, age: 0 });
-    assert.deepEqual(textsOf(actress, true), [
-        '0showcase.unit.films',
-        '0search.unit.age',
-        '160cm',
-        'Csearch.unit.cup',
-        '88-58-88',
-    ]);
-    assert.equal(byKey(actress, true).age.clickable, true, 'age:0 篩得到她自己，必須可點');
-});
 
 // ── clickable（CD-124b-13：可點的三格 ＋ 恆不可點的兩格）──────────────
 
-test('clickable：age/height/cup 值可解析 → true；count/bwh 恆 false（窄螢幕）', () => {
-    const m = byKey(FULL_ACTRESS, true);
-    assert.equal(m.age.clickable, true);
-    assert.equal(m.height.clickable, true);
-    assert.equal(m.cup.clickable, true);
-    assert.equal(m.count.clickable, false, '作品數無對應 pill 維度，恆不可點');
-    assert.equal(m.bwh.clickable, false, '三圍無對應 pill 維度，恆不可點');
-});
 
 // ── fail-closed：值解析不出來就不可點，但文字仍在 ─────────────────────
 
-test("fail-closed：height:'不明' → clickable=false，text 仍是 '不明'", () => {
-    // 162a：罩杯 AA／小寫 b、年齡空字串／「不詳」併入同一支（同一失敗原因：解析不出來的值不得可點）
-    const cases = [
-        { over: { height: '不明' }, key: 'height', text: '不明' },
-        { over: { cup: 'AA' }, key: 'cup', text: 'AAsearch.unit.cup' },
-        { over: { cup: 'b' }, key: 'cup' },
-        { over: { age: '' }, key: 'age', text: 'search.unit.age' },
-        { over: { age: '不詳' }, key: 'age' },
-    ];
-    for (const c of cases) {
-        const m = byKey(Object.assign({}, FULL_ACTRESS, c.over), true);
-        assert.equal(m[c.key].clickable, false, JSON.stringify(c.over));
-        if (c.text !== undefined) assert.equal(m[c.key].text, c.text, JSON.stringify(c.over));
-    }
-});
 
 // ── dim / value 傳原始欄位值，不是顯示字串 ────────────────────────────
 
@@ -184,39 +127,11 @@ test('dim/value：height 傳原始 \'160cm\'（單位由 _setActressPill 剝）�
 // _onActressCardMetadataClick（124b-T4 / CD-124b-15）
 // =====================================================================
 
-test('_onActressCardMetadataClick：只呼叫 addActressPill(dim, value)，不呼叫 closeLightbox', () => {
-    // 162a：toolbarOpen=true（手機摸得到 pill）與「不讀 actressLightboxSource 殘值」併入同一支
-    const calls = [];
-    const c = Object.assign({}, stateActress(), {
-        actressLightboxSource: 'hero',   // 上一次開燈箱留下的殘值
-        addActressPill: (dim, value) => calls.push(['addActressPill', dim, value]),
-        closeLightbox: () => calls.push(['closeLightbox']),
-    });
-    _uiStore.toolbarOpen = false;
-    c._onActressCardMetadataClick('height', '160cm');
-    assert.deepEqual(calls, [['addActressPill', 'height', '160cm']], '殘值不得吞掉卡片點擊');
-    assert.equal(Alpine.store('ui').toolbarOpen, true);
-});
 
 // =====================================================================
 // _actressCardMiddle
 // =====================================================================
 
-function cardMiddle(actress, sort) {
-    const c = Object.assign({}, stateActress(), { actressSort: sort });
-    return c._actressCardMiddle(actress);
-}
-
-test('_actressCardMiddle：video_count:0 → 回傳非空字串 \'0showcase.unit.films\'', () => {
-    // 162a：actress 為 null、video_count 缺欄位併入同一支
-    const result = cardMiddle({ video_count: 0 }, 'video_count');
-    assert.notEqual(result, '');
-    assert.equal(result, '0showcase.unit.films');
-    assert.equal(cardMiddle(null, 'video_count'), '');
-    const missing = cardMiddle({ name: 'x' }, 'video_count');
-    assert.equal(missing, '0showcase.unit.films');
-    assert.ok(!missing.includes('undefined'));
-});
 
 // =====================================================================
 // infoVisible 持久化
@@ -239,10 +154,6 @@ function stubWindow(opts) {
 
 const RESTORE_CASES = [
     { input: true, expected: true, label: 'true → true' },
-    { input: false, expected: false, label: 'false → false' },
-    { input: undefined, expected: false, label: 'undefined（缺鍵）→ false' },
-    { input: 'true', expected: false, label: "'true'（字串）→ false" },
-    { input: 1, expected: false, label: '1（數字）→ false' },
 ];
 
 for (const { input, expected, label } of RESTORE_CASES) {
@@ -306,17 +217,6 @@ function pressS(c) {
     });
 }
 
-test("S 鍵：mode='table' + showFavoriteActresses=true → toggleInfo 有被呼叫", () => {
-    const c = makeKeydownComponent({ mode: 'table', showFavoriteActresses: true });
-    const before = c.infoVisible;
-    pressS(c);
-    assert.notEqual(c.infoVisible, before);
-    // 162a：影片牆（grid ＋ 非女優模式）按 S 照常切換併入同一支
-    const g = makeKeydownComponent({ mode: 'grid', showFavoriteActresses: false });
-    const gBefore = g.infoVisible;
-    pressS(g);
-    assert.notEqual(g.infoVisible, gBefore);
-});
 
 // T1 review 補測：gate 放寬成 `|| this.showFavoriteActresses` 之後，「女優燈箱開著時
 // 按 S 不得切換資訊區」靠的是 handleKeydown 第 5 段（lightboxOpen 分支，

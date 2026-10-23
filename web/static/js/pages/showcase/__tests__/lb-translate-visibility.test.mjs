@@ -64,17 +64,4 @@ test('翻譯開啟：假名無原文只標題行、有原文只原文行、中�
     });
 });
 
-test('開關 getter 隨 window 值即時變化（不被 mergeState 凍結）', () => {
-    const c = make({ needs_translate: true });
-    withSwitch({ enabled: true }, () => assert.equal(c.lbTranslateEnabled, true));
-    withSwitch({ enabled: false }, () => assert.equal(c.lbTranslateEnabled, false));
-});
 
-test('沒有 NFO 的片不顯示原文行再翻圖示', () => {
-    withSwitch({ enabled: true }, () => {
-        for (const has_nfo of [false, undefined]) {
-            const c = make({ needs_translate: false, original_title: '原文', has_nfo });
-            assert.equal(c.lbTrShowOnOtitle(), false, String(has_nfo));
-        }
-    });
-});

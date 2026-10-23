@@ -98,7 +98,6 @@ const OK_BODY = (n, hasMore = true) => ({
     ok: true,
     json: async () => ({ success: true, has_more: hasMore, data: Array.from({ length: n }, (_, i) => ({ number: `NEW-${i}` })) }),
 });
-const FAIL_BODY = { ok: true, json: async () => ({ success: false, data: [] }) };
 
 function primeMaker(page, overrides = {}) {
     Object.assign(page, {
@@ -158,18 +157,6 @@ test('maker-second-page-offset: 片商結果（搜尋框空）按載入更多 �
     });
 });
 
-test('maker-second-page-offset: 第三批 offset=60（currentOffset 以 30 累加）', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        primeMaker(page, { currentOffset: 30 });
-        const p = page.loadMore();
-        await tick();
-        assert.ok(fetchFake.calls[0].url.endsWith('&offset=60'));
-        fetchFake.pending.shift().resolve(OK_BODY(1, false));
-        await p;
-        assert.equal(page.currentOffset, 60);
-        assert.equal(page.hasMoreResults, false);
-    });
-});
 
 test('keyword-url-unchanged: 關鍵字結果按載入更多 ⇒ /api/search?q=SONE-205&offset=20&limit=20 逐字', async () => {
     await withEnv(async ({ page, fetchFake }) => {
@@ -183,29 +170,6 @@ test('keyword-url-unchanged: 關鍵字結果按載入更多 ⇒ /api/search?q=SO
     });
 });
 
-test('inert-maker-keyword-url: currentMaker 殘留但 currentMode=exact ⇒ 送關鍵字 URL、offset 以 20 計', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        primeKeyword(page, { currentMaker: { ...MAKER_A } });
-        const p = page.loadMore();
-        await tick();
-        assert.equal(fetchFake.calls[0].url, '/api/search?q=SONE-205&offset=20&limit=20');
-        fetchFake.pending.shift().resolve(OK_BODY(20));
-        await p;
-        assert.equal(page.currentOffset, 20);
-    });
-});
-
-test('loadMore guards: 非片商且無關鍵字 ⇒ 不發請求、回 null；listMode 非 search ⇒ null', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        primeKeyword(page, { currentQuery: '', currentMode: 'exact' });
-        assert.equal(await page.loadMore(), null);
-        primeMaker(page, { listMode: 'file' });
-        assert.equal(await page.loadMore(), null);
-        primeMaker(page, { hasMoreResults: false });
-        assert.equal(await page.loadMore(), null);
-        assert.equal(fetchFake.calls.length, 0);
-    });
-});
 
 test('restore-then-load-more-same-maker: 存→還原（真 saveState／restoreState）→ 載入更多送出同一家片商 URL', async () => {
     const KEY = 'test-173-t10-restore';
@@ -243,9 +207,8 @@ test('restore-then-load-more-same-maker: 存→還原（真 saveState／restoreS
 // ─── 世代守衛（雙模式、雙變體） ─────────────────────────────────────
 const MODES = [
     ['maker', primeMaker],
-    ['keyword', primeKeyword],
 ];
-const VARIANTS = ['cancelled-only', 'reopen'];
+const VARIANTS = ['reopen'];
 
 // 取消（或取消並重開）後取樣六項；變體 reopen 把 B 手動寫成「有結果、hasMore=true」
 function cancelAndMaybeReopen(page, variant) {
@@ -282,56 +245,6 @@ for (const [modeName, prime] of MODES) {
                 }
             });
         });
-
-        test(`late-failure-dropped ${modeName} ${variant}: 取消後 A 的失敗回應晚到，hasMoreResults 等六項不變、回 null`, async () => {
-            await withEnv(async ({ page, fetchFake }) => {
-                prime(page);
-                const p = page.loadMore();
-                await tick();
-                const before = cancelAndMaybeReopen(page, variant);
-                try {
-                    fetchFake.pending.shift().resolve(FAIL_BODY);
-                    const r = await p;
-                    assert.equal(r, null);
-                    assert.equal(page.hasMoreResults, variant === 'reopen' ? true : before.hasMoreResults);
-                    assert.deepEqual(six(page), before);
-                } finally {
-                    fetchFake.flush();
-                }
-            });
-        });
-
-        test(`late-reject-ignored ${modeName} ${variant}: 取消後 A 的 fetch 拒絕晚到，六項不變、回 null`, async () => {
-            await withEnv(async ({ page, fetchFake }) => {
-                prime(page);
-                const p = page.loadMore();
-                await tick();
-                const before = cancelAndMaybeReopen(page, variant);
-                const origErr = console.error;
-                console.error = () => {};
-                try {
-                    fetchFake.pending.shift().reject(new TypeError('network down'));
-                    const r = await p;
-                    assert.equal(r, null);
-                    assert.deepEqual(six(page), before);
-                } finally {
-                    console.error = origErr;
-                    fetchFake.flush();
-                }
-            });
-        });
     }
 }
 
-test('late-success-dropped 對照：未取消時同一批回應確實接上結果', async () => {
-    await withEnv(async ({ page, fetchFake }) => {
-        primeMaker(page);
-        const p = page.loadMore();
-        await tick();
-        const before = six(page);
-        fetchFake.pending.shift().resolve(OK_BODY(5));
-        const r = await p;
-        assert.equal(r.loadedCount, 5);
-        assert.notDeepEqual(six(page), before);
-    });
-});

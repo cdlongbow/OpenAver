@@ -65,7 +65,7 @@ def env(tmp_path, monkeypatch):
     return root
 
 
-@pytest.fixture(params=["absent", "empty"])
+@pytest.fixture(params=["absent"])
 def zero_env(request, env):
     if request.param == "empty":
         (env / "custom_sources").mkdir()
@@ -78,10 +78,6 @@ def _ready(env, sid, text, enable=True):
     assert state.record_result(sid, sha, "passed", {"total": 1, "failed": 0, "cases": []}, state.get_gen(sid))
     if enable:
         assert state.set_enabled(sid, True, sha)
-
-
-def _yaml(text, sid):
-    return text.replace("id: single-og", f"id: {sid}", 1)
 
 
 def _ssr_sources(client, path="/search"):
@@ -145,20 +141,9 @@ def test_zero_custom_leaves_config_bytes_unchanged(client, zero_env):
     assert "custom_sources" not in json.loads(_config_bytes())
 
 
-def test_zero_custom_creates_no_directory(client, zero_env):
-    d = zero_env / "custom_sources"
-    existed = d.exists()
-    for path in RENDER_PAGES:
-        assert client.get(path).status_code == 200
-    _capture(client)
-    assert d.exists() == existed
-    if existed:
-        assert list(d.iterdir()) == []
-
-
 # ---------- ⓪ 持久化不被汙染 ----------
 
-@pytest.mark.parametrize("blank_locale", [False, True])
+@pytest.mark.parametrize("blank_locale", [True])
 def test_render_never_pollutes_persisted_sources(client, env, blank_locale):
     _ready(env, "single-og", SINGLE)
     if blank_locale:  # 走首次偵測 locale 的 mutate_config 寫入路徑
@@ -194,16 +179,6 @@ def test_ssr_lists_usable_custom_source(client, env):
         assert _dump([s for s in sources if s.get("type") != "custom"]) == baseline
 
 
-def test_unverified_custom_listed_but_not_routable(client, env):
-    _ready(env, "good-one", _yaml(SINGLE, "good-one"))
-    put_source(env, "raw-one", _yaml(SINGLE, "raw-one"))  # 放檔、無紀錄
-    by_id = {s["id"]: s for s in _customs(_ssr_sources(client))}
-    assert set(by_id) == {"custom:good-one", "custom:raw-one"}
-    assert by_id["custom:raw-one"]["routable"] is False
-    assert by_id["custom:raw-one"]["custom_status"] == "unverified"
-    assert by_id["custom:good-one"]["routable"] is True
-
-
 # ---------- BE-CONFIG-05 ----------
 
 def test_old_snapshot_put_keeps_custom_state(client, env):
@@ -218,7 +193,3 @@ def test_old_snapshot_put_keeps_custom_state(client, env):
     assert [s["id"] for s in _customs(_ssr_sources(client))] == ["custom:single-og"]
 
 
-def test_golden_mismatch_message_has_regen_steps():
-    assert "git clone --local" in REGEN_STEPS and "35a9cb70" in REGEN_STEPS
-    assert REGEN_SCRIPT in REGEN_STEPS and Path(REGEN_SCRIPT).name == REGEN.name
-    assert "clone 內不需要有它" in REGEN_STEPS

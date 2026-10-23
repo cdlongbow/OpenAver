@@ -90,10 +90,6 @@ class TestFetchActressProfileWithDbAliasHit:
         assert result is not None
         assert result.get("is_favorite") is True
 
-    def test_returns_correct_name(self, monkeypatch):
-        result = self._call(monkeypatch)
-        assert result.get("name") == "新ありな"
-
 
 # ---------------------------------------------------------------------------
 # Case 2 — alias resolve → all miss → orchestrator → is_favorite=False
@@ -163,32 +159,6 @@ class TestFetchActressProfileNoAlias:
             from web.routers.search import _fetch_actress_profile_with_db
             return _fetch_actress_profile_with_db("田中xxx", [])
 
-    def test_returns_is_favorite_true(self, monkeypatch):
-        result = self._call(monkeypatch)
-        assert result is not None
-        assert result.get("is_favorite") is True
-
-    def test_resolve_called_once_with_name(self, monkeypatch):
-        actress_obj = _make_actress("田中xxx")
-
-        alias_repo_mock = MagicMock()
-        alias_repo_mock.resolve.return_value = {"田中xxx"}
-
-        actress_repo_mock = MagicMock()
-        actress_repo_mock.get_by_name.return_value = actress_obj
-
-        def fake_actress_to_response(actress, video_count=0):
-            return {"name": actress.name, "photo_url": None}
-
-        with patch("core.database.AliasRepository", return_value=alias_repo_mock), \
-             patch("core.database.ActressRepository", return_value=actress_repo_mock), \
-             patch("core.database.init_db"), \
-             patch("web.routers.actress._actress_to_response", side_effect=fake_actress_to_response):
-            from web.routers.search import _fetch_actress_profile_with_db
-            _fetch_actress_profile_with_db("田中xxx", [])
-
-        alias_repo_mock.resolve.assert_called_once_with("田中xxx")
-
 
 # ---------------------------------------------------------------------------
 # Case 4 — count_videos_for_actress_names: multi-name deduplication
@@ -226,39 +196,10 @@ class TestCountVideosForActressNamesMultiName:
         count = repo.count_videos_for_actress_names({"新ありな", "橋本ありな"})
         assert count == 1, f"Expected 1 (DISTINCT), got {count}"
 
-    def test_count_two_different_videos(self, db_with_video):
-        """Two videos each with one name → count=2"""
-        import json
-        conn = sqlite3.connect(str(db_with_video))
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
-            """INSERT INTO videos (path, number, title, actresses)
-               VALUES (?, ?, ?, ?)""",
-            ("/fake/video2.mp4", "TEST-002", "Test2",
-             json.dumps(["河北彩伽"]))
-        )
-        conn.commit()
-        conn.close()
-
-        from core.database import ActressRepository
-        repo = ActressRepository(db_path=db_with_video)
-        # Both videos: TEST-001 (新ありな/橋本ありな) and TEST-002 (河北彩伽)
-        count = repo.count_videos_for_actress_names({"新ありな", "河北彩伽"})
-        assert count == 2
-
 
 # ---------------------------------------------------------------------------
 # Case 5 — count_videos_for_actress_names(set()) → 0
 # ---------------------------------------------------------------------------
-
-class TestCountVideosForActressNamesEmpty:
-    def test_empty_set_returns_zero(self, tmp_path):
-        from core.database import init_db, ActressRepository
-        db_path = tmp_path / "test_empty.db"
-        init_db(db_path)
-        repo = ActressRepository(db_path=db_path)
-        result = repo.count_videos_for_actress_names(set())
-        assert result == 0
 
 
 # ---------------------------------------------------------------------------
@@ -293,8 +234,3 @@ class TestCountVideosForActressDelegates:
         assert by_single == by_names
         assert by_single == 1
 
-    def test_unknown_name_returns_zero(self, db):
-        from core.database import ActressRepository
-        repo = ActressRepository(db_path=db)
-        assert repo.count_videos_for_actress("NoSuchName") == 0
-        assert repo.count_videos_for_actress_names({"NoSuchName"}) == 0

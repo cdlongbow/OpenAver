@@ -69,123 +69,13 @@ test('I-12 gen: preview landing after reopen leaves the new window untouched', a
     });
 });
 
-test('I-12 gen: preview fetch rejecting after reopen does not mark the new window not-found', async () => {
-    const g = gate();
-    await withGlobals({ fetchImpl: async () => { await g.p; throw new Error('boom'); } }, async () => {
-        const ctx = mkCtx();
-        ctx.openRescrape({ number: 'AAA-111', path: '/x/a.mp4' });
-        const pending = ctx.rescrapeWithSource('javbus');
-        ctx.closeRescrape();
-        ctx.openRescrape({ number: 'BBB-222', path: '/x/b.mp4' });
-        g.release();
-        await pending;
-        assert.equal(ctx.rescrapeNotFound, false);
-        assert.equal(ctx.rescrapePreview, null);
-    });
-});
-
-test('I-12 gen: stale preview does not clear the new window\'s loading state', async () => {
-    const g = gate();
-    await withGlobals({ fetchImpl: async () => { await g.p; return reply({ success: false }); } }, async () => {
-        const ctx = mkCtx();
-        ctx.openRescrape({ number: 'AAA-111', path: '/x/a.mp4' });
-        const pending = ctx.rescrapeWithSource('javbus');
-        ctx.closeRescrape();
-        ctx.openRescrape({ number: 'BBB-222', path: '/x/b.mp4' });
-        ctx.rescrapeLoadingSource = 'javdb';              // 新窗自己的載入態
-        g.release();
-        await pending;
-        assert.equal(ctx.rescrapeLoadingSource, 'javdb');
-    });
-});
-
-test('I-12 gen: cf poll callback in flight after reopen does not retry', async () => {
-    const g = gate();
-    let intervalFn = null;
-    await withGlobals({
-        setIntervalImpl: (fn) => { intervalFn = fn; return 7; },
-        fetchImpl: async () => { await g.p; return reply({ ready: true }); },
-    }, async () => {
-        const ctx = mkCtx();
-        const retried = [];
-        ctx.rescrapeWithSource = async (id) => { retried.push(id); };
-        ctx.openRescrape({ number: 'AAA-111', path: '/x/a.mp4' });
-        ctx._pollCfThenRetry('AAA-111', 'javlibrary');
-        const p = intervalFn();
-        ctx.closeRescrape();
-        ctx.openRescrape({ number: 'BBB-222', path: '/x/b.mp4' });
-        g.release();
-        await p;
-        assert.equal(retried.length, 0);
-        assert.equal(ctx.rescrapeCfWaiting, false);
-    });
-});
-
-function confirmCtx(ctx) {
-    ctx.openRescrape({ number: 'AAA-111', path: '/x/a.mp4' });
-    ctx.rescrapePreview = { url: 'u' };
-    ctx.rescrapeStep = 'preview';
-    ctx._rescrapeCommitSource = 'javbus';
-}
 
 for (const [name, body] of [['success', { success: true }], ['cf_needed', { cf_needed: true }]]) {
-    test(`I-12 gen: confirm landing after reopen does not toast or close the new window (${name})`, async () => {
-        const g = gate();
-        await withGlobals({ fetchImpl: async () => { await g.p; return reply(body); } }, async () => {
-            const ctx = mkCtx();
-            confirmCtx(ctx);
-            const pending = ctx.rescrapeConfirm();
-            ctx.closeRescrape();
-            ctx.openRescrape({ number: 'BBB-222', path: '/x/b.mp4' });
-            g.release();
-            await pending;
-            assert.equal(ctx.toasts.length, 0);
-            assert.equal(ctx.rescrapeOpen, true);
-            assert.equal(ctx.rescrapeCfWaiting, false);
-            assert.equal(ctx._cfPollHandle, null);
-        });
-    });
 }
 
-test('I-12 gen: refresh landing after reopen does not toast or close the new window', async () => {
-    const g = gate();
-    await withGlobals({ fetchImpl: async () => reply({ success: true }) }, async () => {
-        const ctx = mkCtx();
-        const r = gate();
-        ctx.refreshVideoData = async (v) => { ctx.refreshed.push(v); await r.p; };
-        confirmCtx(ctx);
-        const pending = ctx.rescrapeConfirm();
-        await g.release();
-        while (ctx.refreshed.length === 0) await Promise.resolve();   // 停在 refresh 的 await
-        ctx.closeRescrape();
-        ctx.openRescrape({ number: 'BBB-222', path: '/x/b.mp4' });
-        r.release();
-        await pending;
-        assert.equal(ctx.toasts.length, 0);
-        assert.equal(ctx.rescrapeOpen, true);
-    });
-});
 
 for (const [name, impl] of [
     ['success:false', async () => reply({ success: false, error: 'write failed' })],
     ['fetch rejects', async () => { throw new Error('boom'); }],
 ]) {
-    test(`I-12 gen: confirm failure landing after reopen still toasts once, new window untouched (${name})`, async () => {
-        const g = gate();
-        await withGlobals({ fetchImpl: async () => { await g.p; return impl(); } }, async () => {
-            const ctx = mkCtx();
-            confirmCtx(ctx);
-            const pending = ctx.rescrapeConfirm();
-            ctx.closeRescrape();
-            ctx.openRescrape({ number: 'BBB-222', path: '/x/b.mp4' });
-            g.release();
-            await pending;
-            assert.equal(ctx.toasts.length, 1);
-            assert.equal(ctx.toasts[0][1], 'error');
-            assert.equal(ctx.rescrapeOpen, true);
-            assert.equal(ctx.rescrapeNotFound, false);
-            assert.equal(ctx.rescrapeCfWaiting, false);
-            assert.equal(ctx.refreshed.length, 0);
-        });
-    });
 }

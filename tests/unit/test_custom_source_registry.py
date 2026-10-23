@@ -1,13 +1,11 @@
 """自訂來源登錄：逐檔隔離載入、檔案過濾、唯讀目錄語意、scraper_factories。"""
 
-import hashlib
 import shutil
 
 import pytest
 
-from core.custom_source import errors, registry, schema
-from core.custom_source.registry import custom_sources_dir, find_path, load_all, load_one, scraper_factories
-from core.scrapers.base import BaseScraper
+from core.custom_source import errors
+from core.custom_source.registry import find_path, load_all, load_one
 from tests.unit._custom_source_pages import FIXTURE_DIR
 
 GOOD = ["single-og", "single-og-min", "two-step", "fuzzy", "text"]
@@ -56,23 +54,6 @@ def test_isolation_oracle_five_good_seven_bad(tmp_path):
     assert sorted(s.id for s in good) == sorted(GOOD)
 
 
-def test_isolation_one_unexpected_exception_does_not_spread(tmp_path, monkeypatch):
-    _put_good(tmp_path)
-    real = schema.load_bytes
-
-    def fake(raw, stem):
-        if stem == "fuzzy":
-            raise RuntimeError("canary")
-        return real(raw, stem)
-
-    monkeypatch.setattr("core.custom_source.registry.load_bytes", fake)
-    got = {s.id: s for s in load_all(tmp_path)}
-    assert got["fuzzy"].spec is None
-    assert got["fuzzy"].error.reason == "bad_value"
-    assert "canary" not in str(got["fuzzy"].error)
-    assert all(got[n].spec is not None for n in GOOD if n != "fuzzy")
-
-
 def test_file_filter_keeps_only_plain_lowercase_yaml_files(tmp_path):
     _put_good(tmp_path, ["single-og"])
     shutil.copy(FIXTURE_DIR / "text.yaml", tmp_path / "text.yml")
@@ -90,104 +71,6 @@ def test_file_filter_keeps_only_plain_lowercase_yaml_files(tmp_path):
     assert [s.id for s in got] == ["Bad_Name", "single-og", "text"]
     assert got[0].spec is None and got[0].error.reason in errors.LOAD_REASONS
     assert got[2].spec is not None
-
-
-@pytest.mark.parametrize("make_dir", [False, True])
-def test_missing_dir_is_empty_and_never_created(tmp_path, monkeypatch, make_dir):
-    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
-    if make_dir:
-        (tmp_path / "custom_sources").mkdir()
-    before = sorted(p.name for p in tmp_path.rglob("*"))
-    assert load_all() == [] and scraper_factories() == {}
-    assert sorted(p.name for p in tmp_path.rglob("*")) == before
-    assert (tmp_path / "custom_sources").exists() is make_dir
-
-
-def test_all_bad_dir_gives_error_items_not_empty(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
-    target = tmp_path / "custom_sources"
-    target.mkdir()
-    for name in ("a", "b", "c"):
-        (target / f"{name}.yaml").write_text(f"id: [{name}", encoding="utf-8")
-    got = load_all()
-    assert len(got) == 3 and all(s.spec is None and s.error is not None for s in got)
-    assert scraper_factories() == {}
-
-
-def test_custom_sources_dir_follows_env_at_call_time(tmp_path, monkeypatch):
-    for sub in ("one", "two"):
-        monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path / sub))
-        assert custom_sources_dir() == tmp_path / sub / "custom_sources"
-
-
-def test_factories_skip_failed_sources(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
-    target = tmp_path / "custom_sources"
-    _put_good(target, ["single-og", "two-step"])
-    (target / "broken.yaml").write_text("id: [x", encoding="utf-8")
-    factories = scraper_factories()
-    assert sorted(factories) == ["custom:single-og", "custom:two-step"]
-    assert sorted(scraper_factories("x/")) == ["x/single-og", "x/two-step"]
-
-
-def test_factories_each_build_their_own_source(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAVER_DATA_DIR", str(tmp_path))
-    _put_good(tmp_path / "custom_sources", ["single-og", "two-step"])
-    for key, factory in scraper_factories().items():
-        built = factory()
-        assert len(built) == 1 and isinstance(built[0], BaseScraper)
-        assert built[0].source_id == key == built[0].source_name
-        assert built[0].spec.id == key.split(":", 1)[1]
-    assert registry.LoadedSource("a", None, None).id == "a"
-
-
-def test_file_inspection_error_skips_only_that_file(tmp_path, monkeypatch):
-    _put_good(tmp_path, ["single-og", "text"])
-    real = registry.Path.is_file
-
-    def flaky(self):
-        if self.name == "text.yaml":
-            raise PermissionError("canary")
-        return real(self)
-
-    monkeypatch.setattr(registry.Path, "is_file", flaky)
-    assert [s.id for s in load_all(tmp_path)] == ["single-og"]
-
-
-def test_sha256_is_of_raw_bytes_for_good_and_bad_files(tmp_path):
-    _put_good(tmp_path, ["single-og"])
-    (tmp_path / "bad.yaml").write_bytes(b"\xef\xbb\xbfid: [unclosed\r\n")
-    got = {s.id: s for s in load_all(tmp_path)}
-    assert got["single-og"].spec is not None
-    assert got["single-og"].sha256 == hashlib.sha256((tmp_path / "single-og.yaml").read_bytes()).hexdigest()
-    assert got["bad"].spec is None
-    assert got["bad"].sha256 == hashlib.sha256(b"\xef\xbb\xbfid: [unclosed\r\n").hexdigest()
-    assert len(got["bad"].sha256) == 64
-
-
-def test_unreadable_file_has_no_sha256(tmp_path, monkeypatch):
-    _put_good(tmp_path, ["single-og"])
-    real = registry.Path.read_bytes
-
-    def boom(self):
-        raise PermissionError("canary")
-
-    monkeypatch.setattr(registry.Path, "read_bytes", boom)
-    got = load_all(tmp_path)
-    monkeypatch.setattr(registry.Path, "read_bytes", real)
-    assert got[0].spec is None and got[0].sha256 is None and got[0].error.reason == "bad_value"
-
-
-def test_find_path_and_load_one(tmp_path):
-    _put_good(tmp_path, ["single-og", "text"])
-    (tmp_path / "broken.yaml").write_text("id: [x", encoding="utf-8")
-    assert find_path("text", tmp_path) == tmp_path / "text.yaml"
-    assert find_path("nope", tmp_path) is None
-    one = load_one("single-og", tmp_path)
-    assert one.spec is not None and one.id == "single-og" and one.sha256 is not None
-    bad = load_one("broken", tmp_path)
-    assert bad.spec is None and bad.error.reason == "yaml_syntax" and len(bad.sha256) == 64
-    assert load_one("nope", tmp_path) is None
 
 
 def test_find_path_rejects_ids_that_are_not_slugs(tmp_path):

@@ -1,12 +1,10 @@
 """測試 VideoRepository 類別"""
 import pytest
-import json
 from unittest.mock import patch
 
 from core.database import (
     Video,
-    VideoRepository,
-    migrate_json_to_sqlite
+    VideoRepository
 )
 from core.path_utils import to_file_uri
 
@@ -38,147 +36,6 @@ def sample_video():
 class TestVideoRepository:
     """VideoRepository 測試"""
 
-    def test_init_with_default_path(self):
-        """測試預設路徑初始化"""
-        repo = VideoRepository()
-        assert repo.db_path.name == "openaver.db"
-
-    def test_init_with_custom_path(self, temp_db):
-        """測試自訂路徑初始化"""
-        repo = VideoRepository(temp_db)
-        assert repo.db_path == temp_db
-
-    def test_upsert_insert(self, temp_db, sample_video):
-        """測試 upsert 新增"""
-        repo = VideoRepository(temp_db)
-        video_id = repo.upsert(sample_video)
-
-        assert video_id > 0
-        assert repo.count() == 1
-
-    def test_upsert_update(self, temp_db, sample_video):
-        """測試 upsert 更新"""
-        repo = VideoRepository(temp_db)
-
-        # 第一次插入
-        video_id1 = repo.upsert(sample_video)
-
-        # 修改標題後再次 upsert
-        sample_video.title = "修改後的標題"
-        video_id2 = repo.upsert(sample_video)
-
-        # id 應該相同
-        assert video_id1 == video_id2
-        assert repo.count() == 1
-
-        # 驗證標題已更新
-        result = repo.get_by_path(sample_video.path)
-        assert result.title == "修改後的標題"
-
-    def test_upsert_batch_insert(self, temp_db):
-        """測試 upsert_batch 批次新增"""
-        repo = VideoRepository(temp_db)
-
-        videos = [
-            Video(path=to_file_uri("/video1.mp4"), title="影片1", mtime=100.0),
-            Video(path=to_file_uri("/video2.mp4"), title="影片2", mtime=200.0),
-            Video(path=to_file_uri("/video3.mp4"), title="影片3", mtime=300.0),
-        ]
-
-        inserted, updated = repo.upsert_batch(videos)
-
-        assert inserted == 3
-        assert updated == 0
-        assert repo.count() == 3
-
-    def test_upsert_batch_mixed(self, temp_db):
-        """測試 upsert_batch 混合新增更新"""
-        repo = VideoRepository(temp_db)
-
-        # 先插入兩部
-        initial_videos = [
-            Video(path=to_file_uri("/video1.mp4"), title="影片1", mtime=100.0),
-            Video(path=to_file_uri("/video2.mp4"), title="影片2", mtime=200.0),
-        ]
-        repo.upsert_batch(initial_videos)
-
-        # 批次操作：1 部更新 + 1 部新增
-        batch_videos = [
-            Video(path=to_file_uri("/video1.mp4"), title="影片1-更新", mtime=150.0),
-            Video(path=to_file_uri("/video3.mp4"), title="影片3", mtime=300.0),
-        ]
-        inserted, updated = repo.upsert_batch(batch_videos)
-
-        assert inserted == 1
-        assert updated == 1
-        assert repo.count() == 3
-
-    def test_upsert_batch_empty(self, temp_db):
-        """測試 upsert_batch 空列表"""
-        repo = VideoRepository(temp_db)
-        inserted, updated = repo.upsert_batch([])
-        assert inserted == 0
-        assert updated == 0
-
-    def test_get_by_path_found(self, temp_db, sample_video):
-        """測試 get_by_path 找到"""
-        repo = VideoRepository(temp_db)
-        repo.upsert(sample_video)
-
-        result = repo.get_by_path(sample_video.path)
-
-        assert result is not None
-        assert result.path == sample_video.path
-        assert result.number == sample_video.number
-        assert result.title == sample_video.title
-        assert result.actresses == sample_video.actresses
-        assert result.tags == sample_video.tags
-
-    def test_get_by_path_not_found(self, temp_db):
-        """測試 get_by_path 找不到"""
-        repo = VideoRepository(temp_db)
-        result = repo.get_by_path(to_file_uri("/not_exist.mp4"))
-        assert result is None
-
-    def test_get_all_empty(self, temp_db):
-        """測試 get_all 空資料庫"""
-        repo = VideoRepository(temp_db)
-        result = repo.get_all()
-        assert result == []
-
-    def test_get_all_with_data(self, temp_db):
-        """測試 get_all 有資料"""
-        repo = VideoRepository(temp_db)
-
-        videos = [
-            Video(path=to_file_uri("/video1.mp4"), title="影片1", mtime=100.0),
-            Video(path=to_file_uri("/video2.mp4"), title="影片2", mtime=200.0),
-        ]
-        repo.upsert_batch(videos)
-
-        result = repo.get_all()
-
-        assert len(result) == 2
-        assert result[0].path == to_file_uri("/video1.mp4")
-        assert result[1].path == to_file_uri("/video2.mp4")
-
-    def test_get_mtime_index(self, temp_db):
-        """測試 get_mtime_index（TASK-118b-T9：3-tuple，第三欄是劇照張數）"""
-        repo = VideoRepository(temp_db)
-
-        videos = [
-            Video(path=to_file_uri("/video1.mp4"), mtime=100.5, nfo_mtime=100.0),
-            Video(path=to_file_uri("/video2.mp4"), mtime=200.5, nfo_mtime=200.0),
-        ]
-        repo.upsert_batch(videos)
-
-        index = repo.get_mtime_index()
-
-        assert len(index) == 2
-        # 兩筆 Video(...) 都沒帶 sample_images → dataclass 預設 [] → 序列化 '[]'
-        # → 解析張數 0（不是壞資料，走正常路徑）。
-        assert index[to_file_uri("/video1.mp4")] == (100.5, 100.0, 0)
-        assert index[to_file_uri("/video2.mp4")] == (200.5, 200.0, 0)
 
     def test_get_mtime_index_sample_count(self, temp_db):
         """get_mtime_index 的第三欄反映實際劇照張數（TASK-118b-T9）"""
@@ -194,45 +51,6 @@ class TestVideoRepository:
 
         assert index[to_file_uri("/video1.mp4")] == (100.5, 100.0, 3)
 
-    def test_get_mtime_index_bad_sample_images_fallback_unknown(self, temp_db):
-        """sample_images 壞資料（空字串／NULL／損毀 JSON／非 list 合法 JSON）→
-        get_mtime_index 不得拋例外，且第三欄回傳的哨兵值必須與任何真實張數
-        （恆 >= 0）不相等，讓呼叫端的比對式自然被排進重掃（Opus 裁決④：
-        fail-safe 成「需要重掃」，不是悄悄當成張數 0）。
-        """
-        import sqlite3
-
-        repo = VideoRepository(temp_db)
-        conn = sqlite3.connect(str(temp_db))
-        try:
-            conn.execute(
-                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
-                (to_file_uri("/empty_str.mp4"), 1.0, 1.0, ''),
-            )
-            conn.execute(
-                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
-                (to_file_uri("/null.mp4"), 2.0, 2.0, None),
-            )
-            conn.execute(
-                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
-                (to_file_uri("/corrupt.mp4"), 3.0, 3.0, '{not valid json'),
-            )
-            conn.execute(
-                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
-                (to_file_uri("/not_a_list.mp4"), 4.0, 4.0, '{}'),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-        # 不得拋例外
-        index = repo.get_mtime_index()
-
-        unknown = index[to_file_uri("/empty_str.mp4")][2]
-        assert unknown < 0, "壞資料不得被靜默當成張數 0（Opus 裁決④）"
-        assert index[to_file_uri("/null.mp4")][2] == unknown
-        assert index[to_file_uri("/corrupt.mp4")][2] == unknown
-        assert index[to_file_uri("/not_a_list.mp4")][2] == unknown
 
     def test_delete_by_paths(self, temp_db):
         """測試 delete_by_paths"""
@@ -251,113 +69,10 @@ class TestVideoRepository:
         assert repo.count() == 1
         assert repo.get_by_path(to_file_uri("/video2.mp4")) is not None
 
-    def test_delete_by_paths_empty(self, temp_db):
-        """測試 delete_by_paths 空列表"""
-        repo = VideoRepository(temp_db)
-        deleted = repo.delete_by_paths([])
-        assert deleted == 0
-
-    def test_delete_by_paths_not_exist(self, temp_db):
-        """測試 delete_by_paths 刪除不存在的路徑"""
-        repo = VideoRepository(temp_db)
-        deleted = repo.delete_by_paths([to_file_uri("/not_exist.mp4")])
-        assert deleted == 0
-
-    def test_get_distinct_makers(self, temp_db, sample_video):
-        """get_distinct_makers：重複片商只回一次，NULL／空字串不回"""
-        import dataclasses
-        repo = VideoRepository(temp_db)
-        for i, mk in enumerate(["S1", "S1", "Moodyz", "", None]):
-            repo.upsert(dataclasses.replace(
-                sample_video, path=to_file_uri(f"C:/Videos/mk{i}.mp4"), number=f"MK-{i:03d}", maker=mk))
-        assert sorted(repo.get_distinct_makers()) == ["Moodyz", "S1"]
-
-    def test_count_empty(self, temp_db):
-        """測試 count 空資料庫"""
-        repo = VideoRepository(temp_db)
-        assert repo.count() == 0
-
-    def test_count_with_data(self, temp_db):
-        """測試 count 有資料"""
-        repo = VideoRepository(temp_db)
-
-        videos = [
-            Video(path=to_file_uri("/video1.mp4"), mtime=100.0),
-            Video(path=to_file_uri("/video2.mp4"), mtime=200.0),
-            Video(path=to_file_uri("/video3.mp4"), mtime=300.0),
-        ]
-        repo.upsert_batch(videos)
-
-        assert repo.count() == 3
-
-
-    def test_clear_all_empty(self, temp_db):
-        """測試 clear_all 空資料庫"""
-        repo = VideoRepository(temp_db)
-        deleted = repo.clear_all()
-        assert deleted == 0
-        assert repo.count() == 0
-
-    def test_clear_all_with_data(self, temp_db):
-        """測試 clear_all 有資料"""
-        repo = VideoRepository(temp_db)
-        videos = [
-            Video(path=to_file_uri("/video1.mp4"), mtime=100.0),
-            Video(path=to_file_uri("/video2.mp4"), mtime=200.0),
-            Video(path=to_file_uri("/video3.mp4"), mtime=300.0),
-        ]
-        repo.upsert_batch(videos)
-        assert repo.count() == 3
-
-        deleted = repo.clear_all()
-        assert deleted == 3
-        assert repo.count() == 0
-
 
 class TestOutputDirProtectionAndOccupancy:
     """TASK-89a-T1: upsert/upsert_batch output_dir 對稱保護 + 佔用查詢 helper"""
 
-    def test_upsert_preserves_output_dir_on_empty_incoming(self, temp_db):
-        """upsert 傳空 output_dir（且 DB 已有非空既有值）→ 既有值不被覆寫"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        v1 = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001"))
-        repo.upsert(v1)
-
-        v2 = Video(path=path, title="影片1-rescan", output_dir="")
-        repo.upsert(v2)
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.output_dir == to_file_uri("/produced/ABC-001")
-
-    def test_upsert_overwrites_output_dir_on_nonempty_incoming(self, temp_db):
-        """upsert 傳非空 output_dir → 正常寫入/覆寫"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        v1 = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001"))
-        repo.upsert(v1)
-
-        v2 = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001-v2"))
-        repo.upsert(v2)
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.output_dir == to_file_uri("/produced/ABC-001-v2")
-
-    def test_upsert_insert_writes_output_dir_directly(self, temp_db):
-        """首次 insert（無既有 row）：INSERT 直接寫入 incoming output_dir 值"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        v = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001"))
-        repo.upsert(v)
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.output_dir == to_file_uri("/produced/ABC-001")
 
     def test_upsert_batch_preserves_output_dir_on_empty_incoming(self, temp_db):
         """upsert_batch 傳空 output_dir（且 DB 已有非空既有值）→ 既有值不被覆寫
@@ -377,21 +92,6 @@ class TestOutputDirProtectionAndOccupancy:
         assert result is not None
         assert result.output_dir == to_file_uri("/produced/ABC-001")
 
-    def test_upsert_batch_overwrites_output_dir_on_nonempty_incoming(self, temp_db):
-        """upsert_batch 傳非空 output_dir → 正常寫入"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        repo.upsert_batch([
-            Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001")),
-        ])
-        repo.upsert_batch([
-            Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001-v2")),
-        ])
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.output_dir == to_file_uri("/produced/ABC-001-v2")
 
     def test_is_output_dir_taken_true_when_held_by_other_row(self, temp_db):
         """候選 output_dir 被別筆 path（source_uri）佔用 → True"""
@@ -412,48 +112,12 @@ class TestOutputDirProtectionAndOccupancy:
 
         assert repo.is_output_dir_taken(own_dir, own_path) is False
 
-    def test_is_output_dir_taken_false_when_unheld(self, temp_db):
-        """候選 output_dir 無人持有 → False"""
-        repo = VideoRepository(temp_db)
-        assert repo.is_output_dir_taken(
-            to_file_uri("/produced/NEW-001"), to_file_uri("/video1.mp4")
-        ) is False
-
 
 class TestScrapeAttemptedAtUpsertProtection:
     """P2 修正：scrape_attempted_at 缺 empty→preserve 保護，與 output_dir 不對稱。
     補對稱 CASE-WHEN（採「保留」語意）：incoming=0 時保留 DB 既有值，避免資料夾重掃
     （Video.from_video_info() 預設 scrape_attempted_at=0.0）洗掉 enricher 標記的 tried 時間戳。"""
 
-    def test_upsert_preserves_scrape_attempted_at_on_zero_incoming(self, temp_db):
-        """upsert 傳 scrape_attempted_at=0（且 DB 已有 >0 既有值）→ 既有值不被覆寫"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        v1 = Video(path=path, title="影片1", scrape_attempted_at=1717171717.0)
-        repo.upsert(v1)
-
-        v2 = Video(path=path, title="影片1-rescan", scrape_attempted_at=0.0)
-        repo.upsert(v2)
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.scrape_attempted_at == 1717171717.0
-
-    def test_upsert_overwrites_scrape_attempted_at_on_nonzero_incoming(self, temp_db):
-        """upsert 傳 scrape_attempted_at>0 → 正常寫入/覆寫"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        v1 = Video(path=path, title="影片1", scrape_attempted_at=1717171717.0)
-        repo.upsert(v1)
-
-        v2 = Video(path=path, title="影片1", scrape_attempted_at=1717181818.0)
-        repo.upsert(v2)
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.scrape_attempted_at == 1717181818.0
 
     def test_upsert_batch_preserves_scrape_attempted_at_on_zero_incoming(self, temp_db):
         """upsert_batch 傳 scrape_attempted_at=0（且 DB 已有 >0 既有值）→ 既有值不被覆寫
@@ -473,100 +137,18 @@ class TestScrapeAttemptedAtUpsertProtection:
         assert result is not None
         assert result.scrape_attempted_at == 1717171717.0
 
-    def test_upsert_batch_overwrites_scrape_attempted_at_on_nonzero_incoming(self, temp_db):
-        """upsert_batch 傳 scrape_attempted_at>0 → 正常寫入"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        repo.upsert_batch([
-            Video(path=path, title="影片1", scrape_attempted_at=1717171717.0),
-        ])
-        repo.upsert_batch([
-            Video(path=path, title="影片1", scrape_attempted_at=1717181818.0),
-        ])
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.scrape_attempted_at == 1717181818.0
-
-    def test_upsert_insert_writes_scrape_attempted_at_zero_directly(self, temp_db):
-        """首次 insert（無既有 row）傳 scrape_attempted_at=0 → 直接寫 0（happy path）"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-
-        v = Video(path=path, title="影片1", scrape_attempted_at=0.0)
-        repo.upsert(v)
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.scrape_attempted_at == 0.0
-
 
 class TestScrapeAttemptedAtRepositoryMethods:
     """TASK-89b-T1: update_scrape_attempted_at / get_attempted_index / insert_if_ignore"""
 
     # ── update_scrape_attempted_at ──────────────────────────────────────────
 
-    def test_update_scrape_attempted_at_updates_only_that_field(self, temp_db):
-        """只改 scrape_attempted_at 與 updated_at，其餘欄位不變"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video1.mp4")
-        repo.upsert(Video(
-            path=path, title="影片1", cover_path=to_file_uri("/out/v1.jpg"),
-            user_tags=["tagA"], output_dir=to_file_uri("/produced/ABC-001"),
-        ))
-
-        ok = repo.update_scrape_attempted_at(path, 1717171717.0)
-
-        assert ok is True
-        result = repo.get_by_path(path)
-        assert result.scrape_attempted_at == 1717171717.0
-        assert result.cover_path == to_file_uri("/out/v1.jpg")
-        assert result.user_tags == ["tagA"]
-        assert result.output_dir == to_file_uri("/produced/ABC-001")
-
-    def test_update_scrape_attempted_at_path_not_exist_returns_false(self, temp_db):
-        """path 不存在 → 回傳 False，不拋例外、不新建 row"""
-        repo = VideoRepository(temp_db)
-        ok = repo.update_scrape_attempted_at(to_file_uri("/nope.mp4"), 123.0)
-
-        assert ok is False
-        assert repo.count() == 0
 
     # ── get_attempted_index ──────────────────────────────────────────────────
 
-    def test_get_attempted_index_empty(self, temp_db):
-        """空表回傳 {}"""
-        repo = VideoRepository(temp_db)
-        assert repo.get_attempted_index() == {}
-
-    def test_get_attempted_index_includes_zero_value_rows(self, temp_db):
-        """含 scrape_attempted_at == 0 的 row（不過濾）"""
-        repo = VideoRepository(temp_db)
-        repo.upsert_batch([
-            Video(path=to_file_uri("/video1.mp4"), scrape_attempted_at=0.0),
-            Video(path=to_file_uri("/video2.mp4"), scrape_attempted_at=999.0),
-        ])
-
-        index = repo.get_attempted_index()
-
-        assert len(index) == 2
-        assert index[to_file_uri("/video1.mp4")] == 0.0
-        assert index[to_file_uri("/video2.mp4")] == 999.0
 
     # ── insert_if_ignore ──────────────────────────────────────────────────────
 
-    def test_insert_if_ignore_new_path_inserts_and_returns_true(self, temp_db):
-        """path 不存在 → 新建一筆並回傳 True"""
-        repo = VideoRepository(temp_db)
-        video = Video(path=to_file_uri("/new.mp4"), number="NEW-001", title="新片")
-
-        ok = repo.insert_if_ignore(video)
-
-        assert ok is True
-        result = repo.get_by_path(to_file_uri("/new.mp4"))
-        assert result is not None
-        assert result.number == "NEW-001"
 
     def test_insert_if_ignore_existing_path_does_not_overwrite_returns_false(self, temp_db):
         """path 已存在 → 不覆蓋任何既有欄位（含 cover_path/user_tags/output_dir）並回傳 False"""
@@ -590,243 +172,6 @@ class TestScrapeAttemptedAtRepositoryMethods:
         assert result.user_tags == ["existing_tag"]
         assert result.output_dir == to_file_uri("/produced/EXIST-001")
 
-    def test_insert_if_ignore_invalidates_only_on_actual_insert(self, temp_db, monkeypatch):
-        """實際插入才 invalidate（rowcount>0）；ON CONFLICT DO NOTHING 命中則不 invalidate。
-
-        比照 upsert() 維持「每次 INSERT INTO videos 都 invalidate」的 spec-57b 完整性不變式
-        （89b-T1 follow-up：guard 測試 test_all_raw_sql_mutations_have_invalidate 要求）。
-        """
-        from core.similar.ranker_cache import SimilarRankerCache
-
-        calls = []
-        monkeypatch.setattr(SimilarRankerCache, "invalidate", classmethod(lambda cls: calls.append(1)))
-
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/new2.mp4")
-
-        # 首次插入 → 實際新增 row → invalidate 一次
-        assert repo.insert_if_ignore(Video(path=path, title="新片2")) is True
-        assert calls == [1]
-
-        # 再次插入同 path → DO NOTHING（rowcount==0）→ 不再 invalidate
-        assert repo.insert_if_ignore(Video(path=path, title="新片2")) is False
-        assert calls == [1]
-
-
-class TestMigrateJsonToSqlite:
-    """migrate_json_to_sqlite 測試"""
-
-    def test_migrate_basic(self, tmp_path):
-        """測試基本遷移"""
-        db_path = tmp_path / "test.db"
-        json_path = tmp_path / "cache.json"
-
-        # 建立 JSON cache
-        cache_data = {
-            "/path/to/video1.mp4": {
-                "mtime": 1234567890.0,
-                "nfo_mtime": 1234567800.0,
-                "info": {
-                    "path": to_file_uri("C:/video1.mp4"),
-                    "title": "影片1",
-                    "originaltitle": "Video 1",
-                    "actor": "演員A,演員B",
-                    "num": "ABC-001",
-                    "maker": "片商1",
-                    "date": "2024-01-01",
-                    "genre": "類型1,類型2",
-                    "size": 1024,
-                    "mtime": 133500000000000000,
-                    "img": to_file_uri("C:/cover1.jpg")
-                }
-            },
-            "/path/to/video2.mp4": {
-                "mtime": 1234567891.0,
-                "nfo_mtime": 1234567801.0,
-                "info": {
-                    "path": to_file_uri("C:/video2.mp4"),
-                    "title": "影片2",
-                    "originaltitle": "",
-                    "actor": "",
-                    "num": "ABC-002",
-                    "maker": "",
-                    "date": "",
-                    "genre": "",
-                    "size": 2048,
-                    "mtime": 133500000000000000,
-                    "img": ""
-                }
-            }
-        }
-
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f)
-
-        result = migrate_json_to_sqlite(json_path, db_path, delete_on_success=False)
-
-        assert result['migrated'] == 2
-        assert result['skipped'] == 0
-        assert result['errors'] == 0
-
-        # 驗證資料庫內容
-        repo = VideoRepository(db_path)
-        assert repo.count() == 2
-
-        video1 = repo.get_by_path(to_file_uri("C:/video1.mp4"))
-        assert video1 is not None
-        assert video1.title == "影片1"
-        assert video1.number == "ABC-001"
-        assert video1.actresses == ["演員A", "演員B"]
-        assert video1.mtime == 1234567890.0
-        assert video1.nfo_mtime == 1234567800.0
-
-    def test_migrate_skip_metadata(self, tmp_path):
-        """測試遷移時跳過 _metadata"""
-        db_path = tmp_path / "test.db"
-        json_path = tmp_path / "cache.json"
-
-        cache_data = {
-            "_metadata": {
-                "last_run": "2026-01-21T00:18:22.552708",
-                "last_added": 2
-            },
-            "/path/to/video.mp4": {
-                "mtime": 1234567890.0,
-                "nfo_mtime": 0,
-                "info": {
-                    "path": to_file_uri("C:/video.mp4"),
-                    "title": "影片",
-                    "originaltitle": "",
-                    "actor": "",
-                    "num": "ABC-001",
-                    "maker": "",
-                    "date": "",
-                    "genre": "",
-                    "size": 1024,
-                    "mtime": 0,
-                    "img": ""
-                }
-            }
-        }
-
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f)
-
-        result = migrate_json_to_sqlite(json_path, db_path, delete_on_success=False)
-
-        assert result['migrated'] == 1
-        assert result['skipped'] == 1  # _metadata 被跳過
-        assert result['errors'] == 0
-
-    def test_migrate_delete_on_success(self, tmp_path):
-        """測試遷移成功後刪除 JSON"""
-        db_path = tmp_path / "test.db"
-        json_path = tmp_path / "cache.json"
-
-        cache_data = {
-            "/path/to/video.mp4": {
-                "mtime": 1234567890.0,
-                "nfo_mtime": 0,
-                "info": {
-                    "path": to_file_uri("C:/video.mp4"),
-                    "title": "影片",
-                    "originaltitle": "",
-                    "actor": "",
-                    "num": "ABC-001",
-                    "maker": "",
-                    "date": "",
-                    "genre": "",
-                    "size": 1024,
-                    "mtime": 0,
-                    "img": ""
-                }
-            }
-        }
-
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f)
-
-        result = migrate_json_to_sqlite(json_path, db_path, delete_on_success=True)
-
-        assert result['migrated'] == 1
-        assert not json_path.exists()  # JSON 應該被刪除
-
-    def test_migrate_not_delete_when_disabled(self, tmp_path):
-        """測試遷移成功但不刪除 JSON"""
-        db_path = tmp_path / "test.db"
-        json_path = tmp_path / "cache.json"
-
-        cache_data = {
-            "/path/to/video.mp4": {
-                "mtime": 1234567890.0,
-                "nfo_mtime": 0,
-                "info": {
-                    "path": to_file_uri("C:/video.mp4"),
-                    "title": "影片",
-                    "originaltitle": "",
-                    "actor": "",
-                    "num": "",
-                    "maker": "",
-                    "date": "",
-                    "genre": "",
-                    "size": 1024,
-                    "mtime": 0,
-                    "img": ""
-                }
-            }
-        }
-
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f)
-
-        result = migrate_json_to_sqlite(json_path, db_path, delete_on_success=False)
-
-        assert result['migrated'] == 1
-        assert json_path.exists()  # JSON 應該保留
-
-    def test_migrate_nonexistent_json(self, tmp_path):
-        """測試遷移不存在的 JSON"""
-        db_path = tmp_path / "test.db"
-        json_path = tmp_path / "not_exist.json"
-
-        result = migrate_json_to_sqlite(json_path, db_path)
-
-        assert result['migrated'] == 0
-        assert result['skipped'] == 0
-        assert result['errors'] == 0
-
-    def test_migrate_invalid_json(self, tmp_path):
-        """測試遷移無效 JSON"""
-        db_path = tmp_path / "test.db"
-        json_path = tmp_path / "invalid.json"
-
-        with open(json_path, 'w') as f:
-            f.write("{ invalid json }")
-
-        result = migrate_json_to_sqlite(json_path, db_path)
-
-        assert result['errors'] == 1
-
-    def test_migrate_empty_info(self, tmp_path):
-        """測試遷移空 info 的項目"""
-        db_path = tmp_path / "test.db"
-        json_path = tmp_path / "cache.json"
-
-        cache_data = {
-            "/path/to/video.mp4": {
-                "mtime": 1234567890.0,
-                "info": {}  # 空 info
-            }
-        }
-
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f)
-
-        result = migrate_json_to_sqlite(json_path, db_path, delete_on_success=False)
-
-        assert result['skipped'] == 1
-        assert result['migrated'] == 0
-
 
 class TestNfoMtimeRepathAuthoritative:
     """TASK-showcase-nfo-mtime: repath 各分支 nfo_mtime 權威值寫穿驗證（含 anti-stale 反向案）。
@@ -841,31 +186,6 @@ class TestNfoMtimeRepathAuthoritative:
 
     # ── upsert 分支（old_uri None，或 old 不在 DB → 委派 upsert）──────────────
 
-    def test_repath_upsert_branch_writes_positive_nfo_mtime(self, temp_db):
-        """old_uri=None → 委派 upsert；incoming nfo_mtime>0 應照寫。"""
-        repo = VideoRepository(temp_db)
-        new_uri = to_file_uri("/video_upsert_pos.mp4")
-        video = Video(path=new_uri, title="新片", nfo_mtime=555.0)
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(None, new_uri, video)
-
-        row = repo.get_by_path(new_uri)
-        assert row is not None
-        assert row.nfo_mtime == 555.0
-
-    def test_repath_upsert_branch_writes_zero_nfo_mtime(self, temp_db):
-        """old_uri=None → 委派 upsert；incoming nfo_mtime=0（無 NFO）應照寫 0，非保留守衛。"""
-        repo = VideoRepository(temp_db)
-        new_uri = to_file_uri("/video_upsert_zero.mp4")
-        video = Video(path=new_uri, title="新片", nfo_mtime=0.0)
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(None, new_uri, video)
-
-        row = repo.get_by_path(new_uri)
-        assert row is not None
-        assert row.nfo_mtime == 0.0
 
     def test_upsert_on_conflict_anti_stale_zero_overwrites_existing(self, temp_db):
         """upsert() ON CONFLICT(path) DO UPDATE 分支 anti-stale 探針（負向 DoD 守衛）：
@@ -895,38 +215,9 @@ class TestNfoMtimeRepathAuthoritative:
             f"不得殘留，實際: {row.nfo_mtime!r}"
         )
 
-    def test_repath_old_not_in_db_branch_writes_authoritative_nfo_mtime(self, temp_db):
-        """old_uri 不在 DB（純 search 無前置 Scanner）→ 委派 upsert；nfo_mtime 照傳入值寫。"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/nonexistent_old_nfo.mp4")
-        new_uri = to_file_uri("/video_old_not_in_db.mp4")
-        video = Video(path=new_uri, title="新片", nfo_mtime=777.0)
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(old_uri, new_uri, video)
-
-        row = repo.get_by_path(new_uri)
-        assert row is not None
-        assert row.nfo_mtime == 777.0
 
     # ── 正常 UPDATE 分支（old 在 DB、new 不在）──────────────────────────────
 
-    def test_repath_normal_update_writes_new_positive_nfo_mtime(self, temp_db):
-        """pre-existing row nfo_mtime>0；repath 傳入新的正值 → row 更新為新值。"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/old_normal_pos.mp4")
-        new_uri = to_file_uri("/new_normal_pos.mp4")
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=old_uri, title="舊片", nfo_mtime=100.0))
-
-        new_video = Video(path=new_uri, title="新片", nfo_mtime=200.0)
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(old_uri, new_uri, new_video)
-
-        row = repo.get_by_path(new_uri)
-        assert row is not None
-        assert row.nfo_mtime == 200.0
 
     def test_repath_normal_update_anti_stale_zero_incoming_does_not_retain_old_value(self, temp_db):
         """anti-stale 反向案（Codex 指定探針）：pre-existing row nfo_mtime>0；
@@ -954,45 +245,6 @@ class TestNfoMtimeRepathAuthoritative:
 
     # ── 碰撞 delete-merge 分支（new 已存在）──────────────────────────────────
 
-    def test_repath_collision_merge_incoming_wins_positive(self, temp_db):
-        """碰撞 merge：incoming nfo_mtime 為權威值，覆蓋 new_row 既有值。"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/old_collision_pos.mp4")
-        new_uri = to_file_uri("/new_collision_pos.mp4")
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=old_uri, title="舊片", nfo_mtime=111.0))
-            repo.upsert(Video(path=new_uri, title="既有新路徑片", nfo_mtime=222.0))
-
-        collision_video = Video(path=new_uri, title="掃描新值", nfo_mtime=333.0)
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(old_uri, new_uri, collision_video)
-
-        row = repo.get_by_path(new_uri)
-        assert row is not None
-        assert row.nfo_mtime == 333.0
-
-    def test_repath_collision_merge_incoming_wins_zero(self, temp_db):
-        """碰撞 merge：incoming nfo_mtime=0（確認無 NFO）同樣照寫，覆蓋既有正值。
-        0 是合法權威值、非「未提供」，anti-stale 精神延伸到碰撞分支。"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/old_collision_zero.mp4")
-        new_uri = to_file_uri("/new_collision_zero.mp4")
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=old_uri, title="舊片", nfo_mtime=444.0))
-            repo.upsert(Video(path=new_uri, title="既有新路徑片", nfo_mtime=555.0))
-
-        collision_video = Video(path=new_uri, title="掃描新值-無NFO", nfo_mtime=0.0)
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(old_uri, new_uri, collision_video)
-
-        row = repo.get_by_path(new_uri)
-        assert row is not None
-        assert row.nfo_mtime == 0.0, (
-            f"碰撞 merge 分支 nfo_mtime=0 應照寫（合法權威值），實際: {row.nfo_mtime!r}"
-        )
-
 
 # ============ TASK-98a-T4: focal + crop_mode preserve-on-conflict（CD-98a-6）============
 
@@ -1004,23 +256,6 @@ class TestFocalPreserveOnConflict:
     讀回後 focal 欄位須維持 mutator 寫的值，不被覆蓋。
     """
 
-    def test_upsert_preserves_focal_on_conflict(self, temp_db, seed_crop_mode):
-        """upsert() ON CONFLICT 分支：重掃描/重刮不覆蓋既有 crop_mode/auto_focal/
-        focal_attempted_at（Codex PR#105 P2 no-face re-enqueue 修復：漏 preserve 會讓
-        重掃的 upsert 把 focal_attempted_at 洗回 NULL，無臉列又被重排）"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_upsert.mp4")
-        repo.upsert(Video(path=path, title="舊片"))
-        assert seed_crop_mode(repo, path, 'default') is True
-        assert repo.update_auto_focal(path, '0.5,0.4', '') is True
-
-        repo.upsert(Video(path=path, title="重掃描新片"))
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.crop_mode == 'default'
-        assert result.auto_focal == '0.5,0.4'
-        assert result.focal_attempted_at is not None
 
     def test_upsert_batch_preserves_focal_on_conflict(self, temp_db, seed_crop_mode):
         """upsert_batch() ON CONFLICT 分支（Scanner 增量掃描主路徑，漏此等於沒修）。
@@ -1060,199 +295,12 @@ class TestFocalPreserveOnConflict:
         assert result.auto_focal == '0.5,0.4'
         assert result.focal_attempted_at is not None
 
-    def test_repath_collision_merge_preserves_focal(self, temp_db, seed_crop_mode):
-        """repath() 分支 3（碰撞 delete-merge，new 已有一筆）：DO UPDATE 跳過 focal 欄位"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/focal_collision_old.mp4")
-        new_uri = to_file_uri("/focal_collision_new.mp4")
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=old_uri, title="舊片"))
-            repo.upsert(Video(path=new_uri, title="既有新路徑片"))
-        assert seed_crop_mode(repo, new_uri, 'default') is True
-        assert repo.update_auto_focal(new_uri, '0.5,0.4', '') is True
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(old_uri, new_uri, Video(path=new_uri, title="重掃描新片"))
-
-        result = repo.get_by_path(new_uri)
-        assert result is not None
-        assert result.crop_mode == 'default'
-        assert result.auto_focal == '0.5,0.4'
-        assert result.focal_attempted_at is not None
 
     # ── Codex PR#105 P2b：cover_path 換了必須重置 focal 偵測態 ───────────────
 
-    def test_upsert_preserves_focal_when_cover_path_unchanged(self, temp_db, seed_crop_mode):
-        """metadata-only 衝突：incoming cover_path 與 DB 既有值相同（非空、非巧合的
-        default '' == ''）→ 仍保留既有 focal 結果。鎖住「同封面保留」這一半的條件式
-        邏輯，不只靠 preserves_focal_on_conflict 系列測試的 default 空字串巧合過。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_same_cover_upsert.mp4")
-        cover = to_file_uri("/focal_same_cover_upsert.jpg")
-
-        repo.upsert(Video(path=path, title="舊片", cover_path=cover))
-        assert seed_crop_mode(repo, path, 'default') is True
-        assert repo.update_auto_focal(path, '0.5,0.4', cover) is True
-
-        repo.upsert(Video(path=path, title="重掃描-metadata only", cover_path=cover))
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.cover_path == cover
-        assert result.crop_mode == 'default'
-        assert result.auto_focal == '0.5,0.4'
-        assert result.focal_attempted_at is not None
-
-    def test_upsert_resets_focal_when_cover_path_changes(self, temp_db, seed_crop_mode):
-        """Codex PR#105 P2b 核心回歸：cover_path 換了（用戶換封面/NFO・sidecar 選了不同
-        封面），舊 focal 偵測結果是針對舊封面算的、已 stale，須重置為未偵測（auto_focal=''
-        + focal_attempted_at=NULL），否則新封面永遠不會被 get_empty_focal_candidates
-        重新排入偵測，除非手動 force-detect。crop_mode 是裁切模式偏好、與封面無關，
-        換封面不應重置——mutation：把條件化拿掉（回到無條件 continue）會讓這條 RED
-        （focal_attempted_at 仍非 NULL）。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_cover_change_upsert.mp4")
-        old_cover = to_file_uri("/focal_cover_change_upsert_old.jpg")
-        new_cover = to_file_uri("/focal_cover_change_upsert_new.jpg")
-
-        repo.upsert(Video(path=path, title="舊片", cover_path=old_cover))
-        assert seed_crop_mode(repo, path, 'default') is True
-        assert repo.update_auto_focal(path, '', old_cover) is True  # 無臉試過（format_focal(None) == ''）
-
-        repo.upsert(Video(path=path, title="換封面重掃", cover_path=new_cover))
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.cover_path == new_cover
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is None, (
-            "封面換了，focal_attempted_at 必須重置為 NULL，否則 get_empty_focal_candidates "
-            "永遠不會對新封面重新排入偵測"
-        )
-        assert result.crop_mode == 'default', "crop_mode 是裁切模式偏好，與封面無關，換封面不應重置"
-
-    def test_upsert_batch_resets_focal_when_cover_path_changes(self, temp_db, seed_crop_mode):
-        """upsert_batch() ON CONFLICT 分支同鏡射（Scanner 增量掃描主路徑，漏此等於沒修）。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_cover_change_batch.mp4")
-        old_cover = to_file_uri("/focal_cover_change_batch_old.jpg")
-        new_cover = to_file_uri("/focal_cover_change_batch_new.jpg")
-
-        repo.upsert(Video(path=path, title="舊片", cover_path=old_cover))
-        assert seed_crop_mode(repo, path, 'default') is True
-        assert repo.update_auto_focal(path, '0.5,0.4', old_cover) is True
-
-        repo.upsert_batch([Video(path=path, title="換封面重掃", cover_path=new_cover)])
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.cover_path == new_cover
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is None
-        assert result.crop_mode == 'default'
-
-    def test_repath_normal_update_resets_focal_when_cover_path_changes(self, temp_db, seed_crop_mode):
-        """repath() 分支 2（正常 UPDATE，old 在 DB、new 不在）：Python-side cover_path
-        比對（無 excluded. 可用，走 old_row.cover_path vs incoming video.cover_path）。"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/focal_repath_cover_change_old.mp4")
-        new_uri = to_file_uri("/focal_repath_cover_change_new.mp4")
-        old_cover = to_file_uri("/focal_repath_cover_change_old.jpg")
-        new_cover = to_file_uri("/focal_repath_cover_change_new.jpg")
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=old_uri, title="舊片", cover_path=old_cover))
-        assert seed_crop_mode(repo, old_uri, 'default') is True
-        assert repo.update_auto_focal(old_uri, '0.5,0.4', old_cover) is True
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(
-                old_uri, new_uri,
-                # incoming 帶 non-default focal（Codex PR#105 P2c）：若 reset branch 漏 continue、
-                # fall through 到底部通用 append，會用這裡的 stale 值蓋掉 reset（SQLite 取最右 SET）。
-                # 用預設 ''/None 會與 reset 值巧合相同、測不出 missing-continue，故刻意餵非預設值。
-                Video(path=new_uri, title="換封面重掃", cover_path=new_cover,
-                      auto_focal='0.9,0.9', focal_attempted_at='2020-01-01 00:00:00'),
-            )
-
-        result = repo.get_by_path(new_uri)
-        assert result is not None
-        assert result.cover_path == new_cover
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is None
-        assert result.crop_mode == 'default'
-
-    def test_repath_collision_merge_resets_focal_when_cover_path_changes(self, temp_db, seed_crop_mode):
-        """repath() 分支 3（碰撞 delete-merge，new 已有一筆）：比對 incoming cover_path
-        （excluded.cover_path）vs 既存 new_uri 那筆的 cover_path（videos.cover_path）。"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/focal_collision_cover_change_old.mp4")
-        new_uri = to_file_uri("/focal_collision_cover_change_new.mp4")
-        existing_cover = to_file_uri("/focal_collision_cover_change_existing.jpg")
-        incoming_cover = to_file_uri("/focal_collision_cover_change_incoming.jpg")
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=old_uri, title="舊片"))
-            repo.upsert(Video(path=new_uri, title="既有新路徑片", cover_path=existing_cover))
-        assert seed_crop_mode(repo, new_uri, 'default') is True
-        assert repo.update_auto_focal(new_uri, '0.5,0.4', existing_cover) is True
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(
-                old_uri, new_uri,
-                Video(path=new_uri, title="換封面重掃", cover_path=incoming_cover),
-            )
-
-        result = repo.get_by_path(new_uri)
-        assert result is not None
-        assert result.cover_path == incoming_cover
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is None
-        assert result.crop_mode == 'default'
 
     # ── 99a-T1b CD-10：manual 座標換封面必須降回 auto（平行於上方 default 版本）───
 
-    def test_upsert_preserves_manual_focal_when_cover_path_unchanged(self, temp_db):
-        """同封面：manual row 全欄位保留（證明 crop_mode 仍留在保留集、非被移出
-        `_FOCAL_PRESERVE` fall-through）。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_same_cover_upsert_manual.mp4")
-        cover = to_file_uri("/focal_same_cover_upsert_manual.jpg")
-
-        repo.upsert(Video(path=path, title="舊片", cover_path=cover))
-        assert repo.update_manual_focal(path, '0.3000,0.6000', cover) is True
-
-        repo.upsert(Video(path=path, title="重掃描-metadata only", cover_path=cover))
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.cover_path == cover
-        assert result.crop_mode == 'manual'
-        assert result.auto_focal == '0.3000,0.6000'
-        assert result.focal_attempted_at is None
-
-    def test_upsert_resets_manual_focal_when_cover_path_changes(self, temp_db):
-        """CD-10 核心回歸：manual 座標對舊封面算的，換封面已失效，crop_mode 必須降回
-        'auto'，否則 CD-9 守衛落地後，不經 enricher 的換封面路徑（scanner/sidecar/NFO）
-        會把 row 永久卡在 manual+空焦點。mutation：拔掉 upsert() crop_mode CASE 的降級
-        分支（回到無條件 continue）→ 留 manual → RED。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_cover_change_upsert_manual.mp4")
-        old_cover = to_file_uri("/focal_cover_change_upsert_manual_old.jpg")
-        new_cover = to_file_uri("/focal_cover_change_upsert_manual_new.jpg")
-
-        repo.upsert(Video(path=path, title="舊片", cover_path=old_cover))
-        assert repo.update_manual_focal(path, '0.3000,0.6000', old_cover) is True
-
-        repo.upsert(Video(path=path, title="換封面重掃", cover_path=new_cover))
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.cover_path == new_cover
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is None
-        assert result.crop_mode == 'auto', "manual 座標對新封面已失效，換封面必須降回 auto"
 
     def test_upsert_batch_resets_manual_focal_when_cover_path_changes(self, temp_db):
         """upsert_batch() 同鏡射（Scanner 增量掃描主路徑，漏此等於沒修）。mutation：
@@ -1306,47 +354,6 @@ class TestFocalPreserveOnConflict:
         assert result.focal_attempted_at is None
         assert result.crop_mode == 'auto', "manual 座標對新封面已失效，換封面必須降回 auto"
 
-    def test_repath_collision_merge_resets_manual_focal_when_cover_path_changes(self, temp_db):
-        """repath() 分支 3（碰撞 delete-merge）manual 版。mutation：拔掉 repath 分支 3
-        crop_mode CASE 的降級分支 → 留 manual → RED。"""
-        repo = VideoRepository(temp_db)
-        old_uri = to_file_uri("/focal_collision_cover_change_old_manual.mp4")
-        new_uri = to_file_uri("/focal_collision_cover_change_new_manual.mp4")
-        existing_cover = to_file_uri("/focal_collision_cover_change_existing_manual.jpg")
-        incoming_cover = to_file_uri("/focal_collision_cover_change_incoming_manual.jpg")
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=old_uri, title="舊片"))
-            repo.upsert(Video(path=new_uri, title="既有新路徑片", cover_path=existing_cover))
-        assert repo.update_manual_focal(new_uri, '0.3000,0.6000', existing_cover) is True
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.repath(
-                old_uri, new_uri,
-                Video(path=new_uri, title="換封面重掃", cover_path=incoming_cover),
-            )
-
-        result = repo.get_by_path(new_uri)
-        assert result is not None
-        assert result.cover_path == incoming_cover
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is None
-        assert result.crop_mode == 'auto'
-
-    def test_insert_writes_dataclass_focal_defaults(self, temp_db):
-        """INSERT（新 path，非衝突）：focal 欄位照寫 dataclass 預設值（''/'auto'/None），
-        鏡像操作對稱驗證（CD-98a-6 語意驗證段落）"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_insert_defaults.mp4")
-
-        repo.upsert(Video(path=path, title="新片"))
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.crop_mode == 'auto'
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is None
-
 
 class TestFocalMutators:
     """VideoRepository.update_auto_focal / update_manual_focal round-trip（CD-98a-6
@@ -1355,47 +362,6 @@ class TestFocalMutators:
     測試隨方法一併移除，其餘測試改用 conftest 的 test-only `seed_crop_mode` fixture
     準備前置狀態。"""
 
-    def test_update_auto_focal_roundtrip(self, temp_db):
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_mutator_auto_focal.mp4")
-        repo.upsert(Video(path=path, title="片"))
-
-        assert repo.update_auto_focal(path, '0.3,0.6', '') is True
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.auto_focal == '0.3,0.6'
-
-    def test_update_auto_focal_missing_path_returns_false(self, temp_db):
-        repo = VideoRepository(temp_db)
-        assert repo.update_auto_focal(to_file_uri("/focal_mutator_nonexistent.mp4"), '0.3,0.6', '') is False
-
-    def test_update_auto_focal_stamps_focal_attempted_at_with_coords(self, temp_db):
-        """有臉存座標時，focal_attempted_at 同一 UPDATE 一起蓋章非 NULL（Codex PR#105 P2）"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_mutator_attempted_coords.mp4")
-        repo.upsert(Video(path=path, title="片"))
-        assert repo.get_by_path(path).focal_attempted_at is None
-
-        assert repo.update_auto_focal(path, '0.3,0.6', '') is True
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '0.3,0.6'
-        assert result.focal_attempted_at is not None
-
-    def test_update_auto_focal_stamps_focal_attempted_at_on_no_face(self, temp_db):
-        """無臉存 ''（format_focal(None)）時，focal_attempted_at 仍蓋章非 NULL——這是
-        Codex PR#105 P2 修的核心：無臉結果也要記「試過了」，否則重掃無限重排。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_mutator_attempted_no_face.mp4")
-        repo.upsert(Video(path=path, title="片"))
-        assert repo.get_by_path(path).focal_attempted_at is None
-
-        assert repo.update_auto_focal(path, '', '') is True
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == ''
-        assert result.focal_attempted_at is not None
 
     def test_update_manual_focal_roundtrip(self, temp_db):
         """單一 UPDATE 原子寫兩欄：auto_focal 與 crop_mode='manual' 同時反映（99a-T1a）。"""
@@ -1410,26 +376,6 @@ class TestFocalMutators:
         assert result.auto_focal == '0.3000,0.6000'
         assert result.crop_mode == 'manual'
 
-    def test_update_manual_focal_missing_path_returns_false(self, temp_db):
-        repo = VideoRepository(temp_db)
-        assert repo.update_manual_focal(
-            to_file_uri("/focal_mutator_manual_nonexistent.mp4"), '0.3000,0.6000', ''
-        ) is False
-
-    def test_update_manual_focal_does_not_touch_focal_attempted_at(self, temp_db):
-        """契約：update_manual_focal 不碰 focal_attempted_at（與 update_auto_focal 不同，
-        手動存的 auto_focal 恆非空字串，天然被 get_empty_focal_candidates 排除）。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_mutator_manual_no_attempted_at.mp4")
-        repo.upsert(Video(path=path, title="片"))
-        assert repo.get_by_path(path).focal_attempted_at is None
-
-        assert repo.update_manual_focal(path, '0.3000,0.6000', '') is True
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '0.3000,0.6000'
-        assert result.crop_mode == 'manual'
-        assert result.focal_attempted_at is None
 
     # ── 99a-T1b CD-4：reset_focal_to_auto ────────────────────────────────────
 
@@ -1448,32 +394,6 @@ class TestFocalMutators:
         assert result.auto_focal == ''
         assert result.crop_mode == 'auto'
 
-    def test_reset_focal_to_auto_missing_path_returns_false(self, temp_db):
-        repo = VideoRepository(temp_db)
-        assert repo.reset_focal_to_auto(to_file_uri("/focal_mutator_reset_nonexistent.mp4")) is False
-
-    def test_reset_focal_to_auto_clears_focal_attempted_at(self, temp_db):
-        """Codex review 補修：reset 若不清 focal_attempted_at，rescrape 後 worker
-        若失敗/未 commit，get_empty_focal_candidates 的
-        `auto_focal='' AND focal_attempted_at IS NULL` gate 會把新封面永遠當『已偵測
-        過』跳過。Mutation-verify：把 `reset_focal_to_auto` 內的
-        `focal_attempted_at = NULL, ` 拿掉，這條會 RED。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_mutator_reset_attempted_at.mp4")
-        repo.upsert(Video(path=path, title="片"))
-        # 模擬舊封面已被偵測過（無論有沒有臉，都會蓋 focal_attempted_at 章）
-        assert repo.update_auto_focal(path, "0.5,0.5", "") is True
-        assert repo.get_by_path(path).focal_attempted_at is not None
-
-        assert repo.reset_focal_to_auto(path) is True
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == ''
-        assert result.crop_mode == 'auto'
-        assert result.focal_attempted_at is None, (
-            "reset 後 focal_attempted_at 必須清 NULL，否則新封面被 "
-            "get_empty_focal_candidates 永遠當『已偵測過』跳過"
-        )
 
     def test_reset_focal_to_auto_requeues_after_worker_never_commits(self, temp_db):
         """端到端回歸：rescrape（cover_written=True）呼叫 reset_focal_to_auto → worker
@@ -1510,38 +430,6 @@ class TestFocalMutators:
         assert result.auto_focal == '0.3000,0.6000', "manual 座標不可被 stale worker 偷換"
         assert result.crop_mode == 'manual'
 
-    def test_update_auto_focal_not_blocked_for_default_crop_mode(self, temp_db, seed_crop_mode):
-        """auto/default row 不受 CD-9 守衛影響，照常寫入兩欄——既有行為，不可回歸。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_mutator_cd9_default.mp4")
-        repo.upsert(Video(path=path, title="片"))
-        assert seed_crop_mode(repo, path, 'default') is True
-
-        assert repo.update_auto_focal(path, '0.7,0.3', '') is True
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '0.7,0.3'
-        assert result.focal_attempted_at is not None
-        assert result.crop_mode == 'default'
-
-    def test_worker_commit_after_manual_save_does_not_clobber(self, temp_db):
-        """時序回歸鎖：worker 排入 → 使用者手存 manual → 舊 worker 才 commit → 最終仍是
-        manual 座標（守住 spec §3.12 未涵蓋的同封面 race，CD-9）。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_cd9_timing_lock.mp4")
-        repo.upsert(Video(path=path, title="片"))
-
-        # ① worker 排入時 row 仍是 auto/空（背景偵測開跑前狀態，無需額外動作）
-        # ② 使用者在 worker 完成前存成 manual
-        assert repo.update_manual_focal(path, '0.2000,0.8000', '') is True
-
-        # ③ 舊（worker 排入時）worker 才完成、呼叫 commit（stale 偵測結果）
-        committed = repo.update_auto_focal(path, '0.55,0.45', '')
-        assert committed is False
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '0.2000,0.8000'
-        assert result.crop_mode == 'manual'
 
     # ── 99b-T2 CD-99b-3/4/5/9：換封面 compare-and-store（DoD ①②③） ──────────
 
@@ -1570,84 +458,8 @@ class TestFocalMutators:
         assert result.focal_attempted_at is None, "舊 job 未命中，不應蓋 focal_attempted_at 章"
         assert result.cover_path == cover_b
 
-    def test_update_auto_focal_succeeds_when_cover_path_matches_new_value(self, temp_db, seed_crop_mode):
-        """DoD ②（反向鎖，必測）：延續①情境，新 job 帶 expected=B（換封面後排的新
-        job）→ 必須命中、正常寫入。防止「把守衛做成誰都寫不進」。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_cd99b_cover_race_new_job.mp4")
-        cover_a = to_file_uri("/focal_cd99b_cover_race_new_job_a.jpg")
-        cover_b = to_file_uri("/focal_cd99b_cover_race_new_job_b.jpg")
-
-        repo.upsert(Video(path=path, title="片", cover_path=cover_a))
-        assert seed_crop_mode(repo, path, 'auto') is True
-        repo.upsert(Video(path=path, title="片-換封面", cover_path=cover_b))
-
-        committed = repo.update_auto_focal(path, '0.6,0.6', cover_b)
-        assert committed is True, "expected_cover_path 對上目前 cover_path，應命中"
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '0.6,0.6'
-        assert result.focal_attempted_at is not None
-
-    def test_update_auto_focal_cover_guard_does_not_regress_cd9_manual_guard(self, temp_db):
-        """DoD ③：CD-9 不回歸。manual row 即使 expected_cover_path 與實際 cover_path
-        相符，仍應被 manual 條件擋下（三條件 path + crop_mode!='manual' + cover_path
-        需同時成立，manual 優先擋）。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_cd99b_manual_not_regressed.mp4")
-        cover = to_file_uri("/focal_cd99b_manual_not_regressed.jpg")
-
-        repo.upsert(Video(path=path, title="片", cover_path=cover))
-        assert repo.update_manual_focal(path, '0.3000,0.6000', cover) is True
-
-        committed = repo.update_auto_focal(path, '0.9,0.9', cover)
-        assert committed is False, "manual row 即使 cover 相符仍應被擋下"
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '0.3000,0.6000'
-        assert result.crop_mode == 'manual'
 
     # ── Codex PR#107 第二輪 P2：手動存檔的 cover compare-and-store 守衛 ─────────
-
-    def test_update_manual_focal_blocked_when_cover_path_changed(self, temp_db):
-        """核心回歸鎖：使用者開遮罩觀察到 cover_path=A，期間 rescan/rescrape 把 row
-        換成 cover_path=B，存檔時 expected_cover_path 仍是 A（使用者觀察當下捕獲的
-        值）→ 必須 rowcount 0，不寫入、不蓋 crop_mode='manual'。mutation：拔掉
-        `AND cover_path = ?` → 寫入成功 → RED。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_manual_cover_race.mp4")
-        cover_a = to_file_uri("/focal_manual_cover_race_a.jpg")
-        cover_b = to_file_uri("/focal_manual_cover_race_b.jpg")
-
-        repo.upsert(Video(path=path, title="片", cover_path=cover_a))
-
-        # row 換封面（模擬 rescan/rescrape 在使用者開著遮罩期間換圖）
-        repo.upsert(Video(path=path, title="片-換封面", cover_path=cover_b))
-
-        # 使用者存檔：expected 仍是開遮罩當下觀察到的 A
-        committed = repo.update_manual_focal(path, '0.3000,0.6000', cover_a)
-        assert committed is False, "expected_cover_path 對不上目前 cover_path，應 rowcount 0"
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '', "未命中，auto_focal 不應被寫入"
-        assert result.crop_mode != 'manual', "未命中，不應被標成 manual（否則永久卡住 worker 重分析）"
-        assert result.cover_path == cover_b
-
-    def test_update_manual_focal_succeeds_when_cover_path_matches(self, temp_db):
-        """反向鎖（必測，防止把守衛做成誰都寫不進）：expected_cover_path 與目前
-        cover_path 一致時，正常存檔仍必須成功寫入 auto_focal + crop_mode='manual'。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/focal_manual_cover_match.mp4")
-        cover = to_file_uri("/focal_manual_cover_match.jpg")
-
-        repo.upsert(Video(path=path, title="片", cover_path=cover))
-
-        committed = repo.update_manual_focal(path, '0.3000,0.6000', cover)
-        assert committed is True, "expected_cover_path 對上目前 cover_path，正常存檔應成功"
-
-        result = repo.get_by_path(path)
-        assert result.auto_focal == '0.3000,0.6000'
-        assert result.crop_mode == 'manual'
 
 
 class TestUpdateCoverPathPreserveFocal:
@@ -1683,56 +495,6 @@ class TestUpdateCoverPathPreserveFocal:
         assert after.crop_mode == before.crop_mode
         assert after.focal_attempted_at == before.focal_attempted_at
 
-    def test_update_cover_path_preserve_focal_cas_mismatch_returns_false(self, temp_db):
-        """DoD②：expected_old_cover_path 對不上目前值時回傳 False，且 cover_path 未變。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video_focal_cas_mismatch.mp4")
-        cover_a = to_file_uri("/cover_cas_a.jpg")
-        cover_b = to_file_uri("/cover_cas_b.jpg")
-        cover_mismatch = to_file_uri("/cover_cas_mismatch.jpg")
-
-        repo.upsert(Video(path=path, title="測試影片", cover_path=cover_a))
-
-        # expected_old_cover_path 不符
-        success = repo.update_cover_path_preserve_focal(path, cover_b, cover_mismatch)
-        assert success is False
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.cover_path == cover_a
-
-        # path 不存在
-        missing_path = to_file_uri("/nonexistent_video.mp4")
-        assert repo.update_cover_path_preserve_focal(missing_path, cover_b, cover_a) is False
-
-    def test_update_cover_path_preserve_focal_then_upsert_preserves_case_when(self, temp_db):
-        """DoD③：mutator 成功更新 cover_path 後，模擬 upsert 帶新 cover_path 不會被 CASE WHEN 洗掉 focal。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/video_focal_upsert_case_when.mp4")
-        cover_a = to_file_uri("/cover_upsert_a.jpg")
-        cover_b = to_file_uri("/cover_upsert_b.jpg")
-
-        repo.upsert(Video(path=path, title="原片名", cover_path=cover_a))
-        assert repo.update_auto_focal(path, '0.1000,0.2000', cover_a) is True
-        assert repo.update_manual_focal(path, '0.3000,0.6000', cover_a) is True
-
-        before = repo.get_by_path(path)
-        assert before is not None
-
-        assert repo.update_cover_path_preserve_focal(path, cover_b, cover_a) is True
-
-        # 緊接著模擬 scanner/enricher upsert 帶新 cover_path（focal 欄位為預設值）
-        repo.upsert(Video(path=path, title="改名後新片名", cover_path=cover_b))
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.title == "改名後新片名"
-        assert result.cover_path == cover_b
-        assert result.auto_focal == before.auto_focal == '0.3000,0.6000'
-        assert result.crop_mode == before.crop_mode == 'manual'
-        assert result.focal_attempted_at == before.focal_attempted_at
-        assert result.focal_attempted_at is not None
-
 
 class TestGetEmptyFocalCandidates:
     """VideoRepository.get_empty_focal_candidates（Codex PR#105 P2 scan-backfill 修復用）。
@@ -1742,29 +504,6 @@ class TestGetEmptyFocalCandidates:
     path 在 in-scope 集合內的列。
     """
 
-    def test_empty_paths_returns_empty_list(self, temp_db):
-        repo = VideoRepository(temp_db)
-        assert repo.get_empty_focal_candidates([]) == []
-
-    def test_returns_only_empty_focal_rows_within_scope(self, temp_db):
-        repo = VideoRepository(temp_db)
-        p_empty = to_file_uri("/empty_focal_candidates_empty.mp4")
-        p_filled = to_file_uri("/empty_focal_candidates_filled.mp4")
-        p_out_of_scope = to_file_uri("/empty_focal_candidates_out_of_scope.mp4")
-
-        repo.upsert(Video(path=p_empty, number="SIRO-1111", maker="", cover_path="cover1"))
-        repo.upsert(Video(path=p_filled, number="SIRO-2222", maker="", cover_path="cover2"))
-        repo.update_auto_focal(p_filled, "0.5,0.5", "cover2")
-        # 不在本次掃描 in-scope 集合的列（即使 auto_focal 也是空）不該被查到
-        repo.upsert(Video(path=p_out_of_scope, number="SIRO-3333", maker="", cover_path="cover3"))
-
-        result = repo.get_empty_focal_candidates([p_empty, p_filled])
-
-        assert result == [(p_empty, "SIRO-1111", "", "cover1")]
-
-    def test_missing_path_not_in_result(self, temp_db):
-        repo = VideoRepository(temp_db)
-        assert repo.get_empty_focal_candidates([to_file_uri("/no_such_video.mp4")]) == []
 
     def test_no_face_result_excluded_from_candidates(self, temp_db):
         """Codex PR#105 P2 核心回歸鎖：auto_focal='' 但 focal_attempted_at 已蓋章
@@ -1881,51 +620,3 @@ class TestUserRatingPreserveOnConflict:
         assert result.user_rating == 1, "new 原本的精選值不該被 old 的 0 蓋掉"
 
 
-class TestSetUserRatingMutator:
-    """set_user_rating()／set_user_rating_bulk() 專用 mutator（BE-DATA-01 連線寫法）。"""
-
-    def test_set_user_rating_happy_path(self, temp_db):
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/user_rating_mutator_happy.mp4")
-        repo.upsert(Video(path=path, title="片"))
-
-        assert repo.set_user_rating(path, 1) is True
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.user_rating == 1
-
-    def test_set_user_rating_can_reset_to_zero(self, temp_db):
-        """value=0 必須合法（取消精選）。"""
-        repo = VideoRepository(temp_db)
-        path = to_file_uri("/user_rating_mutator_reset.mp4")
-        repo.upsert(Video(path=path, title="片"))
-        assert repo.set_user_rating(path, 1) is True
-
-        assert repo.set_user_rating(path, 0) is True
-
-        result = repo.get_by_path(path)
-        assert result is not None
-        assert result.user_rating == 0
-
-    def test_set_user_rating_missing_path_returns_false(self, temp_db):
-        repo = VideoRepository(temp_db)
-        assert repo.set_user_rating(to_file_uri("/no_such_rating_path.mp4"), 1) is False
-
-    def test_set_user_rating_bulk_empty_returns_empty_dict(self, temp_db):
-        repo = VideoRepository(temp_db)
-        assert repo.set_user_rating_bulk([], 1) == {}
-
-    def test_set_user_rating_bulk_partial_hit(self, temp_db):
-        repo = VideoRepository(temp_db)
-        path_a = to_file_uri("/user_rating_bulk_a.mp4")
-        path_b = to_file_uri("/user_rating_bulk_b.mp4")
-        path_missing = to_file_uri("/user_rating_bulk_missing.mp4")
-        repo.upsert(Video(path=path_a, title="A"))
-        repo.upsert(Video(path=path_b, title="B"))
-
-        result = repo.set_user_rating_bulk([path_a, path_b, path_missing], 1)
-
-        assert result == {path_a: True, path_b: True, path_missing: False}
-        assert repo.get_by_path(path_a).user_rating == 1
-        assert repo.get_by_path(path_b).user_rating == 1

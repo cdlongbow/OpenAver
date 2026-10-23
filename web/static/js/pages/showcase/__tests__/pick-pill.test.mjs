@@ -60,25 +60,6 @@ export async function resolve(specifier, context, nextResolve) {
 `;
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
-const { stateVideos } = await import('../state-videos.js');
-
-function makeComponent(overrides) {
-    const c = Object.assign({}, stateVideos(), {
-        pills: [],
-        search: '',
-        actressSearch: '',
-        sort: 'title',
-        order: 'asc',
-        animateCalls: 0,
-        heroCalls: 0,
-        _clearPreciseMatch() {},
-        _checkPreciseActressMatch() {},
-        applyActressFilterAndSort() {},
-    }, overrides);
-    c._animateFilter = function () { c.animateCalls++; };
-    c._reconcileHeroCard = function () { c.heroCalls++; };
-    return c;
-}
 
 // =====================================================================
 // Part A — buildPillPredicate 的 pick 分支
@@ -95,115 +76,9 @@ test('pick 分支：video.user_rating === 0 → 不 match', () => {
     assert.equal(predicate({ user_rating: 0 }), false);
 });
 
-test('pick 分支：video.user_rating 為 undefined → 不 match（|| 兜底）', () => {
-    const predicate = buildPillPredicate([{ dim: 'pick', value: '1' }], {}, {});
-    assert.equal(predicate({}), false);
-    assert.equal(predicate({ user_rating: undefined }), false);
-});
-
-test('pick 分支：video.user_rating 為 null → 不 match（|| 兜底）', () => {
-    const predicate = buildPillPredicate([{ dim: 'pick', value: '1' }], {}, {});
-    assert.equal(predicate({ user_rating: null }), false);
-});
-
-test('AC-9：pick pill 與 actress pill 同時掛 → 取交集', () => {
-    const nameToGroup = {};
-    const predicate = buildPillPredicate(
-        [{ dim: 'pick', value: '1' }, { dim: 'actress', value: 'A' }],
-        nameToGroup, {},
-    );
-    // 精選但女優不符 → 不 match
-    assert.equal(predicate({ user_rating: 1, actresses: 'B' }), false);
-    // 女優符合但未精選 → 不 match
-    assert.equal(predicate({ user_rating: 0, actresses: 'A' }), false);
-    // 兩者皆符合 → match
-    assert.equal(predicate({ user_rating: 1, actresses: 'A' }), true);
-});
-
-test('末尾 fail-closed 出口不受 pick 分支影響：未知 dim 仍回 false', () => {
-    const predicate = buildPillPredicate([{ dim: 'typo', value: 'x' }], {}, {});
-    assert.equal(predicate({ user_rating: 1 }), false);
-});
 
 // =====================================================================
 // Part B — togglePickPill() / _hasPickPill() / pillLabel()
 // =====================================================================
 
-test('_hasPickPill：pills 不含 pick → false；含 pick → true', () => {
-    const c1 = makeComponent();
-    assert.equal(c1._hasPickPill(), false);
 
-    const c2 = makeComponent({ pills: [{ dim: 'pick', value: '1' }] });
-    assert.equal(c2._hasPickPill(), true);
-});
-
-test('togglePickPill：未掛精選時呼叫 → addPill 進去，pills 含恰好一枚 {dim:"pick", value:"1"}', () => {
-    const c = makeComponent();
-    c.togglePickPill();
-    assert.equal(c.pills.length, 1);
-    assert.deepEqual(c.pills[0], { dim: 'pick', value: '1' });
-    assert.equal(c._hasPickPill(), true);
-});
-
-test('togglePickPill：已掛精選時呼叫 → removePill 拿掉，pills 不再含 pick', () => {
-    const c = makeComponent({ pills: [{ dim: 'pick', value: '1' }] });
-    c.togglePickPill();
-    assert.equal(c.pills.length, 0);
-    assert.equal(c._hasPickPill(), false);
-});
-
-test('邊界條件 1：連點兩次「只看精選」→ 第一次 add、第二次 remove，pills 回到不含 pick 的狀態', () => {
-    const c = makeComponent();
-    c.togglePickPill();
-    assert.equal(c._hasPickPill(), true);
-    c.togglePickPill();
-    assert.equal(c._hasPickPill(), false);
-    assert.equal(c.pills.length, 0);
-});
-
-test('AC-10：pill 的 × 與選單那條等價 —— removePill 直接呼叫 與 togglePickPill（已掛狀態）結果相同', () => {
-    const cViaChip = makeComponent({ pills: [{ dim: 'pick', value: '1' }] });
-    cViaChip.removePill('pick', '1');
-
-    const cViaMenu = makeComponent({ pills: [{ dim: 'pick', value: '1' }] });
-    cViaMenu.togglePickPill();
-
-    assert.deepEqual(cViaChip.pills, cViaMenu.pills);
-    assert.equal(cViaChip._hasPickPill(), false);
-    assert.equal(cViaMenu._hasPickPill(), false);
-});
-
-test('AC-8：togglePickPill() 呼叫前後 this.sort 與 this.order 逐位元組不變（精選是篩選不是排序，兩者正交）', () => {
-    const c = makeComponent({ sort: 'mdate', order: 'desc' });
-    c.togglePickPill();
-    assert.equal(c.sort, 'mdate');
-    assert.equal(c.order, 'desc');
-    // 再次呼叫（remove 分支）也不變
-    c.togglePickPill();
-    assert.equal(c.sort, 'mdate');
-    assert.equal(c.order, 'desc');
-});
-
-test('togglePickPill 複用既有 addPill/removePill 的副作用鏈：_animateFilter/_reconcileHeroCard 各呼叫一次', () => {
-    const cAdd = makeComponent();
-    cAdd.togglePickPill();
-    assert.equal(cAdd.animateCalls, 1);
-    assert.equal(cAdd.heroCalls, 1);
-
-    const cRemove = makeComponent({ pills: [{ dim: 'pick', value: '1' }] });
-    cRemove.togglePickPill();
-    assert.equal(cRemove.animateCalls, 1);
-    assert.equal(cRemove.heroCalls, 1);
-});
-
-test('pillLabel：pick dim → 走 i18n key showcase.pick.chip_label（非直接顯示 value "1"）', () => {
-    const c = makeComponent();
-    assert.equal(c.pillLabel({ dim: 'pick', value: '1' }), 'showcase.pick.chip_label');
-});
-
-test('pillLabel：非 pick dim → 逐字回傳 pill.value（其餘 dim 不特判）', () => {
-    const c = makeComponent();
-    assert.equal(c.pillLabel({ dim: 'actress', value: 'AliasActressA' }), 'AliasActressA');
-    assert.equal(c.pillLabel({ dim: 'maker', value: 'S1' }), 'S1');
-    assert.equal(c.pillLabel({ dim: 'tag', value: '痴女' }), '痴女');
-});

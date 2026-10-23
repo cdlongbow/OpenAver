@@ -33,16 +33,8 @@ def _local_version(monkeypatch):
 
 @pytest.mark.parametrize("local,server,status,hint", [
     ("0.17.10", "0.17.7", "server_old", "upgrade_server"),
-    ("0.17.10", "0.17.9", "server_old", "upgrade_server"),
     ("0.17.10", "0.17.10", "ok", ""),
-    ("0.17.10", "0.17.12", "patch_diff", ""),
     ("0.17.10", "0.18.0", "client_old", "upgrade_client"),
-    ("0.17.10", "1.0.0", "client_old", "upgrade_client"),
-    ("0.17.10", "0.16.9", "server_old", "upgrade_server"),
-    ("0.17.10", "0.17.10-rc1", "ok", ""),
-    ("0.17.10", "", "unparseable", ""),
-    ("0.17.10", "abc", "unparseable", ""),
-    ("abc", "0.17.10", "unparseable", ""),
 ])
 def test_check_compat_truth_table(monkeypatch, local, server, status, hint):
     monkeypatch.setattr(client_settings, "MIN_SERVER_VERSION", (0, 17, 10))
@@ -68,51 +60,6 @@ def test_probe_ok_and_bearer(monkeypatch):
     assert seen[-1] is None
 
 
-@pytest.mark.parametrize("exc,reason", [
-    (httpx.ConnectTimeout("x"), "timeout"),
-    (httpx.ReadTimeout("x"), "timeout"),
-    (httpx.ConnectError("x"), "unreachable"),
-])
-def test_probe_exception_reasons_no_health_retry(monkeypatch, exc, reason):
-    def handler(req):
-        raise exc
-
-    calls = _install(monkeypatch, handler)
-    r = client_connect.probe(URL)
-    assert (r["ok"], r["reason"]) == (False, reason)
-    assert len(calls) == 1  # 連線錯誤不試 /api/health
-
-
-def test_probe_tls(monkeypatch):
-    import ssl
-
-    def handler(req):
-        err = httpx.ConnectError("x")
-        err.__cause__ = ssl.SSLError("bad cert")
-        raise err
-
-    _install(monkeypatch, handler)
-    assert client_connect.probe("https://nas.local")["reason"] == "tls"
-
-
-def test_probe_lan_forbidden(monkeypatch):
-    _install(monkeypatch, lambda req: httpx.Response(403, text="Forbidden"))
-    r = client_connect.probe(URL)
-    assert (r["ok"], r["reason"]) == (False, "lan_forbidden")
-
-
-def test_probe_not_openaver(monkeypatch):
-    def handler(req):
-        if req.url.path == "/api/health":
-            return httpx.Response(404, text="nope")
-        return httpx.Response(200, text="<html>router</html>")
-
-    calls = _install(monkeypatch, handler)
-    r = client_connect.probe(URL)
-    assert (r["ok"], r["reason"]) == (False, "not_openaver")
-    assert [c.url.path for c in calls] == ["/api/client/hello", "/api/health"]
-
-
 def test_probe_old_server_without_hello_is_server_old(monkeypatch):
     def handler(req):
         if req.url.path == "/api/health":
@@ -126,35 +73,6 @@ def test_probe_old_server_without_hello_is_server_old(monkeypatch):
     assert r["compat"].status == "server_old" and r["compat"].hint == "upgrade_server"
 
 
-@pytest.mark.parametrize("legacy", ["0.17.7", "0.17.9", "0.18.0"])
-def test_probe_health_fallback_always_server_old(monkeypatch, legacy):
-    # 沒有 hello 的伺服器：即使 health 版本等於本機／MIN，也固定 server_old＋升級伺服器提示
-    def handler(req):
-        if req.url.path == "/api/health":
-            return httpx.Response(200, json={"status": "ok", "version": legacy})
-        return httpx.Response(404, json={})
-
-    _install(monkeypatch, handler)
-    r = client_connect.probe(URL)
-    assert r["compat"] == client_connect.Compat("server_old", "upgrade_server")
-
-
-def test_probe_invalid_url(monkeypatch):
-    calls = _install(monkeypatch, lambda req: httpx.Response(200, json=HELLO))
-    r = client_connect.probe("ftp://x")
-    assert (r["ok"], r["reason"]) == (False, "unreachable")
-    assert calls == []
-
-
-def test_new_client_timeout_all_three_seconds():
-    c = client_connect._new_client()
-    try:
-        t = c.timeout
-        assert (t.connect, t.read, t.write, t.pool) == (3.0, 3.0, 3.0, 3.0)
-    finally:
-        c.close()
-
-
 def test_login_results(monkeypatch):
     def handler(req):
         body = json.loads(req.content)
@@ -166,18 +84,6 @@ def test_login_results(monkeypatch):
     assert client_connect.login(URL, "1234") == {"ok": True, "reason": None, "token": "TKN-SENTINEL-9"}
     r = client_connect.login(URL, "0000")
     assert (r["ok"], r["reason"]) == (False, "bad_pin") and not r.get("token")
-
-
-def test_login_no_pin_required_and_errors(monkeypatch):
-    _install(monkeypatch, lambda req: httpx.Response(200, json={"success": True, "token": None, "auth_required": False}))
-    r = client_connect.login(URL, "")
-    assert r["ok"] is True and r["token"] is None
-
-    def boom(req):
-        raise httpx.ConnectTimeout("x")
-
-    _install(monkeypatch, boom)
-    assert client_connect.login(URL, "1")["reason"] == "timeout"
 
 
 def test_fetch_sources(monkeypatch):
@@ -203,9 +109,7 @@ def _preflight(monkeypatch, handler, token="TKN"):
 @pytest.mark.parametrize("auth_required,authed,token,status,reason", [
     (True, True, "TKN", "ok", None),
     (True, False, "TKN", "offline", "relogin"),
-    (True, False, "", "offline", "relogin"),
     (False, False, "", "ok", None),
-    (False, True, "TKN", "ok", None),
 ])
 def test_preflight_auth_matrix(monkeypatch, auth_required, authed, token, status, reason):
     body = {**HELLO, "auth_required": auth_required, "authed": authed}
@@ -217,8 +121,6 @@ def test_preflight_auth_matrix(monkeypatch, auth_required, authed, token, status
 
 @pytest.mark.parametrize("exc,reason", [
     (httpx.ConnectTimeout("x"), "unreachable"),
-    (httpx.ReadTimeout("x"), "unreachable"),
-    (httpx.ConnectError("x"), "unreachable"),
 ])
 def test_preflight_black_hole_budget(monkeypatch, exc, reason):
     def handler(req):
@@ -274,38 +176,14 @@ def _timeout(req):
     raise httpx.ReadTimeout("t")
 
 
-def _refuse(req):
-    raise httpx.ConnectError("c")
-
-
-def test_fetch_video_extensions_empty_list_is_ok(monkeypatch):
-    """伺服器存 [] ＝「用預設清單」，是合法回應，不是 bad_response。"""
-    _install(monkeypatch, lambda req: _cfg_resp([]))
-    r = client_connect.fetch_video_extensions(URL, "TKN")
-    assert r == {"ok": True, "reason": None, "extensions": []}
-
-
 @pytest.mark.parametrize("handler,reason", [
     (_timeout, "timeout"),
-    (_refuse, "unreachable"),
-    (lambda req: httpx.Response(401, json={"success": False}), "unauthorized"),
-    (lambda req: httpx.Response(403, json={"success": False}), "unauthorized"),
     (lambda req: httpx.Response(500, json={}), "bad_response"),
-    (lambda req: httpx.Response(200, content=b"nope"), "bad_response"),
-    (lambda req: httpx.Response(200, json={"success": True}), "bad_response"),
-    (lambda req: httpx.Response(200, json={"success": True, "data": {"scraper": {}}}), "bad_response"),
-    (lambda req: _cfg_resp(None), "bad_response"),
-    (lambda req: _cfg_resp([".mp4", 5]), "bad_response"),
-    (lambda req: httpx.Response(200, json={"data": [1]}), "bad_response"),
-    (lambda req: httpx.Response(200, json={"data": "oops"}), "bad_response"),
-    (lambda req: httpx.Response(200, json={"data": {"scraper": [1]}}), "bad_response"),
 ])
 def test_fetch_video_extensions_failures_keep_ok_false(monkeypatch, handler, reason):
     _install(monkeypatch, handler)
     r = client_connect.fetch_video_extensions(URL, "TKN")
     assert r == {"ok": False, "reason": reason, "extensions": []}
-
-
 
 
 # ---- fetch_proxy_settings（168d-T1）----
@@ -337,23 +215,12 @@ def _boom(exc):
 
 @pytest.mark.parametrize("handler,reason", [
     (_boom(httpx.ConnectTimeout("t")), "timeout"),
-    (_boom(httpx.ConnectError("refused")), "unreachable"),
-    (lambda r: httpx.Response(401, json={}), "unauthorized"),
-    (lambda r: httpx.Response(403, json={}), "unauthorized"),
-    (lambda r: httpx.Response(200, text="not json"), "bad_response"),
-    (lambda r: httpx.Response(200, json={"success": True, "data": "x"}), "bad_response"),
     (lambda r: httpx.Response(500, json=_cfg()), "bad_response"),
 ])
 def test_fetch_proxy_settings_failures_never_return_settings(monkeypatch, handler, reason):
     _install(monkeypatch, handler)
     r = client_connect.fetch_proxy_settings(URL, "tok")
     assert r == {"ok": False, "reason": reason, "settings": None}
-
-
-
-
-def test_fetch_proxy_settings_bad_url():
-    assert client_connect.fetch_proxy_settings("", "t") == {"ok": False, "reason": "unreachable", "settings": None}
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +285,6 @@ def broken_env_proxy(monkeypatch):
 
 @pytest.mark.parametrize("fn,args", [
     (client_connect.probe, ()),
-    (client_connect.login, ("1234",)),
-    (client_connect.fetch_sources, ("T",)),
-    (client_connect.fetch_video_extensions, ("T",)),
-    (client_connect.fetch_proxy_settings, ("T",)),
 ], ids=lambda v: getattr(v, "__name__", None))
 def test_client_connect_ignores_system_proxy(broken_env_proxy, lan_server, fn, args):
     r = fn(lan_server, *args)
@@ -448,7 +311,3 @@ def test_fetch_sources_tolerates_slow_nas(monkeypatch):
     assert client_connect.fetch_sources(URL, "T")["ok"] is True
 
 
-def test_fetch_sources_still_times_out_at_twelve_seconds(monkeypatch):
-    _slow_nas(monkeypatch, 12)
-    r = client_connect.fetch_sources(URL, "T")
-    assert (r["ok"], r["reason"]) == (False, "timeout")

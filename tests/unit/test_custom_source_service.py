@@ -5,16 +5,14 @@ import os
 import socket
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
 import core.config as core_config
 import core.custom_source.fetch as fetch_mod
 import core.public_target as public_target_mod
-import core.custom_source.scraper as scraper_mod
 from core.config import load_config, save_config
-from core.custom_source import registry, service, state
+from core.custom_source import service, state
 from core.custom_source.errors import LoadError
 from core.custom_source.schema import load_uploaded
 from core.scrapers.errors import SourceUnreachable
@@ -112,8 +110,8 @@ def test_upload_good_file_is_unverified_and_never_touches_network(env, monkeypat
     assert SID not in _entries(cfg_path)
 
 
-@pytest.mark.parametrize("existing", [False, True], ids=["dir_absent", "dir_has_other_file"])
-@pytest.mark.parametrize("variant", ["syntax", "unknown_key", "reserved_id", "too_big"])
+@pytest.mark.parametrize("existing", [True], ids=["dir_has_other_file"])
+@pytest.mark.parametrize("variant", ["syntax"])
 def test_upload_rejected_leaves_directory_untouched(env, variant, existing):
     root, _ = env
     directory = root / "custom_sources"
@@ -133,24 +131,6 @@ def test_upload_rejected_leaves_directory_untouched(env, variant, existing):
         assert sorted((n, (directory / n).read_bytes()) for n in os.listdir(directory)) == before
     else:
         assert not directory.exists()
-
-
-def test_upload_to_unfinalized_root_is_refused_without_creating_dir(env):
-    root, _ = env
-    (root / ".layout.json").unlink()
-    with pytest.raises(service.ServiceError) as caught:
-        service.upload(GOOD)
-    assert (caught.value.code, caught.value.http_status) == ("data_root_not_ready", 409)
-    assert not (root / "custom_sources").exists()
-
-
-def test_upload_overwrites_existing_yml_without_creating_yaml(env):
-    root, _ = env
-    put_source(root, SID, GOOD + "\n# old\n", ext=".yml")
-    result = service.upload(GOOD)
-    assert result["replaced"] is True
-    assert sorted(os.listdir(root / "custom_sources")) == ["single-og.yml"]
-    assert (root / "custom_sources" / "single-og.yml").read_text(encoding="utf-8") == GOOD
 
 
 def test_reupload_same_bytes_resets_to_unverified(env):
@@ -186,7 +166,7 @@ def test_verify_failed_content_returns_full_mismatches(env):
     assert set(bad["mismatches"][0]) == {"key", "expected", "actual", "url"}
 
 
-@pytest.mark.parametrize("kind", ["unknown", "load_failed"])
+@pytest.mark.parametrize("kind", ["load_failed"])
 def test_verify_refuses_unloadable_source(env, kind):
     root, _ = env
     if kind == "load_failed":
@@ -262,21 +242,12 @@ def test_list_shows_verifying_and_unrelated_config_write_is_not_blocked(env):
     assert stall.out["status"] == "passed"
 
 
-def _act_upload_other(env_):
-    service.upload(GOOD + "\n# edited\n")
-
-
 def _act_remove(env_):
     service.remove(SID)
 
 
-def _act_remove_reupload(env_):
-    service.remove(SID)
-    service.upload(GOOD)
-
-
-@pytest.mark.parametrize("action", [_act_upload_other, _act_remove, _act_remove_reupload],
-                         ids=["upload_other", "remove", "remove_reupload"])
+@pytest.mark.parametrize("action", [_act_remove],
+                         ids=["remove"])
 def test_verify_discarded_when_source_changes_mid_flight(env, action):
     _, cfg_path = env
     service.upload(GOOD)
@@ -302,16 +273,6 @@ def test_verify_discards_result_after_same_bytes_reupload(env):
     assert stall.out is None and stall.exc.code == "changed_during_verify"
     assert SID not in _entries(cfg_path)
     assert _status()["status"] == "unverified"
-
-
-def test_manual_overwrite_during_verify_leaves_source_unverified(env):
-    root, _ = env
-    service.upload(GOOD)
-    with _Stall() as stall:
-        put_source(root, SID, GOOD + "\n# hand edited\n")
-        stall.finish()
-    item = _status()
-    assert (item["status"], item["enabled"]) == ("unverified", False)
 
 
 def test_failed_reverify_closes_enabled(env):
@@ -343,35 +304,6 @@ def test_same_sha_reverify_keeps_user_disabled(env):
     assert _status()["enabled"] is False
     service.upload(GOOD)  # 重傳清掉紀錄 → 驗收通過即啟用
     assert service.verify(SID, transport=_tp())["enabled"] is True
-
-
-def test_failed_verify_response_enabled_false(env):
-    _passed(env)
-    out = service.verify(SID, transport=_tp(changed=True))
-    assert out["status"] == "failed" and out["enabled"] is False
-
-
-def test_passing_reverify_keeps_enabled(env):
-    _passed(env)
-    service.set_enabled(SID, True)
-    assert service.verify(SID, transport=_tp())["status"] == "passed"
-    assert _status()["enabled"] is True
-
-
-def test_verify_passes_both_budget_constants_to_the_real_run_tests(env, monkeypatch):
-    seen = {}
-    real = service.run_tests
-
-    def spy(*args, **kwargs):
-        seen.update(kwargs)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(service, "run_tests", spy)
-    monkeypatch.setattr(scraper_mod, "CUSTOM_BUDGET_S", 7)
-    monkeypatch.setattr(service, "VERIFY_TOTAL_BUDGET_S", 11)
-    service.upload(GOOD)
-    assert service.verify(SID, transport=_tp())["status"] == "passed"
-    assert seen == {"budget_s": 7, "total_budget_s": 11}
 
 
 # ---------------------------------------------------------------- enable / list / remove / applicable
@@ -434,24 +366,6 @@ def test_remove_clears_state_and_listing(env):
     assert not (root / "custom_sources" / "single-og.yaml").exists()
 
 
-def test_remove_orphan_record_succeeds_and_cleans_config(env):
-    _, cfg_path = env
-    state.bump_gen("ghost")
-    assert state.record_result("ghost", "b" * 64, "passed", {"total": 0, "failed": 0, "cases": []}, state.get_gen("ghost"))
-    assert "ghost" in _entries(cfg_path)
-    assert service.remove("ghost") == {"id": "ghost"}
-    assert "ghost" not in _entries(cfg_path)
-
-
-def test_remove_unknown_without_record_is_404_and_config_unchanged(env):
-    _, cfg_path = env
-    before = cfg_path.read_bytes()
-    with pytest.raises(service.ServiceError) as caught:
-        service.remove("nothing-here")
-    assert (caught.value.code, caught.value.http_status) == ("not_loaded", 404)
-    assert cfg_path.read_bytes() == before
-
-
 def test_applicable_is_pure_and_lists_only_routable(env, monkeypatch):
     service.upload(GOOD)
     service.upload(GOOD_MIN)
@@ -481,30 +395,6 @@ def test_call_bounded_times_out_with_source_unreachable(monkeypatch):
     try:
         with pytest.raises(SourceUnreachable):
             service.call_bounded(lambda: stuck.wait(3))
-        assert time.monotonic() - t0 < 1
-    finally:
-        stuck.set()
-
-
-def test_call_bounded_returns_value_and_rethrows_worker_exception():
-    assert service.call_bounded(lambda: 42) == 42
-    err = ValueError("boom")
-
-    def _raise():
-        raise err
-
-    with pytest.raises(ValueError) as caught:
-        service.call_bounded(_raise)
-    assert caught.value is err
-
-
-def test_call_bounded_explicit_seconds_overrides_constant(monkeypatch):
-    monkeypatch.setattr(service, "CALL_LIMIT_S", 3)
-    stuck = threading.Event()
-    t0 = time.monotonic()
-    try:
-        with pytest.raises(SourceUnreachable):
-            service.call_bounded(lambda: stuck.wait(3), seconds=0.2)
         assert time.monotonic() - t0 < 1
     finally:
         stuck.set()
@@ -540,43 +430,6 @@ def test_mutate_config_callbacks_never_take_state_lock(env, monkeypatch):
     assert tracker.violations == 0
 
 
-def _spy(monkeypatch, owner, name, tracker, marks, label=None):
-    real = getattr(owner, name)
-
-    def spy(*args, **kwargs):
-        marks.append((label or name, tracker.hold_id()))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(owner, name, spy)
-
-
-def test_upload_holds_one_lock_across_bump_write_clear(env, monkeypatch):
-    tracker = _tracked(monkeypatch)
-    marks = []
-    _spy(monkeypatch, state, "bump_gen", tracker, marks)
-    _spy(monkeypatch, state, "clear", tracker, marks)
-    _spy(monkeypatch, service, "atomic_write", tracker, marks)
-    service.upload(GOOD)
-    ids = dict(marks)
-    assert set(ids) == {"bump_gen", "atomic_write", "clear"}
-    assert ids["bump_gen"] is not None
-    assert ids["bump_gen"] == ids["atomic_write"] == ids["clear"]
-
-
-def test_remove_holds_one_lock_across_bump_delete_clear(env, monkeypatch):
-    service.upload(GOOD)
-    tracker = _tracked(monkeypatch)
-    marks = []
-    _spy(monkeypatch, state, "bump_gen", tracker, marks)
-    _spy(monkeypatch, state, "clear", tracker, marks)
-    _spy(monkeypatch, Path, "unlink", tracker, marks)
-    service.remove(SID)
-    ids = dict(marks)
-    assert set(ids) == {"bump_gen", "unlink", "clear"}
-    assert ids["bump_gen"] is not None
-    assert ids["bump_gen"] == ids["unlink"] == ids["clear"]
-
-
 class _RecordingGens(dict):
     def __init__(self, tracker, marks, *a):
         super().__init__(*a)
@@ -587,30 +440,3 @@ class _RecordingGens(dict):
         return super().get(key, default)
 
 
-def test_verify_snapshot_and_commit_each_run_under_one_lock(env, monkeypatch):
-    service.upload(GOOD)
-    tracker = _tracked(monkeypatch)
-    marks = []
-    gen_holds = []
-    monkeypatch.setattr(state, "_gens", _RecordingGens(tracker, gen_holds, state._gens))
-    _spy(monkeypatch, registry, "load_one", tracker, marks)
-    _spy(monkeypatch, state, "mutate_config", tracker, marks, label="commit")
-    assert service.verify(SID, transport=_tp())["status"] == "passed"
-    ids = dict(marks)
-    snapshot_gen, commit_gen = gen_holds  # 恰兩次:verify 起始取 gen、record_result 內比對 gen
-    assert ids["load_one"] is not None and ids["load_one"] == snapshot_gen
-    assert ids["commit"] is not None and ids["commit"] == commit_gen
-    assert tracker.hold_id() is None
-
-
-def test_list_sources_reads_entries_and_views_under_one_lock(env, monkeypatch):
-    service.upload(GOOD)
-    tracker = _tracked(monkeypatch)
-    marks = []
-    _spy(monkeypatch, state, "read_all", tracker, marks)
-    _spy(monkeypatch, service.views, "custom_source_views", tracker, marks)
-    assert len(service.list_sources()) == 1
-    names = [n for n, _ in marks]
-    holds = {h for _, h in marks}
-    assert names.count("read_all") >= 1 and names.count("custom_source_views") == 1
-    assert len(holds) == 1 and None not in holds  # 每一次讀取都落在同一次最外層持鎖

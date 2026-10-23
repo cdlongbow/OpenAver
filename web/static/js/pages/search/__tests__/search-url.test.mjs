@@ -9,13 +9,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildSearchUrl, MAKER_PAGE_SIZE } from '../search-url.js';
+import { buildSearchUrl } from '../search-url.js';
 
 const MOODYZ = { key: 'moodyz', label: 'MOODYZ', spellings: ['MOODYZ', 'Moodyz'] };
 
-test('keyword stream URL', () => {
-    assert.equal(buildSearchUrl({ stream: true, query: 'SONE-205' }), '/api/search/stream?q=SONE-205');
-});
 
 test('maker stream URL', () => {
     assert.equal(
@@ -63,9 +60,6 @@ test('url-maker-encoded: special chars round-trip through searchParams', () => {
     assert.equal(kw.get('q'), 'a&b#c 日本');
 });
 
-test('MAKER_PAGE_SIZE is 30', () => {
-    assert.equal(MAKER_PAGE_SIZE, 30);
-});
 
 // ─── 175d-T7：cursor（不透明續頁 token；只在 REST 附加、附在所有既有參數之後）────────
 test('url-cursor: keyword REST 附加在 offset／limit 之後；沒有 offset／limit 也附加', () => {

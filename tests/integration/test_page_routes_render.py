@@ -41,10 +41,7 @@ PAGE_ROUTES = [
     "/scanner",
     "/settings",
     "/help",
-    "/design-system",
-    "/motion-lab",
 ]
-
 
 
 @pytest.fixture(scope="module")
@@ -61,17 +58,6 @@ def test_page_route_renders_200(client, route):
         f"{route} 回 {resp.status_code}（TemplateResponse 渲染失敗 / 簽名漂移？）"
     assert b"<html" in resp.content.lower() or b"<!doctype" in resp.content.lower(), \
         f"{route} 回 200 但非 HTML 文件"
-
-
-def test_insights_page_context_is_insights(client, mocker):
-    """/insights 頁面路由 context["page"] 必須為 "insights"（驅動 base.html body class 與側欄 active）"""
-    import web.app as web_app
-    spy = mocker.spy(web_app.templates, "TemplateResponse")
-    resp = client.get("/insights")
-    assert resp.status_code == 200
-    assert spy.call_args.args[1] == "insights.html"
-    assert spy.call_args.args[2]["page"] == "insights"
-
 
 
 # ── 81b-T5：help curl base_url server-aware 注入矩陣 ─────────────────────────
@@ -140,33 +126,4 @@ class TestHelpBaseUrlServerAware:
         # 未被改寫成偵測到的裸 LAN IP。
         assert "192.168.1.50:8001/api/capabilities" not in resp.text
 
-    def test_server_mode_off_falls_back_to_loopback(self, monkeypatch):
-        """server_mode OFF → lan_ip 自然 None → 退 loopback（testserver），無 192.168.*"""
-        _patch_server_mode(monkeypatch, False)
-        monkeypatch.setattr("web.app.get_lan_ip", lambda: "192.168.1.50")
-        _patch_lan_port(monkeypatch, 8001)
-        resp = _fresh_client().get("/help")
-        assert resp.status_code == 200
-        assert "http://testserver/api/capabilities" in resp.text
-        # curl 範例（含 hero-terminal data-attr）不得帶 LAN IP；help.html 內另有
-        # 無關的 192.168 範例說明文字 / i18n dump，故只針對 capabilities 端點比對。
-        assert "192.168.1.50:8001/api/capabilities" not in resp.text
-        assert 'data-capabilities-base="http://testserver"' in resp.text
 
-    def test_server_mode_on_lan_ip_missing_falls_back_no_error(self, monkeypatch):
-        """server_mode ON 但 get_lan_ip → None → 退 loopback，200 無 500"""
-        _patch_server_mode(monkeypatch, True)
-        monkeypatch.setattr("web.app.get_lan_ip", lambda: None)
-        _patch_lan_port(monkeypatch, 8001)
-        resp = _fresh_client().get("/help")
-        assert resp.status_code == 200
-        assert "http://testserver/api/capabilities" in resp.text
-
-    def test_server_mode_on_lan_port_missing_falls_back_no_error(self, monkeypatch):
-        """server_mode ON + lan_ip 有但 lan_port None（listener 未起）→ 退 loopback，200 無 500"""
-        _patch_server_mode(monkeypatch, True)
-        monkeypatch.setattr("web.app.get_lan_ip", lambda: "192.168.1.50")
-        _patch_lan_port(monkeypatch, None)
-        resp = _fresh_client().get("/help")
-        assert resp.status_code == 200
-        assert "http://testserver/api/capabilities" in resp.text

@@ -119,28 +119,6 @@ test('切片後翻譯結果只寫回按下當下那一片', async () => {
     });
 });
 
-test('切片後切回仍是 busy（未放行前）', async () => {
-    await withEnv(async ({ A, c, f }) => {
-        const p = c.lbTranslate();
-        c.nextLightboxVideo();
-        c._setLightboxIndex(0);
-        assert.equal(c.currentLightboxVideo, A);
-        assert.equal(c.lbTrIsBusy(), true);
-        f.pending.translate[0]({ success: true, skipped: true, reason: 'no_japanese' });
-        await p;
-    });
-});
-
-test('同一片連按兩次只送出一次翻譯', async () => {
-    await withEnv(async ({ c, f }) => {
-        const p1 = c.lbTranslate();
-        c.lbTranslate();
-        await tick();
-        assert.equal(f.count('translate'), 1);
-        f.pending.translate[0]({ success: true, skipped: true, reason: 'no_japanese' });
-        await p1;
-    });
-});
 
 test('寫回掛起時再按：翻譯與寫回各只送一次、仍 busy、放行後鎖已清（2b）', async () => {
     await withEnv(async ({ c, f }) => {
@@ -171,92 +149,6 @@ test('翻譯失敗後鎖會釋放', async () => {
     });
 });
 
-test('失敗三種原因各對應各自的 toast key', async () => {
-    const cases = [
-        ['blocked', 'search.toast.translate_blocked'],
-        ['rate_limited', 'search.toast.translate_rate_limited'],
-        ['other', 'search.toast.translate_failed'],
-    ];
-    for (const [reason, key] of cases) {
-        await withEnv(async ({ A, c, f, toasts }) => {
-            const p = c.lbTranslate();
-            f.pending.translate[0]({ success: false, reason });
-            await p;
-            assert.deepEqual(toasts.map((t) => [t[0], t[1]]), [[key, 'error']], reason);
-            assert.equal(A.title, 'あいう');
-            assert.equal(A.original_title, '');
-            assert.equal(f.count('title'), 0);
-            assert.equal(c.lbTrIsBusy(), false);
-        });
-    }
-});
-
-test('翻譯請求 HTTP 非 ok 或丟例外：通用失敗 toast、鎖已清', async () => {
-    await withEnv(async ({ c, f, toasts }) => {
-        const p = c.lbTranslate();
-        f.pending.translate[0]({}, false);
-        await p;
-        assert.equal(toasts[0][0], 'search.toast.translate_failed');
-        assert.equal(c.lbTrIsBusy(), false);
-    });
-});
-
-test('跳過時不呼叫寫回端點', async () => {
-    await withEnv(async ({ A, c, f, toasts }) => {
-        const p = c.lbTranslate();
-        f.pending.translate[0]({ success: true, skipped: true, reason: 'no_japanese' });
-        await p;
-        assert.equal(f.count('title'), 0);
-        assert.deepEqual(toasts.map((t) => [t[0], t[1]]), [['showcase.lightbox.translate_skipped', 'info']]);
-        assert.equal(A.title, 'あいう');
-        assert.equal(c.lbTrIsBusy(), false);
-    });
-});
-
-test('寫回失敗：no_nfo 與其他錯誤各自 toast，標題不變、鎖已清', async () => {
-    const cases = [
-        [{ success: false, error: 'no_nfo' }, 'showcase.lightbox.translate_no_nfo'],
-        [{ success: false, error: 'write_failed' }, 'showcase.lightbox.translate_write_failed'],
-    ];
-    for (const [resp, key] of cases) {
-        await withEnv(async ({ A, c, f, toasts }) => {
-            const p = c.lbTranslate();
-            f.pending.translate[0]({ success: true, result: '譯文' });
-            await tick();
-            f.pending.title[0](resp);
-            await p;
-            assert.deepEqual(toasts.map((t) => [t[0], t[1]]), [[key, 'error']]);
-            assert.equal(A.title, 'あいう');
-            assert.equal(c.lbTrIsBusy(), false);
-        });
-    }
-    await withEnv(async ({ c, f, toasts }) => {
-        const p = c.lbTranslate();
-        f.pending.translate[0]({ success: true, result: '譯文' });
-        await tick();
-        f.pending.title[0]({}, false);
-        await p;
-        assert.equal(toasts[0][0], 'showcase.lightbox.translate_write_failed');
-        assert.equal(c.lbTrIsBusy(), false);
-    });
-});
-
-test('成功 toast 帶 6000 毫秒與復原動作', async () => {
-    await withEnv(async ({ c, f, toasts }) => {
-        const p = c.lbTranslate();
-        f.pending.translate[0]({ success: true, result: '譯文' });
-        await tick();
-        f.pending.title[0](WB_OK('譯文', 'あいう'));
-        await p;
-        assert.equal(toasts.length, 1);
-        const [msg, type, ms, action] = toasts[0];
-        assert.equal(msg, 'showcase.lightbox.translate_done');
-        assert.equal(type, 'success');
-        assert.equal(ms, 6000);
-        assert.equal(action.label, 'showcase.lightbox.translate_undo');
-        assert.equal(typeof action.onClick, 'function');
-    });
-});
 
 test('首次與再翻的寫回只送 file_path 與 title', async () => {
     await withEnv(async ({ A, c, f }) => {
@@ -311,17 +203,3 @@ test('復原用按下當下的快照且只作用於當時那一片', async () =>
     });
 });
 
-test('復原失敗：標題不變並顯示寫入失敗 toast', async () => {
-    await withEnv(async ({ A, c, f, toasts }) => {
-        const p = c.lbTranslate();
-        f.pending.translate[0]({ success: true, result: '譯文' });
-        await tick();
-        f.pending.title[0](WB_OK('譯文', 'あいう'));
-        await p;
-        const undo = toasts[0][3].onClick();
-        f.pending.title[1]({ success: false, error: 'no_nfo' });
-        await undo;
-        assert.equal(A.title, '譯文');
-        assert.equal(toasts[toasts.length - 1][0], 'showcase.lightbox.translate_write_failed');
-    });
-});

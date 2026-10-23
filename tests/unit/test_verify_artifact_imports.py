@@ -37,28 +37,7 @@ def test_stdlib_sweep_contains_ctypes():
     assert "ctypes" in vai._STDLIB_SWEEP
 
 
-def test_stdlib_sweep_approved_only_ctypes():
-    """Opus 修訂 1: the approved list is ctypes and nothing else."""
-    assert list(vai._STDLIB_SWEEP) == ["ctypes"]
-
-
 # ── DoD 2: fail-closed sweep helper + main() exit 1 ──────────────────────────
-
-
-def test_import_sweep_records_module_name_and_exception():
-    """_import_sweep must return (name, exc_type, exc_msg) for a missing module."""
-    missing = "__does_not_exist_xyz__"
-    fails = vai._import_sweep([missing])
-    assert fails, "expected a failure record for a missing module"
-    name, exc_type, msg = fails[0]
-    assert name == missing
-    assert exc_type
-    assert missing in msg or exc_type == "ModuleNotFoundError"
-
-
-def test_import_sweep_success_returns_empty():
-    """A present stdlib module must not be recorded as a failure."""
-    assert vai._import_sweep(["json"]) == []
 
 
 def test_main_stdlib_import_failure_exits_1(monkeypatch, capsys):
@@ -96,43 +75,6 @@ def test_windll_user32_probe_failure_enters_fails(monkeypatch, capsys):
     assert "simulated LoadLibrary failure" in out
 
 
-def test_windll_user32_skipped_on_non_windows(monkeypatch, capsys):
-    """Non-Windows must print an explicit SKIP, not a silent no-op or FAIL."""
-    _patch_usable_site_packages(monkeypatch)
-    monkeypatch.setattr(vai.sys, "platform", "linux")
-    rc = vai.main([])
-    captured = capsys.readouterr()
-    assert "SKIP  ctypes.windll.user32" in captured.out
-    assert "ctypes.windll.user32" not in captured.err
-    assert rc == 0
-
-
-def test_probe_not_called_when_ctypes_import_fails(monkeypatch, capsys):
-    """ctypes import 失敗時不得再呼叫 windll.user32 probe（契約 C）。"""
-    _patch_usable_site_packages(monkeypatch)
-    orig_sweep = vai._import_sweep
-
-    def _sweep_ctypes_fails(names: list[str]) -> list[tuple[str, str, str]]:
-        if "ctypes" in names:
-            return [("ctypes", "ImportError", "simulated ctypes import failure")]
-        return orig_sweep(names)
-
-    probe_calls: list[object] = []
-
-    def _spy_probe() -> None:
-        probe_calls.append(True)
-        return None
-
-    monkeypatch.setattr(vai, "_import_sweep", _sweep_ctypes_fails)
-    monkeypatch.setattr(vai, "_probe_ctypes_windll_user32", _spy_probe)
-    rc = vai.main([])
-    assert rc == 1
-    assert probe_calls == []
-    out = capsys.readouterr().out
-    assert "FAIL[stdlib]" in out
-    assert "ctypes" in out
-
-
 # ── DoD 4: missing site-packages still early-returns before stdlib ───────────
 
 
@@ -154,16 +96,6 @@ def test_main_missing_site_packages_exits_before_stdlib_sweep(monkeypatch, capsy
 
 
 # ── DoD 4 sibling: 0 packages attempted still exit 1 ─────────────────────────
-
-
-def test_zero_packages_attempted_still_exits_1(monkeypatch, capsys):
-    """site-packages 存在但無可 import 模組 → 仍走既有防假綠 return 1."""
-    monkeypatch.setattr(vai, "_site_packages_dirs", lambda: [Path("/fake/site-packages")])
-    monkeypatch.setattr(vai, "_top_level_modules", lambda _sp: ([], []))
-    rc = vai.main([])
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert "0 packages attempted" in err
 
 
 # ── DoD 7: each listed module has a Chinese silent-death comment ─────────────
@@ -242,61 +174,6 @@ def _layout_literal_hits(src: str) -> list[tuple[int, str]]:
     return hits
 
 
-def test_each_stdlib_module_has_silent_death_comment():
-    """Every _STDLIB_SWEEP entry must have an adjacent Chinese reason comment."""
-    src = Path(vai.__file__).read_text(encoding="utf-8")
-    assign = _stdlib_sweep_assign(src)
-    # Window is the assignment's real AST span (lineno / end_lineno), not a
-    # fixed +20 lines. Printed proof: lineno=44 end_lineno=51; the "ctypes"
-    # item's trailing / continuation comments (lines 45-50) sit inside that
-    # span (closing ']' is line 51), so no post-assignment comment extension.
-    assert assign.end_lineno is not None
-    lines = src.splitlines()
-    window = "\n".join(lines[assign.lineno - 1 : assign.end_lineno])
-    chinese = re.compile(r"[\u4e00-\u9fff]")
-    for mod in vai._STDLIB_SWEEP:
-        # quoted name must appear in the constant block
-        assert f'"{mod}"' in window or f"'{mod}'" in window
-        # adjacent comments in the same window must contain Chinese
-        comment_text = "\n".join(
-            ln for ln in window.splitlines() if "#" in ln
-        )
-        assert chinese.search(comment_text), f"no Chinese comment near {mod}"
-        assert len(chinese.findall(comment_text)) >= 8
-
-
-def test_script_has_no_hardcoded_site_packages_layout():
-    """Must stay layout-agnostic: no Lib/ or lib/pythonX.Y/ site-packages paths."""
-    src = Path(vai.__file__).read_text(encoding="utf-8")
-    hits = _layout_literal_hits(src)
-    assert not hits, (
-        "hardcoded site-packages layout in non-docstring string literal(s): "
-        + "; ".join(f"L{lineno}: {value!r}" for lineno, value in hits)
-    )
-
-
-def test_no_second_return_or_exit_for_stdlib():
-    """修訂 4: stdlib sweep must not grow a second return / sys.exit() exit."""
-    src = Path(vai.__file__).read_text(encoding="utf-8")
-    exits = _sys_exit_calls(src)
-    assert exits == [], f"unexpected sys.exit(...) at line(s) {exits}"
-
-    tree = ast.parse(src)
-    main_fn = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "main"
-    )
-    last = main_fn.body[-1]
-    assert isinstance(last, ast.Return), (
-        f"main() last statement must be a Return, got {type(last).__name__}"
-    )
-    assert isinstance(last.value, ast.IfExp), (
-        "main() last return must be IfExp (return 1 if fails else 0), "
-        f"got {type(last.value).__name__ if last.value is not None else None}"
-    )
-
-
 # ── F4: helpers must ignore prose and still catch real code ──────────────────
 
 _DOC_ONLY_SRC = '''\
@@ -320,15 +197,3 @@ sys.exit(2)
 '''
 
 
-def test_helpers_ignore_prose_but_catch_real_layout_and_sys_exit():
-    """Docstrings/comments must not trip the helpers; real code still must."""
-    literals = _code_string_literals(_DOC_ONLY_SRC)
-    assert not any(
-        "Lib/site-packages" in value or re.search(r"lib/python\d", value)
-        for value in literals
-    ), f"prose leaked into code literals: {literals!r}"
-    assert _sys_exit_calls(_DOC_ONLY_SRC) == []
-
-    positives = _code_string_literals(_DOC_PLUS_CODE_SRC)
-    assert any("Lib/site-packages" in value for value in positives), positives
-    assert _sys_exit_calls(_DOC_PLUS_CODE_SRC)

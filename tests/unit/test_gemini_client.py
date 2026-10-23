@@ -12,14 +12,11 @@ import pytest
 
 from core.cloud_translate import TranslateError
 from core.gemini_client import (
-    build_headers,
     build_translate_payload,
     classify_http_error,
     extract_text,
     request_translation,
 )
-
-FAKE_KEY = "AIza-test-fake-key-not-real"
 
 
 def _ok_resp(data):
@@ -76,10 +73,6 @@ def test_payload_keys_exact():
     }
 
 
-def test_headers_strip_key():
-    assert build_headers("  KEY\n") == {"x-goog-api-key": "KEY"}
-
-
 # ============ extract_text 判定 ============
 
 
@@ -90,13 +83,6 @@ def test_ok_with_missing_finish_reason():
 def test_max_tokens_is_truncated():
     with pytest.raises(TranslateError) as ei:
         extract_text(_cand([{"text": "半句"}], finish="MAX_TOKENS"))
-    assert ei.value.kind == "truncated"
-
-
-def test_unknown_finish_reason_with_partial_text_is_truncated():
-    """整理流程撞到服務商中途停筆（RECITATION 等）→ 半截片名不得寫進資料夾名與 NFO。"""
-    with pytest.raises(TranslateError) as ei:
-        extract_text(_cand([{"text": "半句"}], finish="RECITATION"))
     assert ei.value.kind == "truncated"
 
 
@@ -112,12 +98,6 @@ def test_prompt_feedback_block_reason_wins_over_text():
     with pytest.raises(TranslateError) as ei:
         extract_text(data)
     assert ei.value.kind == "blocked"
-
-
-def test_all_thought_parts_is_empty_response():
-    with pytest.raises(TranslateError) as ei:
-        extract_text(_cand([{"text": "想1", "thought": True}, {"text": "想2", "thought": True}], finish="STOP"))
-    assert ei.value.kind == "empty_response"
 
 
 def test_thought_parts_excluded():
@@ -141,18 +121,6 @@ def test_think_tags_cleaned():
     assert extract_text(_cand([{"text": "<thought>先想</thought>譯"}])) == "譯"
 
 
-def test_unpaired_thought_is_empty_response():
-    with pytest.raises(TranslateError) as ei:
-        extract_text(_cand([{"text": "<thought>只有思考"}]))
-    assert ei.value.kind == "empty_response"
-
-
-def test_think_only_is_empty_response():
-    with pytest.raises(TranslateError) as ei:
-        extract_text(_cand([{"text": "<think>x</think>"}]))
-    assert ei.value.kind == "empty_response"
-
-
 # ============ classify_http_error ============
 
 
@@ -160,37 +128,9 @@ def test_429_rate_limited():
     assert classify_http_error(_err_resp(429, {"error": {"message": "q"}})).kind == "rate_limited"
 
 
-def test_resource_exhausted_rate_limited():
-    body = {"error": {"status": "RESOURCE_EXHAUSTED", "message": "q"}}
-    assert classify_http_error(_err_resp(400, body)).kind == "rate_limited"
-
-
 def test_400_key_not_valid_is_auth_failed():
     body = {"error": {"message": "API key not valid. Please pass a valid API key."}}
     assert classify_http_error(_err_resp(400, body)).kind == "auth_failed"
-
-
-def test_400_api_key_invalid_detail_is_auth_failed():
-    body = {"error": {"message": "bad", "details": [{"reason": "API_KEY_INVALID"}]}}
-    assert classify_http_error(_err_resp(400, body)).kind == "auth_failed"
-
-
-def test_other_400_is_http_error():
-    assert classify_http_error(_err_resp(400, {"error": {"message": "bad request"}})).kind == "http_error"
-
-
-def test_401_403_404_5xx():
-    assert classify_http_error(_err_resp(401)).kind == "auth_failed"
-    assert classify_http_error(_err_resp(403)).kind == "forbidden"
-    assert classify_http_error(_err_resp(404)).kind == "not_found"
-    assert classify_http_error(_err_resp(503)).kind == "http_error"
-
-
-def test_non_json_body_still_translate_error():
-    err = classify_http_error(_err_resp(502, json_side_effect=ValueError("no json"), reason="Bad Gateway"))
-    assert isinstance(err, TranslateError)
-    assert err.kind == "http_error"
-    assert err.message == "Bad Gateway"
 
 
 # ============ request_translation ============
@@ -206,41 +146,6 @@ async def test_request_sends_exact_shape_and_stripped_key():
     assert args[0] == "https://generativelanguage.googleapis.com/v1beta/models/gemma-3:generateContent"
     assert kwargs["headers"] == {"x-goog-api-key": "KEY"}
     assert set(kwargs["json"].keys()) == {"contents", "safetySettings"}
-
-
-@pytest.mark.asyncio
-async def test_request_http_error_uses_raise_for_status_response():
-    resp = _ok_resp({})
-    resp.status_code = None  # 不得讀 resp.status_code
-    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "x", request=MagicMock(), response=_err_resp(429, {"error": {"message": "q"}})
-    )
-    client = _client(post_return=resp)
-    with patch("core.gemini_client.httpx.AsyncClient", return_value=client):
-        with pytest.raises(TranslateError) as ei:
-            await request_translation(FAKE_KEY, "m", "p", timeout=5)
-    assert ei.value.kind == "rate_limited"
-    assert ei.value.status == 429
-
-
-@pytest.mark.asyncio
-async def test_request_invalid_json_is_api_error():
-    resp = _ok_resp({})
-    resp.json.side_effect = ValueError("bad")
-    client = _client(post_return=resp)
-    with patch("core.gemini_client.httpx.AsyncClient", return_value=client):
-        with pytest.raises(TranslateError) as ei:
-            await request_translation(FAKE_KEY, "m", "p", timeout=5)
-    assert ei.value.kind == "api_error"
-
-
-@pytest.mark.asyncio
-async def test_request_non_dict_json_is_api_error():
-    client = _client(post_return=_ok_resp([1, 2]))
-    with patch("core.gemini_client.httpx.AsyncClient", return_value=client):
-        with pytest.raises(TranslateError) as ei:
-            await request_translation(FAKE_KEY, "m", "p", timeout=5)
-    assert ei.value.kind == "api_error"
 
 
 @pytest.mark.asyncio

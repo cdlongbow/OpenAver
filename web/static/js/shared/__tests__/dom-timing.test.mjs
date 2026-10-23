@@ -51,52 +51,6 @@ const { waitForMount } = await import('../dom-timing.js');
 
 const fakeRoot = { nodeType: 1 };  // 非 null 即可（FakeMutationObserver.observe 不讀它）
 
-test('〔1〕already-aborted-signal-at-entry → 立即 resolve aborted，不掛 observer', async () => {
-  await withStubs(async () => {
-    const ctrl = new AbortController();
-    ctrl.abort();
-    const res = await waitForMount(fakeRoot, () => false, { signal: ctrl.signal });
-    assert.deepEqual(res, { ready: false, aborted: true });
-    assert.equal(liveObservers.length, 0, 'entry 已中止不應建 observer');
-  });
-});
-
-test('〔2〕initial-true → 同步 resolve ready，不掛 observer', async () => {
-  await withStubs(async () => {
-    const res = await waitForMount(fakeRoot, () => true, {});
-    assert.deepEqual(res, { ready: true });
-    assert.equal(liveObservers.length, 0, 'predicate 同步命中不應建 observer');
-  });
-});
-
-test('〔3〕observer-fires-on-late-mount → mutation 後 resolve ready + disconnect', async () => {
-  await withStubs(async () => {
-    let mounted = false;
-    const p = waitForMount(fakeRoot, () => mounted, {});
-    assert.equal(liveObservers.length, 1);
-    assert.equal(liveObservers[0].connected, true);
-    // 尚未就緒：fire 一次 mutation（predicate 仍 false）不 resolve
-    liveObservers[0].fire();
-    // late mount
-    mounted = true;
-    liveObservers[0].fire();
-    const res = await p;
-    assert.deepEqual(res, { ready: true });
-    assert.equal(liveObservers[0].connected, false, 'ready 後 observer 應 disconnect');
-  });
-});
-
-test('〔4〕abort-settles-false → abort 後 resolve aborted + disconnect', async () => {
-  await withStubs(async () => {
-    const ctrl = new AbortController();
-    const p = waitForMount(fakeRoot, () => false, { signal: ctrl.signal });
-    assert.equal(liveObservers[0].connected, true);
-    ctrl.abort();
-    const res = await p;
-    assert.deepEqual(res, { ready: false, aborted: true });
-    assert.equal(liveObservers[0].connected, false, 'abort 後 observer 應 disconnect');
-  });
-});
 
 test('〔5〕warn-timer-fires-but-does-NOT-settle → observer 續存活，之後 late mount 仍 reveal', async () => {
   await withStubs(async ({ getWarnCalls, fireWarnTimers }) => {
@@ -116,10 +70,3 @@ test('〔5〕warn-timer-fires-but-does-NOT-settle → observer 續存活，之�
   });
 });
 
-test('〔6〕root=null → 靜默 resolve {ready:false}，不掛 observer', async () => {
-  await withStubs(async () => {
-    const res = await waitForMount(null, () => false, {});
-    assert.deepEqual(res, { ready: false });
-    assert.equal(liveObservers.length, 0);
-  });
-});

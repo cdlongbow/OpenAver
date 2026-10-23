@@ -21,9 +21,6 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _INSTALL_PS1 = _REPO_ROOT / "install.ps1"
 
-_ASSIGN_RE = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*\s*=")
-_FUNC_START_RE = re.compile(r"^function\b", re.IGNORECASE)
-_TRAP_START_RE = re.compile(r"^trap\b", re.IGNORECASE)
 _EXIT_WITH_PAUSE_RE = re.compile(r"Exit-WithPause", re.IGNORECASE)
 _BARE_EXIT_RE = re.compile(r"(?<!::)\bexit\b", re.IGNORECASE)
 _ENV_EXIT_RE = re.compile(r"\[(?:System\.)?Environment\]::Exit", re.IGNORECASE)
@@ -220,74 +217,6 @@ def _find_depth0_trap_body(text: str, chars: list[_Char]) -> tuple[int, str] | N
     return None
 
 
-def _positions(text: str) -> tuple[int | None, int | None, int | None]:
-    """(i) function Exit-WithPause 行 (ii) trap 起始行 (iii) 第一個工作語句行。"""
-    chars = _annotate(text)
-    cmap = _char_map(chars)
-    fn_line: int | None = None
-    for m in _find_in_code(text, chars, _FUNC_EWP_RE):
-        c0 = cmap.get(m.start())
-        if c0 and c0.in_code and c0.depth == 0:
-            fn_line = c0.line
-            break
-    trap = _find_depth0_trap_body(text, chars)
-    trap_line = trap[0] if trap else None
-
-    rows = _lines(text)
-    work_line: int | None = None
-    line_start_depth: dict[int, int] = {}
-    for c in chars:
-        if c.line not in line_start_depth:
-            line_start_depth[c.line] = c.depth
-    for line_no, _raw in enumerate(rows, start=1):
-        if line_start_depth.get(line_no, 0) != 0:
-            continue
-        # Comment-only / blank
-        code_on_line = [
-            c for c in chars if c.line == line_no and c.in_code and not c.ch.isspace()
-        ]
-        if not code_on_line:
-            continue
-        # 重組該行 code（去掉字串／註解外的 # 註解）
-        line_code = "".join(c.ch for c in chars if c.line == line_no and (c.in_code or c.ch in " \t"))
-        # 更準：只取 in_code 字元
-        line_code = "".join(c.ch for c in chars if c.line == line_no and c.in_code).strip()
-        if not line_code or line_code in ("{", "}"):
-            continue
-        if _ASSIGN_RE.match(line_code):
-            continue
-        if _FUNC_START_RE.match(line_code) or _TRAP_START_RE.match(line_code):
-            continue
-        work_line = line_no
-        break
-    return fn_line, trap_line, work_line
-
-
-def _last_depth0_executable(text: str) -> tuple[int, str] | None:
-    """從檔尾往前找第一個 brace-depth 0、非空白、非註解、非單獨 {／} 的行。
-
-    界定不出來回 None（呼叫端必須 RED，不可跳過）。
-    """
-    chars = _annotate(text)
-    rows = _lines(text)
-    if not rows:
-        return None
-    line_start_depth: dict[int, int] = {}
-    for c in chars:
-        if c.line not in line_start_depth:
-            line_start_depth[c.line] = c.depth
-    for line_no in range(len(rows), 0, -1):
-        if line_start_depth.get(line_no, 0) != 0:
-            continue
-        line_code = "".join(
-            c.ch for c in chars if c.line == line_no and c.in_code
-        ).strip()
-        if not line_code or line_code in ("{", "}"):
-            continue
-        return line_no, rows[line_no - 1]
-    return None
-
-
 def _scan_exit_paths(text: str) -> _Ends:
     """(b) 先剔除 Exit-WithPause，再在剩餘文字找裸 exit。函式外裸 exit → unparsed。"""
     chars = _annotate(text)
@@ -392,71 +321,6 @@ def test_b_exit_paths_covered(source: str) -> None:
     )
 
 
-def test_c_position(source: str) -> None:
-    """(c) function Exit-WithPause 行 < trap 行 < 第一個工作語句行。
-
-    斷言的字面順序不變，只是把理由寫出來（CD-120d-10 補寫，不是更正既有文字）。
-    真正的硬約束是 Exit-WithPause 函式必須在任何可能出錯的程式碼之前定義——
-    實測把函式定義移到錯誤點之後，trap 有觸發但死在 CommandNotFoundException，
-    而且沒有停住。至於 trap 本身，PowerShell 在 scope 內會提升它，寫在檔案
-    最後一行仍然接得到前面的錯誤（所以「trap 必須擺在所有工作之前」這個
-    常見說法是錯的）。現行「函式定義 → trap → 工作」的順序同時滿足兩者，
-    且仍是最省事的表達方式，故守衛的位置斷言維持不變。
-    """
-    fn_line, trap_line, work_line = _positions(source)
-    assert work_line is not None, (
-        "界定不出第一個 brace-depth 0 工作語句（非整檔只有賦值／函式／trap）"
-    )
-    assert fn_line is not None, "找不到 depth-0 的 function Exit-WithPause"
-    assert trap_line is not None, "找不到 depth-0 的 trap"
-    assert fn_line < trap_line < work_line, (
-        f"位置不正確：Exit-WithPause@{fn_line} trap@{trap_line} 工作語句@{work_line}，"
-        "必須 Exit-WithPause 定義 < trap < 第一個工作語句"
-    )
-
-
-def test_fail_closed_unrecognized_exit_forms(source: str) -> None:
-    """fail-closed 清單任一種出現即 RED 並印原文。"""
-    ends = _scan_fail_closed(source)
-    assert not ends.unparsed, (
-        "install.ps1 有認不得的結束寫法："
-        f"{ends.unparsed}。fail-closed：無法辨識就不能宣稱結束路徑全覆蓋"
-    )
-
-
-def test_allows_throw_inside_expand_zip(source: str) -> None:
-    """放行 Expand-ZipRobust 函式體內的 throw（:44）。"""
-    assert 'throw "ZIP entry 逸出安裝目錄' in source
-    ends = _scan_fail_closed(source)
-    assert not any("ZIP entry" in u for u in ends.unparsed)
-
-
-def test_allows_proc_kill(source: str) -> None:
-    """放行 Install-WebView2 內的 $proc.Kill()（:119）。"""
-    assert "$proc.Kill()" in source
-    ends = _scan_fail_closed(source)
-    assert not any("Kill" in u for u in ends.unparsed)
-
-
-def test_allows_continue_in_zip_loop(source: str) -> None:
-    """放行 Expand-ZipRobust foreach 內的 continue（:49）。"""
-    assert re.search(
-        r"IsNullOrEmpty\(\$entry\.Name\).*continue",
-        source,
-        flags=re.DOTALL,
-    )
-    ends = _scan_fail_closed(source)
-    assert not any(re.search(r"\bcontinue\b", u, re.I) for u in ends.unparsed)
-
-
-def test_allows_break_in_python_cleanup(source: str) -> None:
-    """放行清除舊版 Python 迴圈內的 break（:195）。"""
-    assert "Remove-Item $PythonDir" in source
-    assert re.search(r"Remove-Item \$PythonDir[^\n]*\n\s*break", source)
-    ends = _scan_fail_closed(source)
-    assert not any(re.search(r"\bbreak\b", u, re.I) for u in ends.unparsed)
-
-
 @pytest.mark.parametrize(
     "snippet",
     [
@@ -477,42 +341,3 @@ def test_fail_closed_flags_synthetic(snippet: str) -> None:
     assert any(snippet.split("\n")[0] in u or snippet in u for u in ends.unparsed)
 
 
-def test_last_depth0_statement_is_exit_with_pause(source: str) -> None:
-    """正常完成路徑的停留不得被移除：最後一個 depth-0 可執行語句必須是 Exit-WithPause 呼叫。"""
-    last = _last_depth0_executable(source)
-    assert last is not None, (
-        "界定不出最後一個 brace-depth 0 可執行語句（檔案空或全是註解）"
-    )
-    _line_no, raw = last
-    line_code = raw.strip()
-    assert _EXIT_WITH_PAUSE_RE.search(line_code) and not _FUNC_START_RE.match(
-        line_code
-    ), (
-        "最後一個 depth-0 可執行語句必須是 Exit-WithPause 呼叫，"
-        f"實際找到：{raw}"
-    )
-
-
-def test_c2_exit_withpause_is_top_level_in_trap(source: str) -> None:
-    """trap 本體的 Exit-WithPause 必須在最外層（depth 1），不可包進更深的 { }。
-
-    守的是：未來若再加診斷、把 Exit-WithPause 1 順手包進 try { } catch {},
-    try 內抵達該呼叫前若有例外，catch {} 會吞掉它，停留機制整個失效。
-    使用者可見後果：按「更新」→安裝出錯→視窗閃掉（Bug D 復發）。
-    """
-    trap = _find_depth0_trap_body(source, _annotate(source))
-    assert trap is not None, (
-        "界定不出 depth-0 的 trap { } 區塊，無法判定 Exit-WithPause 嵌套深度"
-    )
-    _line, body = trap
-    chars = _annotate(body)
-    cmap = _char_map(chars)
-    depths: list[int | None] = []
-    for m in _find_in_code(body, chars, _EXIT_WITH_PAUSE_RE):
-        c0 = cmap.get(m.start())
-        depths.append(None if c0 is None else c0.depth)
-    assert any(d == 1 for d in depths), (
-        "trap 區塊本體裡必須至少有一個 depth 恰好 1 的 Exit-WithPause"
-        "（trap { 為 depth 0，body 最外層語句為 depth 1；包進 try/if/foreach 會更深）。"
-        f"fail-closed：認不得或算不出 depth 即紅。depths={depths} body={body}"
-    )

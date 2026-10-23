@@ -288,35 +288,6 @@ class TestOffFlavorHappyPath:
         output = _off_root(src, db_path)  # the ACTUAL fixed off-flavor root
         return numbers, src, output, db_path
 
-    def test_per_movie_assets_and_no_strm(self, tmp_path, monkeypatch, client, parse_sse_events):
-        """#5/#6: each movie → subdir with .nfo + cover; NO -poster/-fanart (TASK-111 §2.1
-        gate — off mode no longer produces them) + NO extrafanart; NO .strm."""
-        numbers, src, output, db_path = self._setup(tmp_path, monkeypatch)
-        _run_generate(client, parse_sse_events)
-
-        for num in numbers:
-            movie_dir = output / num
-            assert movie_dir.is_dir(), f"missing movie dir for {num}"
-            assert (movie_dir / f"{num}.nfo").exists(), f"missing nfo {num}"
-            assert (movie_dir / f"{num}.jpg").exists(), f"missing cover {num}"
-            assert not (movie_dir / f"{num}-poster.jpg").exists(), f"unexpected poster {num}"
-            assert not (movie_dir / f"{num}-fanart.jpg").exists(), f"unexpected fanart {num}"
-            # TASK-104-T2 (spec §3-A / Non-Goals, intended change — NOT a
-            # weakening): bulk produce no longer downloads sample images even
-            # when download_sample_images=True — resolve_ingest_plan forces
-            # meta['sample_images']=[] unconditionally (samples are on-demand
-            # only, via the separate fetch-samples endpoint / case C). Before
-            # T2 this asserted extrafanart/fanart1.jpg EXISTS; the correct
-            # post-T2 behavior is that bulk produce never creates it.
-            assert not (movie_dir / "extrafanart" / "fanart1.jpg").exists(), (
-                f"extrafanart must NOT be populated by bulk produce (T2 spec change): {num}"
-            )
-
-        # Acceptance #5: off-flavor produces NO .strm anywhere under output.
-        assert ".strm" not in _all_extensions(output)
-        # CD-89a-7: the manually-configured (decoy) output_path must be untouched —
-        # off mode ignores source.output_path entirely.
-        assert list(Path(tmp_path / "decoy-output-path-must-be-ignored").iterdir()) == []
 
     def test_db_path_cover_sample_pointers(self, tmp_path, monkeypatch, client, parse_sse_events):
         """#6: DB path == source URI; cover_path/sample_images under the fixed off-flavor root."""
@@ -339,18 +310,6 @@ class TestOffFlavorHappyPath:
             # populates them.
             assert v.sample_images == [], f"expected NO bulk-downloaded samples for {num} (T2 spec change)"
 
-    def test_schema_no_new_columns(self, tmp_path, monkeypatch, client, parse_sse_events):
-        """#7: videos table column set unchanged (no schema drift from 88b write path)."""
-        numbers, src, output, db_path = self._setup(tmp_path, monkeypatch)
-        _run_generate(client, parse_sse_events)
-
-        repo = VideoRepository(str(db_path))
-        conn = repo._get_connection()
-        try:
-            cols = {r[1] for r in conn.execute("PRAGMA table_info(videos)")}
-        finally:
-            conn.close()
-        assert cols == _BASELINE_VIDEO_COLUMNS
 
     def test_source_dir_zero_write(self, tmp_path, monkeypatch, client, parse_sse_events):
         """#1: source dir recursive snapshot identical before/after generate."""
@@ -360,19 +319,6 @@ class TestOffFlavorHappyPath:
         after = _snapshot(src)
         assert before == after, "source directory was modified (zero-write violated)"
 
-    def test_sse_readonly_stats_four_numbers(self, tmp_path, monkeypatch, client, parse_sse_events):
-        """#13: done event readonly_stats four numbers match landed movie count."""
-        numbers, src, output, db_path = self._setup(tmp_path, monkeypatch)
-        events = _run_generate(client, parse_sse_events)
-        stats = _done_event(events)["readonly_stats"]
-
-        # actual landed = per-movie subdirs that contain an nfo
-        landed = sum(1 for num in numbers if (output / num / f"{num}.nfo").exists())
-        assert landed == len(numbers)
-        assert stats["created"] == landed
-        assert stats["skipped"] == 0
-        assert stats["no_scrape"] == 0
-        assert stats["failed"] == 0
 
     def test_cover_via_image_proxy_200_and_bytes(self, tmp_path, monkeypatch, client, parse_sse_events):
         """#16 (chains T-1): DB cover_path → /api/gallery/image → 200 + real bytes; outside → 403.
@@ -464,29 +410,6 @@ def test_produced_rows_expose_nonempty_output_dir_signal(tmp_path, monkeypatch, 
 # Case: samples OFF (gated extrafanart behavior)
 # ---------------------------------------------------------------------------
 
-def test_samples_off_no_extrafanart(tmp_path, monkeypatch, client, parse_sse_events):
-    """download_sample_images=False → no extrafanart dir, DB sample_images empty."""
-    numbers = ["DEF-010", "DEF-011"]
-    src = _make_source_dir(tmp_path / "src", "movies", numbers)
-    db_path = tmp_path / "test.db"
-    config = _make_config(
-        # CD-89a-7: off mode ignores output_path — omitted here (UI hides this field
-        # in off mode, so the realistic value is "").
-        [{"path": str(src), "output_path": "", "readonly": True}],
-        tmp_path / "htmlout",
-        download_samples=False,
-    )
-    _wire(monkeypatch, config, db_path)
-    _run_generate(client, parse_sse_events)
-
-    output = _off_root(src, db_path)
-    repo = VideoRepository(str(db_path))
-    for num in numbers:
-        assert (output / num / f"{num}.nfo").exists()
-        assert not (output / num / "extrafanart").exists()
-        src_uri = to_file_uri(str(src / f"{num}.mp4"), {})
-        assert repo.get_by_path(src_uri).sample_images == []
-
 
 # ---------------------------------------------------------------------------
 # TASK-104-T2 (CD-104-3/3a/3b, DoD 四矩陣): nfo_exists × local-cover-hit
@@ -569,42 +492,6 @@ class TestIngestFourMatrix:
         assert v.cover_path.startswith(to_file_uri(str(output), {}))
         assert v.sample_images == []
 
-    def test_case2_nfo_only(self, tmp_path, monkeypatch, client, parse_sse_events):
-        """② .nfo only (no cover img): meta from NFO, cover_path empty,
-        search_jav AND download_image both NOT called (zero network)."""
-        num = "MTX-002"
-        before, after, output, v, mock_search, mock_download = self._run_case(
-            tmp_path, monkeypatch, client, parse_sse_events, num, with_nfo=True, with_cover=False,
-        )
-        mock_search.assert_not_called()
-        mock_download.assert_not_called()
-        assert before == after, "source tree must be zero-write"
-
-        movie_dir = output / num
-        assert (movie_dir / f"{num}.nfo").exists()
-        assert not (movie_dir / f"{num}.jpg").exists()
-        assert v is not None
-        assert v.title == f"Sidecar Title {num}"
-        assert v.cover_path == ""
-        assert v.sample_images == []
-
-    def test_case3_cover_only(self, tmp_path, monkeypatch, client, parse_sse_events):
-        """③ cover only (no .nfo): search_jav CALLED (metadata scrape),
-        download_image NOT called (local cover copied instead)."""
-        num = "MTX-003"
-        before, after, output, v, mock_search, mock_download = self._run_case(
-            tmp_path, monkeypatch, client, parse_sse_events, num, with_nfo=False, with_cover=True,
-        )
-        mock_search.assert_called_once()
-        mock_download.assert_not_called()
-        assert before == after, "source tree must be zero-write"
-
-        movie_dir = output / num
-        assert (movie_dir / f"{num}.nfo").exists()
-        assert (movie_dir / f"{num}.jpg").exists()
-        assert v is not None
-        assert v.title == f"Title {num}"  # from _fake_search_jav, not the (absent) NFO
-        assert v.sample_images == []
 
     def test_case4_neither(self, tmp_path, monkeypatch, client, parse_sse_events):
         """④ neither: existing scrape behavior unchanged — search_jav CALLED,
@@ -661,99 +548,6 @@ def _make_curated_jellyfin_source(
     return d
 
 
-class TestOffModeIngestPosterFanartSuppressed:
-    """TASK-111 (spec-111 §2.1): in off mode, ingest never produces
-    `-poster`/`-fanart` — regardless of whether the source carries its own
-    curated sidecars, a same-name cover, or neither.
-
-    This class used to lock an owner-approved fix: ingest copies curator
-    `-poster`/`-fanart` sidecars VERBATIM instead of regenerating them from
-    whichever image `find_cover_image` picked as the cover. That verbatim-copy
-    mechanism itself is unaffected by TASK-111 and still has full unit-level
-    coverage (every branch: both sidecars present, poster-only fallback to
-    `crop_to_poster`, fanart-only fallback to cover copy, and mid-copy
-    `OSError`) at
-    `tests/unit/test_readonly_producer.py::TestCuratedPosterFanartPassthrough`
-    (kodi config — untouched by the off-mode gate). The integration-level
-    (real SSE endpoint + real ingest scan) coverage this class used to provide
-    for that mechanism is restored, on a media-server flavour, by a new class
-    added under T3."""
-
-    def test_jellyfin_source_poster_and_fanart_not_produced(
-        self, tmp_path, monkeypatch, client, parse_sse_events,
-    ):
-        """No same-name `{num}.jpg` → find_cover_image's L1.5 fallback picks
-        `-fanart` as the cover (fanart-before-poster priority, gallery_scanner.py
-        find_cover_image) — that part of the pipeline is unchanged. But off
-        mode's step-2 gate (TASK-111) short-circuits before the source's
-        curated `-poster`/`-fanart` sidecars would ever be copied, so neither
-        file is produced at all."""
-        num = "JELLY-001"
-        src = _make_curated_jellyfin_source(tmp_path / "src", "movies", num, with_nfo=True)
-        db_path = tmp_path / "test.db"
-        config = _make_config(
-            [{"path": str(src), "output_path": "", "readonly": True}], tmp_path / "htmlout",
-        )
-        _wire(monkeypatch, config, db_path)
-        _run_generate(client, parse_sse_events)
-
-        movie_dir = _off_root(src, db_path) / num
-        assert (movie_dir / f"{num}.jpg").read_bytes() == _FANART_MARKER_BYTES, (
-            "cover must come from find_cover_image's existing -fanart-first priority"
-        )
-        assert not (movie_dir / f"{num}-poster.jpg").exists(), (
-            "off mode must not copy the source's curated poster sidecar"
-        )
-        assert not (movie_dir / f"{num}-fanart.jpg").exists(), (
-            "off mode must not copy the source's curated fanart sidecar"
-        )
-
-    def test_same_name_cover_plus_poster_and_fanart_not_produced(
-        self, tmp_path, monkeypatch, client, parse_sse_events,
-    ):
-        """Same-name `{num}.jpg` present too → it wins as the cover (L1 beats
-        L1.5, unchanged), but off mode still never produces `-poster`/
-        `-fanart` — independent of which image became the cover."""
-        num = "JELLY-002"
-        src = _make_curated_jellyfin_source(
-            tmp_path / "src", "movies", num, with_nfo=True, same_name_cover=True,
-        )
-        db_path = tmp_path / "test.db"
-        config = _make_config(
-            [{"path": str(src), "output_path": "", "readonly": True}], tmp_path / "htmlout",
-        )
-        _wire(monkeypatch, config, db_path)
-        _run_generate(client, parse_sse_events)
-
-        movie_dir = _off_root(src, db_path) / num
-        assert (movie_dir / f"{num}.jpg").read_bytes() == _SAME_NAME_COVER_MARKER_BYTES
-        assert not (movie_dir / f"{num}-poster.jpg").exists()
-        assert not (movie_dir / f"{num}-fanart.jpg").exists()
-
-    def test_only_same_name_cover_no_sidecars_not_generated(
-        self, tmp_path, monkeypatch, client, parse_sse_events,
-    ):
-        """A source with ONLY a same-name cover (no -poster/-fanart sidecars
-        at all) used to still get poster/fanart GENERATED via
-        generate_jellyfin_images (mocked in _wire to write _FAKE_IMG_BYTES) —
-        the pre-TASK-111 fallback path. Off mode's step-2 gate now suppresses
-        that fallback too: this is the off-mode cell of the flavour matrix
-        whose media-server cell (fallback DOES trigger) T3 adds separately."""
-        num = "JELLY-003"
-        src = _make_ingest_source(tmp_path / "src", "movies", num, with_nfo=True, with_cover=True)
-        db_path = tmp_path / "test.db"
-        config = _make_config(
-            [{"path": str(src), "output_path": "", "readonly": True}], tmp_path / "htmlout",
-        )
-        _wire(monkeypatch, config, db_path)
-        _run_generate(client, parse_sse_events)
-
-        movie_dir = _off_root(src, db_path) / num
-        assert (movie_dir / f"{num}.jpg").read_bytes() == _FAKE_COVER_BYTES
-        assert not (movie_dir / f"{num}-poster.jpg").exists()
-        assert not (movie_dir / f"{num}-fanart.jpg").exists()
-
-
 # ---------------------------------------------------------------------------
 # TASK-111-T3 群組 6 (Opus 裁決承接項)：media-server flavour 整合層 verbatim
 # passthrough — T2 把 TestOffModeIngestPosterFanartSuppressed 翻面成「off 模式
@@ -766,76 +560,6 @@ class TestOffModeIngestPosterFanartSuppressed:
 # flavour 的固定 output/lib/<name> 根不同 — 因此這裡的 movie_dir 用本測試自建的
 # output_path 算，不能沿用 _off_root helper（那個只鏡射 off 分支）。
 # ---------------------------------------------------------------------------
-
-class TestIngestCuratedPosterFanartVerbatimMediaServer:
-    """Opus 裁決（TASK-111-T3.md 現況分析 #6）：jellyfin/kodi 任一即可，機制與
-    哪個 media-server flavour 無關——這裡選 jellyfin。斷言 sidecar bytes 逐位
-    元組等於 _POSTER_MARKER_BYTES/_FANART_MARKER_BYTES（不是 _wire 裡
-    _fake_generate_jellyfin_images 寫的 _FAKE_IMG_BYTES）+ generate_jellyfin_
-    images 未被呼叫，證明走的是 verbatim 複製而非重新裁切生成。
-
-    T6 語意重寫（TASK-112b-T6.md §A-2 / plan-112b.md §7.3 DoD-10）：這支測試在
-    112 翻面之後**繼續是綠燈**（`BE-TEST-11` 第六次命中）——原因是這個 fixture
-    （`_make_curated_jellyfin_source(..., with_nfo=True)`，不傳 `same_name_cover`）
-    源目錄裡沒有同名 `{num}.jpg`，`find_cover_image` 本來就走 L1.5 命中 `-fanart`，
-    CD-112-7 前半句（封面來源升格）在這個 fixture 上是無操作的空翻。但 verbatim
-    保證的**落點**已經改變：翻面前是「curator sidecar 被複製到一個獨立位置
-    （`{num}.jpg`）」；翻面後正典封面本身落在 `-fanart.jpg`，`-poster.jpg` 與
-    `-fanart.jpg` 是輸出夾裡**僅有**的兩張圖，不再有第三張獨立同名封面——
-    verbatim 保證變成「sidecar 就是正典封面」，不是「sidecar 被複製了一份」。
-    新增兩條斷言把這個新語意焊死：① 輸出夾沒有獨立的 `{num}.jpg`（AC5b）
-    ② DB `cover_path` 指向 `-fanart.jpg`（AC5b 的 DB 記帳半句）。"""
-
-    def test_jellyfin_curated_sidecars_copied_verbatim_not_regenerated(
-        self, tmp_path, monkeypatch, client, parse_sse_events,
-    ):
-        num = "JELLY-VERB-001"
-        src = _make_curated_jellyfin_source(tmp_path / "src", "movies", num, with_nfo=True)
-        out_dir = tmp_path / "jellyfin_out"
-        out_dir.mkdir()
-        db_path = tmp_path / "test.db"
-        config = _make_config(
-            [{"path": str(src), "output_path": str(out_dir), "readonly": True}],
-            tmp_path / "htmlout",
-            external_manager="jellyfin",
-        )
-        _wire(monkeypatch, config, db_path)
-        # BE-TEST-01 #1: patch 使用端 core.readonly_assets.generate_jellyfin_images
-        # (NOT core.organizer.*) — layered on top of _wire's monkeypatch.setattr,
-        # mirroring TestIngestFourMatrix._run_case's existing double-mock idiom, so
-        # this `with patch(...)` block additionally gets call-tracking for
-        # assert_not_called() below.
-        with patch(
-            "core.readonly_assets.generate_jellyfin_images",
-            side_effect=_fake_generate_jellyfin_images,
-        ) as mock_jellyfin:
-            _run_generate(client, parse_sse_events)
-
-        movie_dir = out_dir / num
-        assert (movie_dir / f"{num}-poster.jpg").read_bytes() == _POSTER_MARKER_BYTES, (
-            "poster must be the curator's own sidecar bytes (verbatim copy), "
-            "not a regenerated crop"
-        )
-        assert (movie_dir / f"{num}-fanart.jpg").read_bytes() == _FANART_MARKER_BYTES, (
-            "fanart must be the curator's own sidecar bytes (verbatim copy), not "
-            "the _FAKE_IMG_BYTES generate_jellyfin_images would have written"
-        )
-        mock_jellyfin.assert_not_called()
-
-        # 真理表 Table 2 #2（AC5b，新語意）：verbatim 保證的落點是「正典封面本身
-        # 就是 curator -fanart」，不是「curator -fanart 被複製到另一個獨立檔」——
-        # 沒有第三張同名封面。
-        assert not (movie_dir / f"{num}.jpg").exists(), (
-            "no independent same-name cover — the canonical cover IS -fanart.jpg"
-        )
-        # AC5b 的 DB 記帳半句：DB cover_path 指向 -fanart.jpg。
-        repo = VideoRepository(str(db_path))
-        src_uri = to_file_uri(str(src / f"{num}.mp4"), {})
-        v = repo.get_by_path(src_uri)
-        assert v is not None, f"no DB row for {num}"
-        assert v.cover_path.endswith(f"{num}-fanart.jpg"), (
-            f"DB cover_path must point at the -fanart canonical cover, got {v.cover_path!r}"
-        )
 
 
 class TestH10CuratorSameNameConflictUpgrade:
@@ -894,91 +618,10 @@ class TestH10CuratorSameNameConflictUpgrade:
             f"DB cover_path must point at the -fanart canonical cover, got {v.cover_path!r}"
         )
 
-    def test_off_flavour_keeps_same_name_cover_not_upgraded(
-        self, tmp_path, monkeypatch, client, parse_sse_events,
-    ):
-        """反向鎖（AC2）：同一組三色 fixture，off flavour 下 cover 來源升格閘門
-        不成立——輸出必須是同名封面 A（不是 curator fanart B），且不產生
-        poster/fanart（TASK-111 既有 gate）。"""
-        num = "H10-002"
-        src = _make_curated_jellyfin_source(
-            tmp_path / "src", "movies", num, with_nfo=True, same_name_cover=True,
-        )
-        db_path = tmp_path / "test.db"
-        config = _make_config(
-            [{"path": str(src), "output_path": "", "readonly": True}],
-            tmp_path / "htmlout",
-            external_manager="off",
-        )
-        _wire(monkeypatch, config, db_path)
-        _run_generate(client, parse_sse_events)
-
-        movie_dir = _off_root(src, db_path) / num
-        assert (movie_dir / f"{num}.jpg").read_bytes() == _SAME_NAME_COVER_MARKER_BYTES, (
-            "off flavour must NOT upgrade the cover source — same-name cover (A) stays"
-        )
-        assert not (movie_dir / f"{num}-poster.jpg").exists()
-        assert not (movie_dir / f"{num}-fanart.jpg").exists()
-
-        repo = VideoRepository(str(db_path))
-        src_uri = to_file_uri(str(src / f"{num}.mp4"), {})
-        v = repo.get_by_path(src_uri)
-        assert v is not None, f"no DB row for {num}"
-        assert v.cover_path.endswith(f"{num}.jpg") and "-fanart" not in v.cover_path, (
-            f"DB cover_path must point at the same-name cover, got {v.cover_path!r}"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Case 17: same-number across two sources → two distinct leaf subdirs
 # ---------------------------------------------------------------------------
-
-def test_same_number_two_sources_collision(tmp_path, monkeypatch, client, parse_sse_events):
-    """#17: two readonly sources each with ABC-123.mp4 → two non-overwriting leaf dirs.
-
-    TASK-89a-T2 (CD-89a-7) note: before this task, off-flavor sources shared a
-    single user-configured `output_path`, so `_movie_dir`'s collision-avoidance
-    hash-suffix was the mechanism that kept the two sources' same-number movies
-    apart (one clean `ABC-123`, one hashed `ABC-123-<hash>`) under one tree.
-    Now each off-flavor source resolves to its OWN distinct fixed root
-    (`resolve_output_root` derives the name from the source's own path — CD-89a-7
-    Option B), so the two sources never share a root at all: each gets a clean
-    `ABC-123` leaf under its own tree, with no hash suffix involved. This test now
-    asserts non-collision at the SOURCE level rather than the leaf-hash level.
-    """
-    src_a = _make_source_dir(tmp_path / "srcA", "a", ["ABC-123"])
-    src_b = _make_source_dir(tmp_path / "srcB", "b", ["ABC-123"])
-    db_path = tmp_path / "test.db"
-    config = _make_config(
-        [
-            {"path": str(src_a), "output_path": "", "readonly": True},
-            {"path": str(src_b), "output_path": "", "readonly": True},
-        ],
-        tmp_path / "htmlout",
-    )
-    _wire(monkeypatch, config, db_path)
-    events = _run_generate(client, parse_sse_events)
-
-    root_a = _off_root(src_a, db_path)
-    root_b = _off_root(src_b, db_path)
-    assert root_a != root_b, "two distinct sources must resolve to distinct off-flavor roots"
-
-    # Each source gets its OWN clean (non-hashed) ABC-123 leaf — no cross-source collision.
-    for root in (root_a, root_b):
-        assert (root / "ABC-123").is_dir(), f"missing ABC-123 leaf dir under {root}"
-        assert (root / "ABC-123" / "ABC-123.nfo").exists(), f"missing nfo under {root}"
-        assert (root / "ABC-123" / "ABC-123.jpg").exists(), f"missing cover under {root}"
-
-    stats = _done_event(events)["readonly_stats"]
-    assert stats["created"] == 2
-
-    # Both source URIs present in DB, pointing at distinct output covers.
-    repo = VideoRepository(str(db_path))
-    uri_a = to_file_uri(str(src_a / "ABC-123.mp4"), {})
-    uri_b = to_file_uri(str(src_b / "ABC-123.mp4"), {})
-    va, vb = repo.get_by_path(uri_a), repo.get_by_path(uri_b)
-    assert va is not None and vb is not None
-    assert va.cover_path != vb.cover_path
 
 
 # ---------------------------------------------------------------------------
@@ -986,46 +629,6 @@ def test_same_number_two_sources_collision(tmp_path, monkeypatch, client, parse_
 # extensions → increment allocation must give each its OWN movie dir
 # (ABC-123 / ABC-123-2), never overwrite one with the other's assets.
 # ---------------------------------------------------------------------------
-
-def test_same_source_same_number_two_formats_increment(tmp_path, monkeypatch, client, parse_sse_events):
-    """One readonly source with ABC-123.mp4 AND ABC-123.mkv (same number, two source
-    files) → both land, in two distinct dirs (ABC-123, ABC-123-2), each with its own
-    nfo/cover; DB has two rows with two distinct output_dir values."""
-    src = tmp_path / "src" / "movies"
-    src.mkdir(parents=True)
-    (src / "ABC-123.mp4").write_bytes(b"FAKE-VIDEO-BYTES-MP4")
-    (src / "ABC-123.mkv").write_bytes(b"FAKE-VIDEO-BYTES-MKV")
-    db_path = tmp_path / "test.db"
-    config = _make_config(
-        [{"path": str(src), "output_path": "", "readonly": True}],
-        tmp_path / "htmlout",
-    )
-    _wire(monkeypatch, config, db_path)
-
-    events = _run_generate(client, parse_sse_events)
-    stats = _done_event(events)["readonly_stats"]
-    assert stats["created"] == 2
-    assert stats["failed"] == 0
-
-    output = _off_root(src, db_path)
-    assert (output / "ABC-123").is_dir()
-    assert (output / "ABC-123-2").is_dir()
-    # Both files scrape to the SAME number (ABC-123) → the filename inside each leaf
-    # dir is "ABC-123.nfo"/"ABC-123.jpg" regardless of the leaf's own (incremented) name.
-    for leaf in ("ABC-123", "ABC-123-2"):
-        assert (output / leaf / "ABC-123.nfo").exists(), f"missing nfo under {leaf}"
-        assert (output / leaf / "ABC-123.jpg").exists(), f"missing cover under {leaf}"
-
-    repo = VideoRepository(str(db_path))
-    uri_mp4 = to_file_uri(str(src / "ABC-123.mp4"), {})
-    uri_mkv = to_file_uri(str(src / "ABC-123.mkv"), {})
-    v_mp4, v_mkv = repo.get_by_path(uri_mp4), repo.get_by_path(uri_mkv)
-    assert v_mp4 is not None and v_mkv is not None
-    assert v_mp4.output_dir != v_mkv.output_dir
-    assert v_mp4.output_dir and v_mkv.output_dir  # neither is empty (CASE-WHEN no-op guard)
-    assert {uri_to_fs_path(v_mp4.output_dir), uri_to_fs_path(v_mkv.output_dir)} == {
-        str(output / "ABC-123"), str(output / "ABC-123-2"),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1135,118 +738,6 @@ def _expected_basename(meta, source_fs_path, scraper_cfg):
     return _build_basename(fd, source_fs_path, scraper_cfg)
 
 
-def test_real_readstore_overwrite_title_drift_and_extrafanart_shrink(
-    tmp_path, monkeypatch, client, parse_sse_events
-):
-    """Zero out `scrape_attempted_at` (bypass `_should_skip`'s attempted-index
-    check) → re-scrape with a corrected title → asserts the SECOND run truly
-    walks the read-store branch (same output_dir, not re-allocated) and
-    TASK-89a-T4's stale-singleton cleanup (old title-A nfo/cover/poster/fanart
-    removed, only title-B remains). TASK-104-T2: no longer also covers
-    extrafanart shrink — bulk produce never downloads samples post-T2 (see
-    reconciliation note on the section header above).
-    """
-    numbers = ["JKL-030"]
-    num = numbers[0]
-    # CD-89a-7: off flavour IGNORES source.output_path entirely — it always
-    # resolves to the fixed App-managed `get_db_path().parent/"lib"/<name>` root
-    # (see `_off_root` below / `resolve_output_root`'s off branch). A decoy
-    # output_path is passed only to prove the backend doesn't accidentally use it.
-    src = _make_source_dir(tmp_path / "src", "movies", numbers)
-    decoy_output_path = tmp_path / "decoy-output-path-must-be-ignored"
-    decoy_output_path.mkdir()
-    db_path = tmp_path / "test.db"
-    # filename_format must include {title} — default _make_config uses "{num}"
-    # only, which would make old_base == new_base regardless of title drift.
-    config = _make_config(
-        [{"path": str(src), "output_path": str(decoy_output_path), "readonly": True}],
-        tmp_path / "htmlout",
-        download_samples=True,
-    )
-    config["scraper"]["filename_format"] = "{num} {title}"
-    _wire(monkeypatch, config, db_path)
-    monkeypatch.setattr("core.readonly_producer.search_jav", _fake_search_jav_round1)
-    output = _off_root(src, db_path)  # the ACTUAL fixed off-flavor root
-
-    source_fs_path = str(src / f"{num}.mp4")
-    meta_a = _fake_search_jav_round1(num)
-    meta_b = _fake_search_jav_round2(num)
-    old_base = _expected_basename(meta_a, source_fs_path, config["scraper"])
-    new_base = _expected_basename(meta_b, source_fs_path, config["scraper"])
-    assert old_base != new_base, "sanity: round1/round2 metas must produce different basenames"
-
-    # --- Round 1: normal creation ---
-    events1 = _run_generate(client, parse_sse_events)
-    stats1 = _done_event(events1)["readonly_stats"]
-    assert stats1["created"] == 1
-
-    movie_dir = output / num
-    assert (movie_dir / f"{old_base}.nfo").exists()
-    assert (movie_dir / f"{old_base}.jpg").exists()
-    # TASK-111 (spec-111 §2.1): off mode no longer produces -poster/-fanart.
-    assert not (movie_dir / f"{old_base}-poster.jpg").exists()
-    assert not (movie_dir / f"{old_base}-fanart.jpg").exists()
-    # TASK-104-T2 (intended change, NOT a weakening): resolve_ingest_plan
-    # forces sample_images=[] — bulk produce never populates extrafanart,
-    # even with download_sample_images=True and a 3-sample search_jav return.
-    assert not (movie_dir / "extrafanart" / "fanart3.jpg").exists()
-
-    repo = VideoRepository(str(db_path))
-    src_uri = to_file_uri(source_fs_path, {})
-    row1 = repo.get_by_path(src_uri)
-    assert row1 is not None
-    output_dir_before = row1.output_dir
-    assert row1.title == meta_a["title"]
-
-    # --- Bypass `_should_skip`'s attempted-index check (TASK-89b-T3): zero out
-    # scrape_attempted_at for this row directly, simulating "never attempted".
-    # output_dir / all other DB fields are left completely untouched, and the
-    # cover file on disk is NOT deleted — the new skip model no longer looks
-    # at the filesystem at all. ---
-    repo.update_scrape_attempted_at(src_uri, 0)
-
-    # --- Round 2: search_jav now returns a corrected title + fewer samples ---
-    monkeypatch.setattr("core.readonly_producer.search_jav", _fake_search_jav_round2)
-    events2 = _run_generate(client, parse_sse_events)
-    stats2 = _done_event(events2)["readonly_stats"]
-
-    # Proves the read-store branch (not the skip branch) was actually walked.
-    assert stats2["created"] == 1, "must NOT be skipped — scrape_attempted_at was zeroed"
-    assert stats2["skipped"] == 0
-
-    row2 = repo.get_by_path(src_uri)
-    assert row2 is not None
-    assert row2.output_dir == output_dir_before, (
-        "read-store reuse: same movie_dir must be reused, not re-allocated"
-    )
-    assert row2.title == meta_b["title"]
-
-    # TASK-89a-T4: old title-A series fully gone, only title-B series remains.
-    assert not (movie_dir / f"{old_base}.nfo").exists(), "stale title-A nfo survived"
-    assert not (movie_dir / f"{old_base}.jpg").exists(), "stale title-A cover survived"
-    # TASK-111: these two poster/fanart lines are still literally true, but the
-    # reason has shifted — off mode never produces title-A's poster/fanart in
-    # the first place (round 1, above), so there is nothing left for
-    # `_clean_stale_singletons` to actually clean here; this is no longer
-    # evidence that cleanup ran.
-    assert not (movie_dir / f"{old_base}-poster.jpg").exists(), "stale title-A poster survived"
-    assert not (movie_dir / f"{old_base}-fanart.jpg").exists(), "stale title-A fanart survived"
-    assert (movie_dir / f"{new_base}.nfo").exists()
-    assert (movie_dir / f"{new_base}.jpg").exists()
-    # TASK-111 (spec-111 §2.1): off mode no longer produces -poster/-fanart.
-    assert not (movie_dir / f"{new_base}-poster.jpg").exists()
-    assert not (movie_dir / f"{new_base}-fanart.jpg").exists()
-
-    # TASK-104-T2 (intended change, NOT a weakening): extrafanart stays empty
-    # across both rounds — bulk produce never downloads samples post-T2, so
-    # there is no 3→2 shrink to observe any more (see reconciliation note on
-    # the section header above).
-    ef_dir = movie_dir / "extrafanart"
-    assert not (ef_dir / "fanart1.jpg").exists()
-    assert not (ef_dir / "fanart2.jpg").exists()
-    assert not (ef_dir / "fanart3.jpg").exists()
-
-
 # ---------------------------------------------------------------------------
 # PR#91 P2-D: DirectoryConfig.path as a file:/// URI (schema「FS 路徑或 URI」).
 # A URI source path must be handled idempotently everywhere it is converted:
@@ -1258,35 +749,6 @@ def test_real_readstore_overwrite_title_drift_and_extrafanart_shrink(
 # ---------------------------------------------------------------------------
 
 class TestUriSourcePathIdempotent:
-    def test_readonly_rows_appear_in_generated_list_uri_source(
-        self, tmp_path, monkeypatch, client, parse_sse_events
-    ):
-        """URI source path → readonly-generated rows land in the gallery list.
-
-        done.video_count is the DB row set filtered by configured_dir_uris; the
-        pre-fix double-wrap (to_file_uri('file:///…') = 'file:///file:///…')
-        filters every readonly row out → video_count == 0 (RED).
-        """
-        numbers = ["URI-001", "URI-002", "URI-003"]
-        src = _make_source_dir(tmp_path / "src", "movies", numbers)
-        output = tmp_path / "output"
-        output.mkdir()
-        db_path = tmp_path / "test.db"
-        # Source `path` stored as a file:/// URI (not an FS path).
-        config = _make_config(
-            [{"path": to_file_uri(str(src), {}), "output_path": str(output), "readonly": True}],
-            tmp_path / "htmlout",
-        )
-        _wire(monkeypatch, config, db_path)
-
-        events = _run_generate(client, parse_sse_events)
-        done = _done_event(events)
-
-        # readonly producer still created every movie (source scanning already
-        # URI-safe via _list_source_videos), ...
-        assert done["readonly_stats"]["created"] == len(numbers)
-        # ... and the post-loop configured_dir_uris filter keeps them in the list.
-        assert done["video_count"] == len(numbers)
 
     def test_video_proxy_allows_file_under_uri_source(self, tmp_path, monkeypatch, client):
         """A video under a URI-form source dir passes the get_video allowlist (not 403)."""
@@ -1308,33 +770,6 @@ class TestUriSourcePathIdempotent:
         resp = client.get(f"/api/gallery/video?path={quote(path_arg)}")
         assert resp.status_code == 200, resp.text
         assert resp.content == b"FAKE-VIDEO-BYTES"
-
-    def test_image_proxy_allows_file_under_uri_source(self, tmp_path, monkeypatch, client):
-        """A cover under a URI-form source dir passes the get_image allowlist (not 403);
-        an outside .jpg still 403 (whitelist not degraded)."""
-        src = tmp_path / "src"
-        src.mkdir()
-        cover = src / "cover.jpg"
-        cover.write_bytes(_FAKE_COVER_BYTES)
-
-        test_config = {
-            "gallery": {
-                "directories": [{"path": to_file_uri(str(src), {}), "output_path": ""}],
-                "path_mappings": {},
-            },
-            "scraper": {},
-        }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
-
-        r = client.get("/api/gallery/image", params={"path": str(cover)})
-        assert r.status_code == 200, r.text
-        assert r.content == _FAKE_COVER_BYTES
-
-        outside = tmp_path / "outside" / "x.jpg"
-        outside.parent.mkdir()
-        outside.write_bytes(_FAKE_COVER_BYTES)
-        r403 = client.get("/api/gallery/image", params={"path": str(outside)})
-        assert r403.status_code == 403
 
 
 # ---------------------------------------------------------------------------

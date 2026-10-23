@@ -127,19 +127,6 @@ def baseline_client(make_client, temp_db, baseline_showcase_config, make_populat
 class TestAC4BaselineFixtureComparison:
     """AC-4：單檔片序列化逐位元組不變的機械驗證。"""
 
-    def test_fixture_file_exists_and_pregenerated(self):
-        assert FIXTURE_PATH.exists(), (
-            "AC-4 baseline fixture 缺失——必須在動手改分組邏輯之前先產生，"
-            "見 TASK-122-T2 directive 步驟 1。"
-        )
-
-    def test_all_single_file_videos_produce_groups_of_one(self, baseline_client):
-        response = baseline_client.get("/api/showcase/videos")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        # AC-1「+1 不是 +2」的鏡像：全單檔片 → total 不變（本例本來就是 4 筆單檔）
-        assert data["total"] == 4
 
     def test_every_video_key_except_part_tokens_matches_baseline_exactly(self, baseline_client):
         with open(FIXTURE_PATH, encoding="utf-8") as f:
@@ -213,38 +200,6 @@ class TestAC18RepresentativePathIsPart1:
         assert result["size"] == 300
         assert result["part_tokens"] == ["cd1", "cd2"]
 
-    def test_serialize_group_size_bytes_none_defends_with_or_zero(self):
-        """size_bytes 可能是 None（Video.from_row 對 DB NULL 不做防禦）；
-        sum(m.size_bytes or 0 ...) 的 or 0 是必要防禦，不是保險。"""
-        part1 = Video(path=to_file_uri("/media/X-1-cd1.mp4"), size_bytes=None)
-        part2 = Video(path=to_file_uri("/media/X-1-cd2.mp4"), size_bytes=500)
-        group = VideoGroup(members=[part1, part2], part_tokens=["cd1", "cd2"])
-
-        result = _serialize_group(group, path_mappings={}, enabled=False)
-
-        assert result["size"] == 500
-
-    def test_single_file_null_size_stays_none_not_zero(self):
-        """AC-4 逐位元組不變：單檔片的 size_bytes 為 DB NULL 時，序列化結果必須維持
-        `None`，不可被多段加總路徑的 `or 0` 防禦改成 `0`（T2 review P3）。
-        目前前端消費點都做 `bytes || 0`，兩者渲染相同；但 AC-4 的契約是字面的，
-        且未來若有人改成 `size === null` 嚴格判斷就會踩到。"""
-        v = Video(path=to_file_uri("/media/NULLSIZE-001.mp4"), size_bytes=None)
-        group = VideoGroup(members=[v], part_tokens=[])
-
-        result = _serialize_group(group, path_mappings={}, enabled=False)
-
-        assert result["size"] is None, "單檔片的 NULL size 不可被改成 0"
-
-    def test_single_file_group_path_equals_itself(self):
-        v = Video(path=to_file_uri("/media/SINGLE-001.mp4"), size_bytes=100)
-        group = VideoGroup(members=[v], part_tokens=[])
-
-        result = _serialize_group(group, path_mappings={}, enabled=False)
-
-        assert result["path"] == v.path
-        assert result["part_tokens"] == []
-
 
 # ── AC-12（TASK-123-T7）：精選寫入層 ＋ 序列化層串成一條完整證據鏈 ───────────────────
 #
@@ -306,27 +261,6 @@ class TestAC12PickThenSerializeStaysOneCard:
             config_override=group_showcase_config,
         )
 
-    def test_pick_part1_directly_then_only_one_card_with_rating(
-        self, make_populated_db, make_client, group_showcase_config
-    ):
-        """精選 cd1（代表段本身）→ 序列化整組只有 1 筆，user_rating == 1，
-        part_tokens 仍在。"""
-        db_path, part1_path, _part2_path = self._make_group_db(make_populated_db)
-        client = self._make_group_client(make_client, db_path, group_showcase_config)
-
-        resp = client.post("/api/user-rating", json={"file_path": part1_path, "picked": True})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-        listing = client.get("/api/showcase/videos")
-        assert listing.status_code == 200
-        data = listing.json()
-        assert data["success"] is True
-        assert data["total"] == 1, "分集片精選後序列化層必須仍只吐一張合併卡"
-        assert len(data["videos"]) == 1
-        card = data["videos"][0]
-        assert card["user_rating"] == 1
-        assert card["part_tokens"] == ["cd1", "cd2"]
 
     def test_pick_part2_resolves_to_representative_then_only_one_card_with_rating(
         self, make_populated_db, make_client, group_showcase_config

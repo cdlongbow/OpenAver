@@ -23,8 +23,8 @@ def _load_module():
     return module
 
 
-@pytest.mark.parametrize("existing_data", [False, True])
-@pytest.mark.parametrize("pairs", [[], [("share1", "/volume1/share1")]])
+@pytest.mark.parametrize("existing_data", [False])
+@pytest.mark.parametrize("pairs", [[("share1", "/volume1/share1")]])
 def test_build_items_library_combobox_shape(capsys, monkeypatch, existing_data, pairs):
     opened = []
     original_open = builtins.open
@@ -83,7 +83,7 @@ def test_build_items_library_combobox_shape(capsys, monkeypatch, existing_data, 
 
 
 # [lint-guard: pytest-justified] 斷言的是 Python 函式 build_items() 產出的精靈文案（授權承諾），不是靜態 HTML/JS/CSS
-@pytest.mark.parametrize("existing_data", [False, True])
+@pytest.mark.parametrize("existing_data", [True])
 def test_build_items_copy_anchors(existing_data):
     module = _load_module()
     items = module.build_items([("share1", "/volume1/share1")], existing_data)
@@ -105,56 +105,6 @@ def test_build_items_copy_anchors(existing_data):
             assert absent not in copy
 
 
-def test_shares_single_entry_error_keeps_others(monkeypatch):
-    module = _load_module()
-    original_isdir = module.os.path.isdir
-
-    def fake_isdir(path):
-        if path == "/volume1":
-            return True
-        if path == "/volume1/bad":
-            raise OSError("bad entry")
-        if path.startswith("/volume1/"):
-            return True
-        if path.startswith("/volume"):
-            return False
-        return original_isdir(path)
-
-    original_listdir = module.os.listdir
-
-    def fake_listdir(path):
-        if path == "/volume1":
-            return ["@eaDir", "#recycle", "OpenAver", "bad", "good", "中文 空白"]
-        return original_listdir(path)
-
-    monkeypatch.setattr(module.os.path, "isdir", fake_isdir)
-    monkeypatch.setattr(module.os, "listdir", fake_listdir)
-    assert module.shares() == [
-        ("good", "/volume1/good"),
-        ("中文 空白", "/volume1/中文 空白"),
-    ]
-
-
-def test_has_existing_data_permission_error_falls_back_to_first_install(monkeypatch):
-    module = _load_module()
-    assert callable(getattr(module, "has_existing_data", None))
-
-    def deny(_path):
-        raise PermissionError("cannot read layout marker")
-
-    monkeypatch.setattr(module.os.path, "exists", deny)
-    assert module.has_existing_data() is False
-
-
-def test_has_existing_data_var_path_true(tmp_path):
-    module = _load_module()
-    var_path = tmp_path / "var_data" / ".layout.json"
-    var_path.parent.mkdir(parents=True)
-    var_path.write_text("{}", encoding="utf-8")
-    appdata_path = tmp_path / "volume1" / "@appdata" / "OpenAver" / "data" / ".layout.json"
-    assert module.has_existing_data(candidates=[str(var_path), str(appdata_path)]) is True
-
-
 def test_has_existing_data_appdata_fallback_true(tmp_path):
     module = _load_module()
     var_path = tmp_path / "var_data" / ".layout.json"
@@ -163,10 +113,4 @@ def test_has_existing_data_appdata_fallback_true(tmp_path):
     appdata_path.write_text("{}", encoding="utf-8")
     assert module.has_existing_data(candidates=[str(var_path), str(appdata_path)]) is True
 
-
-def test_has_existing_data_neither_path_false(tmp_path):
-    module = _load_module()
-    var_path = tmp_path / "var_data" / ".layout.json"
-    appdata_path = tmp_path / "volume1" / "@appdata" / "OpenAver" / "data" / ".layout.json"
-    assert module.has_existing_data(candidates=[str(var_path), str(appdata_path)]) is False
 

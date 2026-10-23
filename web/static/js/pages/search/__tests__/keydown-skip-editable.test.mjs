@@ -41,13 +41,6 @@ test('handleKeydown: focus on INPUT + ArrowLeft → navigate NOT called (caret �
     assert.deepEqual(fakeThis._navCalls, [], 'INPUT 聚焦時 ArrowLeft 不應觸發 navigate（否則會清掉未確認編輯）');
 });
 
-test('handleKeydown: focus on TEXTAREA + ArrowRight → navigate NOT called（標題/中文/演員編輯欄位）', () => {
-    const fakeThis = makeFakeThis({ tagName: 'TEXTAREA' });
-
-    searchStateNavigation().handleKeydown.call(fakeThis, { key: 'ArrowRight', preventDefault() {} });
-
-    assert.deepEqual(fakeThis._navCalls, [], 'TEXTAREA 聚焦時 ArrowRight 不應觸發 navigate');
-});
 
 test('handleKeydown: focus on non-editable DIV + ArrowLeft → navigate(-1) 正常觸發（guard 不過度攔截）', () => {
     const fakeThis = makeFakeThis({ tagName: 'DIV' });

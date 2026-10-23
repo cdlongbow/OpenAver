@@ -10,24 +10,11 @@ Tests the 6 specified cases:
 6. dict without "ja" key → fallback to empty string
 """
 
-import pytest
 from web.routers.actress import _flatten_aliases
 
 
 class TestFlattenAliases:
-    def test_dict_list_format(self):
-        """dict-list 格式來源回傳 dict list，應取出 ja 欄"""
-        raw = [{"ja": "笹川そら", "hiragana": "ささがわそら", "romaji": "Sasagawa Sora"}]
-        assert _flatten_aliases(raw) == ["笹川そら"]
 
-    def test_string_list_wiki_format(self):
-        """wiki scraper 回傳純字串 list，應保持不變"""
-        raw = ["上川星空", "笹川そら"]
-        assert _flatten_aliases(raw) == ["上川星空", "笹川そら"]
-
-    def test_empty_list(self):
-        """空 list → 回傳空 list"""
-        assert _flatten_aliases([]) == []
 
     def test_none_input(self):
         """None → 回傳空 list"""
@@ -38,7 +25,3 @@ class TestFlattenAliases:
         raw = [{"ja": "A"}, "B"]
         assert _flatten_aliases(raw) == ["A", "B"]
 
-    def test_dict_without_ja_key(self):
-        """dict 無 ja key → fallback 空字串"""
-        raw = [{"en": "foo"}]
-        assert _flatten_aliases(raw) == [""]

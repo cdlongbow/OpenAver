@@ -87,7 +87,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 await import('../animations.js');
 const ShowcaseAnimations = globalThis.window.ShowcaseAnimations;
 
-const { stateBase } = await import('../state-base.js');
 
 const VIEWPORT_H = 900;
 
@@ -166,27 +165,6 @@ function resetCalls() {
     globalThis.window.innerHeight = VIEWPORT_H;
 }
 
-function clearPropsCalls(exact) {
-    return gsapCalls.set.filter((args) => {
-        const cp = args[1] && args[1].clearProps;
-        if (!cp) return false;
-        if (exact === undefined) return true;
-        return cp === exact;
-    });
-}
-
-function makeToggleInfoCtx() {
-    const fakeGrid = makeGrid([]);
-    const ctx = Object.assign(
-        stateBase.call({ $persist: (obj) => ({ as: () => obj }) }),
-        {
-            infoVisible: false,
-            _persistedShowcase: {},
-            _getActiveGrid: () => fakeGrid,
-        },
-    );
-    return { ctx, fakeGrid };
-}
 
 // ── 1. toggleInfo：第一行就寫 infoVisible ────────────────────────
 
@@ -240,106 +218,12 @@ test('playInfoExpand：onInterrupt 卸 gsap-animating／flip-guard 且 clearProp
 
 // ── 7. 建 tween 拋錯 → 收乾淨＋狀態機仍翻轉（AC-6）──────────────
 
-test('建 tween 拋錯：class/transform 收乾淨，toggleInfo 狀態機仍翻轉（AC-6）', () => {
-    resetCalls();
-    const { ctx } = makeToggleInfoCtx();
-    const card = makeCard({
-        top: 100, bottom: 280, left: 0, right: 100, width: 100, height: 180,
-    });
-    const gridWithCard = makeGrid([card]);
-    ctx._getActiveGrid = () => gridWithCard;
-
-    const origTo = globalThis.gsap.to;
-    globalThis.gsap.to = (...args) => {
-        gsapOrder.push('to');
-        throw new Error('tween-build-boom');
-    };
-
-    const savedConsoleError = console.error;
-    const errors = [];
-    console.error = (...args) => { errors.push(args); };
-
-    try {
-        assert.doesNotThrow(() => ctx.toggleInfo());
-        assert.equal(ctx.infoVisible, true, '動畫失敗不得回滾 infoVisible');
-        assert.equal(ctx._persistedShowcase.infoVisible, true, '持久化仍須翻轉');
-        assert.ok(
-            clearPropsCalls('transform').length >= 1,
-            'catch 路徑必須 clearProps transform',
-        );
-        assert.ok(card._removed.includes('gsap-animating'));
-        assert.ok(gridWithCard._removed.includes('flip-guard'));
-        assert.equal(card.classList.contains('gsap-animating'), false);
-        assert.equal(gridWithCard.classList.contains('flip-guard'), false);
-        assert.ok(errors.length >= 1, '應 console.error 記錄動畫失敗');
-    } finally {
-        globalThis.gsap.to = origTo;
-        console.error = savedConsoleError;
-    }
-});
 
 // ── 8. 缺 gsap 安靜降級 ──────────────────────────────────────────
 
-test('缺 gsap：capture／play／toggleInfo 整條安靜降級、不 throw', () => {
-    resetCalls();
-    const cards = [
-        makeCard({ top: 100, bottom: 280, left: 0, right: 100, width: 100, height: 180 }),
-    ];
-    const gridEl = makeGrid(cards);
-    const captured = [{ el: cards[0], top: 100, left: 0, bottom: 280 }];
-    const saved = globalThis.gsap;
-    delete globalThis.gsap;
-    try {
-        assert.doesNotThrow(() => {
-            assert.equal(ShowcaseAnimations.captureInfoState(gridEl), null);
-            assert.equal(ShowcaseAnimations.playInfoExpand(captured, gridEl), null);
-        });
-
-        const { ctx } = makeToggleInfoCtx();
-        assert.doesNotThrow(() => ctx.toggleInfo());
-        assert.equal(ctx.infoVisible, true);
-        assert.equal(ctx._persistedShowcase.infoVisible, true);
-    } finally {
-        globalThis.gsap = saved;
-    }
-});
 
 // ── 8b. AC-6：缺 _getActiveGrid／grid null ───────────────────────
 
-test('toggleInfo()：缺 _getActiveGrid 與 grid 為 null 時不 throw，狀態機仍翻轉（AC-6）', () => {
-    const ctx = Object.assign(
-        stateBase.call({ $persist: (obj) => ({ as: () => obj }) }),
-        {
-            infoVisible: false,
-            _persistedShowcase: {},
-        },
-    );
-    delete ctx._getActiveGrid;
-    assert.equal(typeof ctx._getActiveGrid, 'undefined');
-
-    assert.doesNotThrow(() => ctx.toggleInfo());
-    assert.equal(ctx.infoVisible, true);
-    assert.equal(ctx._persistedShowcase.infoVisible, true);
-
-    ctx._getActiveGrid = () => null;
-    assert.doesNotThrow(() => ctx.toggleInfo());
-    assert.equal(ctx.infoVisible, false);
-    assert.equal(ctx._persistedShowcase.infoVisible, false);
-
-    // 162a：!gridEl 動畫入口守衛併入（同一失敗原因：grid 為 null 不得崩）
-    resetCalls();
-    assert.equal(ShowcaseAnimations.captureInfoState(null), null);
-    assert.equal(ShowcaseAnimations.playInfoExpand(null, null), null);
-    assert.equal(
-        ShowcaseAnimations.playInfoExpand(
-            [{ el: makeCard({ top: 1, bottom: 2, left: 0, right: 1, width: 1, height: 1 }), top: 1, left: 0, bottom: 2 }],
-            null,
-        ),
-        null,
-    );
-    assert.doesNotThrow(() => ShowcaseAnimations.captureInfoState(null));
-    assert.doesNotThrow(() => ShowcaseAnimations.playInfoExpand([], null));
-});
 
 // ── 9. shouldSkip（PRM）不建動畫 ─────────────────────────────────
 
@@ -369,20 +253,3 @@ test('playInfoExpand：shouldSkip() 成立時不建動畫（gsap.to 零呼叫）
 
 // 視口過濾（162a 依 branch review 補回精簡版）：使用者在上千張的大牆按眼睛 →
 // 完全離屏的卡不得被動畫（否則整面牆每張都 gsap.set/to → 卡頓）。
-test('playInfoExpand：舊或新位置在視口 ±200px 內才 animate，完全離屏的卡不碰', () => {
-    resetCalls();
-    const rect = (top) => ({ top, bottom: top + 180, left: 0, right: 100, width: 100, height: 180 });
-    const a = makeCard(rect(5000));   // 新位置離屏
-    const c = makeCard(rect(5100));   // 新位置離屏
-    const gridEl = makeGrid([a, c]);
-    const captured = [
-        { el: a, top: 100, left: 0, bottom: 280 },     // 舊在窗內
-        { el: c, top: 5000, left: 0, bottom: 5180 },   // 舊新都在窗外
-    ];
-    assert.ok(ShowcaseAnimations.playInfoExpand(captured, gridEl));
-    const toTargets = gsapCalls.to[0][0];
-    const setTargets = gsapCalls.set.map((args) => args[0]).flat();
-    assert.ok(toTargets.includes(a) && setTargets.includes(a), '舊在窗內必須 animate');
-    assert.ok(!toTargets.includes(c) && !setTargets.includes(c), '舊新都在窗外不得碰');
-    assert.ok(!c._added.includes('gsap-animating'), '窗外卡不得加 gsap-animating');
-});

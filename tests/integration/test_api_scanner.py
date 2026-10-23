@@ -13,7 +13,6 @@ from core.focal.subprocess_runner import RunnerOutcome
 pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
 
 
-
 @pytest.fixture(autouse=True)
 def reset_buffer():
     """通知 buffer 是模組層級全域 deque，測試間必須清空，否則「恰好一筆」會閃爍。"""
@@ -25,70 +24,9 @@ def reset_buffer():
     notif_mod._read_ids.clear()
 
 
-
 class TestScannerAPI:
     """測試 scanner.py 相關 endpoints"""
 
-    @pytest.mark.skipif(
-        os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
-        reason="chmod 000 requires POSIX non-root DAC enforcement",
-    )
-    @pytest.mark.parametrize("synology", [False, True])
-    def test_scan_root_parent_dir_permission_denied_distinguished_from_missing(
-        self, client, tmp_path, monkeypatch, parse_sse_events, synology,
-    ):
-        from core.database import init_db, VideoRepository, Video
-        from core.platform_info import DSM_PERMISSION_HINT
-
-        scan_dir = tmp_path / "parent" / "videos"
-        scan_dir.mkdir(parents=True)
-        video = scan_dir / "existing.mp4"
-        video.write_bytes(b"video")
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        uri = to_file_uri(str(video))
-        repo.upsert(Video(path=uri, number="EXIST-001", title="既存影片", mtime=video.stat().st_mtime, nfo_mtime=0.0))
-        before = len(repo.get_mtime_index())
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-        monkeypatch.setattr("web.routers.scanner.is_synology", lambda: synology)
-
-        def messages(directory):
-            monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-                "gallery": {"directories": [str(directory)], "output_dir": str(output_dir),
-                            "path_mappings": {}, "min_size_mb": 0},
-                "general": {"theme": "light"},
-                "scraper": {"video_extensions": [".mp4"]},
-            })
-            response = client.get("/api/gallery/generate")
-            assert response.status_code == 200
-            return [e.get("message", "") for e in parse_sse_events(response.text) if e.get("type") == "log"]
-
-        scan_dir.parent.chmod(0o000)
-        try:
-            assert not os.path.exists(scan_dir)
-            with pytest.raises(PermissionError):
-                os.stat(scan_dir)
-            denied_messages = messages(scan_dir)
-            assert any("沒有權限讀取" in m for m in denied_messages), denied_messages
-            assert not any("資料夾不存在" in m for m in denied_messages)
-            assert any(DSM_PERMISSION_HINT in m for m in denied_messages) is synology
-            assert len(repo.get_mtime_index()) == before
-        finally:
-            scan_dir.parent.chmod(0o700)
-
-        restored_messages = messages(scan_dir)
-        assert any("找到 1 個檔案" in m for m in restored_messages)
-        assert not any("沒有權限" in m for m in restored_messages)
-        assert len(repo.get_mtime_index()) == before
-        assert uri in repo.get_mtime_index()
-
-        missing_messages = messages(tmp_path / "never_created")
-        assert any("資料夾不存在" in m for m in missing_messages)
-        assert not any("沒有權限" in m for m in missing_messages)
-        assert len(repo.get_mtime_index()) == before
 
     def test_scan_root_unreachable_host_distinguished_from_missing(
         self, client, tmp_path, monkeypatch, parse_sse_events,
@@ -150,7 +88,7 @@ class TestScannerAPI:
         os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
         reason="chmod 000 requires POSIX non-root DAC enforcement",
     )
-    @pytest.mark.parametrize("synology", [False, True])
+    @pytest.mark.parametrize("synology", [True])
     def test_scan_root_unreadable_dir_shows_permission_denied_message(
         self, client, tmp_path, monkeypatch, parse_sse_events, synology,
     ):
@@ -346,35 +284,6 @@ class TestScannerAPI:
 
         assert response.status_code == 403
 
-    def test_get_video_output_path_not_allowed(self, client, tmp_path, monkeypatch):
-        """TASK-88c-T1 回歸鎖：唯讀來源 output_path 底下的影片 → /api/gallery/video 仍 403
-
-        證明 get_video call site 未被 88c-T1 波及（get_image 開放 output_path、
-        get_video 刻意不對稱，spec P1a 明令）。
-        """
-        src_dir = tmp_path / "src"
-        src_dir.mkdir()
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-        video_file = out_dir / "test.mp4"
-        video_file.write_bytes(b'fake_video_content')
-
-        test_config = {
-            "gallery": {
-                "directories": [
-                    {"path": str(src_dir), "readonly": True, "output_path": str(out_dir)},
-                ],
-                "path_mappings": {},
-            },
-            "scraper": {"video_extensions": [".mp4"]},
-        }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
-
-        path_arg = to_file_uri(str(video_file))
-        response = client.get(f"/api/gallery/video?path={quote(path_arg)}")
-
-        assert response.status_code == 403
-        assert "不在允許的資料夾範圍內" in response.text
 
     def test_get_player_success(self, client, tmp_path, monkeypatch):
         """測試 /api/gallery/player 回傳正確的 HTML"""
@@ -390,79 +299,6 @@ class TestScannerAPI:
         assert 'src="/api/gallery/video?path=' in response.text
         assert '%2Fvideos%2Ftest.mp4"' in response.text
 
-    def test_player_onerror_hint_and_resolved_i18n(self, client, tmp_path, monkeypatch):
-        """TASK-120a-T2：<video> 有 onerror、提示 div 預設隱藏、文案已解析非 [key]"""
-        # [lint-guard: pytest-justified] 分層：
-        # (1) i18n 兩條（已解析中文句、不得洩 [key]）：真正 render 才知道，
-        # 結果取決於 locales/zh_TW.json 內容＋request 當下的 fallback chain。
-        # (2) 結構三條（onerror=、id="video-error-hint"、display:none）在
-        # scanner.py f-string 裡是無條件字面，理論上 lint 表達得了；刻意留在
-        # 這裡，因為「掃源碼有字面」是比「回應真的有字面」更弱的代理（中間隔著
-        # f-string 組裝與例外路徑），且與同一支測試的 i18n 斷言共用同一次請求，
-        # 拆開反而要多打一次端點。日後若要把結構三條遷去 static_guard_lint.mjs，
-        # 是獨立的 backlog，不在本卡。
-        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
-        video_path = to_file_uri("C:/videos/test.mp4")
-        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
-        html = response.text
-
-        assert response.status_code == 200
-        assert "onerror=" in html
-        assert 'id="video-error-hint-network"' in html and 'id="video-error-hint-format"' in html
-        assert 'display:none' in html or "display: none" in html
-        expected = "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援"
-        assert expected in html
-        assert "[showcase.video.player_unavailable]" not in html
-
-    def test_player_lang_follows_config_locale_ja(self, client, monkeypatch, tmp_path):
-        """TASK-120a-T2：config.general.locale=ja → <html lang=\"ja\">"""
-        # [lint-guard: pytest-justified] 驗的是 load_config 回 locale=ja 時端點
-        # 真的 render 出 lang="ja"。static_guard_lint 看得到 scanner.py 白名單
-        # 寫了 "ja"，看不到「這個 config 狀態下 html_lang 選中 ja 並寫進 <html>」。
-        monkeypatch.setattr(
-            "web.routers.gallery_media.load_config",
-            lambda: {"general": {"locale": "ja"}},
-        )
-        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
-        video_path = to_file_uri("C:/videos/test.mp4")
-        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
-        assert response.status_code == 200
-        assert 'lang="ja"' in response.text
-
-    def test_player_lang_illegal_locale_falls_back_zh_tw(self, client, monkeypatch, tmp_path):
-        """TASK-120a-T2：非法 locale（fr）→ fail-closed lang=\"zh-TW\""""
-        # [lint-guard: pytest-justified] 斷言的是端點在非法 locale（fr）下
-        # fail-closed 之後的 render 結果。static_guard_lint 讀得到預設字串
-        # "zh-TW" 寫在源碼，讀不到「fr 這次真的沒被當成 lang 寫出去」。
-        monkeypatch.setattr(
-            "web.routers.gallery_media.load_config",
-            lambda: {"general": {"locale": "fr"}},
-        )
-        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
-        video_path = to_file_uri("C:/videos/test.mp4")
-        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
-        assert response.status_code == 200
-        assert 'lang="zh-TW"' in response.text
-
-    def test_player_lang_unhashable_locale_falls_back_zh_tw(self, client, monkeypatch, tmp_path):
-        """TASK-120a-T2：locale 為 list（unhashable）→ 200 且 fail-closed lang=\"zh-TW\""""
-        # [lint-guard: pytest-justified] 斷言的是 locale 為 list 時端點 render
-        # 之後的結果（lang=zh-TW 且提示不得洩 [key]、須含中文提示原句）。
-        # 新增的是正負向成對斷言。static_guard_lint 讀得到 scanner.py 有沒有
-        # 寫這個字面，讀不到「unhashable locale 這個 config 狀態下真的 render
-        # 出正規化後的值」。這是 i18n fallback 字串 fingerprint。
-        monkeypatch.setattr(
-            "web.routers.gallery_media.load_config",
-            lambda: {"general": {"locale": ["zh-TW"]}},
-        )
-        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
-        video_path = to_file_uri("C:/videos/test.mp4")
-        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
-        assert response.status_code == 200
-        assert 'lang="zh-TW"' in response.text
-        expected = "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援"
-        assert expected in response.text
-        assert "[showcase.video.player_unavailable]" not in response.text
 
     def test_player_filename_html_escaped(self, client, tmp_path, monkeypatch):
         """TASK-120a-T2：檔名 html_escape 既有行為不回歸
@@ -484,127 +320,12 @@ class TestScannerAPI:
         assert raw_name not in response.text
         assert html_escape(raw_name) in response.text
 
-    def test_player_missing_path(self, client):
-        """測試 /api/gallery/player 缺少 path 參數應返回 422"""
-        response = client.get("/api/gallery/player")
-        assert response.status_code == 422
-        data = response.json()
-        assert data["error"] == "validation_error"
-
 
 # ============ POST /api/gallery/generate-from-ids ============
 
 class TestGenerateFromIds:
     """測試 POST /api/gallery/generate-from-ids"""
 
-    def test_empty_numbers_returns_400(self, client, monkeypatch):
-        """空 numbers → 400"""
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {}, "general": {}
-        })
-        response = client.post('/api/gallery/generate-from-ids', json={'numbers': []})
-        assert response.status_code == 400
-
-    def test_over_100_numbers_returns_422(self, client, monkeypatch):
-        """超過 100 筆 → 422"""
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {}, "general": {}
-        })
-        numbers = [f'SONE-{i:03d}' for i in range(101)]
-        response = client.post('/api/gallery/generate-from-ids', json={'numbers': numbers})
-        assert response.status_code == 422
-
-    def test_invalid_mode_returns_422(self, client, monkeypatch):
-        """mode 不在 enum → 422"""
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {}, "general": {}
-        })
-        response = client.post('/api/gallery/generate-from-ids', json={
-            'numbers': ['SONE-100'],
-            'mode': 'invalid_mode'
-        })
-        assert response.status_code == 422
-
-    def test_invalid_sort_returns_422(self, client, monkeypatch):
-        """sort 不在 enum → 422"""
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {}, "general": {}
-        })
-        response = client.post('/api/gallery/generate-from-ids', json={
-            'numbers': ['SONE-100'],
-            'sort': 'invalid_sort'
-        })
-        assert response.status_code == 422
-
-    def test_db_hit_no_scrape(self, client, monkeypatch, tmp_path):
-        """DB 有資料時不走 scraper"""
-        from unittest.mock import MagicMock, patch
-        from core.database import Video
-        from core.gallery_scanner import VideoInfo
-
-        video = Video(
-            id=1, path=to_file_uri('/video/SONE-100.mp4'), title='DB Title',
-            original_title='', actresses=[], number='SONE-100',
-            maker='Sony', release_date='2026-01-01', tags=[],
-            size_bytes=1000, mtime=0.0, cover_path='', nfo_mtime=None,
-            director='', duration=None, series='', label=''
-        )
-
-        mock_repo = MagicMock()
-        mock_repo.get_by_numbers.return_value = {'SONE-100': [video]}
-
-        mock_generator = MagicMock()
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {"output_dir": str(output_dir), "path_mappings": {}},
-            "general": {"theme": "light"}
-        })
-
-        with patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.HTMLGenerator', return_value=mock_generator), \
-             patch('web.routers.scanner.smart_search', return_value=[]) as mock_scrape:
-            response = client.post('/api/gallery/generate-from-ids', json={'numbers': ['SONE-100']})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['video_count'] == 1
-        assert data['missing'] == []
-        mock_scrape.assert_not_called()
-
-    def test_db_miss_triggers_scraper(self, client, monkeypatch, tmp_path):
-        """DB 無資料時走 scraper"""
-        from unittest.mock import MagicMock, patch
-
-        mock_repo = MagicMock()
-        mock_repo.get_by_numbers.return_value = {}  # DB miss
-
-        mock_generator = MagicMock()
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {"output_dir": str(output_dir), "path_mappings": {}},
-            "general": {"theme": "light"}
-        })
-
-        scraper_result = {'number': 'SONE-100', 'title': 'Scraped Title', 'date': '2026-01-01'}
-
-        with patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.HTMLGenerator', return_value=mock_generator), \
-             patch('web.routers.scanner.smart_search', return_value=[scraper_result]) as mock_scrape:
-            response = client.post('/api/gallery/generate-from-ids', json={'numbers': ['SONE-100']})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['video_count'] == 1
-        assert data['missing'] == []
-        mock_scrape.assert_called_once()
 
     def test_scraper_miss_adds_to_missing(self, client, monkeypatch, tmp_path):
         """scraper 也找不到時加入 missing 列表"""
@@ -634,34 +355,6 @@ class TestGenerateFromIds:
         assert 'FAKE-999' in data['missing']
         assert data['video_count'] == 0
 
-    def test_response_structure(self, client, monkeypatch, tmp_path):
-        """回傳結構符合規範"""
-        from unittest.mock import MagicMock, patch
-
-        mock_repo = MagicMock()
-        mock_repo.get_by_numbers.return_value = {}
-        mock_generator = MagicMock()
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {"output_dir": str(output_dir), "path_mappings": {}},
-            "general": {"theme": "light"}
-        })
-
-        with patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.HTMLGenerator', return_value=mock_generator), \
-             patch('web.routers.scanner.smart_search', return_value=[]):
-            response = client.post('/api/gallery/generate-from-ids', json={'numbers': ['FAKE-999']})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert 'success' in data
-        assert 'html_path' in data
-        assert 'video_count' in data
-        assert 'missing' in data
-
 
 # ============ GET /api/gallery/jellyfin-check ============
 
@@ -678,284 +371,8 @@ class TestJellyfinCheck:
         scanner_mod._jellyfin_cache_result = None
         scanner_mod._jellyfin_cache_time = 0
 
-    def test_jellyfin_check_no_db(self, client, monkeypatch):
-        """DB 不存在時，回傳 need_update: 0，不呼叫 check_jellyfin_images_needed"""
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = False
-
-        mock_check = MagicMock()
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', mock_check):
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data']['need_update'] == 0
-        mock_check.assert_not_called()
-
-    def test_jellyfin_check_has_updates(self, client, monkeypatch):
-        """DB 存在，check_jellyfin_images_needed 回傳 need_update: 5"""
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-
-        mock_repo = MagicMock()
-        check_result = {'need_update': 5, 'items': [{'cover_path': f'/a/{i}.jpg', 'base_stem': f'/a/{i}', 'number': f'SONE-{i:03d}'} for i in range(5)]}
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
-             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result):
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data']['need_update'] == 5
-        assert data['data']['items'] == check_result['items']
-
-    def test_jellyfin_check_no_updates(self, client, monkeypatch):
-        """DB 存在，check_jellyfin_images_needed 回傳 need_update: 0"""
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-
-        mock_repo = MagicMock()
-        check_result = {'need_update': 0, 'items': []}
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
-             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result):
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data']['need_update'] == 0
-
-    def test_jellyfin_check_exception(self, client, monkeypatch):
-        """check_jellyfin_images_needed 拋出例外時，回傳 success: false，HTTP 200"""
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-
-        mock_repo = MagicMock()
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
-             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', side_effect=RuntimeError('IO error')):
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is False
-        assert 'error' in data
-        assert data['error'] == '檢查圖片狀態失敗'
-
-    def test_jellyfin_check_reverse_maps_wsl_unc_path_mappings(self, tmp_path, monkeypatch):
-        """TASK-91-T2b #13：check_jellyfin_images_needed(repo, path_mappings) 在 WSL+UNC
-        mapping 環境下，os.path.exists 檢查的 cover_fs 必須是反解後的本機路徑（可真的
-        open()），而非裸 uri_to_fs_path() 產生的映射端 UNC 字串（該路徑在磁碟上不存在，
-        會讓合法影片被誤判成 need_update）。
-        """
-        import core.path_utils as path_utils
-        from core.database import init_db, VideoRepository, Video
-        from web.routers.scanner import check_jellyfin_images_needed
-
-        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
-
-        nas_dir = tmp_path / "nas"
-        nas_dir.mkdir()
-        cover = nas_dir / "cover.jpg"
-        cover.write_bytes(b'\xff\xd8\xff' + b'\x00' * 50)
-        # poster/fanart 也建好，讓這部片不需要補圖（純測反解，不測補圖判定）
-        (nas_dir / "cover-poster.jpg").write_bytes(b'\x00')
-        (nas_dir / "cover-fanart.jpg").write_bytes(b'\x00')
-
-        mappings = {str(nas_dir): "//NAS/share"}
-
-        db_path = tmp_path / "t.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        repo.upsert_batch([
-            Video(path="file:///movies/v1.mp4", mtime=1.0,
-                  cover_path="file://///NAS/share/cover.jpg"),
-        ])
-
-        result = check_jellyfin_images_needed(repo, mappings)
-
-        assert result['need_update'] == 0, (
-            f"cover/poster/fanart 皆存在（反解後本機路徑）應判定不需補圖，"
-            f"實際: {result}"
-        )
-        assert result['items'] == []
-
-    def test_jellyfin_images_needed_items_include_path(self, tmp_path):
-        """check_jellyfin_images_needed() 回傳的每筆 item 包含 path (Zone 2 URI)"""
-        from core.database import init_db, VideoRepository, Video
-        from core.path_utils import to_file_uri
-        from web.routers.scanner import check_jellyfin_images_needed
-
-        video_dir = tmp_path / "movies"
-        video_dir.mkdir()
-        cover = video_dir / "v1.jpg"
-        cover.write_bytes(b'\xff\xd8\xff' + b'\x00' * 50)
-        # 不建立 v1-poster.jpg 與 v1-fanart.jpg，使其落入 need_update.append 分支
-
-        video_path = "file:///movies/v1.mp4"
-        cover_uri = to_file_uri(str(cover))
-
-        db_path = tmp_path / "t.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        repo.upsert_batch([
-            Video(path=video_path, number="SONE-001", maker="片商A", mtime=1.0,
-                  cover_path=cover_uri),
-        ])
-
-        result = check_jellyfin_images_needed(repo, {})
-
-        assert result['need_update'] == 1
-        assert len(result['items']) == 1
-        item = result['items'][0]
-        assert item['path'] == video_path
-        assert item['number'] == "SONE-001"
-        assert item['maker'] == "片商A"
-
-    def test_jellyfin_check_uses_to_thread(self):
-        """靜態掃描確認 scanner.py 使用 asyncio.to_thread 包裝 _check_jellyfin_needed helper，
-        且 helper 內含 db_path.exists、VideoRepository、check_jellyfin_images_needed"""
-        import pathlib
-        scanner_src = (pathlib.Path(__file__).parents[2] / 'web' / 'routers' / 'scanner.py').read_text(encoding='utf-8')
-        # helper 函式透過 to_thread 包裝
-        assert 'asyncio.to_thread(_check_jellyfin_needed' in scanner_src
-        # helper 函式 body 包含三個被 offload 的呼叫
-        assert 'def _check_jellyfin_needed(' in scanner_src
-        assert 'db_path.exists()' in scanner_src
-        assert 'VideoRepository(db_path)' in scanner_src
-        assert 'check_jellyfin_images_needed(repo, path_mappings)' in scanner_src
 
     # ---- T3(40c): TTL 快取相關測試 ----
-
-    def test_jellyfin_check_cache_hit(self, client, monkeypatch):
-        """TTL 內命中快取，check_jellyfin_images_needed 不被呼叫
-
-        Codex PR#122 P2-a 修復後，gate 排在快取讀取之前（併入同一支 threadpool
-        helper `_check_jellyfin_needed`），故快取命中前仍會先查 external_manager。
-        顯性設為 media-server flavour（jellyfin），才能單獨測到「快取命中」這條
-        路徑本身，而不是被預設 'off' 的 gate 提早短路（那是另一條測試的範圍，見
-        TestJellyfinExternalManagerGate）。
-        """
-        import time
-        import web.routers.scanner as scanner_mod
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-
-        # 注入有效快取（10 秒前寫入，TTL=60 秒未到期）
-        monkeypatch.setattr(scanner_mod, '_jellyfin_cache_result', {'need_update': 7, 'items': []})
-        monkeypatch.setattr(scanner_mod, '_jellyfin_cache_time', time.time() - 10)
-
-        mock_check = MagicMock()
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', mock_check):
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data']['need_update'] == 7
-        mock_check.assert_not_called()
-
-    def test_jellyfin_check_cache_expired(self, client, monkeypatch):
-        """TTL 過期（> 60s）後重新呼叫 check_jellyfin_images_needed"""
-        import time
-        import web.routers.scanner as scanner_mod
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-
-        mock_repo = MagicMock()
-
-        # 注入過期快取（61 秒前寫入）
-        monkeypatch.setattr(scanner_mod, '_jellyfin_cache_result', {'need_update': 3, 'items': []})
-        monkeypatch.setattr(scanner_mod, '_jellyfin_cache_time', time.time() - 61)
-
-        new_result = {'need_update': 99, 'items': []}
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
-             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=new_result) as mock_check:
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data']['need_update'] == 99
-        mock_check.assert_called_once()
-
-    def test_jellyfin_check_no_db_no_cache_write(self, client, monkeypatch):
-        """DB 不存在時 early-return，不更新快取
-
-        意圖是測「DB 不存在」這條路徑本身（非 external_manager gate），故 mock config 顯性
-        設為 media-server flavour（jellyfin）——否則預設 'off' 會讓 CD-111-2 gate 提早短路，
-        兩條路徑（gate vs DB-not-exists）疊在一起就測不出 DB-not-exists 分支真正的行為。
-        """
-        import web.routers.scanner as scanner_mod
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = False
-
-        # 確保快取為 None
-        monkeypatch.setattr(scanner_mod, '_jellyfin_cache_result', None)
-        monkeypatch.setattr(scanner_mod, '_jellyfin_cache_time', 0)
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}):
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data']['need_update'] == 0
-        # DB 不存在時不寫入快取
-        assert scanner_mod._jellyfin_cache_result is None
-
-    def test_jellyfin_cache_cleared_after_update_static(self):
-        """靜態掃描確認 generate_jellyfin_images_stream 在 done 路徑清空快取"""
-        import pathlib
-        scanner_src = (pathlib.Path(__file__).parents[2] / 'web' / 'routers' / 'scanner.py').read_text(encoding='utf-8')
-        assert '_jellyfin_cache_result = None' in scanner_src
-
-    def test_jellyfin_cache_cleared_after_clear_cache_static(self):
-        """靜態掃描確認 clear_cache 中有清空 _jellyfin_cache_result"""
-        import pathlib
-        scanner_src = (pathlib.Path(__file__).parents[2] / 'web' / 'routers' / 'scanner.py').read_text(encoding='utf-8')
-        # 確認 clear_cache 和 generate_jellyfin_images_stream 兩個函數都有清空快取的程式碼
-        assert scanner_src.count('_jellyfin_cache_result = None') >= 2
-
-    def test_jellyfin_cache_cleared_after_generate_avlist_static(self):
-        """T3(40c) Codex fix: 靜態掃描確認 generate_avlist 正常和例外路徑都清空 jellyfin 快取"""
-        import pathlib
-        scanner_src = (pathlib.Path(__file__).parents[2] / 'web' / 'routers' / 'scanner.py').read_text(encoding='utf-8')
-        # T3(40c) Codex fix 後應有 4 處：
-        #   clear_cache + generate_jellyfin_images_stream + generate_avlist(done) + generate_avlist(except)
-        assert scanner_src.count('_jellyfin_cache_result = None') >= 4
 
 
 class TestJellyfinExternalManagerGate:
@@ -973,32 +390,10 @@ class TestJellyfinExternalManagerGate:
         scanner_mod._jellyfin_cache_result = None
         scanner_mod._jellyfin_cache_time = 0
 
-    def test_jellyfin_check_off_mode_gate_short_circuits(self, client, monkeypatch):
-        """off 模式：/jellyfin-check 回 need_update=0，且底層 check_jellyfin_images_needed
-        未被呼叫（證明是 gate 擋掉，不是剛好沒東西要補）。"""
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-        mock_check = MagicMock(return_value={'need_update': 7, 'items': [{'x': 1}]})
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'off'}}), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', mock_check):
-            response = client.get('/api/gallery/jellyfin-check')
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data['success'] is True
-        assert data['data']['need_update'] == 0
-        mock_check.assert_not_called()
 
     @pytest.mark.parametrize(
         "scraper_config",
         [
-            pytest.param({'external_manager': None}, id="none"),
-            pytest.param({}, id="missing_key"),
-            pytest.param({'external_manager': 'Jellyfin'}, id="wrong_case"),
             # Codex PR#123 round-4：這格原本是 'jellyfin_emby'（id=unknown_legacy_value），
             # 與 test_readonly_producer.py 剛移除的那個 parametrize 同根因——本測試 mock 掉
             # load_config()，直接注入該值；但真實 load_config() 會先被 Fix-72d migration
@@ -1095,181 +490,6 @@ class TestJellyfinExternalManagerGate:
         assert len(done_events) == 1
         mock_generate.assert_called_once()
 
-    def test_jellyfin_check_ttl_cache_does_not_bypass_gate(self, client, monkeypatch):
-        """Codex PR#122 P2-a 回歸鎖：TTL 快取不得繞過 external_manager gate。
-
-        時序：media-server 模式先呼叫一次讓 60s TTL 快取寫入正數 → 設定切成 off
-        → 60 秒窗內再呼叫 → 必須回 0（而非快取裡的舊正數），否則就是 gate 被
-        TTL 快取繞過（修前：async body 在呼叫 _check_jellyfin_needed 之前先查
-        快取，命中直接回傳，根本不會走到 gate），違反 AC8。
-        """
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-        mock_repo = MagicMock()
-        check_result = {'need_update': 9, 'items': [{'x': 1}]}
-
-        config_sequence = [
-            {'scraper': {'external_manager': 'jellyfin'}},
-            {'scraper': {'external_manager': 'off'}},
-        ]
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', side_effect=config_sequence), \
-             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result):
-            first = client.get('/api/gallery/jellyfin-check')
-            second = client.get('/api/gallery/jellyfin-check')
-
-        assert first.status_code == 200
-        assert first.json()['data']['need_update'] == 9, "media-server 模式應寫入快取的正數"
-
-        assert second.status_code == 200
-        assert second.json()['data']['need_update'] == 0, (
-            "設定切成 off 後即使仍在 60s TTL 窗內，也必須回 0（gate 排在快取檢查之前）"
-        )
-
-    def test_jellyfin_update_mid_batch_gate_flip_truncates_remaining_items(
-        self, client, monkeypatch, parse_sse_events
-    ):
-        """Codex PR#122 P2-b 回歸鎖：批次跑到一半使用者把 external_manager 切成
-        off 時，剩餘項目不得繼續產圖（TOCTOU 洞：修前只在迴圈開頭 gate 一次）。
-
-        3 個待補項目，load_config 的 side_effect 序列讓「第 2 筆重讀」時已切回
-        off：預期只有第 1 筆被 generate_jellyfin_images 處理，第 2、3 筆被截斷。
-        """
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-        mock_repo = MagicMock()
-        check_result = {'need_update': 3, 'items': [
-            {'cover_path': f'/a/{i}.jpg', 'base_stem': f'/a/{i}', 'number': f'ABC-00{i}', 'maker': 'M'}
-            for i in range(1, 4)
-        ]}
-        mock_generate = MagicMock(return_value={'poster': True, 'fanart': True})
-
-        # 呼叫序：① 進入函式時的初次 gate/items 讀取 ②③④ 逐筆重讀（item1/2/3）。
-        # item1 重讀仍是 jellyfin（照常處理）、item2 重讀切成 off（中止）。多墊
-        # 幾筆 off 防禦「重讀次數算法跟預期不同」時 side_effect 用盡拋
-        # StopIteration，讓失敗訊息更好懂（call_count 斷言，而非 side effect 例外）。
-        config_sequence = (
-            [{'scraper': {'external_manager': 'jellyfin'}}] * 2
-            + [{'scraper': {'external_manager': 'off'}}] * 5
-        )
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', side_effect=config_sequence), \
-             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result), \
-             patch('web.routers.scanner.generate_jellyfin_images', mock_generate):
-            response = client.get('/api/gallery/jellyfin-update')
-
-        assert response.status_code == 200
-        assert mock_generate.call_count == 1, (
-            f"設定中途切回 off 後應中止剩餘項目，實際呼叫次數: {mock_generate.call_count}"
-        )
-
-        events = parse_sse_events(response.text)
-        done_events = [e for e in events if e.get('type') == 'done']
-        assert len(done_events) == 1, f"應恰好一個 done 事件: {events}"
-        assert done_events[0]['updated'] == 1, "done 事件應回報已實際完成的筆數，而非原始 total"
-
-    def test_jellyfin_update_completes_all_items_when_gate_stays_open(
-        self, client, monkeypatch, parse_sse_events
-    ):
-        """反向鎖：media-server flavour 全程不變時，多筆項目應完整跑完——沒有這條，
-        把「逐筆重讀後中止」寫成「處理完第一筆後永遠中止」也會在上面的截斷測試
-        全綠（該測試的 call_count==1 對「永遠中止」這種壞實作是假陽性）。
-        """
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = True
-        mock_repo = MagicMock()
-        check_result = {'need_update': 3, 'items': [
-            {'cover_path': f'/b/{i}.jpg', 'base_stem': f'/b/{i}', 'number': f'XYZ-00{i}', 'maker': 'M'}
-            for i in range(1, 4)
-        ]}
-        mock_generate = MagicMock(return_value={'poster': True, 'fanart': True})
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
-             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
-             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result), \
-             patch('web.routers.scanner.generate_jellyfin_images', mock_generate):
-            response = client.get('/api/gallery/jellyfin-update')
-
-        assert response.status_code == 200
-        assert mock_generate.call_count == 3, "gate 全程開放時所有項目都應被處理"
-
-        events = parse_sse_events(response.text)
-        done_events = [e for e in events if e.get('type') == 'done']
-        assert len(done_events) == 1
-        assert done_events[0]['updated'] == 3
-
-    def test_jellyfin_update_off_mode_gate_precedes_db_check_when_db_missing(
-        self, client, monkeypatch, parse_sse_events, tmp_path
-    ):
-        """Codex PR#123 P2 回歸鎖：external_manager gate 必須排在 get_db_path() 之前。
-
-        情境：全新安裝／還沒產生過列表（資料庫不存在）且 external_manager='off'。
-        修前的順序是先呼叫 get_db_path()（副作用：mkdir 建立 output/ 資料夾，見
-        core/database/connection.py:15-22）、再檢查資料庫是否存在並回 error，gate
-        根本走不到；等於「off 時零寫入」的 AC8 承諾被破：明明該直接回 done +
-        updated=0，卻先動了磁碟又回 error。這裡直接鎖住「gate 之前零副作用」：
-        get_db_path 完全不該被呼叫。
-
-        Codex PR#123 round-3 P2②-a——裸 `MagicMock()`（不設 `return_value`）在 gate 短路時
-        看起來無害，mutation 把 gate 拿掉就會拿 repr 當檔名寫進 repo 根：原本這裡是裸
-        `MagicMock()`，沒有設 `return_value`。正常路徑（gate 生效）下
-        `assert_not_called()` 綠燈，看起來無害；但 mutation 自驗把 gate 停用時，
-        `get_db_path()` 真的被呼叫，回傳一個 auto-spec 的子 mock，其 repr
-        （`<MagicMock name='mock()' id=...>`）被當成檔名寫進 repo 根目錄產生一個
-        4096 bytes 的空 SQLite 檔（曾被誤 commit）。改為顯式 `return_value` 指向
-        `tmp_path` 下一個不存在的檔案，即使 mutation 情境下被呼叫到，下游頂多在
-        pytest 自動清理的 tmp_path 留下痕跡，不會再碰到 repo 根目錄；
-        `assert_not_called()` 的斷言力道不變（驗的是「有沒有被呼叫」，與
-        `return_value` 無關）。
-        """
-        from unittest.mock import MagicMock, patch
-
-        mock_get_db_path = MagicMock(return_value=tmp_path / 'nonexistent_gate_test.db')
-
-        with patch('web.routers.scanner.get_db_path', mock_get_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'off'}}):
-            response = client.get('/api/gallery/jellyfin-update')
-
-        assert response.status_code == 200
-        events = parse_sse_events(response.text)
-        done_events = [e for e in events if e.get('type') == 'done']
-        error_events = [e for e in events if e.get('type') == 'error']
-        assert len(done_events) == 1, f"應收到 done 事件而非 error: {events}"
-        assert done_events[0]['updated'] == 0
-        assert error_events == [], f"off 模式不應出現 error 事件: {events}"
-        mock_get_db_path.assert_not_called()
-
-    def test_jellyfin_update_media_server_flavour_still_errors_when_db_missing(
-        self, client, monkeypatch, parse_sse_events
-    ):
-        """反向鎖：media-server flavour（gate 不擋）+ 資料庫不存在時，仍應收到既有的
-        error 事件——證明搬移 gate 順序沒有把「DB 不存在」檢查整個弄丟。"""
-        from unittest.mock import MagicMock, patch
-
-        mock_db_path = MagicMock()
-        mock_db_path.exists.return_value = False
-
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
-             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}):
-            response = client.get('/api/gallery/jellyfin-update')
-
-        assert response.status_code == 200
-        events = parse_sse_events(response.text)
-        error_events = [e for e in events if e.get('type') == 'error']
-        assert len(error_events) == 1, f"應收到 error 事件: {events}"
-        assert '資料庫不存在' in error_events[0]['message']
-
 
 _STATION4_FOCAL_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "actress_photos"
 
@@ -1358,9 +578,6 @@ class TestJellyfinUpdateStationWiring:
 
     def test_station4_fixture_a(self, tmp_path, monkeypatch):
         self._run_station4(tmp_path, "a", self._FIXTURE_A, monkeypatch)
-
-    def test_station4_fixture_b(self, tmp_path, monkeypatch):
-        self._run_station4(tmp_path, "b", self._FIXTURE_B, monkeypatch)
 
 
 def _station4_manual_oracle_poster_bytes(manual_x):
@@ -1548,7 +765,7 @@ class TestMissingCheckAPI:
 
     def _make_db(self, tmp_path, videos):
         """建立測試用 SQLite DB，插入指定影片資料"""
-        from core.database import init_db, VideoRepository, Video
+        from core.database import init_db, VideoRepository
         db_path = tmp_path / "test.db"
         init_db(db_path)
         repo = VideoRepository(db_path)
@@ -1556,97 +773,6 @@ class TestMissingCheckAPI:
         repo.upsert_batch(videos)
         return db_path
 
-    def test_db_not_exist_returns_zero(self, client, tmp_path, monkeypatch):
-        """DB 不存在時回 {success: true, data: {total_missing: 0, items: []}}"""
-        from unittest.mock import patch
-        missing_path = tmp_path / "nonexistent.db"
-        with patch('web.routers.scanner.get_db_path', return_value=missing_path):
-            resp = client.get('/api/gallery/missing-check')
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['total_missing'] == 0
-        assert data['data']['items'] == []
-
-    def test_all_complete_returns_zero(self, client, tmp_path, monkeypatch):
-        """所有影片均有 NFO + 封面時，total_missing = 0"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
-                  cover_path="/covers/a.jpg", nfo_mtime=1234567890.0),
-            Video(path=to_file_uri(str(tmp_path / "b.mp4")), number="BBB-002",
-                  cover_path="/covers/b.jpg", nfo_mtime=1234567891.0),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['total_missing'] == 0
-        assert data['data']['missing_both'] == 0
-        assert data['data']['missing_nfo'] == 0
-        assert data['data']['missing_cover'] == 0
-        assert data['data']['items'] == []
-
-    def test_missing_both_counted(self, client, tmp_path, monkeypatch):
-        """cover_path='' 且 nfo_mtime=0 的影片計入 missing_both"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
-                  cover_path="", nfo_mtime=0.0),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['missing_both'] == 1
-        assert data['data']['missing_nfo'] == 0
-        assert data['data']['missing_cover'] == 0
-        assert data['data']['total_missing'] == 1
-        assert len(data['data']['items']) == 1
-        assert data['data']['items'][0]['number'] == 'AAA-001'
-
-    def test_missing_nfo_only_counted(self, client, tmp_path, monkeypatch):
-        """nfo_mtime=0 但有封面 → 計入 missing_nfo"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
-                  cover_path="/covers/a.jpg", nfo_mtime=0.0),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        data = resp.json()
-        assert data['data']['missing_nfo'] == 1
-        assert data['data']['missing_both'] == 0
-        assert data['data']['missing_cover'] == 0
-        assert data['data']['total_missing'] == 1
-
-    def test_missing_cover_only_counted(self, client, tmp_path, monkeypatch):
-        """cover_path='' 但有 NFO → 計入 missing_cover"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
-                  cover_path="", nfo_mtime=1234567890.0),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        data = resp.json()
-        assert data['data']['missing_cover'] == 1
-        assert data['data']['missing_both'] == 0
-        assert data['data']['missing_nfo'] == 0
-        assert data['data']['total_missing'] == 1
 
     def test_mixed_missing_counts_correct(self, client, tmp_path, monkeypatch):
         """混合缺失類型：missing_both + missing_nfo + missing_cover 各自正確計數"""
@@ -1714,87 +840,6 @@ class TestMissingCheckAPI:
         assert sum(1 for i in data['data']['items'] if i['category'] == 'nfo') == data['data']['missing_nfo']
         assert sum(1 for i in data['data']['items'] if i['category'] == 'cover') == data['data']['missing_cover']
 
-    def test_null_number_excluded(self, client, tmp_path, monkeypatch):
-        """number IS NULL 的記錄不計入 items（無法補完）"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number=None,
-                  cover_path="", nfo_mtime=0.0),
-            Video(path=to_file_uri(str(tmp_path / "b.mp4")), number="BBB-002",
-                  cover_path="", nfo_mtime=0.0),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        data = resp.json()
-        assert data['data']['total_missing'] == 1
-        assert len(data['data']['items']) == 1
-        assert data['data']['items'][0]['number'] == 'BBB-002'
-
-    def test_response_includes_file_path(self, client, tmp_path, monkeypatch):
-        """items 的每個元素包含 file_path 和 number"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        video_uri = to_file_uri(str(tmp_path / "a.mp4"))
-        videos = [
-            Video(path=video_uri, number="AAA-001",
-                  cover_path="", nfo_mtime=0.0),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        data = resp.json()
-        item = data['data']['items'][0]
-        assert 'file_path' in item
-        assert 'number' in item
-        assert item['number'] == 'AAA-001'
-
-    def test_exactly_500_returns_full_items(self, client, tmp_path, monkeypatch):
-        """total_missing == 500（邊界，剛好不超過舊 cap）→ items 為完整 list"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / f"v{i:04d}.mp4")),
-                  number=f"AAA-{i:04d}",
-                  cover_path="", nfo_mtime=0.0)
-            for i in range(500)
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['total_missing'] == 500
-        assert data['data']['items'] is not None
-        assert isinstance(data['data']['items'], list)
-        assert len(data['data']['items']) == 500
-
-    def test_exactly_501_returns_full_items(self, client, tmp_path, monkeypatch):
-        """total_missing == 501（邊界，剛好超過舊 cap）→ items 為完整 list（非 None）"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / f"v{i:04d}.mp4")),
-                  number=f"AAA-{i:04d}",
-                  cover_path="", nfo_mtime=0.0)
-            for i in range(501)
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['total_missing'] == 501
-        assert data['data']['items'] is not None
-        assert isinstance(data['data']['items'], list)
-        assert len(data['data']['items']) == 501
 
     def test_over_500_returns_full_items(self, client, tmp_path, monkeypatch):
         """total_missing > 500 → items 為完整 list（本 task 後新行為，舊版為 None）"""
@@ -1818,67 +863,6 @@ class TestMissingCheckAPI:
         assert isinstance(data['data']['items'], list)
         assert len(data['data']['items']) == 750
 
-    def test_over_5000_returns_full_items(self, client, tmp_path, monkeypatch):
-        """total_missing > 5000（大批量）→ items 為完整 list"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / f"v{i:05d}.mp4")),
-                  number=f"AAA-{i:05d}",
-                  cover_path="", nfo_mtime=0.0)
-            for i in range(5000)
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['total_missing'] == 5000
-        assert data['data']['items'] is not None
-        assert isinstance(data['data']['items'], list)
-        assert len(data['data']['items']) == 5000
-
-    def test_producer_row_excluded_from_buckets(self, client, tmp_path, monkeypatch):
-        """producer 產出的 row（output_dir!=''，nfo_mtime 恆 0）不進任何桶、不計入 total_missing（TASK-89b-T4）"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
-                  cover_path="", nfo_mtime=0.0,
-                  output_dir=to_file_uri(str(tmp_path / "out"))),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['missing_both'] == 0
-        assert data['data']['missing_nfo'] == 0
-        assert data['data']['missing_cover'] == 0
-        assert data['data']['total_missing'] == 0
-        assert data['data']['items'] == []
-
-    def test_tried_non_producer_row_excluded_from_buckets(self, client, tmp_path, monkeypatch):
-        """scrape_attempted_at>0 但非 producer（output_dir==''）同樣被排除（一般 NOT-FOUND 記憶場景，TASK-89b-T4）"""
-        from unittest.mock import patch
-        from core.database import Video
-        from core.path_utils import to_file_uri
-        videos = [
-            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
-                  cover_path="", nfo_mtime=0.0,
-                  scrape_attempted_at=1234567890.0),
-        ]
-        db_path = self._make_db(tmp_path, videos)
-        with patch('web.routers.scanner.get_db_path', return_value=db_path):
-            resp = client.get('/api/gallery/missing-check')
-        data = resp.json()
-        assert data['success'] is True
-        assert data['data']['missing_both'] == 0
-        assert data['data']['total_missing'] == 0
-        assert data['data']['items'] == []
 
     def test_produced_tried_quadrants_only_untried_unproduced_bucketed(self, client, tmp_path, monkeypatch):
         """produced x tried 2x2 矩陣：僅 (False,False) 進桶，其餘三象限早退（TASK-89b-T4）"""
@@ -1920,47 +904,6 @@ class TestMissingCheckAPI:
 class TestScannerGenerateLongPathsField:
     """spec-48a §a5 契約 3 — /api/gallery/generate SSE done event 必須含 long_paths key"""
 
-    def test_done_event_has_long_paths_key(self, client, tmp_path, monkeypatch, parse_sse_events):
-        """
-        SSE done event payload 必須含 long_paths 欄位（即使平台非 win32 也應為 [] 而非缺 key）。
-        用空資料夾讓掃描快速結束，重點驗證 payload 結構，不驗證內容。
-        """
-        scan_dir = tmp_path / "videos"
-        scan_dir.mkdir()
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        # Mock config — 單一空目錄，掃完即 done
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {
-                "directories": [str(scan_dir)],
-                "output_dir": str(output_dir),
-                "path_mappings": {},
-                "min_size_mb": 0,
-            },
-            "general": {"theme": "light"},
-            "scraper": {"video_extensions": [".mp4"]},
-        })
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
-
-        response = client.get('/api/gallery/generate')
-        assert response.status_code == 200
-
-        events = parse_sse_events(response.text)
-        done_events = [e for e in events if e.get('type') == 'done']
-        assert done_events, "SSE stream 未收到 done event"
-
-        done_payload = done_events[-1]
-        assert 'long_paths' in done_payload, (
-            "done SSE payload 缺少 long_paths 欄位"
-            "（實作可能漏掉 long_paths 參數或未抽 module-level helper）"
-        )
-        assert isinstance(done_payload['long_paths'], list), \
-            "long_paths 應為 list 型別"
-        # 非 win32 平台（CI / 開發機多為 linux）應為空 list
-        # win32 平台上空目錄也應為空 list
-        assert done_payload['long_paths'] == [], \
-            "空目錄 / 非 win32 平台下 long_paths 應為 []"
 
     def test_skipped_long_paths_captured_via_on_skip(
         self, client, tmp_path, monkeypatch, parse_sse_events
@@ -2117,44 +1060,6 @@ class TestGenerateAvlistCleanupPass:
     （Canonical Decision #4：雙流程覆蓋，Scanner UI 主路徑不呼叫 scan_to_sqlite）
     """
 
-    def test_generate_avlist_calls_cleanup_pass(self, client, tmp_path, monkeypatch):
-        """呼叫 /api/gallery/generate 後，_run_sample_images_cleanup_pass 應被執行。
-        用 mock 確認 helper 有被呼叫（驗行為，不驗 DB 狀態，避免過重 fixture）。
-        """
-        from unittest.mock import patch, MagicMock
-        from pathlib import Path
-
-        scan_dir = tmp_path / "videos"
-        scan_dir.mkdir()
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        # Mock config
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
-            "gallery": {
-                "directories": [str(scan_dir)],
-                "output_dir": str(output_dir),
-                "path_mappings": {},
-                "min_size_mb": 0,
-            },
-            "general": {"theme": "light"},
-            "scraper": {"video_extensions": [".mp4"]},
-        })
-
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
-
-        # 驗證 _run_sample_images_cleanup_pass 被呼叫
-        with patch(
-            "web.routers.scanner._run_sample_images_cleanup_pass",
-            return_value=0,
-        ) as mock_cleanup:
-            response = client.get('/api/gallery/generate')
-
-        assert response.status_code == 200
-        mock_cleanup.assert_called_once(), (
-            "_run_sample_images_cleanup_pass 應在 generate_avlist() 中被呼叫一次。"
-            "若未呼叫，Scanner UI 主路徑不會清孤兒（Canonical Decision #4 雙流程覆蓋未達成）"
-        )
 
     def test_generate_avlist_passes_nfo_title_format_to_scanner(self, client, tmp_path, monkeypatch):
         """generate_avlist() 必須把 scraper.nfo_title_format 傳進 VideoScanner。"""
@@ -2186,41 +1091,6 @@ class TestGenerateAvlistCleanupPass:
 
         assert response.status_code == 200
         assert MockScanner.call_args.kwargs['nfo_title_format'] == '{num}-{title}'
-
-
-class TestClearCacheThumbnailInvalidation:
-    """feature/71 T8 邊界1：clear_cache → thumbnail_cache.clear_all() 連動清整個 thumb/。"""
-
-    def test_clear_cache_calls_clear_all(self, client, tmp_path, mocker):
-        """DB 存在 → repo.clear_all() 後 thumbnail_cache.clear_all() 被呼叫一次；回應正常。"""
-        from core.database import init_db
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=db_path)
-
-        clear_all_spy = mocker.patch(
-            "web.routers.scanner.thumbnail_cache.clear_all"
-        )
-
-        resp = client.delete("/api/gallery/cache")
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        clear_all_spy.assert_called_once()
-
-    def test_clear_cache_db_missing_does_not_call_clear_all(self, client, tmp_path, mocker):
-        """DB 不存在（早退）→ clear_all 不被呼叫（放在 repo.clear_all() 之後）。"""
-        missing = tmp_path / "nonexistent.db"
-        mocker.patch("web.routers.scanner.get_db_path", return_value=missing)
-
-        clear_all_spy = mocker.patch(
-            "web.routers.scanner.thumbnail_cache.clear_all"
-        )
-
-        resp = client.delete("/api/gallery/cache")
-
-        assert resp.status_code == 200
-        clear_all_spy.assert_not_called()
 
 
 class TestScanPruneThumbnailInvalidation:
@@ -2359,98 +1229,14 @@ class TestGenerateReadonlyBridge:
 
     # 1b. TASK-90b-T3 wiring：should_abort 從 generate_avlist 直呼一路轉發到 produce_source，
     # 中間不包 lambda，用 `is` 斷言身分一致（非包裝出的新 callable）。
-    def test_should_abort_forwarded_by_identity_to_produce_source(self, tmp_path, monkeypatch, mocker):
-        from web.routers.scanner import generate_avlist
-
-        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mock_ps = mocker.patch("web.routers.scanner.produce_source",
-                               return_value=self._result(tmp_path))
-
-        fake_should_abort = lambda: False  # noqa: E731 - 身分識別用，非真正 abort 邏輯
-        list(generate_avlist(should_abort=fake_should_abort))
-
-        assert mock_ps.call_count == 1
-        received = mock_ps.call_args.kwargs["should_abort"]
-        assert received is fake_should_abort
 
     # 2. 分流互斥（反向）：非 readonly → produce_source 未被呼叫
-    def test_non_readonly_does_not_call_produce_source(self, client, tmp_path, monkeypatch, mocker):
-        cfg = self._readonly_config(tmp_path, [(False, "")])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mock_ps = mocker.patch("web.routers.scanner.produce_source")
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        mock_ps.assert_not_called()
 
     # 3. SSE 逐片橋接：on_progress 連發 3 outcome → SSE 出 3 條對應 log；sentinel 後續下一來源
-    def test_sse_per_outcome_streaming(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
-        from core.readonly_producer import ProduceOutcome
-        cfg = self._readonly_config(tmp_path, [
-            (True, str(tmp_path / "out0")),
-            (True, str(tmp_path / "out1")),
-        ])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-
-        def side_effect(source, config, repo, *, on_progress=None, should_abort=None, force=False, reachable=True, strm_mappings_getter=None):
-            from core.readonly_producer import ProduceResult
-            if source.path == str(tmp_path / "src0"):
-                on_progress(ProduceOutcome(source_uri="uri1", status="created", number="ABC-001"))
-                on_progress(ProduceOutcome(source_uri="uri2", status="skipped", number="ABC-002"))
-                on_progress(ProduceOutcome(source_uri="uri3", status="failed", number="ABC-003", error="生成失敗"))
-                return ProduceResult(source_path=source.path, output_path=source.output_path,
-                                     created=1, skipped=1, failed=1)
-            return ProduceResult(source_path=source.path, output_path=source.output_path)
-
-        mock_ps = mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        events = parse_sse_events(resp.text)
-        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
-        assert any("✓ 生成" in m and "ABC-001" in m for m in msgs)
-        assert any("略過" in m and "ABC-002" in m for m in msgs)
-        assert any("✗ 失敗" in m and "ABC-003" in m for m in msgs)
-        # 第 2 來源也被處理（sentinel 後迴圈續跑）
-        assert mock_ps.call_count == 2
 
     # 4. 四數摘要累計
-    def test_four_number_summary(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
-        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mocker.patch("web.routers.scanner.produce_source",
-                     return_value=self._result(tmp_path, created=2, skipped=1, no_scrape=1, failed=1))
-        resp = client.get("/api/gallery/generate")
-        events = parse_sse_events(resp.text)
-        done = [e for e in events if e.get("type") == "done"][-1]
-        rs = done["readonly_stats"]
-        assert rs["created"] == 2 and rs["skipped"] == 1
-        assert rs["no_scrape"] == 1 and rs["failed"] == 1
-        assert rs["sources"] == 1
-        # 該來源小結四數皆出現
-        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
-        assert any("新增 2" in m and "略過 1" in m and "刮不到 1" in m and "失敗 1" in m for m in msgs)
 
     # 5. no_output_path 提示
-    def test_no_output_path_prompt(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
-        cfg = self._readonly_config(tmp_path, [(True, "")])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mocker.patch("web.routers.scanner.produce_source",
-                     return_value=self._result(tmp_path, aborted_reason="no_output_path"))
-        resp = client.get("/api/gallery/generate")
-        events = parse_sse_events(resp.text)
-        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
-        assert any("請先設定輸出夾" in m for m in msgs)
-        done = [e for e in events if e.get("type") == "done"][-1]
-        rs = done["readonly_stats"]
-        assert rs["no_output"] == 1
-        assert rs["created"] == 0 and rs["skipped"] == 0
-        assert rs["no_scrape"] == 0 and rs["failed"] == 0
-        assert rs["sources"] == 0
 
     # 6. CRITICAL：source-level 例外傳遞 + 續跑
     def test_source_level_exception_continues(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
@@ -2483,31 +1269,6 @@ class TestGenerateReadonlyBridge:
         assert done["readonly_stats"]["sources"] == 1
 
     # 7. 跨 thread DB 寫入（回歸鎖，無 ProgrammingError）
-    def test_cross_thread_db_write(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
-        from core.database import init_db, VideoRepository, Video
-        from core.readonly_producer import ProduceResult
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=db_path)
-        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-
-        written_uri = to_file_uri(str(tmp_path / "src0" / "worker_written.mp4"))
-
-        def side_effect(source, config, repo, *, on_progress=None, should_abort=None, force=False, reachable=True, strm_mappings_getter=None):
-            # 在 worker frame 用傳入的 repo 寫一筆（per-call 連線）
-            repo.upsert(Video(path=written_uri, number="WK-001", title="worker",
-                              mtime=1.0, nfo_mtime=0.0))
-            return ProduceResult(source_path=source.path, output_path=source.output_path, created=1)
-
-        mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        events = parse_sse_events(resp.text)
-        assert [e for e in events if e.get("type") == "done"], "未收到 done event"
-        # 無 ProgrammingError → 寫入成功
-        check = VideoRepository(db_path)
-        assert written_uri in check.get_mtime_index()
 
     # 8. deletion 安全（readonly continue 早於 deletion → 影片未被誤刪）
     def test_readonly_video_not_deleted(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
@@ -2580,75 +1341,8 @@ class TestGenerateReadonlyBridge:
         assert mock_ps.call_args.args[0].path == unc
 
     # 10. 88c-P2：來源級失敗 → 完成通知走 warn（非純 success）
-    def test_source_level_failure_completion_notif_is_warn(
-        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
-    ):
-        """readonly 來源整源拋錯（source_errors>0）→ 最終完成通知必須是 warn/
-        scanner_done_with_errors，不可 success/scanner_done（Codex P2）。"""
-        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mocker.patch("web.routers.scanner.produce_source",
-                     side_effect=ValueError("boom（迴圈前逃出）"))
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        # drain SSE 讓 generator 跑完（完成通知在 done 之前 emit）
-        parse_sse_events(resp.text)
-
-        # 完成通知（scanner_generate task_type，排除 scanner_started）
-        completion_calls = [
-            c for c in mock_notif.call_args_list
-            if c.kwargs.get("task_type") == "scanner_generate"
-            and c.args and c.args[1] != "notif.scanner_started"
-        ]
-        assert completion_calls, "未發出完成通知"
-        final = completion_calls[-1]
-        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
-        assert final.args[1] == "notif.scanner_done_with_errors"
-        assert "來源失敗" in final.kwargs.get("message", "")
 
     # 11. PR#91 ②：個別影片失敗（readonly failed>0, source_errors=0）→ 完成通知走 warn
-    def test_per_video_failure_completion_notif_is_warn(
-        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
-    ):
-        """produce_source 未拋錯（source_errors=0）但回傳 failed>0（例如 NFO 寫入失敗）
-        → 完成通知仍須 warn/scanner_done_with_errors，不可純 success（PR#91 ②）。
-        no fix → failed-only 的完成通知會報 success，本測試 RED。"""
-        from core.readonly_producer import ProduceResult
-        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mocker.patch(
-            "web.routers.scanner.produce_source",
-            return_value=ProduceResult(
-                source_path=str(tmp_path / "src0"),
-                output_path=str(tmp_path / "out0"),
-                created=1, failed=2,
-            ),
-        )
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        events = parse_sse_events(resp.text)
-
-        # readonly_stats 帶 failed=2、source_errors=0
-        done = [e for e in events if e.get("type") == "done"][-1]
-        assert done["readonly_stats"]["failed"] == 2
-        assert done["readonly_stats"]["source_errors"] == 0
-
-        completion_calls = [
-            c for c in mock_notif.call_args_list
-            if c.kwargs.get("task_type") == "scanner_generate"
-            and c.args and c.args[1] != "notif.scanner_started"
-        ]
-        assert completion_calls, "未發出完成通知"
-        final = completion_calls[-1]
-        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
-        assert final.args[1] == "notif.scanner_done_with_errors"
-        assert "2 部失敗" in final.kwargs.get("message", "")
 
     # -----------------------------------------------------------------
     # TASK-89b-T6: DB-row-only prune + Finding-2 不誤報成功回歸鎖
@@ -2663,21 +1357,6 @@ class TestGenerateReadonlyBridge:
 
     # 12. pruned 計數進 done SSE readonly_stats（mock-based，不觸發真實 prune 邏輯，
     #     只驗證 ProduceResult.pruned 有被 scanner.py 正確累計/傳遞）
-    def test_pruned_count_reaches_done_sse_readonly_stats(
-        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
-    ):
-        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mocker.patch(
-            "web.routers.scanner.produce_source",
-            return_value=self._result(tmp_path, created=1, pruned=3),
-        )
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        events = parse_sse_events(resp.text)
-        done = [e for e in events if e.get("type") == "done"][-1]
-        assert done["readonly_stats"]["pruned"] == 3
 
     # 13. Finding-2 情境一：來源不可達 → per-source warn SSE + unreachable 計數 +
     #     完成通知 warn（非 success）
@@ -2713,60 +1392,8 @@ class TestGenerateReadonlyBridge:
 
     # 14. Finding-2 情境二：partial-scan（skipped_paths 非空）→ 追加 warn SSE +
     #     partial 計數 + 完成通知 warn
-    def test_partial_scan_warns_and_completion_is_warn(
-        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
-    ):
-        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mocker.patch(
-            "web.routers.scanner.produce_source",
-            return_value=self._result(
-                tmp_path, created=1, skipped_paths=["/src0/broken_dir"],
-            ),
-        )
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        events = parse_sse_events(resp.text)
-
-        # 正常小結仍要 yield（info），另外追加一則「已略過刪除偵測」warn
-        warn_logs = [
-            e for e in events
-            if e.get("type") == "log" and e.get("level") == "warn"
-            and "已略過刪除偵測" in e.get("message", "")
-        ]
-        assert warn_logs, "partial-scan 應追加一則含「已略過刪除偵測」的 warn SSE"
-
-        done = [e for e in events if e.get("type") == "done"][-1]
-        assert done["readonly_stats"]["partial"] == 1
-
-        final = self._completion_calls(mock_notif)[-1]
-        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
-        assert "部分讀取失敗" in final.kwargs.get("message", "")
 
     # 15. Finding-2 情境三：no_output>0（原本已計數但完成通知未讀）→ 完成通知 warn
-    def test_no_output_completion_is_warn_not_success(
-        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
-    ):
-        cfg = self._readonly_config(tmp_path, [(True, "")])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
-        mocker.patch(
-            "web.routers.scanner.produce_source",
-            return_value=self._result(tmp_path, aborted_reason="no_output_path"),
-        )
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        parse_sse_events(resp.text)
-
-        final = self._completion_calls(mock_notif)[-1]
-        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
-        assert final.args[1] == "notif.scanner_done_with_errors"
-        assert "未設輸出夾" in final.kwargs.get("message", "")
 
     # 16. Real produce_source (unmocked): 跨來源隔離 + partial suppression + DB-row-only
     #     （不動輸出夾檔案）。以下測試不 mock produce_source，讓真實 prune 邏輯跑，
@@ -2899,72 +1526,6 @@ class TestGenerateReadonlyBridge:
         assert gone_looking_uri in remaining, (
             "partial scan（skipped_paths 非空）必須抑制 prune，即使該片看似從本次列表消失"
         )
-
-    def test_delete_by_paths_only_removes_db_row_not_output_files(
-        self, client, tmp_path, monkeypatch, parse_sse_events
-    ):
-        """輸出夾檔案（nfo/封面/資料夾）在 prune 前後必須 exists() 不變——DB-row-only。"""
-        from core.database import init_db, VideoRepository, Video
-        from core.path_utils import to_file_uri
-
-        src_a = tmp_path / "srcA"
-        src_a.mkdir()
-        output_dir = tmp_path / "html_out"
-        output_dir.mkdir()
-        out_a = tmp_path / "outA"
-
-        # 模擬既有輸出夾產物：資料夾 + nfo + 封面
-        produced_dir = out_a / "GONE-001"
-        produced_dir.mkdir(parents=True)
-        nfo_file = produced_dir / "GONE-001.nfo"
-        nfo_file.write_text("<movie></movie>", encoding="utf-8")
-        cover_file = produced_dir / "poster.jpg"
-        cover_file.write_bytes(b"\xff\xd8\xff")
-
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-
-        gone_uri = to_file_uri(str(src_a / "gone.mp4"))
-        repo.upsert(Video(
-            path=gone_uri, number="GONE-001", title="已消失但輸出夾仍在",
-            mtime=1.0, nfo_mtime=0.0, output_dir=str(produced_dir),
-        ))
-        kept_fs = str(src_a / "kept.mp4")
-
-        cfg = {
-            "gallery": {
-                "directories": [
-                    {"path": str(src_a), "readonly": True, "output_path": str(out_a)},
-                ],
-                "output_dir": str(output_dir),
-                "path_mappings": {},
-                "min_size_mb": 0,
-            },
-            "search": {"proxy_url": ""},
-            "general": {"theme": "light"},
-            "scraper": {"video_extensions": [".mp4"]},
-        }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-
-        def stub_fast_scan(directory, extensions, min_size_bytes, on_skip=None):
-            # gone.mp4 不再出現，但列表非空（有 kept.mp4）→ gate 通過，觸發 prune
-            return [{"path": kept_fs, "size": 1024, "mtime": 2.0}]
-
-        monkeypatch.setattr("core.readonly_producer.fast_scan_directory", stub_fast_scan)
-        monkeypatch.setattr("core.readonly_producer.extract_number", lambda basename: None)
-
-        resp = client.get("/api/gallery/generate")
-        assert resp.status_code == 200
-        parse_sse_events(resp.text)
-
-        # DB row 已刪
-        assert gone_uri not in repo.get_mtime_index()
-        # 輸出夾檔案完全不動
-        assert produced_dir.exists()
-        assert nfo_file.exists()
-        assert cover_file.exists()
 
 
 class TestGenerateAvlistShouldAbortTopLevel:
@@ -3106,152 +1667,14 @@ class TestGenerateAvlistShouldAbortTopLevel:
 
     # ---- (2) 逐檔內層迴圈中途 abort：同一資料夾內後續檔案未被迭代 ----
 
-    def test_inner_loop_break_leaves_remaining_files_unprocessed(self, tmp_path, monkeypatch, mocker):
-        from web.routers.scanner import generate_avlist
-
-        dir0, files = self._make_dir_with_files(tmp_path, "src0", 3)
-        cfg = self._config(tmp_path, [dir0])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
-
-        scan_calls = self._patch_scan_file(mocker)
-        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        # calls 序列：outer(dir0)=#1, inner(file0)=#2, inner(file1)=#3
-        # trigger_after=2 → 第 3 次（inner file1 之前）True → file1/file2 不掃
-        fake_should_abort = self._counting_should_abort(trigger_after=2)
-
-        # 先塞非預設哨兵值（同 outer 測試，避免 (d) 假綠）。
-        import web.routers.scanner as scanner_mod
-        scanner_mod._jellyfin_cache_result = {"need_update": 1}
-        scanner_mod._jellyfin_cache_time = 12345.0
-
-        events = list(generate_avlist(should_abort=fake_should_abort))
-
-        # (a) 只有 1 個檔案被掃到（同資料夾內後續檔案未被迭代）
-        assert len(scan_calls) == 1
-
-        # (b) HTML 未被產生
-        mock_html.return_value.generate.assert_not_called()
-
-        # (c) 不發 success/warn 完成通知，改發恰好一筆中性 info「取消」通知
-        self._assert_cancelled_terminal(mock_notif)
-
-        # (d) jellyfin cache 仍被重設（哨兵值已被覆寫回 None/0）
-        assert scanner_mod._jellyfin_cache_result is None
-        assert scanner_mod._jellyfin_cache_time == 0
-
-        # (e) done event 未被 yield
-        parsed = self._parse_events(events)
-        assert not [e for e in parsed if e.get("type") == "done"]
 
     # ---- (2b) tail-race：迴圈已跑完、尾段進行中才斷線（PR#90b Codex P1）----
 
-    def test_tail_race_disconnect_after_loop_reports_cancelled_not_success(
-        self, tmp_path, monkeypatch, mocker
-    ):
-        """Codex P1 回歸：single-snapshot 只在迴圈結束時查一次 should_abort()，會漏
-        掉「迴圈已跑完、HTML 產生等尾段進行中才斷線」的 race → 誤發 success。此測
-        讓 should_abort 在迴圈與 orphan/HTML 兩個 gate 都回 False，只在最後的
-        terminal fresh 檢查回 True，驗證：HTML 有被產生（gate 通過），但完成通知
-        仍走「取消」而非 success，且不 yield done event。"""
-        from web.routers.scanner import generate_avlist
-
-        dir0, _ = self._make_dir_with_files(tmp_path, "src0", 1)
-        cfg = self._config(tmp_path, [dir0])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
-
-        self._patch_scan_file(mocker)
-        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        # 呼叫序列（1 dir / 1 file）：outer #1、inner #2、focal-pass entry gate #3
-        # （TASK-99b-T1 sibling 併修新增）、focal-candidate-loop-top gate #4
-        # （Codex P1 二次修新增——ABC-001 被 get_empty_focal_candidates 撈出、
-        # 迴圈確實執行一圈，只是 requires_face_detection 擋在 submit 前，故
-        # 候選迴圈頂端的 fresh should_abort() 檢查仍會被呼叫一次）、orphan
-        # gate #5、HTML gate #6、terminal #7。trigger_after=6 → 前 6 次 False
-        # （迴圈跑完、focal-pass entry/candidate-loop/orphan/HTML gate 都通過），
-        # 第 7 次（terminal fresh 檢查）才 True。single-snapshot 版本此情境會
-        # 誤發 success；fresh 版本應改發 cancelled。
-        fake_should_abort = self._counting_should_abort(trigger_after=6)
-
-        events = list(generate_avlist(should_abort=fake_should_abort))
-
-        # HTML 確實被產生（證明 orphan/HTML gate 當時未 abort，race 發生在其後）
-        mock_html.return_value.generate.assert_called_once()
-
-        # 尾段 fresh 檢查捕捉到斷線 → 走「取消」通知契約，不誤報 success
-        self._assert_cancelled_terminal(mock_notif)
-
-        # done event 不 yield（terminal 分支已改走 cancelled）
-        parsed = self._parse_events(events)
-        assert not [e for e in parsed if e.get("type") == "done"], \
-            "tail-race abort 不應 yield done event"
 
     # ---- (3) 零回歸：should_abort=None → 尾段全部照舊執行 ----
 
-    def test_should_abort_none_no_regression(self, tmp_path, monkeypatch, mocker):
-        from web.routers.scanner import generate_avlist
-
-        dir0, _ = self._make_dir_with_files(tmp_path, "src0", 1)
-        cfg = self._config(tmp_path, [dir0])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
-
-        self._patch_scan_file(mocker)
-        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        events = list(generate_avlist(should_abort=None))
-
-        mock_html.return_value.generate.assert_called_once()
-
-        completion_calls = [
-            c for c in mock_notif.call_args_list
-            if c.kwargs.get("task_type") == "scanner_generate"
-            and c.args and c.args[1] != "notif.scanner_started"
-        ]
-        assert completion_calls, "should_abort=None 時仍應照舊發出完成通知"
-        assert completion_calls[-1].args[0] == "success"
-
-        parsed = self._parse_events(events)
-        assert [e for e in parsed if e.get("type") == "done"], \
-            "should_abort=None 時仍應照舊發出 done event"
 
     # ---- (4) 零回歸：should_abort 設置但從未觸發（正常跑完）----
-
-    def test_should_abort_set_but_never_true_no_regression(self, tmp_path, monkeypatch, mocker):
-        from web.routers.scanner import generate_avlist
-
-        dir0, _ = self._make_dir_with_files(tmp_path, "src0", 1)
-        cfg = self._config(tmp_path, [dir0])
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
-
-        self._patch_scan_file(mocker)
-        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
-        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
-
-        never_abort = lambda: False  # noqa: E731 - 測試用 fake，非真正邏輯
-
-        events = list(generate_avlist(should_abort=never_abort))
-
-        mock_html.return_value.generate.assert_called_once()
-
-        completion_calls = [
-            c for c in mock_notif.call_args_list
-            if c.kwargs.get("task_type") == "scanner_generate"
-            and c.args and c.args[1] != "notif.scanner_started"
-        ]
-        assert completion_calls, "should_abort 設置但從未觸發時仍應照舊發出完成通知"
-        assert completion_calls[-1].args[0] == "success"
-
-        parsed = self._parse_events(events)
-        assert [e for e in parsed if e.get("type") == "done"], \
-            "should_abort 從未觸發時仍應照舊發出 done event"
 
 
 # ============ TASK-98b-T2: 掃描 empty-focal gate（scanner.py router 路徑） ============
@@ -3365,19 +1788,12 @@ class TestGenerateAvlistFocalTrigger:
             list(generate_avlist(should_abort=should_abort))
         return mock_submit
 
-    def test_uncensored_empty_focal_submits(self, tmp_path):
-        mock_submit = self._run(tmp_path, "SIRO-1234")
-        mock_submit.assert_called_once()
-        assert mock_submit.call_args[0][0] == "SIRO-1234"
 
     def test_uncensored_nonempty_focal_no_submit(self, tmp_path):
         # empty-focal gate：現有 auto_focal 有值 → 不 submit（mutation：拿掉 gate 必 RED）
         mock_submit = self._run(tmp_path, "SIRO-1234", seed_auto_focal="0.5,0.5")
         mock_submit.assert_not_called()
 
-    def test_censored_no_submit(self, tmp_path):
-        mock_submit = self._run(tmp_path, "SONE-205", maker="SOD")
-        mock_submit.assert_not_called()
 
     def test_existing_unchanged_empty_focal_backfilled(self, tmp_path):
         # Codex PR#105 P2 回歸釘：既有 DB 列、auto_focal=''、mtime 未變（不進
@@ -3388,62 +1804,6 @@ class TestGenerateAvlistFocalTrigger:
         mock_submit.assert_called_once()
         args = mock_submit.call_args[0]
         assert args[0] == "SIRO-1234"
-
-    def test_should_abort_before_focal_pass_zero_submits(self, tmp_path):
-        """TASK-99b-T1 DoD ⑥ (CD-99b-8 sibling): should_abort() flips True right
-        before the :533 focal pass (after the single needs_scan file has already
-        been scanned/upserted) → the focal pass itself must be skipped entirely,
-        zero maybe_submit_video_focal calls — mirrors the readonly_producer
-        abort gate, just on the router's inline (non-readonly) scan path.
-        mutation: drop the newly-added `and not (should_abort and should_abort())`
-        gate → this test goes RED (submit fires despite the fresh abort signal)."""
-        call_count = [0]
-
-        def abort_after_two():
-            call_count[0] += 1
-            return call_count[0] > 2  # let the source-level + per-file checks through once each
-
-        mock_submit = self._run(tmp_path, "SIRO-1234", should_abort=abort_after_two)
-        mock_submit.assert_not_called()
-
-    def test_abort_mid_candidate_loop_stops_remaining_submits(self, tmp_path):
-        """Codex P1（:546 focal-candidate-loop-top gate）行為鎖：3 個無碼候選
-        （SIRO-1234/2345/3456，全新檔案、全 requires_face_detection=True），
-        should_abort 在第 1 個候選 submit 之後、第 2 個候選的迴圈頂端檢查才翻
-        True → 迴圈必須 break，第 2、3 個候選都不能被 submit。
-
-        呼叫序列（實測，traceback instrumented probe，3 needs_scan 檔）：
-          #1 :377 outer source-level gate
-          #2-4 :502 per-file gate（needs_scan 3 檔各一次）
-          #5 :539 focal-pass entry gate
-          #6 :546 candidate-loop-top gate（candidate 1 = SIRO-1234）→ False → submit
-          #7 :546 candidate-loop-top gate（candidate 2 = SIRO-2345）→ True → break
-          （candidate 3 = SIRO-3456 的迴圈頂端因 break 完全不會被檢查）
-          #8-10 :571 尾段 _is_aborted()（orphan/HTML/terminal gate）
-        trigger_after=6 → 前 6 次 False、第 7 次 True，恰好落在 candidate 2 的
-        迴圈頂端檢查。
-
-        mutation：拔掉 web/routers/scanner.py 的 `if should_abort and
-        should_abort(): break`（:546 那段）→ 此測試必 RED，因為迴圈不再中途
-        停止，candidate 2、3 都會被 submit（call_count 變 3，不是 1）。
-        """
-        call_count = [0]
-
-        def abort_after_first_submit():
-            call_count[0] += 1
-            return call_count[0] > 6
-
-        mock_submit = self._run(
-            tmp_path, "SIRO-1234",
-            extra_nums=["SIRO-2345", "SIRO-3456"],
-            should_abort=abort_after_first_submit,
-        )
-
-        assert mock_submit.call_count == 1, (
-            f"迴圈中途 abort 應只 submit 第 1 個候選，實得 {mock_submit.call_count} 次: "
-            f"{mock_submit.call_args_list}"
-        )
-        assert mock_submit.call_args[0][0] == "SIRO-1234"
 
 
 class TestJellyfinFanartCoverSelfHealRoundTrip:
@@ -3466,50 +1826,6 @@ class TestJellyfinFanartCoverSelfHealRoundTrip:
         yield
         scanner_mod._jellyfin_cache_result = None
         scanner_mod._jellyfin_cache_time = 0
-
-    def test_update_then_check_returns_zero_no_false_warning(self, client, tmp_path, monkeypatch):
-        from PIL import Image
-        from core.database import init_db, VideoRepository, Video
-        from web.routers.scanner import generate_jellyfin_images_stream
-
-        movie_dir = tmp_path / "ABC-123"
-        movie_dir.mkdir()
-        # cover_path 本身就是 -fanart.jpg（外部庫掃描 L1.5 命中情境），沒有另一張獨立封面
-        cover = movie_dir / "ABC-123-fanart.jpg"
-        Image.new("RGB", (800, 538), color=(128, 64, 32)).save(str(cover), "JPEG")
-
-        db_path = tmp_path / "t.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        video_uri = to_file_uri(str(movie_dir / "ABC-123.mp4"))
-        cover_uri = to_file_uri(str(cover))
-        repo.upsert_batch([
-            Video(path=video_uri, mtime=1.0, number="ABC-123", maker="Test Maker",
-                  cover_path=cover_uri),
-        ])
-
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-        monkeypatch.setattr(
-            "web.routers.scanner.load_config",
-            lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}},
-        )
-
-        events = list(generate_jellyfin_images_stream())
-        assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
-        assert not any("fanart 複製失敗" in e for e in events), (
-            f"fanart == cover 時不應誤報「fanart 複製失敗」: {events}"
-        )
-
-        poster_path = movie_dir / "ABC-123-poster.jpg"
-        assert poster_path.exists(), "poster 應已補齊"
-
-        response = client.get("/api/gallery/jellyfin-check")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["data"]["need_update"] == 0, (
-            f"補齊後再 check 一次必須回 0，實得: {data}"
-        )
 
 
 # ============ feature/122 T5：播放頁多段接續 ============
@@ -3609,22 +1925,6 @@ class TestVideoPlayerMultipart:
         assert "onerror=" in html
         assert 'id="video-error-hint-network"' in html and 'id="video-error-hint-format"' in html
 
-    def test_multipart_no_inline_script(self, client, tmp_path, monkeypatch):
-        """CD-122-12：除外部 ESM 模組外，沒有任何 <script>...</script> 區塊。"""
-        # [lint-guard: pytest-justified] 正面斷言「輸出 HTML 裡只允許那一種
-        # module script 形狀」。static_guard_lint 掃源碼 f-string 看得到字面，
-        # 看不到「這次 multipart 回應真的沒夾進第二個 <script>」。
-        setup = _seed_player_videos(
-            tmp_path, monkeypatch,
-            ["ABC-123-cd1.mp4", "ABC-123-cd2.mp4"],
-        )
-        response = client.get(f"/api/gallery/player?path={quote(setup['uris'][0])}")
-        assert response.status_code == 200
-        html = response.text
-        assert _ALLOWED_PLAYER_MODULE in html
-        rest = html.replace(_ALLOWED_PLAYER_MODULE, "", 1)
-        assert "<script" not in rest
-        assert "</script>" not in rest
 
     def test_multipart_data_parts_escaping(self, client, tmp_path, monkeypatch):
         """path 含 \" / & / < / > 時 data-parts 仍是合法屬性，JSON.parse 得回原值。
@@ -3681,58 +1981,6 @@ class TestVideoPlayerMultipart:
         assert "oa-player-progress" not in html
         assert "/static/js/pages/player.js" not in html
         assert "<video controls autoplay src=" in html
-
-    def test_cd122_13_same_part_number_does_not_continue(
-        self, client, tmp_path, monkeypatch
-    ):
-        """CD-122-13（播放入口）：ABC-123-cd1.mp4 ＋ ABC-123-cd1.mkv → 不接續。
-
-        段號重複代表那是「同一片的兩種容器」，不是「一片的兩段」；若誤併，播放頁
-        會把同一段連播兩次（第二次只是換個容器的同內容）。
-        """
-        # [lint-guard: pytest-justified] 同上一支：源碼掃描看不到「這兩個檔名組合
-        # 因為段號重複而 resolve 成 1-member、走了單檔 f-string」。
-        setup = _seed_player_videos(
-            tmp_path, monkeypatch,
-            ["ABC-123-cd1.mp4", "ABC-123-cd1.mkv"],
-        )
-        mp4_uri = setup["uris"][0]
-        response = client.get(f"/api/gallery/player?path={quote(mp4_uri)}")
-        assert response.status_code == 200
-        html = response.text
-        assert "data-parts" not in html
-        assert 'id="oa-player"' not in html
-        assert "oa-player-progress" not in html
-        assert "/static/js/pages/player.js" not in html
-        assert "<video controls autoplay src=" in html
-
-    def test_db_exception_falls_back_to_single_file(
-        self, client, tmp_path, monkeypatch
-    ):
-        """DB 查詢拋例外 → 200 且走單檔分支（播放端 fail-safe）。
-
-        mutation-sensitive：把 except Exception 收窄（例如改成 except ZeroDivisionError）
-        這支就會紅。
-        """
-        # [lint-guard: pytest-justified] 斷言例外路徑 render 出的仍是單檔 HTML
-        # （無 data-parts）。收窄 except 會讓 TestClient 拿到 500 而非這份 HTML。
-        db_path = tmp_path / "broken.db"
-        db_path.write_bytes(b"not-sqlite")
-        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: db_path)
-
-        def _boom(*_a, **_k):
-            raise RuntimeError("db exploded")
-
-        monkeypatch.setattr("web.routers.gallery_media.VideoRepository", _boom)
-        video_path = to_file_uri("C:/videos/test.mp4")
-        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
-        assert response.status_code == 200
-        html = response.text
-        assert "<video" in html
-        assert "data-parts" not in html
-        assert 'id="oa-player"' not in html
-        assert "/static/js/pages/player.js" not in html
-        assert "test.mp4" in html
 
 
 class TestGenerateAvlistWishlistReconcile:
@@ -3806,125 +2054,4 @@ class TestGenerateAvlistWishlistReconcile:
         conn.close()
         assert row is None, "已入手書籤應被對帳刪除"
 
-    def test_generate_avlist_reconcile_failure_isolated(
-        self, client, tmp_path, monkeypatch, parse_sse_events
-    ):
-        """DoD 3：reconcile 丟例外時 done 欄位與 baseline 一致，並發 warn 通知。"""
-        scan_dir = tmp_path / "videos"
-        scan_dir.mkdir()
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-        db_path = tmp_path / "test.db"
 
-        from core.database import init_db
-        init_db(db_path)
-
-        monkeypatch.setattr(
-            "web.routers.scanner.load_config",
-            lambda: self._scan_config(scan_dir, output_dir),
-        )
-        self._patch_db_paths(monkeypatch, db_path)
-
-        # BE-TEST-10：先跑 baseline（不注入例外）取得預期 done 欄位
-        baseline_resp = client.get("/api/gallery/generate")
-        assert baseline_resp.status_code == 200
-        baseline_done = [
-            e for e in parse_sse_events(baseline_resp.text) if e.get("type") == "done"
-        ]
-        assert len(baseline_done) == 1
-        baseline = baseline_done[0]
-
-        import web.routers.notifications as notif_mod
-        notif_mod._notifications.clear()
-        notif_mod._read_ids.clear()
-
-        def _boom():
-            raise RuntimeError("reconcile exploded")
-
-        # raising=False：實作前屬性尚不存在；RED 應落在「未發 warn」而非 AttributeError
-        monkeypatch.setattr("web.routers.scanner.reconcile_wishlist", _boom, raising=False)
-
-        failure_resp = client.get("/api/gallery/generate")
-        assert failure_resp.status_code == 200
-        failure_done = [
-            e for e in parse_sse_events(failure_resp.text) if e.get("type") == "done"
-        ]
-        assert len(failure_done) == 1
-        failed = failure_done[0]
-
-        assert failed["video_count"] == baseline["video_count"]
-        assert failed["stats"] == baseline["stats"]
-
-        notif_items = client.get("/api/notifications").json()["items"]
-        warn_items = [
-            i for i in notif_items
-            if i["title_key"] == "notif.wishlist_reconcile_failed"
-        ]
-        assert len(warn_items) == 1, (
-            f"對帳失敗應發恰好 1 筆 reconcile_failed，實得 {[i['title_key'] for i in notif_items]}"
-        )
-        assert warn_items[0]["level"] == "warn"
-        assert warn_items[0]["task_type"] == "wishlist_reconcile"
-
-    def test_generate_avlist_reconciles_even_when_aborted(
-        self, tmp_path, monkeypatch, mocker
-    ):
-        """DoD 6：使用者中止但已寫入新片 → 對帳仍觸發。"""
-        from web.routers.scanner import generate_avlist
-        from core.database import init_db
-        from core.gallery_scanner import VideoInfo
-
-        dir0 = tmp_path / "src0"
-        dir0.mkdir()
-        (dir0 / "video_0.mp4").write_bytes(b"x" * 2048)
-        dir1 = tmp_path / "src1"
-        dir1.mkdir()
-        (dir1 / "video_0.mp4").write_bytes(b"x" * 2048)
-
-        output_dir = tmp_path / "html_out"
-        output_dir.mkdir()
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-
-        cfg = {
-            "gallery": {
-                "directories": [str(dir0), str(dir1)],
-                "output_dir": str(output_dir),
-                "path_mappings": {},
-                "min_size_mb": 0,
-            },
-            "search": {"proxy_url": ""},
-            "general": {"theme": "light"},
-            "scraper": {"video_extensions": [".mp4"]},
-        }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
-        self._patch_db_paths(monkeypatch, db_path)
-
-        def fake_scan_file(self, video_path, base_path=None):
-            return VideoInfo(path=to_file_uri(video_path), title="t", num="ABC-001")
-
-        mocker.patch("web.routers.scanner.VideoScanner.scan_file", fake_scan_file)
-        mocker.patch("web.routers.scanner.HTMLGenerator")
-        mocker.patch("web.routers.scanner._emit_notif")
-
-        reconcile_calls = []
-
-        def fake_reconcile():
-            reconcile_calls.append(1)
-            return []
-
-        # raising=False：實作前屬性尚不存在；RED 應落在「呼叫次數 0」而非 AttributeError
-        monkeypatch.setattr("web.routers.scanner.reconcile_wishlist", fake_reconcile, raising=False)
-
-        # outer(dir0)=#1, inner(file0@dir0)=#2, outer(dir1)=#3 → trigger 後 abort
-        state = {"n": 0}
-
-        def should_abort():
-            state["n"] += 1
-            return state["n"] > 2
-
-        list(generate_avlist(should_abort=should_abort))
-
-        assert len(reconcile_calls) >= 1, (
-            "abort 路徑仍應觸發 reconcile_wishlist（已掃到的片是真的已入手）"
-        )

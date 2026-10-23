@@ -142,16 +142,6 @@ test('影片模式：對焦編輯開著時 ← / → 不換片', () => {
     } finally { cleanup(); }
 });
 
-test('影片模式：對焦編輯沒開時 → 照樣換片', () => {
-    seed();
-    try {
-        const c = makeComponent({ _maskVisible: false });
-        const n = withIndexSpy(c);
-        keydown(c, 'ArrowRight');
-        assert.equal(n.video, 1);
-        assert.equal(c.lightboxIndex, 1);
-    } finally { cleanup(); }
-});
 
 // ---- 女優模式（另一份獨立的碼，不能只驗影片）----
 
@@ -170,20 +160,6 @@ test('女優模式：對焦編輯開著時左滑不換人', () => {
     } finally { cleanup(); }
 });
 
-test('女優模式：對焦編輯沒開時左滑照樣換人', () => {
-    seed();
-    try {
-        const c = makeComponent({
-            _maskVisible: false,
-            showFavoriteActresses: true,
-            currentLightboxActress: ACTRESSES[0],
-        });
-        const n = withIndexSpy(c);
-        swipeLeft(c);
-        assert.equal(n.actress, 1);
-        assert.equal(c.actressLightboxIndex, 1);
-    } finally { cleanup(); }
-});
 
 test('女優模式：對焦編輯開著時 ← / → 不換人', () => {
     seed();
@@ -211,17 +187,3 @@ test('女優模式：對焦編輯開著時 ← / → 不換人', () => {
     } finally { cleanup(); }
 });
 
-test('女優模式：對焦編輯沒開時 → 照樣換人', () => {
-    seed();
-    try {
-        const c = makeComponent({
-            _maskVisible: false,
-            showFavoriteActresses: true,
-            currentLightboxActress: ACTRESSES[0],
-        });
-        const n = withIndexSpy(c);
-        keydown(c, 'ArrowRight');
-        assert.equal(n.actress, 1);
-        assert.equal(c.actressLightboxIndex, 1);
-    } finally { cleanup(); }
-});

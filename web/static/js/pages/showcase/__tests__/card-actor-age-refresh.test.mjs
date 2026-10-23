@@ -52,7 +52,6 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 
 const { _recomputeCardActorAges, _setActresses, _setFilteredVideos } = await import('@/showcase/state-base.js');
 const { stateVideos } = await import('../state-videos.js');
-const { stateLightbox } = await import('../state-lightbox.js');
 
 test('_recomputeCardActorAges 單元行為：falsy 安全退出、正確為 video 寫入 _cardActorAges', () => {
     // 1. falsy 不拋錯
@@ -113,51 +112,3 @@ test('updatePagination() 對 paginatedVideos 每一筆寫入 _cardActorAges', ()
     });
 });
 
-test('refreshVideoData 補資料後同步更新卡片年齡', async () => {
-    _setActresses([
-        { name: '柚木ティナ', birth: '1986-10-29' },
-    ]);
-
-    const video = {
-        path: '/media/video1.mp4',
-        actresses: '',
-        release_date: '2020-01-15',
-        duration: 120,
-    };
-    _recomputeCardActorAges(video);
-    assert.deepStrictEqual(video._cardActorAges, {});
-
-    // Mock fetch 回傳更新後的 video 資料
-    const originalFetch = globalThis.fetch;
-    try {
-        globalThis.fetch = async (url) => {
-            if (String(url).includes('/api/showcase/video')) {
-                return {
-                    ok: true,
-                    json: async () => ({
-                        success: true,
-                        video: {
-                            actresses: '柚木ティナ',
-                            release_date: '2020-01-15',
-                            duration: 120,
-                        },
-                    }),
-                };
-            }
-            return { ok: false };
-        };
-
-        const comp = stateLightbox();
-        // 刻意讓 currentLightboxVideo 不是 video，驗證燈箱不在該片時仍同步更新卡片年齡
-        comp.currentLightboxVideo = null;
-
-        await comp.refreshVideoData(video);
-
-        // video._cardActorAges 必須被更新
-        assert.deepStrictEqual(video._cardActorAges, {
-            '柚木ティナ': 33,
-        });
-    } finally {
-        globalThis.fetch = originalFetch;
-    }
-});

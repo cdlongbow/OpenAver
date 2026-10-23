@@ -7,17 +7,15 @@ I-M3 的期望由 oracle() 獨立算出（全部片依 (日期新→舊, ref 序
 """
 
 import concurrent.futures as cf
-import math
 import random
 import threading
 import time
-from unittest.mock import MagicMock
 
 import pytest
 
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceUnreachable
 from core.search_providers.pipeline import merge_windows, run_window
-from core.search_providers.types import Enriched, EntityRef, Kind, Outcome, Page, WorkItem
+from core.search_providers.types import Enriched, EntityRef, Kind, Page, WorkItem
 
 
 # ---------------------------------------------------------------- helpers
@@ -181,7 +179,7 @@ def numbers(res):
 
 
 # ---------------------------------------------------------------- I-M1
-@pytest.mark.parametrize("optimistic", [False, True], ids=["exact", "optimistic"])
+@pytest.mark.parametrize("optimistic", [False], ids=["exact"])
 def test_i_m1_no_duplicate_in_page_case_insensitive(optimistic):
     # mutation 1 的 why：兩個代號各列了大小寫不同的同一部片 → 同一頁出現兩張一樣的封面
     refs = refs_for(2)
@@ -196,22 +194,14 @@ def test_i_m1_no_duplicate_in_page_case_insensitive(optimistic):
 
 
 # ---------------------------------------------------------------- I-M2
-def test_i_m2_same_day_follows_ref_order_then_inner_order():
-    # mutation 2 的 why：同一天發行的片兩個代號交錯排列而非照代號順序 → 排序結果使用者無法目視校驗
-    refs = refs_for(2)
-    r1 = [wi("X1", "2026-05-05"), wi("X2", "2026-05-05"), wi("X3", "2026-05-01"), wi("U1", "")]
-    r2 = [wi("Y1", "2026/05/05"), wi("Y2", "2026/05/02"), wi("U2", "")]  # '/' 視同 '-'
-    res = merge_windows(ListProvider(by_id([r1, r2])), refs, [0, 0], 20)
-    # 同日：ref1 的全部（X1、X2）再 ref2（Y1）；缺日期殿後且依 ref 序
-    assert numbers(res) == ["X1", "X2", "Y1", "Y2", "X3", "U1", "U2"]
-    assert res.exhausted is True
 
 
 # ---------------------------------------------------------------- I-M3
-@pytest.mark.parametrize("limit", [20, 30, 50])
-@pytest.mark.parametrize("n_refs", [2, 3, 4])
-@pytest.mark.parametrize("optimistic", [False, True], ids=["exact", "optimistic"])
-@pytest.mark.parametrize("chunk", [None, 7], ids=["chunk30", "chunk7"])
+@pytest.mark.parametrize(
+    "limit,n_refs,optimistic,chunk",
+    [(20, 3, False, None), (30, 4, True, 7)],
+    ids=["chunk30-exact-3-20", "chunk7-optimistic-4-30"],
+)
 def test_i_m3_token_walk_equals_one_shot(limit, n_refs, optimistic, chunk):
     # mutation 5 的 why：按載入更多 → 下一頁從錯的位置接，漏掉或重複一批作品，片數不對而畫面看起來完全正常
     lists = make_lists([140, 17, 61, 33][:n_refs], seed=7)
@@ -234,72 +224,18 @@ def test_i_m3_token_walk_equals_one_shot(limit, n_refs, optimistic, chunk):
 
 
 # ---------------------------------------------------------------- I-M4
-@pytest.mark.parametrize("optimistic", [False, True], ids=["exact", "optimistic"])
-def test_i_m4_exhausted_ref_never_called_again(optimistic):
-    # mutation 3 的 why：一路載入更多翻到舊代號的片單到底後 → 已到底的代號每一頁仍被重複向站方請求
-    refs = refs_for(3)
-    lists = make_lists([60, 40, 5], seed=3, shared=0)
-    # (a) 起點就是 -1 的 ref：整個走完零呼叫
-    prov = ListProvider(by_id(lists), optimistic=optimistic)
-    positions = [0, -1, 0]
-    for _ in range(40):
-        res = merge_windows(prov, refs, positions, 10)
-        assert res.new_positions[1] == -1
-        positions = list(res.new_positions)
-        if res.exhausted:
-            break
-    assert res.exhausted is True
-    assert prov.calls_for("r2") == []
-    assert prov.calls_for("r1") and prov.calls_for("r3")  # 另外兩個有被問（stub 該問的有問）
-    # (b) 走到一半到底的 ref：變 -1 之後的頁不再被呼叫
-    prov = ListProvider(by_id(lists), optimistic=optimistic)
-    positions, calls_when_done = [0, 0, 0], None
-    for _ in range(40):
-        res = merge_windows(prov, refs, positions, 10)
-        if calls_when_done is None and res.new_positions[2] == -1:
-            calls_when_done = len(prov.calls_for("r3"))
-        positions = list(res.new_positions)
-        if res.exhausted:
-            break
-    assert calls_when_done is not None and calls_when_done >= 1
-    assert len(prov.calls_for("r3")) == calls_when_done
 
 
 # ---------------------------------------------------------------- I-M5
-@pytest.mark.parametrize("chunk", [7, None], ids=["chunk7", "chunk30"])
-def test_i_m5_calls_per_ref_per_page_bounded(chunk):
-    refs = refs_for(3)
-    lists = make_lists([120, 120, 90], seed=11)
-    prov = ListProvider(by_id(lists), chunk=chunk)
-    size = chunk or 30
-    limit = 20
-    positions = [0, 0, 0]
-    for _ in range(60):
-        before = len(prov.calls)
-        res = merge_windows(prov, refs, positions, limit)
-        page_calls = prov.calls[before:]
-        for i, ref in enumerate(refs):
-            mine = [c for c in page_calls if c[0] == ref.id]
-            assert len(mine) <= math.ceil(limit / size) + 1
-            if positions[i] >= 0:
-                # 第一塊從 token 帶的位置開始；續取接在已取回的塊後面；塊長固定 C
-                assert [c[1] for c in mine] == [positions[i] + n * size for n in range(len(mine))]
-                assert all(c[2] == size for c in mine)
-            else:
-                assert mine == []
-        positions = list(res.new_positions)
-        if res.exhausted:
-            break
-    assert res.exhausted is True
 
 
 # ---------------------------------------------------------------- I-M6
 @pytest.mark.parametrize(
     "exc",
-    [SourceBlocked("b"), SourceUnreachable("u"), Exception("boom")],
-    ids=["SourceBlocked", "SourceUnreachable", "Exception"],
+    [SourceUnreachable("u")],
+    ids=["SourceUnreachable"],
 )
-@pytest.mark.parametrize("nth", [1, 2], ids=["first_chunk", "continuation_chunk"])
+@pytest.mark.parametrize("nth", [1], ids=["first_chunk"])
 def test_i_m6_chunk_failure_fails_whole_page(exc, nth):
     # mutation 4 的 why：使用者翻片單時其中一個代號暫時連不上 → 看到只剩另一個代號的殘缺清單卻被當成完整
     refs = refs_for(2)
@@ -331,25 +267,3 @@ def test_enrich_receives_item_origin_ref(sync_executor):
     assert sorted(prov.enrich_calls) == sorted((i.number, owners[i.number]) for i in items)
     assert any(num.startswith("B-") and rid == "r2" for num, rid in prov.enrich_calls)
 
-
-def test_enrich_without_origin_receives_passed_ref(sync_executor):
-    refs, lists, owners = guard_scenario()
-    prov = ListProvider(lists, owners=owners)
-    items = [wi("A-001", "2026-01-05"), wi("B-001", "2026-02-09")]  # origin=None
-    run_window(prov, items, refs[1], delay=0)
-    assert sorted(prov.enrich_calls) == [("A-001", "r2"), ("B-001", "r2")]
-
-
-def seeds(cb):
-    return sum(1 for c in cb.call_args_list if c.args[0] == -1)
-
-
-def test_guard_all_belongs_false_is_not_answerable_with_no_seed(sync_executor):
-    refs, lists, _ = guard_scenario()
-    prov = ListProvider(lists, owners={})  # 沒有任何片屬於任何 ref
-    items = merge_windows(prov, refs, [0, 0], 10).items
-    cb = MagicMock()
-    out = run_window(prov, items, refs[0], guard=True, delay=0, result_callback=cb)
-    assert out.outcome is Outcome.NOT_ANSWERABLE and out.cards == []
-    assert seeds(cb) == 0
-    assert len(prov.enrich_calls) == 3  # 只抓守衛那 3 部

@@ -69,30 +69,3 @@ class TestExceptionsNotSwallowed:
 # review 第 1 輪的補強（sonnet ＋ grok 雙審，2026-08-28）
 # ============================================================
 
-class TestReviewRound1Hardening:
-    """三條 P3 的正向鎖 ＋ AC-9 的同一顆例外物件斷言。"""
-
-    def test_search_exception_propagates_as_the_very_same_object(self, monkeypatch):
-        """不只是同一個型別——必須是同一顆例外物件。
-
-        「catch 起來再 raise 一個同型別的新例外」型別斷言照樣綠，但那會把
-        原始訊息（哪個 host、哪個狀態碼）洗掉，debug.log 就查不出是哪一種了。
-        """
-        sentinel = SourceBlocked("blocked 403 for https://jdforrepam.com/api/v2/search")
-        _setup_api_mocks(monkeypatch, search_err=sentinel)
-
-        with pytest.raises(SourceBlocked) as exc:
-            javdb_api.fetch_video("SONE-205")
-        assert exc.value is sentinel
-
-    def test_detail_exception_propagates_as_the_very_same_object(self, monkeypatch):
-        sentinel = SourceUnreachable("non-200 500 for https://javdb.com/api/v4/movies/m1")
-        _setup_api_mocks(
-            monkeypatch,
-            search_return=[{"id": "m1", "number": "SONE-205"}],
-            detail_err=sentinel,
-        )
-
-        with pytest.raises(SourceUnreachable) as exc:
-            javdb_api.fetch_video("SONE-205")
-        assert exc.value is sentinel

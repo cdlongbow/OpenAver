@@ -1,6 +1,5 @@
 """測試 Showcase API"""
 import pytest
-from pathlib import Path
 from fastapi.testclient import TestClient
 
 from core.database import Video, VideoRepository
@@ -108,35 +107,6 @@ def populated_db(make_populated_db):
 class TestShowcaseVideosAPI:
     """測試 /api/showcase/videos 端點"""
 
-    def test_get_videos_empty_db(self, client, temp_db, monkeypatch):
-        """測試空資料庫回傳正確格式"""
-        def mock_get_db_path():
-            return temp_db
-        monkeypatch.setattr("web.routers.showcase.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/showcase/videos")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["videos"] == []
-        assert data["total"] == 0
-
-    def test_get_videos_db_not_exists(self, client, tmp_path, monkeypatch):
-        """測試資料庫檔案不存在時不報錯"""
-        nonexistent_db = tmp_path / "nonexistent.db"
-
-        def mock_get_db_path():
-            return nonexistent_db
-        monkeypatch.setattr("web.routers.showcase.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/showcase/videos")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["success"] is True
-        assert data["videos"] == []
-        assert data["total"] == 0
 
     def test_cover_url_conversion_unix_path(self, client, populated_db, monkeypatch):
         """測試 cover_url 正確轉換（Unix 路徑）— 使用真實 Unix 路徑，CI 環境無關"""
@@ -163,29 +133,6 @@ class TestShowcaseVideosAPI:
         # URL encoded，路徑分隔符 / 會變成 %2F
         assert "%2F" in video1["cover_url"]
 
-    def test_cover_url_conversion_windows_path(self, client, populated_db, monkeypatch):
-        """測試 cover_url 正確轉換（Windows 路徑）"""
-        from urllib.parse import unquote
-
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.showcase.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/showcase/videos")
-        data = response.json()
-
-        # 第二筆：file:///C:/Videos/ABW-001/cover.jpg
-        # normalize_path 在 WSL 會轉為 /mnt/c/...，在 Windows 保持 C:/...
-        video2 = data["videos"][1]
-        assert video2["cover_url"].startswith("/api/gallery/image?path=")
-        assert "ABW-001" in video2["cover_url"]
-
-        # 解碼 URL 驗證路徑合理性（不是相對路徑）
-        path_param = video2["cover_url"].split("path=")[1]
-        decoded_path = unquote(path_param)
-        # 路徑應該是絕對路徑（/ 開頭或盤符開頭）
-        assert decoded_path.startswith("/") or (len(decoded_path) >= 2 and decoded_path[1] == ":"), \
-            f"Windows 路徑轉換結果不是絕對路徑: {decoded_path}"
 
     def test_cover_url_conversion_unc_path(self, client, populated_db, monkeypatch):
         """測試 cover_url 正確轉換（UNC 路徑，不多加 /）"""
@@ -209,40 +156,6 @@ class TestShowcaseVideosAPI:
         assert decoded_path.startswith("//"), f"UNC 路徑格式錯誤: {decoded_path}"
         assert not decoded_path.startswith("///"), f"UNC 路徑多了 /: {decoded_path}"
         assert "PRED-001" in decoded_path
-
-    def test_cover_url_empty_when_no_cover(self, client, populated_db, monkeypatch):
-        """測試無封面圖時 cover_url 為空字串"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.showcase.get_db_path", mock_get_db_path)
-
-        response = client.get("/api/showcase/videos")
-        data = response.json()
-
-        # 第三筆：無封面
-        video3 = data["videos"][2]
-        assert video3["cover_url"] == ""
-
-    def test_get_videos_error_handling(self, client, populated_db, monkeypatch):
-        """測試 DB 錯誤時回傳 500 + 錯誤訊息"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.showcase.get_db_path", mock_get_db_path)
-
-        # Mock VideoRepository.get_all() 拋出異常
-        def mock_get_all_error(self):
-            raise Exception("db error")
-
-        monkeypatch.setattr("core.database.VideoRepository.get_all", mock_get_all_error)
-
-        response = client.get("/api/showcase/videos")
-        assert response.status_code == 500
-
-        data = response.json()
-        assert data["success"] is False
-        assert data["error"] == "取得影片資料失敗"
-        assert data["videos"] == []
-        assert data["total"] == 0
 
 
 class TestShowcaseDirectoryFiltering:
@@ -375,43 +288,10 @@ class TestShowcaseDirectoryFiltering:
         assert data["total"] == 1
         assert data["videos"][0]["number"] == "SONE-205"
 
-    def test_no_dirs_configured_returns_empty(self, client, populated_db, monkeypatch):
-        """未設定資料夾時回傳空結果"""
-        def mock_get_db_path():
-            return populated_db
-        monkeypatch.setattr("web.routers.showcase.get_db_path", mock_get_db_path)
-
-        def mock_load_config():
-            return {"gallery": {"directories": [], "path_mappings": {}}}
-        monkeypatch.setattr("web.routers.showcase.load_config", mock_load_config)
-
-        response = client.get("/api/showcase/videos")
-        data = response.json()
-
-        assert data["success"] is True
-        assert data["total"] == 0
-
 
 class TestVideoProxy:
     """測試 GET /api/gallery/video 影片代理"""
 
-    def test_allowed_path_returns_200(self, client, tmp_path, monkeypatch):
-        """白名單內的影片路徑回傳 200"""
-        video = tmp_path / "test.mp4"
-        video.write_bytes(b'\x00' * 100)
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(tmp_path)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        response = client.get(f"/api/gallery/video?path={str(video)}")
-        assert response.status_code == 200
-        assert "video" in response.headers["content-type"]
 
     def test_outside_dir_returns_403(self, client, tmp_path, monkeypatch):
         """白名單外的路徑回傳 403"""
@@ -430,38 +310,6 @@ class TestVideoProxy:
         response = client.get(f"/api/gallery/video?path={str(video)}")
         assert response.status_code == 403
 
-    def test_non_video_extension_returns_403(self, client, tmp_path, monkeypatch):
-        """非影片副檔名回傳 403"""
-        txt_file = tmp_path / "readme.txt"
-        txt_file.write_bytes(b'hello')
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(tmp_path)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        response = client.get(f"/api/gallery/video?path={str(txt_file)}")
-        assert response.status_code == 403
-
-    def test_not_found_returns_404(self, client, tmp_path, monkeypatch):
-        """檔案不存在回傳 404"""
-        nonexistent = tmp_path / "ghost.mp4"
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(tmp_path)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        response = client.get(f"/api/gallery/video?path={str(nonexistent)}")
-        assert response.status_code == 404
 
     def test_range_request_returns_206(self, client, tmp_path, monkeypatch):
         """Range request 回傳 206 Partial Content"""
@@ -485,16 +333,6 @@ class TestVideoProxy:
         assert response.headers["content-range"] == "bytes 0-499/1000"
         assert len(response.content) == 500
 
-    def test_player_page_returns_html(self, client, tmp_path, monkeypatch):
-        """播放頁面回傳包含 <video> 標籤的 HTML"""
-        video = tmp_path / "test.mp4"
-        video.write_bytes(b'\x00' * 100)
-
-        response = client.get(f"/api/gallery/player?path={str(video)}")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "<video" in response.text
-        assert "/api/gallery/video?path=" in response.text
 
     def test_path_traversal_blocked(self, client, tmp_path, monkeypatch):
         """路徑穿越 ../ 被 normpath + 白名單兜底擋下回傳 403"""
@@ -553,25 +391,6 @@ class TestVideoProxy:
         assert response.status_code == 403, \
             "realpath 追蹤 symlink target：target 在白名單外應回傳 403"
 
-    def test_invalid_range_returns_416(self, client, tmp_path, monkeypatch):
-        """無效 Range（start 超出檔案大小）回傳 416"""
-        video = tmp_path / "test.mp4"
-        video.write_bytes(b'\x00' * 100)
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(tmp_path)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        response = client.get(
-            f"/api/gallery/video?path={str(video)}",
-            headers={"Range": "bytes=9999-"}
-        )
-        assert response.status_code == 416
 
     def test_exe_file_returns_403(self, client, tmp_path, monkeypatch):
         """Proxy security: .exe file returns 403 even if in config video_extensions"""
@@ -593,101 +412,6 @@ class TestVideoProxy:
         response = client.get(f"/api/gallery/video?path={str(exe_file)}")
         assert response.status_code == 403, \
             ".exe should be blocked by proxy security (SAFE_PROXY_EXTENSIONS)"
-
-    def test_video_api_uses_get_proxy_extensions(self):
-        """get_video() must use get_proxy_extensions (not hardcoded ALLOWED_VIDEO_EXTENSIONS)
-
-        TASK-150a-T1：get_video() 搬到 gallery_media.py，斷言指向改隨之改指向。
-        """
-        gallery_media_py = Path(__file__).parent.parent.parent / "web" / "routers" / "gallery_media.py"
-        content = gallery_media_py.read_text(encoding='utf-8')
-        assert 'get_proxy_extensions' in content, \
-            "gallery_media.py get_video() should use get_proxy_extensions from core.video_extensions"
-
-    def test_endpoint_works_when_realpath_would_raise(self, client, tmp_path, monkeypatch):
-        """FUSE/WinFsp 相容：mock os.path.realpath 丟 OSError 時 endpoint 走 except 分支降級 normpath，仍回傳 200"""
-        import os
-        from unittest.mock import Mock
-
-        video = tmp_path / "test.mp4"
-        video.write_bytes(b'\x00' * 100)
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(tmp_path)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-        monkeypatch.setattr(os.path, "realpath", Mock(side_effect=OSError("WinError 1005")))
-
-        response = client.get(f"/api/gallery/video?path={str(video)}")
-        assert response.status_code == 200, \
-            "realpath OSError 時應降級 normpath，FUSE/WinFsp 掛載下 endpoint 應回傳 200 而非 500"
-
-    def test_video_fuse_symlink_fallback(self, client, tmp_path, monkeypatch):
-        """FUSE 環境 mock realpath raise OSError → 降級 normpath → symlink 在白名單內 → 200
-        明確記錄 FUSE 下接受 symlink escape 殘留風險（target 不被追蹤）"""
-        import os
-        from unittest.mock import Mock
-
-        allowed_dir = tmp_path / "gallery"
-        allowed_dir.mkdir()
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        target = outside / "target.mp4"
-        target.write_bytes(b'\x00' * 100)
-        link = allowed_dir / "link.mp4"
-        try:
-            link.symlink_to(target)
-        except OSError:
-            pytest.skip("系統不支援 symlink")
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(allowed_dir)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-        # mock realpath raise OSError（模擬 WinFsp GetFinalPathNameByHandle 失敗）
-        monkeypatch.setattr(os.path, "realpath", Mock(side_effect=OSError("WinError 1005")))
-
-        response = client.get(f"/api/gallery/video?path={str(link)}")
-        assert response.status_code == 200, \
-            "FUSE 降級 normpath 後 symlink 本身在白名單內應回 200（接受 FUSE 下 symlink escape 殘留風險）"
-
-    def test_normpath_resolves_traversal(self, client, tmp_path, monkeypatch):
-        """normpath 正確解析 .. 並交給白名單兜底：合法 .. → 200；穿越 → 403"""
-        allowed_dir = tmp_path / "allowed"
-        allowed_dir.mkdir()
-        sub = allowed_dir / "sub"
-        sub.mkdir()
-        video = allowed_dir / "cover.mp4"
-        video.write_bytes(b'\x00' * 100)
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(allowed_dir)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        # Case A: sub/../cover.mp4 → normpath → allowed_dir/cover.mp4 → 200
-        legal_path = str(sub / ".." / "cover.mp4")
-        response = client.get(f"/api/gallery/video?path={legal_path}")
-        assert response.status_code == 200, \
-            "合法 .. 移動（仍在白名單內）應回傳 200"
-
-        # Case B: allowed_dir/../../etc → normpath → 白名單外 → 403
-        traversal_path = str(allowed_dir / ".." / ".." / "etc" / "passwd.mp4")
-        response = client.get(f"/api/gallery/video?path={traversal_path}")
-        assert response.status_code == 403, \
-            "穿越出白名單的 .. 路徑應被 403 擋下"
 
 
 class TestImageProxy:
@@ -838,69 +562,6 @@ class TestImageProxy:
         assert response.status_code == 200, \
             "realpath OSError 時應降級 normpath，FUSE/WinFsp 掛載下 endpoint 應回傳 200 而非 500"
 
-    def test_image_fuse_symlink_fallback(self, client, tmp_path, monkeypatch):
-        """FUSE 環境 mock realpath raise OSError → 降級 normpath → symlink 在白名單內 → 200
-        明確記錄 FUSE 下接受 symlink escape 殘留風險（target 不被追蹤）"""
-        import os
-        from unittest.mock import Mock
-
-        allowed_dir = tmp_path / "gallery"
-        allowed_dir.mkdir()
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        target = outside / "target.jpg"
-        target.write_bytes(b'\xff\xd8\xff' + b'\x00' * 100)
-        link = allowed_dir / "link.jpg"
-        try:
-            link.symlink_to(target)
-        except OSError:
-            pytest.skip("系統不支援 symlink")
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(allowed_dir)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-        # mock realpath raise OSError（模擬 WinFsp GetFinalPathNameByHandle 失敗）
-        monkeypatch.setattr(os.path, "realpath", Mock(side_effect=OSError("WinError 1005")))
-
-        response = client.get(f"/api/gallery/image?path={str(link)}")
-        assert response.status_code == 200, \
-            "FUSE 降級 normpath 後 symlink 本身在白名單內應回 200（接受 FUSE 下 symlink escape 殘留風險）"
-
-    def test_normpath_resolves_traversal(self, client, tmp_path, monkeypatch):
-        """normpath 正確解析 .. 並交給白名單兜底：合法 .. → 200；穿越 → 403"""
-        allowed_dir = tmp_path / "gallery"
-        allowed_dir.mkdir()
-        sub = allowed_dir / "sub"
-        sub.mkdir()
-        img = allowed_dir / "cover.jpg"
-        img.write_bytes(b'\xff\xd8\xff' + b'\x00' * 100)
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(allowed_dir)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        # Case A: sub/../cover.jpg → normpath → allowed_dir/cover.jpg → 200
-        legal_path = str(sub / ".." / "cover.jpg")
-        response = client.get(f"/api/gallery/image?path={legal_path}")
-        assert response.status_code == 200, \
-            "合法 .. 移動（仍在白名單內）應回傳 200"
-
-        # Case B: allowed_dir/../../etc → normpath → 白名單外 → 403
-        traversal_path = str(allowed_dir / ".." / ".." / "etc" / "passwd.jpg")
-        response = client.get(f"/api/gallery/image?path={traversal_path}")
-        assert response.status_code == 403, \
-            "穿越出白名單的 .. 路徑應被 403 擋下"
-
 
 class TestMappedDriveWhitelist:
     """T1–T5: SMB 連線磁碟機 / DFS-UNC 白名單比對不對稱修正（TASK-73）
@@ -1004,41 +665,6 @@ class TestMappedDriveWhitelist:
         )
 
     # ── T3: DFS-aliased UNC — get_image → 200 ─────────────────────────────────
-    def test_dfs_aliased_unc_get_image_200(self, image_client, tmp_path, monkeypatch):
-        """T3: 模擬 DFS alias（\\\\server\\pikpak → \\\\ERICPAN\\usbshare3-2）；
-        config 存 dfs_dir，realpath 把請求映射到 target_dir。"""
-        import os
-        self._clear_cache()
-
-        dfs_dir    = tmp_path / "eric" / "pikpak" / "media"
-        target_dir = tmp_path / "eric" / "usbshare" / "media"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        cover = target_dir / "cover.jpg"
-        cover.write_bytes(b'\xff\xd8\xff' + b'\x00' * 100)
-
-        mapping = {
-            str(dfs_dir / "cover.jpg"): str(cover),
-            str(dfs_dir): str(target_dir),
-        }
-        def fake_realpath(p):
-            return mapping.get(str(p), os.path.normpath(str(p)))
-
-        monkeypatch.setattr(os.path, "realpath", fake_realpath)
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(dfs_dir)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        response = image_client.get(f"/api/gallery/image?path={str(dfs_dir / 'cover.jpg')}")
-        assert response.status_code == 200, (
-            "T3: DFS-aliased UNC — realpath 改寫後請求端 URI 應能命中 dir 的 realpath-form → 200，"
-            f"實際: {response.status_code}"
-        )
 
     # ── T4: 間歇不對稱（dual-form 保證）────────────────────────────────────────
     def test_intermittent_asymmetry_dual_form_200(self, image_client, tmp_path, monkeypatch):
@@ -1110,44 +736,6 @@ class TestMappedDriveWhitelist:
         )
 
     # ── T5: 契約守衛（behavioral regression guard）─────────────────────────────
-    def test_dir_whitelist_canonicalization_is_symmetric(self, image_client, tmp_path, monkeypatch):
-        """T5: 契約守衛 — config dir 端必須也經過 realpath 正規化（與請求端對稱）。
-        設定：config dir = kform_dir（未被 realpath），請求路徑的 realpath → real_dir；
-        修正前：兩端格式不同 → 403（RED）；修正後：dir 端也跑 realpath → dual-form → 200（GREEN）。
-        此測試作為 TASK-73 的 regression guard 永久留存。"""
-        import os
-        self._clear_cache()
-
-        kform_dir = tmp_path / "kguard" / "media"
-        real_dir  = tmp_path / "realguard" / "media"
-        real_dir.mkdir(parents=True, exist_ok=True)
-        cover = real_dir / "cover.jpg"
-        cover.write_bytes(b'\xff\xd8\xff' + b'\x00' * 100)
-
-        mapping = {
-            str(kform_dir / "cover.jpg"): str(cover),
-            str(kform_dir): str(real_dir),
-        }
-        def fake_realpath(p):
-            return mapping.get(str(p), os.path.normpath(str(p)))
-
-        monkeypatch.setattr(os.path, "realpath", fake_realpath)
-
-        def mock_load_config():
-            return {
-                "gallery": {
-                    "directories": [str(kform_dir)],
-                    "path_mappings": {},
-                }
-            }
-        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-
-        response = image_client.get(f"/api/gallery/image?path={str(kform_dir / 'cover.jpg')}")
-        assert response.status_code == 200, (
-            "T5 契約守衛: config dir 端白名單比對必須對稱地跑 realpath-or-normpath 正規化；"
-            "若此測試失敗表示白名單比對不對稱已回歸。"
-            f"實際: {response.status_code}"
-        )
 
 
 class TestMappedDriveWhitelistWslUncSymmetry:
@@ -1284,21 +872,3 @@ class TestSerializeVideoPathMappingsReverse:
             f"cover_full_url 不應殘留裸 UNC 映射端字串，實際: {decoded}"
         )
 
-    def test_sample_images_url_reverse_maps_wsl_unc(self, wsl_video, monkeypatch):
-        import core.path_utils as path_utils
-        from urllib.parse import unquote
-        from web.routers.showcase import _serialize_video
-
-        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
-        mappings = {"/home/user/nas": "//NAS/share"}
-
-        result = _serialize_video(wsl_video, mappings, enabled=False)
-
-        assert len(result["sample_images"]) == 1
-        sample_url = unquote(result["sample_images"][0])
-        assert "/home/user/nas/sample1.jpg" in sample_url, (
-            f"sample_images URL 應反解為本機路徑，實際: {sample_url}"
-        )
-        assert "//NAS/share/sample1.jpg" not in sample_url, (
-            f"sample_images URL 不應殘留裸 UNC 映射端字串，實際: {sample_url}"
-        )

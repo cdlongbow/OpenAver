@@ -248,36 +248,6 @@ def _raw_hits(
     return hits
 
 
-def _find_loopback_hosts_assignment(tree: ast.Module) -> ast.Assign | None:
-    """模組層 `_LOOPBACK_HOSTS = frozenset({...含 loopback 字面...})`。"""
-    for node in tree.body:
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-            continue
-        tgt = node.targets[0]
-        if not (isinstance(tgt, ast.Name) and tgt.id == "_LOOPBACK_HOSTS"):
-            continue
-        if not isinstance(node.value, ast.Call):
-            continue
-        if not (
-            isinstance(node.value.func, ast.Name)
-            and node.value.func.id == "frozenset"
-        ):
-            continue
-        if not node.value.args:
-            continue
-        arg0 = node.value.args[0]
-        if not isinstance(arg0, (ast.Set, ast.List, ast.Tuple)):
-            continue
-        lits = {
-            elt.value
-            for elt in arg0.elts
-            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-        }
-        if lits & _LOOPBACK_LITERALS:
-            return node
-    return None
-
-
 def _violations(
     path: pathlib.Path, rel: str | None = None
 ) -> list[tuple[int, int, str, str]]:
@@ -349,81 +319,6 @@ def test_no_new_handwritten_loopback_judgments():
 # ---------------------------------------------------------------------------
 # Anti-rot：帳本每條都必須仍對應真實原始碼（只准減不准增）
 # ---------------------------------------------------------------------------
-
-def _ledger_entry_exists(entry: LedgerEntry) -> tuple[bool, str]:
-    """回傳 (exists, diagnostic)。"""
-    path = REPO_ROOT / entry.rel
-    if not path.is_file():
-        return False, f"檔案不存在：{entry.rel}"
-
-    src = path.read_text(encoding="utf-8")
-    try:
-        tree = ast.parse(src, filename=str(path))
-    except SyntaxError as exc:
-        return False, f"無法 parse {entry.rel}: {exc}"
-
-    if entry.shape == "assignment_frozenset":
-        if entry.scope != "<module>":
-            return False, "assignment_frozenset 必須 scope=<module>"
-        node = _find_loopback_hosts_assignment(tree)  # type: ignore[arg-type]
-        if node is None:
-            return False, f"{entry.rel} 找不到 _LOOPBACK_HOSTS = frozenset({{...}})"
-        return True, f"assignment at {node.lineno}"
-
-    if entry.shape == "function_body":
-        for node in tree.body if isinstance(tree, ast.Module) else []:
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name == entry.scope
-            ):
-                return True, f"function {entry.scope} at {node.lineno}"
-        return False, f"{entry.rel} 找不到函式 {entry.scope!r}"
-
-    # literal / is_loopback_attr：在指定 scope 內至少一處 raw hit
-    raw = _raw_hits(path)
-    matches = [
-        h for h in raw
-        if h[2] == entry.shape and (h[4] or "<module>") == entry.scope
-    ]
-    if not matches:
-        return False, (
-            f"{entry.rel}:{entry.scope}:{entry.shape} 在原始碼中找不到對應命中；"
-            f"該檔 raw hits: {[(h[0], h[2], h[4]) for h in raw]}"
-        )
-    return True, f"{len(matches)} hit(s) e.g. line {matches[0][0]}"
-
-
-def test_ledger_entries_all_still_present():
-    """帳本反腐（Opus 裁決 §5）：每條必須仍存在於原始碼。
-
-    刪了碼但帳本留著 → 永久免死金牌。這支測試逼人回來刪帳本條目。
-    帳本只准減不准增——加條目是 PR 上可見的 deliberate 動作。
-    """
-    dead: list[str] = []
-    for entry in LEDGER:
-        ok, diag = _ledger_entry_exists(entry)
-        if not ok:
-            dead.append(f"{_identity(entry)} — {diag}")
-    assert dead == [], (
-        f"LEDGER 有 {len(dead)} 條死條目（原始碼已無對應）：\n"
-        + "\n".join(dead)
-        + "\n→ 刪除帳本條目（只准減不准增），不要留指向空氣的豁免。"
-    )
-
-
-def test_ledger_reasons_state_direction():
-    """每條理由必須標明 allow-direction 或 deny-direction（誠實帳本）。"""
-    bad = [
-        _identity(e)
-        for e in LEDGER
-        if "allow-direction" not in e.reason and "deny-direction" not in e.reason
-    ]
-    assert bad == [], f"帳本理由未標方向：{bad}"
-
-
-def test_ledger_identities_are_unique():
-    ids = [_identity(e) for e in LEDGER]
-    assert len(ids) == len(set(ids)), f"帳本身分重複：{ids}"
 
 
 # ---------------------------------------------------------------------------

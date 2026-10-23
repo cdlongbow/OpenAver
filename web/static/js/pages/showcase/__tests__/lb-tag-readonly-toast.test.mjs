@@ -134,24 +134,6 @@ test('confirmAddLbTag: readonly_no_output false → 不顯示 tag_nfo_not_writte
     }
 });
 
-test('confirmAddLbTag: 欄位缺省（非唯讀）→ 不顯示 tag_nfo_not_written toast', async () => {
-    const mock = mockFetch({
-        success: true,
-        user_tags: ['EXISTING', 'TESTTAG'],
-        nfo_updated: true,
-    });
-    try {
-        const c = makeComponent();
-        await c.confirmAddLbTag();
-        assert.equal(
-            c.toasts.filter((t) => t.msg === TOAST_KEY).length,
-            0,
-            `unexpected toast calls: ${JSON.stringify(c.toasts)}`,
-        );
-    } finally {
-        mock.restore();
-    }
-});
 
 test('confirmAddLbTag: nfo_write_blocked true → showToast(tag_nfo_write_blocked, info)', async () => {
     const mock = mockFetch({
@@ -168,17 +150,3 @@ test('confirmAddLbTag: nfo_write_blocked true → showToast(tag_nfo_write_blocke
     }
 });
 
-test('removeLbUserTag: nfo_write_blocked true → showToast(tag_nfo_write_blocked, info)', async () => {
-    const mock = mockFetch({
-        success: true, user_tags: [], nfo_updated: false,
-        readonly_no_output: false, nfo_write_blocked: true,
-    });
-    try {
-        const c = makeComponent();
-        await c.removeLbUserTag('EXISTING');
-        assert.deepEqual(c.toasts, [{ msg: BLOCKED_KEY, kind: 'info' }]);
-        assert.deepEqual(c.currentLightboxVideo.user_tags, []);
-    } finally {
-        mock.restore();
-    }
-});

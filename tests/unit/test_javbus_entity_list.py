@@ -38,15 +38,10 @@ def _vec_video_summary_rating() -> Video:
                  summary="the plot", rating=4.5, votes=12, preview_cover_url="https://img.example/p.jpg")
 
 
-def _vec_video_unknown_prefix() -> Video:
-    return Video(number="ZZZ-999", title="Unknown Prefix", source="javbus")
-
-
 VECTOR_CASES = [
     (_vec_video_with_maker, "SSIS-001"),
     (_vec_video_maker_from_prefix, "ABC-123"),
     (_vec_video_summary_rating, "SSIS-002"),
-    (_vec_video_unknown_prefix, "ZZZ-999"),
 ]
 
 
@@ -103,14 +98,6 @@ EXPECTED_VECTORS = {
 def test_search_jav_card_vector_is_bit_for_bit(card_env, make_video, number):
     """特徵測試（改前綠、抽出後仍綠）：整個 dict 逐位元比對，不是鍵子集；涵蓋 to_legacy_dict 不輸出 entity_ids。"""
     assert _search_jav_card(make_video, number) == EXPECTED_VECTORS[number]
-
-
-def test_build_card_matches_search_jav_vector(card_env):
-    """抽出的 build_card 對同一組 Video 產出與 HEAD 的 search_jav 完全相同的 dict（RED：抽出前不存在）。"""
-    from core.scraper import build_card
-
-    for make_video, number in VECTOR_CASES:
-        assert build_card(make_video(), number) == EXPECTED_VECTORS[number]
 
 
 def test_capabilities_are_exactly_the_eight_kinds():

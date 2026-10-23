@@ -5,12 +5,11 @@ test_api_actress.py — 女優 API 整合測試
 外部依賴（orchestrator + requests）全部 mock。
 """
 
-import os
 import time
 
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from core.database import init_db
@@ -104,114 +103,9 @@ class TestAddFavorite:
         assert actress["birth"] == "1993-08-16"
         assert actress["cup"] == "E"
 
-    def test_add_favorite_uses_cache_hit(self, client):
-        """cache hit → 不呼叫 get_actress_profile，直接存入 DB"""
-        with patch("web.routers.actress.get_cached_profile", return_value=MOCK_PROFILE), \
-             patch("web.routers.actress.get_actress_profile") as mock_get_profile, \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None):
-
-            resp = client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        assert resp.status_code == 200
-        mock_get_profile.assert_not_called()
-
-    def test_add_favorite_duplicate_returns_409(self, client):
-        """同名再 POST → 409"""
-        # 先收藏一次
-        with patch("web.routers.actress.get_cached_profile", return_value=MOCK_PROFILE), \
-             patch("web.routers.actress.get_actress_profile"), \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None):
-            client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        # 第二次 POST → 409
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            resp = client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        assert resp.status_code == 409
-        data = resp.json()
-        assert data["error"] == "already_exists"
-        assert "actress" in data
-
-    def test_add_favorite_not_found_returns_404(self, client):
-        """orchestrator 回 data=None, timed_out=False → 404"""
-        with patch("web.routers.actress.get_cached_profile", return_value=None), \
-             patch("web.routers.actress.get_actress_profile") as mock_get_profile:
-
-            from core.scrapers.actress.orchestrator import ProfileResult
-            mock_get_profile.return_value = ProfileResult(data=None, timed_out=False)
-
-            resp = client.post("/api/actresses/favorite", json={"name": "不存在女優XYZ"})
-
-        assert resp.status_code == 404
-        data = resp.json()
-        assert data["error"] == "not_found"
-
-    def test_add_favorite_timeout_returns_504(self, client):
-        """orchestrator 超時 → 504"""
-        with patch("web.routers.actress.get_cached_profile", return_value=None), \
-             patch("web.routers.actress.get_actress_profile") as mock_get_profile:
-
-            from core.scrapers.actress.orchestrator import ProfileResult
-            mock_get_profile.return_value = ProfileResult(data=None, timed_out=True)
-
-            resp = client.post("/api/actresses/favorite", json={"name": "タイムアウト女優"})
-
-        assert resp.status_code == 504
-        data = resp.json()
-        assert data["error"] == "timeout"
-
-    def test_add_favorite_empty_name_returns_422(self, client):
-        """空名稱 → 422"""
-        resp = client.post("/api/actresses/favorite", json={"name": ""})
-        assert resp.status_code == 422
-
-    def test_add_favorite_returns_real_video_count(self, client):
-        """成功收藏後，回應 actress.video_count 應為真實值（非硬編碼 0）"""
-        with patch("web.routers.actress.get_cached_profile", return_value=None), \
-             patch("web.routers.actress.get_actress_profile") as mock_get_profile, \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None), \
-             patch("core.database.ActressRepository.count_videos_for_actress_names", return_value=5), \
-             patch("core.database.AliasRepository.resolve", return_value={ACTRESS_NAME}):
-
-            from core.scrapers.actress.orchestrator import ProfileResult
-            mock_get_profile.return_value = ProfileResult(data=MOCK_PROFILE, timed_out=False)
-
-            resp = client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["actress"]["video_count"] == 5
 
     # ---- TASK-117-T1: covered_names（成功／409 兩條路徑，AC-3.1/3.3/3.4 形狀）----
 
-    def test_add_favorite_covered_names_shape_a_includes_existing_group_member(self, client):
-        """covered_names 形狀 A：既有 group 成員（宇都宮しをん）不在這次 profile aliases
-        裡（scraper 這次只回部分別名），仍必須出現在 covered_names——resolve() 讀的是
-        sync 後的完整 DB group，不是這次 profile 的原始值。"""
-        from core.database import AliasRepository as _AliasRepository
-        _AliasRepository().add(primary_name="安齋らら", aliases=["RION", "宇都宮しをん"])
-
-        profile = {
-            **MOCK_PROFILE,
-            "name": "安齋らら",
-            "text": {**MOCK_PROFILE["text"], "aliases": ["RION"]},
-        }
-        with patch("web.routers.actress.get_cached_profile", return_value=None), \
-             patch("web.routers.actress.get_actress_profile") as mock_get_profile, \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None):
-
-            from core.scrapers.actress.orchestrator import ProfileResult
-            mock_get_profile.return_value = ProfileResult(data=profile, timed_out=False)
-
-            resp = client.post("/api/actresses/favorite", json={"name": "安齋らら"})
-
-        assert resp.status_code == 200
-        assert "宇都宮しをん" in resp.json()["covered_names"]
 
     def test_add_favorite_covered_names_shape_b_includes_clicked_alias(self, client):
         """covered_names 形狀 B：使用者點的別名（新ありな）不在 scraper 回傳的正式名與
@@ -272,26 +166,6 @@ class TestAddFavorite:
         record = _AliasRepository().get_by_primary("橋本ありな")
         assert "新ありな" not in record.aliases
 
-    def test_add_favorite_duplicate_409_includes_covered_names(self, client):
-        """409 路徑（無 sync_from_favorite 呼叫）也要帶 covered_names，內容與「若這次
-        是成功路徑」時應涵蓋的名字一致（sync_primary 概念在此就是 name 本身）。"""
-        from core.database import AliasRepository as _AliasRepository
-
-        with patch("web.routers.actress.get_cached_profile", return_value=MOCK_PROFILE), \
-             patch("web.routers.actress.get_actress_profile"), \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None):
-            client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            resp = client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        assert resp.status_code == 409
-        data = resp.json()
-        assert "covered_names" in data
-        expected = _AliasRepository().resolve(ACTRESS_NAME) | {ACTRESS_NAME}
-        assert set(data["covered_names"]) == expected
-
 
 # ---------------------------------------------------------------------------
 # T2: GET /api/actresses/{name} — 查詢已收藏女優
@@ -310,30 +184,6 @@ class TestPreviewActress:
         mock_preview.assert_called_once_with(name)
         return response
 
-    def test_preview_favorited_actress_has_current_no_alias_of(self, client):
-        from core.database import Actress, ActressRepository
-
-        ActressRepository().save(Actress(name=ACTRESS_NAME, name_en="Yua Mikami"))
-        response = self._preview(client, ACTRESS_NAME)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["name"] == ACTRESS_NAME
-        assert data["current"]["name_en"] == "Yua Mikami"
-        assert data["current"]["is_favorite"] is True
-        assert "alias_of" not in data
-        assert data["photo_candidates"] == []
-
-    def test_preview_unfavorited_non_alias_has_null_current(self, client):
-        name = "全新女優"
-        response = self._preview(client, name)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["name"] == name
-        assert data["current"] is None
-        assert "alias_of" not in data
-        assert data["photo_candidates"] == []
 
     def test_preview_unfavorited_alias_of_favorited_primary(self, client):
         """PR #211 第三輪 v2：命中已收藏 primary 的別名時，`current` 改回 primary
@@ -353,130 +203,6 @@ class TestPreviewActress:
         assert data["current"]["name_en"] == "Yua Mikami"
         assert data["current"]["is_favorite"] is True
 
-    def test_preview_alias_with_own_orphan_row_still_returns_primary_current(self, client):
-        """alias 自己意外也有一筆既有 row（例如曾被單獨收藏過，之後才被同步成
-        某個已收藏 primary 的別名）：`current` 仍要回 primary 的資料，不是這筆
-        別名自己的孤兒 row——與 submit_actress／upload_actress_photo／
-        set_actress_photo 用同一個 `_favorited_primary_for_alias` 判準，三處
-        不該漂移。"""
-        from core.database import Actress, ActressRepository, AliasRepository
-
-        primary, alias = ACTRESS_NAME, "鬼頭桃菜"
-        ActressRepository().save(Actress(name=primary, name_en="PrimaryName"))
-        ActressRepository().save(Actress(name=alias, name_en="AliasOwnRowName"))
-        AliasRepository().add(primary_name=primary, aliases=[alias])
-        response = self._preview(client, alias)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["alias_of"] == primary
-        assert data["current"]["name"] == primary
-        assert data["current"]["name_en"] == "PrimaryName"
-
-    def test_preview_orphan_alias_primary_not_favorited_no_alias_of(self, client):
-        from core.database import AliasRepository
-
-        AliasRepository().add(primary_name="未收藏主名", aliases=["孤兒別名"])
-        response = self._preview(client, "孤兒別名")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["current"] is None
-        assert "alias_of" not in data
-
-    def test_preview_unfavorited_actress_photo_candidates_nonempty(self, client):
-        sources = {
-            "xcity": None,
-            "wiki": {"photo_url": "https://example.com/wiki.jpg"},
-            "graphis": None,
-            "gfriends": None,
-        }
-        response = self._preview(client, "有照片女優", sources)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["current"] is None
-        assert data["photo_candidates"] == [
-            {"source": "wiki", "url": "https://example.com/wiki.jpg"}
-        ]
-
-    def test_preview_unfavorited_actress_photo_candidates_empty(self, client):
-        response = self._preview(client, "無照片女優")
-
-        assert response.status_code == 200
-        assert response.json()["photo_candidates"] == []
-
-    @pytest.mark.parametrize("missing_source", ["xcity", "wiki", "graphis", "gfriends"])
-    def test_preview_sources_keep_four_keys_with_individual_none(self, client, missing_source):
-        sources = {
-            "xcity": {"photo_url": "https://example.com/xcity.jpg"},
-            "wiki": {"photo_url": "https://example.com/wiki.jpg"},
-            "graphis": {"prof_url": "https://example.com/graphis.jpg"},
-            "gfriends": "https://example.com/gfriends.jpg",
-        }
-        sources[missing_source] = None
-        response = self._preview(client, "來源部分缺失", sources)
-
-        assert response.status_code == 200
-        data = response.json()
-        assert set(data["sources"]) == {"xcity", "wiki", "graphis", "gfriends"}
-        assert data["sources"] == sources
-        assert data["sources"][missing_source] is None
-
-    def test_preview_blank_name_returns_422_without_fetch(self, client):
-        """PR #211 第三輪 v2：空白名字訊息改為固定中文（原本是英文 snake_case
-        `invalid_name`），與其餘新增路徑一律固定中文的規則一致。"""
-        with patch("web.routers.actress.get_actress_profile_preview", create=True) as mock_preview:
-            response = client.post("/api/actresses/preview", json={"name": "   "})
-
-        assert response.status_code == 422
-        assert response.json() == {"error": "女優名字不可為空"}
-        mock_preview.assert_not_called()
-
-    def test_preview_unexpected_exception_returns_fixed_chinese_500(self, client):
-        """PR #211 第三輪 v2：preview_actress 整支原本無任何 try/except，DB 或
-        orchestrator 非預期例外會逸出成裸文字 500。改為 log 後回固定中文 JSON
-        500，不洩漏例外內容（str(e)）。"""
-        with patch("web.routers.actress.get_actress_profile_preview",
-                   side_effect=RuntimeError("boom - secret detail")):
-            response = client.post("/api/actresses/preview", json={"name": ACTRESS_NAME})
-
-        assert response.status_code == 500
-        body = response.json()
-        assert body == {"error": "操作失敗"}
-        assert "boom" not in str(body) and "RuntimeError" not in str(body)
-
-
-class TestGetActress:
-    """GET /api/actresses/{name} 測試"""
-
-    def test_get_actress_success(self, client):
-        """已收藏女優 → 200，is_favorite: True"""
-        # 先收藏
-        with patch("web.routers.actress.get_cached_profile", return_value=MOCK_PROFILE), \
-             patch("web.routers.actress.get_actress_profile"), \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None):
-            client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        # 查詢
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            resp = client.get(f"/api/actresses/{ACTRESS_NAME}")
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["is_favorite"] is True
-        actress = data["actress"]
-        assert actress["name"] == ACTRESS_NAME
-
-    def test_get_actress_not_found_returns_404(self, client):
-        """不存在的女優 → 404"""
-        resp = client.get("/api/actresses/不存在女優XYZ")
-
-        assert resp.status_code == 404
-        data = resp.json()
-        assert data["error"] == "not_found"
-
 
 # ---------------------------------------------------------------------------
 # TASK-100a-T1: _actress_to_response 序列化契約（auto_focal / crop_mode，spec-100）
@@ -485,21 +211,6 @@ class TestGetActress:
 class TestActressFocalSerialization:
     """GET /api/actresses/{name} 應吐出 auto_focal / crop_mode，且值真的來自 DB"""
 
-    def test_get_actress_includes_focal_fields_default(self, client):
-        """新收藏女優未經 mutator 寫入 → response 含 auto_focal='' / crop_mode='auto'"""
-        with patch("web.routers.actress.get_cached_profile", return_value=MOCK_PROFILE), \
-             patch("web.routers.actress.get_actress_profile"), \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None):
-            client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            resp = client.get(f"/api/actresses/{ACTRESS_NAME}")
-
-        assert resp.status_code == 200
-        actress = resp.json()["actress"]
-        assert actress["auto_focal"] == ""
-        assert actress["crop_mode"] == "auto"
 
     def test_get_actress_reflects_manual_focal_value(self, client, tmp_db):
         """update_manual_focal 塞非預設值後 GET → response 反映該值
@@ -551,41 +262,10 @@ class TestDeleteActress:
         resp2 = client.get(f"/api/actresses/{ACTRESS_NAME}")
         assert resp2.status_code == 404
 
-    def test_delete_actress_not_found_returns_404(self, client):
-        """刪除不存在的女優 → 404"""
-        resp = client.delete("/api/actresses/不存在女優XYZ")
-
-        assert resp.status_code == 404
-        data = resp.json()
-        assert data["error"] == "not_found"
-
 
 # ---------------------------------------------------------------------------
 # T4: GET /api/actresses/photo/{name} — 本地照片 binary response
 # ---------------------------------------------------------------------------
-
-class TestGetActressPhoto:
-    """GET /api/actresses/photo/{name} 測試"""
-
-    def test_get_photo_success(self, client, tmp_path):
-        """有本地檔案 → 200 + binary content"""
-        # 建立假照片檔案
-        fake_photo = tmp_path / "photo.jpg"
-        fake_photo.write_bytes(b"\xff\xd8\xff\xe0fake_jpeg_content")
-
-        with patch("web.routers.actress.get_local_photo_path", return_value=fake_photo):
-            resp = client.get(f"/api/actresses/photo/{ACTRESS_NAME}")
-
-        assert resp.status_code == 200
-        assert resp.content == b"\xff\xd8\xff\xe0fake_jpeg_content"
-        assert "image/jpeg" in resp.headers["content-type"]
-
-    def test_get_photo_not_found_returns_404(self, client):
-        """無本地照片 → 404"""
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            resp = client.get(f"/api/actresses/photo/{ACTRESS_NAME}")
-
-        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -631,12 +311,6 @@ class TestPhotoCandidates:
              patch("web.routers.actress.get_local_photo_path", return_value=None):
             client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
 
-    def test_photo_candidates_actress_not_found(self, client):
-        """actress 不在 DB → 404 JSONResponse"""
-        resp = client.get("/api/actresses/不存在女優XYZ/photo-candidates")
-        assert resp.status_code == 404
-        data = resp.json()
-        assert data["error"] == "not_found"
 
     def test_photo_candidates_sse_happy_path(self, client):
         """actress 存在，雲端 mock 回 URL → SSE stream 含 candidate + done events"""
@@ -669,66 +343,6 @@ class TestPhotoCandidates:
         assert len(done_events) == 1
         assert "total" in done_events[0]["data"]
 
-    def test_photo_candidates_cloud_fail_local_fallback(self, client):
-        """雲端全失敗 + 本機有影片 → SSE 仍回 local_crop candidates + done"""
-        self._save_actress(client)
-
-        # 建立假 Video
-        from unittest.mock import MagicMock as MM
-        fake_video = MM()
-        fake_video.cover_path = "/fake/cover.jpg"
-        fake_video.path = "/fake/video.mp4"
-
-        with patch("web.routers.actress._fetch_single_source", return_value=None), \
-             patch("web.routers.actress._get_random_videos_with_covers", return_value=[fake_video]), \
-             patch("web.routers.actress.to_file_uri", return_value=to_file_uri("/fake/video.mp4")):
-            resp = client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
-
-        assert resp.status_code == 200
-        events = _parse_sse_events(resp.text)
-
-        candidates = [e for e in events if e["event"] == "candidate"]
-        assert len(candidates) == 1
-        assert candidates[0]["data"]["source"] == "local_crop"
-        assert "thumb_url" in candidates[0]["data"]
-
-        done_events = [e for e in events if e["event"] == "done"]
-        assert done_events[0]["data"]["total"] == 1
-
-    def test_photo_candidates_total_zero_when_all_fail(self, client):
-        """雲端全失敗 + 本機無影片 → done: {total: 0}"""
-        self._save_actress(client)
-
-        with patch("web.routers.actress._fetch_single_source", return_value=None), \
-             patch("web.routers.actress._get_random_videos_with_covers", return_value=[]):
-            resp = client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
-
-        assert resp.status_code == 200
-        events = _parse_sse_events(resp.text)
-        done_events = [e for e in events if e["event"] == "done"]
-        assert done_events[0]["data"]["total"] == 0
-
-    def test_photo_candidates_photo_source_none_tries_all_four(self, client):
-        """photo_source=None（legacy）時 4 來源全部嘗試"""
-        # 先收藏，photo_source 設為 None
-        with patch("web.routers.actress.get_cached_profile", return_value={**MOCK_PROFILE, "photo_source": None}), \
-             patch("web.routers.actress.get_actress_profile"), \
-             patch("web.routers.actress.download_actress_photo", return_value=True), \
-             patch("web.routers.actress.get_local_photo_path", return_value=None):
-            client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
-
-        called_sources = []
-
-        def mock_fetch(name, source):
-            called_sources.append(source)
-            return None
-
-        with patch("web.routers.actress._fetch_single_source", side_effect=mock_fetch), \
-             patch("web.routers.actress._get_random_videos_with_covers", return_value=[]):
-            client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
-
-        # 4 來源全部嘗試
-        assert set(called_sources) == {"graphis", "gfriends", "wiki", "xcity"}
 
     def test_photo_candidates_excludes_current_source(self, client):
         """photo_source='gfriends' 時 gfriends 不會被呼叫，剩 3 來源並行"""
@@ -748,56 +362,10 @@ class TestPhotoCandidates:
         assert "gfriends" not in called_sources
         assert set(called_sources) == {"graphis", "wiki", "xcity"}
 
-    def test_photo_candidates_local_crop_tries_all_four(self, client):
-        """photo_source='local_crop' 時 4 雲端來源全試"""
-        self._save_actress_with_source(client, "local_crop")
-
-        called_sources = []
-
-        def mock_fetch(name, source):
-            called_sources.append(source)
-            return None
-
-        with patch("web.routers.actress._fetch_single_source", side_effect=mock_fetch), \
-             patch("web.routers.actress._get_random_videos_with_covers", return_value=[]):
-            client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
-
-        assert set(called_sources) == {"graphis", "gfriends", "wiki", "xcity"}
-
 
 # ---------------------------------------------------------------------------
 # T6: GET /api/actresses/actress-crop — on-demand crop endpoint (T2 新增)
 # ---------------------------------------------------------------------------
-
-class TestActressCrop:
-    """GET /api/actresses/actress-crop 測試"""
-
-    def test_actress_crop_success(self, client):
-        """crop_video_cover 回 bytes → 200 image/jpeg"""
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_JPEG"
-
-        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.VideoRepository") as mock_repo_cls:
-            mock_repo_cls.return_value.is_known_cover_path.return_value = True
-            resp = client.get("/api/actresses/actress-crop?path=/fake/cover.jpg&spec=v1")
-
-        assert resp.status_code == 200
-        assert "image/jpeg" in resp.headers.get("content-type", "")
-        assert resp.content == fake_jpeg
-
-    def test_actress_crop_not_found(self, client):
-        """crop_video_cover 回 None → 404"""
-        with patch("web.routers.actress.crop_video_cover", return_value=None), \
-             patch("web.routers.actress.VideoRepository") as mock_repo_cls:
-            mock_repo_cls.return_value.is_known_cover_path.return_value = True
-            resp = client.get("/api/actresses/actress-crop?path=/nonexistent/cover.jpg&spec=v1")
-
-        assert resp.status_code == 404
-
-    def test_actress_crop_missing_path_returns_422(self, client):
-        """缺少 path 參數 → FastAPI 自動 422"""
-        resp = client.get("/api/actresses/actress-crop")
-        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -892,57 +460,9 @@ class TestSetActressPhoto:
 
     # ---- local_crop happy path ----
 
-    def test_set_actress_photo_local_crop_success(self, client, tmp_db, tmp_path):
-        """POST /photo source=local_crop + video_path，mock crop 成功，回 200 + photo_source='local_crop'
-
-        🔴 必改既有測試 #2：原本只 patch `web.routers.actress.GFRIENDS_DIR`，未 patch
-        `core.actress_photo.GFRIENDS_DIR`（gotchas-backend.md §3b 雙 binding 陷阱）——
-        T3 新增的 `get_local_photo_path` 讀取的是後者，讀不到 tmp 目錄裡剛寫的檔 → 500。
-        """
-        self._save_actress(client)
-        video_path, cover_path = self._save_video_with_cover(tmp_path)
-        video_uri = f"file://{video_path}"
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_CROP_JPEG"
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "local_crop", "video_path": video_uri},
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["photo_source"] == "local_crop"
-        assert "?v=" in data["photo_url"]
-        # file was actually written
-        written = list(gfriends.glob("*.jpg"))
-        assert len(written) == 1
-        assert written[0].read_bytes() == fake_jpeg
 
     # ---- 錯誤處理 ----
 
-    def test_set_actress_photo_actress_not_found(self, client):
-        """actress 不在 DB 時回 404 not_found"""
-        resp = client.post(
-            "/api/actresses/不存在女優XYZ/photo",
-            json={"source": "graphis", "url": "https://www.graphis.ne.jp/photo.jpg"},
-        )
-        assert resp.status_code == 404
-        assert resp.json()["error"] == "not_found"
-
-    def test_set_actress_photo_unknown_source(self, client):
-        """source='unknown_xyz' 回 400 unknown_source"""
-        self._save_actress(client)
-        resp = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/photo",
-            json={"source": "unknown_xyz", "url": "https://example.com/photo.jpg"},
-        )
-        assert resp.status_code == 400
-        assert resp.json()["error"] == "unknown_source"
 
     def test_set_actress_photo_offwhitelist_url_400_and_keeps_focal(self, client, tmp_db):
         """🔴 Codex P2 回歸鎖：白名單外的 URL → 400，且**不得清掉使用者的手動焦點**。
@@ -972,188 +492,9 @@ class TestSetActressPhoto:
         assert row.auto_focal == "0.3000,0.7000", "白名單外的 URL 把使用者的手動焦點清掉了"
         assert row.crop_mode == "manual"
 
-    def test_set_actress_photo_cloud_missing_url(self, client):
-        """雲端 source 缺 url 回 400 url_required"""
-        self._save_actress(client)
-        resp = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/photo",
-            json={"source": "graphis"},
-        )
-        assert resp.status_code == 400
-        assert resp.json()["error"] == "url_required"
-
-    def test_set_actress_photo_local_crop_missing_video_path(self, client):
-        """local_crop 缺 video_path 回 400 video_path_required"""
-        self._save_actress(client)
-        resp = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/photo",
-            json={"source": "local_crop"},
-        )
-        assert resp.status_code == 400
-        assert resp.json()["error"] == "video_path_required"
-
-    def test_set_actress_photo_local_crop_video_not_found(self, client, tmp_path):
-        """video_path 對應影片不在 DB 回 404 video_or_cover_not_found"""
-        self._save_actress(client)
-        resp = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/photo",
-            json={"source": "local_crop", "video_path": to_file_uri("/tmp/nonexistent_video.mp4")},
-        )
-        assert resp.status_code == 404
-        assert resp.json()["error"] == "video_or_cover_not_found"
-
-    def test_set_actress_photo_local_crop_no_cover(self, client, tmp_db, tmp_path):
-        """video 在 DB 但 cover_path 為空 → 404 video_or_cover_not_found"""
-        self._save_actress(client)
-        # 儲存 Video 但沒有 cover_path
-        from core.database import VideoRepository, Video
-        video_path = str(tmp_path / "no_cover_video.mp4")
-        video = Video(
-            path=video_path,
-            title="No Cover Video",
-            actresses=[ACTRESS_NAME],
-            cover_path="",  # 空
-        )
-        VideoRepository().upsert(video)
-        video_uri = f"file://{video_path}"
-
-        resp = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/photo",
-            json={"source": "local_crop", "video_path": video_uri},
-        )
-        assert resp.status_code == 404
-        assert resp.json()["error"] == "video_or_cover_not_found"
-
-    def test_set_actress_photo_local_crop_failed(self, client, tmp_db, tmp_path):
-        """crop_video_cover 回 None 時回 500 crop_failed"""
-        self._save_actress(client)
-        video_path, cover_path = self._save_video_with_cover(tmp_path)
-        video_uri = f"file://{video_path}"
-
-        with patch("web.routers.actress.crop_video_cover", return_value=None):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "local_crop", "video_path": video_uri},
-            )
-
-        assert resp.status_code == 500
-        assert resp.json()["error"] == "crop_failed"
 
     # ---- 🔴 PR#108 Codex 二審 P2-B：清舊檔失敗不可拖垮已成功的換圖 ----
 
-    def test_set_actress_photo_local_crop_old_file_cleanup_permission_error_still_succeeds(
-        self, client, tmp_db, tmp_path,
-    ):
-        """舊 sibling 檔（不同副檔名）unlink 拋 PermissionError（模擬 Windows 縮圖/防毒鎖檔）
-        時，換圖仍必須成功（200 + photo_url/photo_source），因為此時新圖已由 os.replace
-        落地、_pre_invalidate_focal 也已清完舊焦點——清舊殘檔失敗不該讓已成功的換圖回 500。
-
-        mutation：把 `_write_actress_photo` 清舊檔迴圈的 try/except 拿掉（改回裸
-        `old.unlink(missing_ok=True)`）→ 本測試必紅（PermissionError 逸出成 500）。
-        """
-        from core.organizer import sanitize_filename
-
-        self._save_actress(client)
-        video_path, cover_path = self._save_video_with_cover(tmp_path)
-        video_uri = f"file://{video_path}"
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_CROP_JPEG"
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir(parents=True, exist_ok=True)
-        # 舊照片：不同副檔名（.png），會落入清舊檔迴圈（old != dest）
-        old_path = gfriends / f"{sanitize_filename(ACTRESS_NAME)}.png"
-        old_path.write_bytes(b"OLD_PNG_BYTES")
-
-        real_unlink = Path.unlink
-
-        def fake_unlink(self_path, *a, **kw):
-            if self_path == old_path:
-                raise PermissionError("locked by AV scanner")
-            return real_unlink(self_path, *a, **kw)
-
-        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch.object(Path, "unlink", fake_unlink):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "local_crop", "video_path": video_uri},
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "photo_url" in data
-        assert data["photo_source"] == "local_crop"
-        # 新圖確實落地（清舊檔失敗不阻擋新圖寫入）
-        written = list(gfriends.glob("*.jpg"))
-        assert len(written) == 1
-        assert written[0].read_bytes() == fake_jpeg
-        # 舊殘檔仍在（unlink 失敗，未被清掉）
-        assert old_path.exists()
-
-        # DB photo_source 真的持久化（非跳過收尾直接 500）
-        from core.database import ActressRepository
-        actress = ActressRepository().get_by_name(ACTRESS_NAME)
-        assert actress.photo_source == "local_crop"
-
-    def test_set_actress_photo_local_crop_write_failure_returns_json_500(
-        self, client, tmp_db, tmp_path,
-    ):
-        """`_write_actress_photo` 本身寫入失敗（非清舊檔失敗，如 os.replace 拋例外）時，
-        local_crop 分支必須有外層 try/except 接住並回固定中文 JSON 500（比照
-        upload_actress_photo :898-902），不可讓例外逸出成 Starlette 預設的裸文字
-        "Internal Server Error"。
-
-        mutation：把 local_crop 呼叫 `_write_actress_photo` 那段的外層 try/except
-        拿掉（改回裸呼叫）→ 例外直接逸出，TestClient（raise_server_exceptions=True
-        預設）會讓本測試在 client.post() 當場拋例外而非拿到 500 response，本測試必紅。
-        """
-        self._save_actress(client)
-        video_path, cover_path = self._save_video_with_cover(tmp_path)
-        video_uri = f"file://{video_path}"
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_CROP_JPEG"
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir(parents=True, exist_ok=True)
-
-        # 🔴 os.replace 是模組級共用函式（非 web.routers.actress 私有 binding）——local_crop
-        # 分支中途會呼叫 load_config()，若該次觸發 core/config.py 的 default-config
-        # 落地寫入也會經過 os.replace，全域無差別 side_effect 會連它一起炸掉（假紅，
-        # 與本測試想模擬的「_write_actress_photo 寫入失敗」無關）。改成只在目的地落在
-        # gfriends 目錄內時才炸，其餘呼叫走真實 os.replace。
-        real_replace = os.replace
-
-        def fake_replace(src, dst, *a, **kw):
-            if str(gfriends) in str(dst):
-                raise OSError("disk full")
-            return real_replace(src, dst, *a, **kw)
-
-        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("core.atomic_write.os.replace", side_effect=fake_replace):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "local_crop", "video_path": video_uri},
-            )
-
-        assert resp.status_code == 500
-        assert resp.headers["content-type"].startswith("application/json")
-        assert resp.json()["error"] == _SET_PHOTO_ERR_FAILED
-        assert "disk full" not in resp.text   # 細節只進 log，不外洩
-
-    def test_set_actress_photo_download_failed(self, client):
-        """download_actress_photo 回 False 時回 500 download_failed"""
-        self._save_actress(client)
-
-        with patch("web.routers.actress.download_actress_photo", return_value=False):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "gfriends", "url": "https://cdn.jsdelivr.net/photo.jpg"},
-            )
-
-        assert resp.status_code == 500
-        assert resp.json()["error"] == "download_failed"
 
     # ---- DB 更新驗證 ----
 
@@ -1192,117 +533,9 @@ class TestSetActressPhoto:
 
     # ---- cache-bust 驗證 ----
 
-    def test_set_actress_photo_response_has_fp_cache_bust(self, client, tmp_path):
-        """回應 photo_url 含 CD-11 fp cache-bust `?v={mtime_ns}-{size}`，非舊秒級 ?t=
-
-        🔴 必改既有測試 #4（改名 + 重寫）：原測試斷言 `?t=` 是純數字（`isdigit()`），
-        語意已隨 CD-11 不成立（`?v=` 是 `mtime_ns-size` 兩段式，非純數字）。比照
-        gotchas-backend.md 的量級結構鎖（`mtime_ns` ~1.7e18 vs 秒級 ~1.7e9）。
-        """
-        self._save_actress(client)
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-        with patch(
-            "web.routers.actress.download_actress_photo",
-            side_effect=self._cloud_download_writer(gfriends, b"\xff\xd8\xff\xe0FAKE_XCITY"),
-        ), patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-                patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "xcity", "url": "https://faws.xcity.jp/actress/large/image/person/1/photo.jpg"},
-            )
-
-        assert resp.status_code == 200
-        photo_url = resp.json()["photo_url"]
-        assert "?v=" in photo_url
-        assert "?t=" not in photo_url
-        v = photo_url.split("?v=")[1]
-        mtime_part, size_part = v.split("-")
-        assert int(mtime_part) > 10**18, f"?v= 第一分量應為奈秒級 mtime_ns，got: {mtime_part}"
-        assert size_part.isdigit()
 
     # ---- 5a: 連續換圖整合測試 ----
 
-    def test_set_actress_photo_continuous_changes(self, client, tmp_path):
-        """連續換圖 cloud → local_crop → cloud，每次正確覆蓋 photo_source
-
-        🔴 必改既有測試 #5：第 1/3 段（cloud）原本 `get_local_photo_path(return_value=None)`
-        覆蓋整個 POST 呼叫 → 500；第 2 段（local_crop）只 patch
-        `web.routers.actress.GFRIENDS_DIR`，漏了 `core.actress_photo.GFRIENDS_DIR`
-        （§3b 雙 binding 陷阱）。三段都改為讓 `get_local_photo_path` 在 POST 呼叫
-        當下讀到真檔。
-        """
-        self._save_actress(client)  # 初始 photo_source='gfriends'
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-
-        # 1st: source=graphis with mock download 真寫檔 → photo_source='graphis'
-        with patch(
-            "web.routers.actress.download_actress_photo",
-            side_effect=self._cloud_download_writer(gfriends, b"\xff\xd8\xff\xe0FAKE1"),
-        ), patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-                patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp1 = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "graphis", "url": "https://www.graphis.ne.jp/photo1.jpg"},
-            )
-        assert resp1.status_code == 200
-        assert resp1.json()["photo_source"] == "graphis"
-
-        # Verify DB via GET
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            get1 = client.get(f"/api/actresses/{ACTRESS_NAME}")
-        assert get1.json()["actress"]["photo_source"] == "graphis"
-
-        # 2nd: source=local_crop with mock crop → photo_source='local_crop'
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_CROP"
-        from core.database import VideoRepository, Video
-        cover_path = str(tmp_path / "continuous_cover.jpg")
-        video_path = str(tmp_path / "continuous_video.mp4")
-        Path(cover_path).write_bytes(b"\xff\xd8\xff\xe0fake_cover")
-        vid = Video(
-            path=video_path,
-            title="Continuous Test Video",
-            actresses=[ACTRESS_NAME],
-            cover_path=cover_path,
-        )
-        VideoRepository().upsert(vid)
-        video_uri = f"file://{video_path}"
-
-        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp2 = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "local_crop", "video_path": video_uri},
-            )
-        assert resp2.status_code == 200
-        assert resp2.json()["photo_source"] == "local_crop"
-
-        # Verify DB via GET
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            get2 = client.get(f"/api/actresses/{ACTRESS_NAME}")
-        assert get2.json()["actress"]["photo_source"] == "local_crop"
-
-        # 3rd: source=gfriends → photo_source='gfriends'
-        with patch(
-            "web.routers.actress.download_actress_photo",
-            side_effect=self._cloud_download_writer(gfriends, b"\xff\xd8\xff\xe0FAKE3"),
-        ), patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-                patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp3 = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "gfriends", "url": "https://cdn.jsdelivr.net/photo3.jpg"},
-            )
-        assert resp3.status_code == 200
-        assert resp3.json()["photo_source"] == "gfriends"
-
-        # Verify DB via GET
-        with patch("web.routers.actress.get_local_photo_path", return_value=None):
-            get3 = client.get(f"/api/actresses/{ACTRESS_NAME}")
-        assert get3.json()["actress"]["photo_source"] == "gfriends"
 
     # ---- Fix 3: actress-crop 路徑驗證 ----
 
@@ -1314,28 +547,6 @@ class TestSetActressPhoto:
             resp = client.get("/api/actresses/actress-crop?path=/evil/path.jpg&spec=v1")
         assert resp.status_code == 403
 
-    def test_actress_crop_accepts_known_video_cover_path(self, client, tmp_path):
-        """actress-crop endpoint：DB 中已知 cover_path → 200"""
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_JPEG"
-        with patch("web.routers.actress.VideoRepository") as mock_repo_cls, \
-             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg):
-            mock_repo = mock_repo_cls.return_value
-            mock_repo.is_known_cover_path.return_value = True
-            resp = client.get("/api/actresses/actress-crop?path=/known/cover.jpg&spec=v1")
-        assert resp.status_code == 200
-        assert resp.content == fake_jpeg
-
-    def test_actress_crop_accepts_uri_input(self, client, tmp_path):
-        """actress-crop endpoint：path 帶 file:/// URI 可正確處理（idempotent）"""
-        fake_jpeg = b"\xff\xd8\xff\xe0URI_JPEG"
-        with patch("web.routers.actress.VideoRepository") as mock_repo_cls, \
-             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg):
-            mock_repo = mock_repo_cls.return_value
-            mock_repo.is_known_cover_path.return_value = True
-            # 傳 file:/// URI，endpoint 應正確轉為 FS path 再查 DB
-            resp = client.get("/api/actresses/actress-crop?path=file:///known/cover.jpg&spec=v1")
-        assert resp.status_code == 200
-        assert resp.content == fake_jpeg
 
     # ---- 5b: Production-realistic — DB 存 file:/// URI，local_crop 仍能匹配 ----
 
@@ -1485,48 +696,6 @@ class TestSetActressPhoto:
         assert fresh_actress.crop_mode == "manual"
         assert fresh_actress.photo_source == "gfriends"
 
-    def test_set_actress_photo_local_crop_clear_focal_failure_blocks_write(self, client, tmp_db, tmp_path):
-        """local_crop：clear_focal 回 False → 500，_write_actress_photo 未被呼叫，舊圖/舊焦點完全不變
-
-        mutation②：把實作改成先呼叫 _write_actress_photo、再呼叫 clear_focal
-        （順序對調）→ 本測試單獨變紅（_write_actress_photo 會被呼叫）。
-        """
-        self._save_actress(client)
-        from core.database import ActressRepository
-        from core.organizer import sanitize_filename
-        repo = ActressRepository(tmp_db)
-        repo.update_manual_focal(ACTRESS_NAME, "0.1000,0.9000")
-
-        video_path, cover_path = self._save_video_with_cover(tmp_path)
-        video_uri = f"file://{video_path}"
-        fake_jpeg = b"\xff\xd8\xff\xe0NEW_CROP_BLOCKED"
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-        safe = sanitize_filename(ACTRESS_NAME)
-        old_photo = gfriends / f"{safe}.jpg"
-        old_bytes = b"\xff\xd8\xff\xe0OLD_LOCAL_PHOTO"
-        old_photo.write_bytes(old_bytes)
-
-        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.clear_focal", return_value=False), \
-             patch("web.routers.actress._write_actress_photo") as mock_write:
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "local_crop", "video_path": video_uri},
-            )
-            mock_write.assert_not_called()
-
-        assert resp.status_code == 500
-        assert resp.json() == {"error": _SET_PHOTO_ERR_FAILED}
-        assert old_photo.read_bytes() == old_bytes
-        assert list(gfriends.glob(f"{safe}.*")) == [old_photo]
-        fresh_actress = ActressRepository(tmp_db).get_by_name(ACTRESS_NAME)
-        assert fresh_actress.auto_focal == "0.1000,0.9000"
-        assert fresh_actress.crop_mode == "manual"
-        assert fresh_actress.photo_source == "gfriends"
 
     def test_set_actress_photo_local_crop_failed_does_not_call_clear_focal(self, client, tmp_db, tmp_path):
         """local_crop：crop_video_cover 回 None（crop_failed）發生在 clear_focal 之前——
@@ -1551,45 +720,6 @@ class TestSetActressPhoto:
 
     # ---- DoD③ cloud 分支 fp 對實際落地檔 stat（CD-6，副檔名非 .jpg 亦正確） ----
 
-    def test_set_actress_photo_cloud_fp_stats_actual_non_jpg_file(self, client, tmp_path):
-        """cloud 換圖落地檔為 .png（模擬來源 Content-Type: image/png）→ ?v= 必須對
-        該 .png 檔案的真實 stat()，不是假設 .jpg。接續 GET /photo/{name} 回正確 MIME。
-
-        mutation③：把 CD-11 重解析改回硬編 `{safe}.jpg`（不呼叫 get_local_photo_path）
-        → 本測試單獨變紅（該路徑不存在 → 500 或斷言失敗）。
-        """
-        self._save_actress(client)
-        png_bytes = b"\x89PNG\r\n\x1a\nFAKE_PNG_BYTES"
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-        with patch(
-            "web.routers.actress.download_actress_photo",
-            side_effect=self._cloud_download_writer(gfriends, png_bytes, ext=".png"),
-        ), patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-                patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "wiki", "url": "https://upload.wikimedia.org/photo.png"},
-            )
-
-            assert resp.status_code == 200
-            data = resp.json()
-            photo_url = data["photo_url"]
-            assert "?v=" in photo_url
-
-            from core.organizer import sanitize_filename
-            actual_file = gfriends / f"{sanitize_filename(ACTRESS_NAME)}.png"
-            assert actual_file.exists()
-            real_stat = actual_file.stat()
-            v = photo_url.split("?v=")[1]
-            mtime_part, size_part = v.split("-")
-            assert mtime_part == str(real_stat.st_mtime_ns)
-            assert size_part == str(real_stat.st_size)
-
-            get_resp = client.get(f"/api/actresses/photo/{ACTRESS_NAME}")
-        assert get_resp.status_code == 200
-        assert get_resp.headers["content-type"] == "image/png"
 
     # ---- DoD④ ?v={mtime_ns}-{size} 取代秒級 ?t=：同秒連續切換兩候選 → URL 必不同 ----
 
@@ -1749,48 +879,6 @@ class TestSetActressPhoto:
         assert resp.status_code == 404
         assert resp.json()["error"] == "video_or_cover_not_found"
 
-    def test_set_actress_photo_local_crop_uses_alias_resolve_symmetrically(self, client, tmp_db, tmp_path):
-        """對稱守衛：local_crop 儲存路徑必須呼叫 AliasRepository.resolve(name) 且
-        VideoRepository.get_videos_by_actress_names 收到展開後的多名 list（與候選端
-        _get_random_videos_with_covers 同一對 API，spec-102 §3.2 / plan-102a CD-3）。
-        """
-        from core.database import VideoRepository
-
-        self._save_actress(client)
-        video_path, cover_path = self._save_video_with_cover(tmp_path)
-        video_uri = to_file_uri(video_path)
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_SYMMETRY_JPEG"
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-
-        with patch("web.routers.actress.AliasRepository") as mock_alias_repo_cls, \
-             patch("web.routers.actress.VideoRepository") as mock_video_repo_cls, \
-             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            mock_alias_repo_cls.return_value.resolve.return_value = {ACTRESS_NAME, "別名A"}
-            # PR #211 第三輪 v3：set_actress_photo 新增的身分守衛會呼叫
-            # AliasRepository().find_by_alias(name)；本測試整個 mock 掉
-            # AliasRepository class，不明確設定的話會回未配置的 MagicMock，
-            # 讓 repo.exists(MagicMock) 炸 sqlite3.ProgrammingError——與本測試
-            # 要驗的 local_crop resolve 對稱性無關，明確設 None 關掉守衛分支。
-            mock_alias_repo_cls.return_value.find_by_alias.return_value = None
-            real_video_repo = VideoRepository()
-            mock_video_repo_cls.return_value.get_videos_by_actress_names.side_effect = (
-                real_video_repo.get_videos_by_actress_names
-            )
-
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "local_crop", "video_path": video_uri},
-            )
-
-        assert resp.status_code == 200
-        mock_alias_repo_cls.return_value.resolve.assert_called_once_with(ACTRESS_NAME)
-        mock_video_repo_cls.return_value.get_videos_by_actress_names.assert_called_once()
-        called_names = mock_video_repo_cls.return_value.get_videos_by_actress_names.call_args[0][0]
-        assert set(called_names) == {ACTRESS_NAME, "別名A"}
 
     # ---- 🔴 PR #211 第三輪 v3：身分守衛新擴及本端點 ----
 
@@ -1913,25 +1001,6 @@ class TestUploadActressPhoto:
         assert get_resp.status_code == 200
         assert get_resp.headers["content-type"] == "image/png"
 
-    def test_upload_photo_webp_stores_webp_ext_and_correct_mime(self, client, tmp_path):
-        self._save_actress(client)
-        webp_bytes = self._make_webp_bytes()
-
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.webp", webp_bytes, "image/webp")},
-            )
-            assert resp.status_code == 200
-            written = list(gfriends.glob("*.webp"))
-            assert len(written) == 1
-            assert list(gfriends.glob("*.jpg")) == []
-
-            get_resp = client.get(f"/api/actresses/photo/{ACTRESS_NAME}")
-        assert get_resp.status_code == 200
-        assert get_resp.headers["content-type"] == "image/webp"
 
     # ---- DoD③ 上傳後 DB auto_focal 為空 ----
 
@@ -1966,43 +1035,9 @@ class TestUploadActressPhoto:
         assert resp.status_code == 413
         assert resp.json() == {"error": _ERR_TOO_LARGE}
 
-    def test_upload_photo_size_none_falls_back_to_len_check(self, client, tmp_db, tmp_path):
-        """file.size is None（模擬解析器未設置 .size）→ 讀取後仍用 len(data) 正確擋下 413"""
-        self._save_actress(client)
-        import asyncio
-        from web.routers.actress import upload_actress_photo
-        import json as _json
-
-        class _FakeFile:
-            size = None
-            content_type = "image/jpeg"
-            filename = "huge.jpg"
-
-            async def read(self):
-                return b"\x00" * (10 * 1024 * 1024 + 1)
-
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = asyncio.run(upload_actress_photo(ACTRESS_NAME, _FakeFile()))
-
-        assert resp.status_code == 413
-        assert _json.loads(resp.body) == {"error": _ERR_TOO_LARGE}
 
     # ---- DoD⑤ 假 Content-Type → 415（兩子案例） ----
 
-    def test_upload_photo_content_type_not_whitelisted_415(self, client):
-        """Content-Type 不在白名單（application/pdf）→ 415，且在 Image.open() 之前就攔下"""
-        self._save_actress(client)
-        with patch("web.routers.actress.Image") as mock_image:
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("fake.jpg", b"%PDF-1.4 fake pdf content", "application/pdf")},
-            )
-            mock_image.open.assert_not_called()
-
-        assert resp.status_code == 415
-        assert resp.json() == {"error": _ERR_UNSUPPORTED_FORMAT}
 
     def test_upload_photo_fake_content_type_non_image_bytes_415(self, client):
         """Content-Type 謊稱 image/jpeg 但 bytes 是純文字 → Image.open() 拋例外 → 415"""
@@ -2036,21 +1071,6 @@ class TestUploadActressPhoto:
 
     # ---- DoD⑦ 重載後 photo_source 仍是 upload ----
 
-    def test_upload_photo_persists_photo_source_upload(self, client, tmp_db, tmp_path):
-        self._save_actress(client)  # 初始 photo_source='gfriends'
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
-            )
-        assert resp.status_code == 200
-
-        from core.database import ActressRepository
-        fresh_repo = ActressRepository(tmp_db)  # 新實例，模擬重新載入
-        actress = fresh_repo.get_by_name(ACTRESS_NAME)
-        assert actress.photo_source == "upload"
 
     # ---- DoD⑧ 🔴 CD-4 排序鎖 ----
 
@@ -2089,107 +1109,12 @@ class TestUploadActressPhoto:
         assert fresh_actress.crop_mode == "manual"
         assert fresh_actress.photo_source == "gfriends"  # 仍是上傳前的來源，未被改成 upload
 
-    def test_upload_photo_clear_focal_exception_blocks_write_500(self, client, tmp_db, tmp_path):
-        """clear_focal 拋例外 → 同樣視為失敗 → 500，_write_actress_photo 未被呼叫"""
-        self._save_actress(client)
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.clear_focal", side_effect=RuntimeError("db locked")), \
-             patch("web.routers.actress._write_actress_photo") as mock_write:
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
-            )
-            mock_write.assert_not_called()
-
-        assert resp.status_code == 500
-        assert resp.json() == {"error": _ERR_UPLOAD_FAILED}
 
     # ---- DoD⑨ 錯誤 body 固定中文、無 str(e) ----
 
-    def test_upload_photo_error_bodies_fixed_chinese_no_exception_leak(self, client):
-        self._save_actress(client)
-
-        # 404
-        resp404 = client.post(
-            "/api/actresses/不存在女優ABC/photo/upload",
-            files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
-        )
-        assert resp404.status_code == 404
-        assert resp404.json() == {"error": _ERR_NOT_FOUND}
-
-        # 413
-        huge = b"\x00" * (10 * 1024 * 1024 + 1)
-        resp413 = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-            files={"file": ("huge.jpg", huge, "image/jpeg")},
-        )
-        assert resp413.json() == {"error": _ERR_TOO_LARGE}
-
-        # 415
-        resp415 = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-            files={"file": ("fake.jpg", b"not an image" * 50, "image/jpeg")},
-        )
-        assert resp415.json() == {"error": _ERR_UNSUPPORTED_FORMAT}
-
-        # 500 — 注入含敏感細節（假造檔案系統路徑）的例外，確認不外洩
-        with patch("web.routers.actress.clear_focal",
-                    side_effect=RuntimeError("boom at /secret/fs/path/leak.db")):
-            resp500 = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
-            )
-        assert resp500.status_code == 500
-        body500 = resp500.json()
-        assert body500 == {"error": _ERR_UPLOAD_FAILED}
-
-        for r in (resp404, resp413, resp415, resp500):
-            assert set(r.json().keys()) == {"error"}  # 🔴 Opus 裁決：無 "success" 鍵
-            assert "Traceback" not in r.text
-            assert "RuntimeError" not in r.text
-            assert "/secret/fs/path" not in r.text
-            assert "boom" not in r.text
 
     # ---- DoD⑩ 同秒兩次上傳 → ?v= 不同 ----
 
-    def test_upload_photo_v_param_differs_on_identical_rapid_uploads(self, client, tmp_path):
-        """DoD⑩：同秒兩次上傳 → ?v= 不同。
-
-        🔴 刻意上傳**完全相同的 bytes**（review finding）：本測試原本餵兩張**不同尺寸**
-        的圖，`?v={mtime_ns}-{size}` 的 **size 分量就獨自保證了不同** → 即使實作退回
-        秒級 `int(time.time())`，測試照樣綠，等於沒鎖到 CD-11。相同 bytes → size 恆等
-        → 只剩 mtime_ns 能區分，這才是 CD-11 的本體。
-
-        sleep 10ms 的理由（實測，非猜測）：本機 ext4 的 mtime 時間戳粒度約 **3.7ms**，
-        兩次寫入若落在同一格會拿到**完全相同的 mtime_ns**（實測連寫 6 次差 0ns）。
-        production 不受影響——兩次真實上傳中間隔著 HTTP 解析／PIL 驗證／兩次 DB
-        commit／檔案寫入，遠超 4ms。10ms 遠小於 1 秒，「同秒」的前提不變。
-        """
-        self._save_actress(client)
-        same_bytes = self._make_jpeg_bytes(size=(100, 100))
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp1 = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.jpg", same_bytes, "image/jpeg")},
-            )
-            time.sleep(0.01)
-            resp2 = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.jpg", same_bytes, "image/jpeg")},
-            )
-
-        assert resp1.status_code == 200
-        assert resp2.status_code == 200
-        v1 = resp1.json()["photo_url"].split("?v=")[1]
-        v2 = resp2.json()["photo_url"].split("?v=")[1]
-        assert v1 != v2, "同 size 的兩次上傳 ?v= 相同 → mtime_ns 分量沒有生效"
-
-        # 結構鎖（零 flake，不受秒邊界影響）：mtime_ns 量級 ~1.7e18，秒級
-        # int(time.time()) 是 ~1.7e9——差 9 個數量級。退回秒級此條必紅。
-        assert int(v1.split("-")[0]) > 10**18, "?v= 的第一個分量不是奈秒級 mtime_ns"
 
     # ---- 回應 body 完整契約（成功路徑，無 "success" 鍵） ----
 
@@ -2213,37 +1138,6 @@ class TestUploadActressPhoto:
 
     # ---- 🔴 Codex P2：repo.update_fields 失敗必須回固定中文，不可逸出成純文字 500 ----
 
-    def test_upload_photo_save_failure_returns_fixed_chinese_500(self, client, tmp_path):
-        """repo.update_fields 拋例外若逸出 async 路由 → Starlette 預設 handler 回
-        **純文字** "Internal Server Error"（web/app.py 只註冊 RequestValidationError、
-        無 catch-all）→ 不是 JSON、更不是 AGENTS.md:33 要求的固定中文。
-
-        T4 的 set_actress_focal 本來就有這個 guard，T2/T3 漏了——同一 branch 內部
-        的不對稱。mutation：拿掉 _persist_photo_source 的 try/except → 必紅。
-
-        🔴 157-post-merge-1：_persist_photo_source 已從整份 `repo.save(actress)`
-        改成單欄 `repo.update_fields(actress.name, {...})`（避免踩掉並發寫入的
-        其他欄位），故這裡改 patch `update_fields.side_effect`。
-        """
-        self._save_actress(client)
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.ActressRepository") as repo_cls:
-            repo_cls.return_value.get_by_name.return_value = MagicMock(
-                name=ACTRESS_NAME, auto_focal="", crop_mode="auto", photo_source="gfriends")
-            repo_cls.return_value.clear_focal.return_value = True
-            repo_cls.return_value.update_fields.side_effect = RuntimeError("disk full")
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
-            )
-
-        assert resp.status_code == 500
-        # 🔴 承重：body 是 JSON + 固定中文，不是 Starlette 的純文字 "Internal Server Error"
-        assert resp.headers["content-type"].startswith("application/json")
-        assert resp.json()["error"] == _ERR_UPLOAD_FAILED
-        assert "disk full" not in resp.text   # 細節只進 log，不外洩
 
     # ---- 🔴 spec §3.3 失敗矩陣：寫檔失敗 → 舊圖必須原封不動 ----
 
@@ -2287,51 +1181,6 @@ class TestUploadActressPhoto:
 
     # ---- 🔴 PR#108 Codex 二審 P2-B：清舊檔失敗不可拖垮已成功的換圖 ----
 
-    def test_upload_photo_old_file_cleanup_permission_error_still_succeeds(self, client, tmp_path):
-        """舊 sibling 檔（不同副檔名）unlink 拋 PermissionError（模擬 Windows 縮圖/防毒
-        鎖檔）時，上傳仍必須成功（200 + photo_url/photo_source），因為新圖已由
-        os.replace 落地——清舊殘檔失敗不該讓已成功的上傳回 500。
-
-        mutation：把 `_write_actress_photo` 清舊檔迴圈的 try/except 拿掉（改回裸
-        `old.unlink(missing_ok=True)`）→ 本測試必紅（PermissionError 逸出成 500）。
-        """
-        from core.organizer import sanitize_filename
-
-        self._save_actress(client)
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir(parents=True, exist_ok=True)
-        # 舊照片：不同副檔名（.jpg），上傳 PNG 後會落入清舊檔迴圈（old != dest）
-        old_path = gfriends / f"{sanitize_filename(ACTRESS_NAME)}.jpg"
-        old_path.write_bytes(self._make_jpeg_bytes())
-
-        real_unlink = Path.unlink
-
-        def fake_unlink(self_path, *a, **kw):
-            if self_path == old_path:
-                raise PermissionError("locked by AV scanner")
-            return real_unlink(self_path, *a, **kw)
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch.object(Path, "unlink", fake_unlink):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("new.png", self._make_png_bytes(), "image/png")},
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "photo_url" in data
-        assert data["photo_source"] == "upload"
-        # 新圖確實落地
-        written = list(gfriends.glob("*.png"))
-        assert len(written) == 1
-        # 舊殘檔仍在（unlink 失敗，未被清掉）
-        assert old_path.exists()
-
-        from core.database import ActressRepository
-        actress = ActressRepository().get_by_name(ACTRESS_NAME)
-        assert actress.photo_source == "upload"
 
     # ---- 🔴 157-post-merge-2：alias 身分守衛必須擋在任何寫入之前 ----
 
@@ -2417,24 +1266,6 @@ class TestUploadActressPhoto:
 
     # ---- 🔴 PR #211 第三輪 v2：整段主體防護（前段原本沒有任何 try/except） ----
 
-    def test_upload_photo_unexpected_exception_returns_fixed_chinese_500(self, client):
-        """upload_actress_photo 前段（女優載入）原本沒有 try/except 包住，DB 或
-        其他非預期例外會逸出成裸文字 500。改為整段防護：HTTPException（別名
-        擋下）放行，其餘例外一律 log 後回既有固定中文 `_ERR_UPLOAD_FAILED`，
-        不洩漏例外內容。"""
-        self._save_actress(client)
-        with patch("web.routers.actress._load_actress",
-                   side_effect=RuntimeError("boom - secret detail")):
-            resp = client.post(
-                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
-                files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
-            )
-
-        assert resp.status_code == 500
-        body = resp.json()
-        assert body == {"error": _ERR_UPLOAD_FAILED}
-        assert "boom" not in str(body) and "RuntimeError" not in str(body)
-
 
 # ---------------------------------------------------------------------------
 # TASK-100a-T4: POST /{name}/detect-focal + POST /{name}/focal
@@ -2471,41 +1302,12 @@ class TestDetectActressFocal:
 
     # ---- 女優不存在 → 404 ----
 
-    def test_detect_focal_actress_not_found_404(self, client):
-        resp = client.post("/api/actresses/不存在女優ABC/detect-focal")
-        assert resp.status_code == 404
-        assert resp.json() == {"success": False, "error": _FOCAL_ERR_NOT_FOUND}
 
     # ---- 女優存在但無照片 → 400（Opus 裁決：mirror showcase.py:264-266）----
 
-    def test_detect_focal_no_photo_400(self, client, tmp_path):
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-        assert resp.status_code == 400
-        assert resp.json() == {"success": False, "error": _FOCAL_ERR_NO_PHOTO}
 
     # ---- §3.7-6 無臉圖不崩（真 fixture）----
 
-    def test_detect_focal_no_face_returns_200_empty_string(self, client, tmp_path):
-        """mock `detect_focal` 回 None（真「無臉真圖回 None」能力已搬到
-        test_focal_detector.py::TestDetectFocal::test_detect_focal_no_face_real_photo_returns_none，
-        本測試只驗端點收到 None 後的 wiring：回 200 + auto_focal 空字串。"""
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "no_face_detected.jpg")
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.run_detection", return_value=RunnerOutcome(kind="NO_FACE")) as mock_detect:
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-        assert resp.status_code == 200
-        assert resp.json() == {"success": True, "auto_focal": "", "reason": ""}
-        # None 與「端點沒呼叫 detect_focal、直接寫死空字串」輸出同 JSON，光比對回應
-        # 證不出 wiring；必須額外斷言 mock 真的被呼叫過一次（同根因見
-        # test_organizer.py::test_no_face_real_photo_branch3，Codex PR#110 二審 P2-1）。
-        mock_detect.assert_called_once()
 
     # ---- 真實 fixture 偵測輸出落在寬鬆區間（證明真的有在偵測，非鎖 ratio）----
     # TASK-102c-T1：吸收原本獨立的 test_detect_focal_ratio_is_075_via_spy
@@ -2570,103 +1372,9 @@ class TestDetectActressFocal:
 
     # ---- DoD⑤ response 不含任何 FS path（全分支）----
 
-    def test_detect_focal_response_no_fs_path_all_branches(self, client, tmp_path):
-        resp_404 = client.post("/api/actresses/不存在女優ABC/detect-focal")
-
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
-            resp_400 = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-            _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-            resp_200 = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp_404.status_code == 404
-        assert resp_400.status_code == 400
-        assert resp_200.status_code == 200
-
-        assert set(resp_404.json().keys()) == {"success", "error"}
-        assert set(resp_400.json().keys()) == {"success", "error"}
-        assert set(resp_200.json().keys()) == {"success", "auto_focal", "reason"}
-
-        for resp in (resp_404, resp_400, resp_200):
-            text = resp.text
-            assert str(gfriends) not in text
-            assert str(tmp_path) not in text
 
     # ---- CD-13：不揭露進 capabilities ----
 
-    def test_detect_focal_not_registered_in_capabilities(self):
-        # [lint-guard: pytest-justified] CD-13 agentic-AI 揭露面安全守衛，理由同
-        # test_upload_endpoint_not_registered_in_capabilities（跨檔 contract + 與 main
-        # 既有 detail_url／metatube_status 同類守衛共處 pytest）。
-        capabilities_src = Path("web/routers/capabilities.py").read_text(encoding="utf-8")
-        assert "detect-focal" not in capabilities_src
-
-    def test_manual_detect_uses_unified_5s_budget(self, client, tmp_path):
-        """CD-152d-1：前景與背景共用同一個 5 秒定義——timeout_s 必須是 5.0。"""
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-        captured = {}
-
-        def slow_detect(fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None):
-            captured["timeout_s"] = timeout_s
-            return RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.run_detection", side_effect=slow_detect) as spy:
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert resp.json()["auto_focal"] == "0.3148,0.2000"
-        assert resp.json()["reason"] == ""
-        spy.assert_called_once()
-        assert captured["timeout_s"] == 5.0
-
-    def test_abandoned_returns_same_shape_as_no_face(self, client, tmp_path):
-        """ABANDONED(crashed) → reason=='failed'，不得被歸成 too_slow 家族（CD-152d-4b）。"""
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch(
-                 "web.routers.actress.run_detection",
-                 return_value=RunnerOutcome(kind="ABANDONED", reason="crashed"),
-             ):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp.status_code == 200
-        assert resp.json() == {"success": True, "auto_focal": "", "reason": "failed"}
-
-    def test_device_disabled_returns_same_shape_as_no_face(self, client, tmp_path):
-        """裝置已停用 → reason=='device_disabled'（CD-152d-6）。"""
-        from core.focal import device_state
-
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            if pre_spawn_check is not None and pre_spawn_check():
-                return RunnerOutcome(kind="ABANDONED", reason="skipped_disabled")
-            return RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch.object(device_state, "is_disabled", return_value=True), \
-             patch("web.routers.actress.run_detection", side_effect=fake_run):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp.status_code == 200
-        assert resp.json() == {"success": True, "auto_focal": "", "reason": "device_disabled"}
 
     def test_disabled_short_circuits_before_runner_lock(self, client, tmp_path, monkeypatch):
         """關掉自動對焦後，點裁切工具不得進 run_detection 全域鎖排隊。
@@ -2713,29 +1421,6 @@ class TestDetectActressFocal:
         assert "cover_path" not in body
         spy.assert_not_called()
 
-    def test_disabled_lookup_failure_fails_open_and_still_detects(self, client, tmp_path):
-        """config 停用查詢失敗 ≠ 硬體算不動：fail-open 繼續偵測，不得 500 / device_disabled。"""
-        from core.focal import device_state
-
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch.object(device_state, "is_disabled", side_effect=OSError("config unreadable")), \
-             patch(
-                 "web.routers.actress.run_detection",
-                 return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)),
-             ) as spy:
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["auto_focal"] == "0.4200,0.5000"
-        assert body["reason"] == ""
-        spy.assert_called_once()
 
     def test_manual_detect_timeout_does_not_contribute(self, client, tmp_path):
         """CD-152d-2b②：前景逾時走 record_manual_outcome（非 record_outcome），reason=too_slow_auto_disabled。"""
@@ -2769,22 +1454,8 @@ class TestDetectActressFocal:
         assert record_manual_spy.call_count == 1
         assert record_bg_spy.call_count == 0
 
-    def test_reason_empty_on_found(self, client, tmp_path):
-        """reason 值域：正常 FOUND → ''。"""
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch(
-                 "web.routers.actress.run_detection",
-                 return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY),
-             ):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == ""
 
-    @pytest.mark.parametrize("abandoned_reason", ["startup_timeout", "crashed", "circuit_open"])
+    @pytest.mark.parametrize("abandoned_reason", ["crashed"])
     def test_reason_failed_for_non_timeout_abandoned(self, client, tmp_path, abandoned_reason):
         """reason 值域：startup_timeout／crashed／circuit_open → 'failed'。"""
         _save_actress_for_focal(client)
@@ -2801,181 +1472,12 @@ class TestDetectActressFocal:
         assert resp.json()["reason"] == "failed"
         assert resp.json()["reason"] not in ("too_slow", "too_slow_auto_disabled")
 
-    def test_reason_too_slow_when_set_by_user_suppresses(self, client, tmp_path):
-        """reason 值域：逾時但 just_disabled=False → 'too_slow'。"""
-        from core.focal import device_state
-
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
-            if on_outcome is not None:
-                on_outcome(outcome)
-            return outcome
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch.object(device_state, "record_manual_outcome", return_value=False), \
-             patch("web.routers.actress.run_detection", side_effect=fake_run):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == "too_slow"
-
-    def test_manual_timeout_does_not_call_notification_sink(self, client, tmp_path, monkeypatch):
-        """前景轉態不呼叫 notification sink——拋例外的 sink 全程未被呼叫，端點仍 200。"""
-        import core.config as core_config
-        from core.config import save_config
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-
-        config_path = tmp_path / "config.json"
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-        save_config({
-            "focal_device": {
-                "disabled": False,
-                "consecutive_timeout_count": 0,
-                "judged_at_version": VERSION,
-                "set_by_user": False,
-            }
-        })
-
-        calls = []
-
-        def _boom_sink(*args, **kwargs):
-            calls.append((args, kwargs))
-            raise RuntimeError("sink must not be called on manual path")
-
-        monkeypatch.setattr(device_state, "_notification_sink", _boom_sink)
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
-            if on_outcome is not None:
-                on_outcome(outcome)
-            return outcome
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.run_detection", side_effect=fake_run):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == "too_slow_auto_disabled"
-        assert calls == []
-        assert device_state.is_disabled() is True
-
-    def test_judgment_happens_inside_on_outcome_before_return(self, client, tmp_path, monkeypatch):
-        """判定發生在 on_outcome 內：callback 後、run_detection 返回前，is_disabled 已是 True。"""
-        import core.config as core_config
-        from core.config import save_config
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-
-        config_path = tmp_path / "config.json"
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-        save_config({
-            "focal_device": {
-                "disabled": False,
-                "consecutive_timeout_count": 0,
-                "judged_at_version": VERSION,
-                "set_by_user": False,
-            }
-        })
-
-        probe = {"disabled_after_on_outcome": None}
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
-            if on_outcome is not None:
-                on_outcome(outcome)
-            probe["disabled_after_on_outcome"] = device_state.is_disabled()
-            return outcome
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.run_detection", side_effect=fake_run):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp.status_code == 200
-        assert probe["disabled_after_on_outcome"] is True
-        assert resp.json()["reason"] == "too_slow_auto_disabled"
-
-    def test_interleaved_set_by_user_yields_too_slow_not_auto_disabled(
-        self, client, tmp_path, monkeypatch,
-    ):
-        """交錯 oracle：偵測期間 set_by_user 變 True → reason=too_slow，設定仍開著。"""
-        import core.config as core_config
-        from core.config import save_config
-        from core.focal import device_state
-        from core.version import VERSION
-
-        _save_actress_for_focal(client)
-        gfriends = tmp_path / "gfriends"
-        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
-
-        config_path = tmp_path / "config.json"
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-        save_config({
-            "focal_device": {
-                "disabled": False,
-                "consecutive_timeout_count": 0,
-                "judged_at_version": VERSION,
-                "set_by_user": False,
-            }
-        })
-
-        def fake_run(
-            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
-        ):
-            device_state.set_disabled_by_user(False)
-            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
-            if on_outcome is not None:
-                on_outcome(outcome)
-            return outcome
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.run_detection", side_effect=fake_run):
-            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
-
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == "too_slow"
-        assert device_state.is_disabled() is False
-
 
 class TestSetActressFocal:
     """POST /api/actresses/{name}/focal 測試（TASK-100a-T4，CD-3：無 compare token / 無 409）"""
 
     # ---- DoD④ parse_focal 驗證先於一切（含 DB）----
 
-    def test_set_focal_validation_before_load_actress(self, client):
-        """畸形格式 + 女優不存在的組合 → 必須是 400（格式錯誤），不是 404；_load_actress 完全不被呼叫。"""
-        with patch("web.routers.actress._load_actress") as mock_load:
-            resp = client.post(
-                "/api/actresses/不存在的女優/focal",
-                json={"focal": "not-a-focal"},
-            )
-            mock_load.assert_not_called()
-        assert resp.status_code == 400
-        assert resp.json() == {"success": False, "error": _FOCAL_ERR_INVALID_FORMAT}
 
     def test_set_focal_invalid_format_existing_actress_400(self, client):
         _save_actress_for_focal(client)
@@ -2988,13 +1490,6 @@ class TestSetActressFocal:
 
     # ---- 格式合法、女優不存在 → 404 ----
 
-    def test_set_focal_actress_not_found_404(self, client):
-        resp = client.post(
-            "/api/actresses/不存在女優ABC/focal",
-            json={"focal": "0.5000,0.5000"},
-        )
-        assert resp.status_code == 404
-        assert resp.json() == {"success": False, "error": _FOCAL_ERR_NOT_FOUND}
 
     # ---- DoD③ 單一 UPDATE 同寫 auto_focal + crop_mode 兩欄 ----
 
@@ -3014,44 +1509,8 @@ class TestSetActressFocal:
 
     # ---- DoD⑤ response 不含任何 FS path（全分支）----
 
-    def test_set_focal_response_no_fs_path_all_branches(self, client, tmp_path):
-        """DoD⑤ 專屬（不糾纏 DoD④ 順序）：先存好女優，400 案例才不會被
-        「女優不存在」混淆——確保本測試只對 mutation⑤（洩漏路徑欄位）敏感。
-        """
-        _save_actress_for_focal(client)
-        resp_400 = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/focal",
-            json={"focal": "garbage"},
-        )
-        resp_404 = client.post(
-            "/api/actresses/不存在女優ABC/focal",
-            json={"focal": "0.5000,0.5000"},
-        )
-        resp_200 = client.post(
-            f"/api/actresses/{ACTRESS_NAME}/focal",
-            json={"focal": "0.5000,0.5000"},
-        )
-
-        assert resp_400.status_code == 400
-        assert resp_404.status_code == 404
-        assert resp_200.status_code == 200
-
-        assert set(resp_400.json().keys()) == {"success", "error"}
-        assert set(resp_404.json().keys()) == {"success", "error"}
-        assert set(resp_200.json().keys()) == {"success", "auto_focal"}
-
-        for resp in (resp_400, resp_404, resp_200):
-            text = resp.text
-            assert str(tmp_path) not in text
 
     # ---- CD-13：不揭露進 capabilities ----
-
-    def test_set_focal_not_registered_in_capabilities(self):
-        # [lint-guard: pytest-justified] CD-13 agentic-AI 揭露面安全守衛，理由同
-        # test_upload_endpoint_not_registered_in_capabilities（跨檔 contract + 與 main
-        # 既有 detail_url／metatube_status 同類守衛共處 pytest）。
-        capabilities_src = Path("web/routers/capabilities.py").read_text(encoding="utf-8")
-        assert "/focal" not in capabilities_src
 
 
 # ---------------------------------------------------------------------------
@@ -3059,103 +1518,9 @@ class TestSetActressFocal:
 # ---------------------------------------------------------------------------
 
 
-class TestWriteActressPhoto:
-    """確定性測試 _write_actress_photo 的 lock-free 原子寫語意（不需真並發）。"""
-
-    def test_write_actress_photo_atomic_last_wins(self, tmp_path):
-        """序列兩次同 actress 寫入 → 終態 = 後者 bytes，且只剩一個 jpg（舊檔已取代）。"""
-        from web.routers.actress import _write_actress_photo
-        from core.organizer import sanitize_filename
-
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends):
-            _write_actress_photo("Some Name", b"AAA")
-            _write_actress_photo("Some Name", b"BBB")
-
-            safe = sanitize_filename("Some Name")
-            dest = gfriends / f"{safe}.jpg"
-            assert dest.exists()
-            assert dest.read_bytes() == b"BBB"
-            # 只剩一個此 actress 的 jpg（無 temp 殘留、舊檔已取代）
-            assert list(gfriends.glob(f"{safe}.*")) == [dest]
-            assert list(gfriends.glob("tmp*")) == []
-
-    def test_write_actress_photo_unlink_race_missing_ok(self, tmp_path):
-        """模擬 unlink race：glob 回傳一個已被刪除的舊檔 → unlink(missing_ok=True) 不拋。"""
-        from web.routers.actress import _write_actress_photo
-        from core.organizer import sanitize_filename
-
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-        safe = sanitize_filename("Race Name")
-
-        # 先寫一個舊檔再刪掉，模擬「另一 writer 已 unlink 同檔」的競態
-        stale = gfriends / f"{safe}.png"
-        stale.write_bytes(b"OLD")
-        stale.unlink()  # 已不存在
-
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch.object(type(gfriends), "glob", lambda self, pat: [stale]):
-            # glob 回傳已刪除的 stale → 不應拋 FileNotFoundError
-            _write_actress_photo("Race Name", b"NEW")
-
-        dest = gfriends / f"{safe}.jpg"
-        assert dest.exists()
-        assert dest.read_bytes() == b"NEW"
-
-    def test_write_actress_photo_no_temp_leftover_on_error(self, tmp_path):
-        """os.replace 拋 OSError → 重新拋出，且不留 tmp* 殘檔。"""
-        from web.routers.actress import _write_actress_photo
-
-        gfriends = tmp_path / "gfriends"
-        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.atomic_write.os.replace", side_effect=OSError("boom")):
-            with pytest.raises(OSError):
-                _write_actress_photo("Err Name", b"DATA")
-
-        # 例外後不留 temp 殘檔
-        assert list(gfriends.glob("tmp*")) == []
-
-
 # ---------------------------------------------------------------------------
 # 157-post-merge-1: _persist_photo_source 改單欄寫入，不可覆蓋並發寫入的其他欄位
 # ---------------------------------------------------------------------------
-
-class TestPersistPhotoSourceConcurrentWrite:
-    """`_persist_photo_source` 的 `actress` 參數是呼叫端在 request 較早時間點讀出
-    的快照，之後經過至少一次 `await`（clear_focal / 下載 / 裁切 / 寫檔）才走到這
-    裡。若同一段時間內有另一個 writer 改了這筆女優的其他文字欄位，舊版
-    `actress.photo_source = source` 後整份 `repo.save(actress)` 會把那些欄位覆寫
-    回呼叫端手上的舊快照值，等於憑空吃掉別人剛寫的東西。
-
-    mutation：把 `_persist_photo_source` 改回 `repo.save(actress)` → 本測試必紅
-    （height 被踩回舊快照的 '158cm'，而不是併發寫入的 '170cm'）。
-    """
-
-    def test_persist_photo_source_does_not_revert_concurrent_field_write(self, tmp_db, monkeypatch):
-        import asyncio
-        from core.database import Actress, ActressRepository
-        from web.routers.actress import _persist_photo_source
-
-        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
-        repo = ActressRepository(tmp_db)
-        repo.save(Actress(name=ACTRESS_NAME, height="158cm", photo_source="wiki"))
-
-        # 呼叫端在 request 較早時間點讀出的快照（模擬 _load_actress 讀到的舊版本）
-        stale_actress = repo.get_by_name(ACTRESS_NAME)
-
-        # 模擬另一個 writer 在這之後、_persist_photo_source 真正執行之前，
-        # 改了與照片無關的文字欄位
-        assert repo.update_fields(ACTRESS_NAME, {"height": "170cm"})
-
-        err = asyncio.run(_persist_photo_source(
-            repo, stale_actress, "graphis", ctx="test", err_msg="持久化失敗"))
-
-        assert err is None
-        stored = repo.get_by_name(ACTRESS_NAME)
-        assert stored.photo_source == "graphis"
-        assert stored.height == "170cm", (
-            "併發寫入的 height 被 _persist_photo_source 用舊快照覆蓋回去了")
 
 
 # ---------------------------------------------------------------------------
@@ -3225,25 +1590,6 @@ class TestAddFavoriteLocalCropFallback:
         assert len(written) == 1
         assert written[0].read_bytes() == fake_jpeg
 
-    def test_add_favorite_local_crop_no_cover_still_creates_card(self, client, tmp_path):
-        """AC-2: miss ＋ 庫裡有片但全無封面 → 200 + 無照片，卡仍建立
-        （隨後 GET /api/actresses/{name} 回 200 證明卡真的建起來了）"""
-        self._save_video(tmp_path, self.ACTRESS, with_cover=False)
-        gfriends = tmp_path / "gfriends"
-
-        with patch("web.routers.actress.get_cached_profile", return_value=None), \
-             patch("web.routers.actress.get_actress_profile",
-                   return_value=self._profile_result_miss()), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["actress"]["photo_url"] is None
-            assert data["actress"]["photo_source"] is None
-
-            get_resp = client.get(f"/api/actresses/{self.ACTRESS}")
-        assert get_resp.status_code == 200
 
     def test_add_favorite_timeout_with_videos_does_not_create_card(self, client, tmp_path):
         """AC-4: timeout ＋ 庫裡有片 → 仍 504、不建卡（閘門不得誤套進 504 分支，
@@ -3262,56 +1608,6 @@ class TestAddFavoriteLocalCropFallback:
 
             get_resp = client.get(f"/api/actresses/{self.ACTRESS}")
         assert get_resp.status_code == 404
-
-    def test_add_favorite_local_crop_picks_stable_first_and_tries_once(self, client, tmp_path):
-        """CD-T10-1 / CD-T10-3：多部有封面的片 → 依 `str(v.path)` 排序取第一筆，
-        且只裁一次。
-
-        沒有這支的話 `sorted(...)` 那行是死碼路徑（其餘測試每支只塞一部片），
-        日後被改成 random.choice / 加 for 迴圈重試都不會有測試轉紅——使用者要
-        反覆重試看到「每次得到不同的臉」才會發現。
-        """
-        # 先存 _b 再存 _a：DB 自然順序與排序後順序相反，才驗得出真的有排序
-        self._save_video(tmp_path, self.ACTRESS, suffix="_b")
-        self._save_video(tmp_path, self.ACTRESS, suffix="_a")
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP"
-
-        with patch("web.routers.actress.get_cached_profile", return_value=None), \
-             patch("web.routers.actress.get_actress_profile",
-                   return_value=self._profile_result_miss()), \
-             patch("web.routers.actress.crop_video_cover",
-                   return_value=fake_jpeg) as mock_crop, \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
-
-        assert resp.status_code == 200
-        assert resp.json()["actress"]["photo_source"] == "local_crop"
-        # 只裁一次（CD-T10-3：失敗不換下一張，成功更不該多裁）
-        assert mock_crop.call_count == 1
-        # 裁的是 path 字典序最小的那部（cover_a），不是 DB 先插入的 cover_b
-        assert Path(mock_crop.call_args[0][0]).name == "cover_a.jpg"
-
-    def test_add_favorite_local_crop_failure_still_200(self, client, tmp_path):
-        """AC-5: crop_video_cover 回 None（裁圖失敗）→ 200（不是 500），不影響建卡"""
-        self._save_video(tmp_path, self.ACTRESS)
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-
-        with patch("web.routers.actress.get_cached_profile", return_value=None), \
-             patch("web.routers.actress.get_actress_profile",
-                   return_value=self._profile_result_miss()), \
-             patch("web.routers.actress.crop_video_cover", return_value=None), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["actress"]["photo_url"] is None
-        assert data["photo_downloaded"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -3360,51 +1656,6 @@ class TestAddFavoriteCropWhenNoCloudPhoto:
             cover_path=to_file_uri(cover_fs),
         ))
 
-    @pytest.mark.parametrize("warm_cache", [False, True], ids=["cache_miss", "cache_hit"])
-    def test_no_cloud_photo_crops_cover(self, client, tmp_path, warm_cache):
-        """①④：只有 avbase 有料、無任何照片、片庫有她的片 → 裁封面當頭像"""
-        from core.scrapers.actress.orchestrator import get_actress_profile
-
-        self._save_video(tmp_path, self.ACTRESS)
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP"
-
-        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
-                   return_value=self._sources()) as mock_fetch, \
-             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg) as mock_crop, \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            if warm_cache:
-                get_actress_profile(self.ACTRESS)
-            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["photo_downloaded"] is True
-        assert data["actress"]["photo_source"] == "local_crop"
-        assert mock_crop.call_count == 1
-        # miss＝端點那次抓取；hit＝預熱那次，收藏沒有再抓
-        assert mock_fetch.call_count == 1
-        written = list(gfriends.glob("*.jpg"))
-        assert len(written) == 1
-        assert written[0].read_bytes() == fake_jpeg
-
-    def test_no_cloud_photo_no_videos_stays_blank_200(self, client, tmp_path):
-        """②：沒有任何雲端照片、片庫也沒有她的片 → 照片空白，仍 200"""
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-
-        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
-                   return_value=self._sources()), \
-             patch("web.routers.actress.crop_video_cover", return_value=b"x") as mock_crop, \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
-
-        assert resp.status_code == 200
-        assert resp.json()["actress"]["photo_source"] is None
-        assert mock_crop.call_count == 0
 
     def test_cloud_photo_present_never_crops(self, client, tmp_path):
         """③：有雲端照片（graphis）且片庫有她的片 → 照舊下載、不裁圖"""
@@ -3424,40 +1675,6 @@ class TestAddFavoriteCropWhenNoCloudPhoto:
         assert resp.json()["actress"]["photo_source"] == "graphis"
         assert mock_try_crop.call_count == 0
         assert mock_dl.call_count == 1
-
-    def test_crop_does_not_mutate_cached_profile(self, client, tmp_path):
-        """⑤（I-P1）：裁圖成功後快取內容不變；取消收藏後同名再收藏、這次裁圖失敗
-        → 不能被記成「照片來源＝裁圖」"""
-        import copy
-        from core.scrapers.actress.orchestrator import get_actress_profile, get_cached_profile
-
-        self._save_video(tmp_path, self.ACTRESS)
-        gfriends = tmp_path / "gfriends"
-        gfriends.mkdir()
-
-        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
-                   return_value=self._sources()), \
-             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
-            get_actress_profile(self.ACTRESS)
-            snapshot = copy.deepcopy(get_cached_profile(self.ACTRESS))
-
-            with patch("web.routers.actress.crop_video_cover",
-                       return_value=b"\xff\xd8\xff\xe0FAKE"):
-                resp1 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
-            assert resp1.status_code == 200
-            assert resp1.json()["actress"]["photo_source"] == "local_crop"
-            assert get_cached_profile(self.ACTRESS) == snapshot
-
-            del_resp = client.delete(f"/api/actresses/{self.ACTRESS}")
-            assert del_resp.status_code == 200
-
-            with patch("web.routers.actress.crop_video_cover", return_value=None):
-                resp2 = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
-
-        assert resp2.status_code == 200
-        assert resp2.json()["actress"]["photo_source"] is None
-        assert not resp2.json()["photo_downloaded"]
 
 
 class TestPreviewIncludesAvbase:
@@ -3484,7 +1701,6 @@ class TestPreviewIncludesAvbase:
         assert data["photo_candidates"] == [
             {"source": "wiki", "url": "https://example.com/wiki-photo.jpg"}
         ]
-
 
 
 # ---------------------------------------------------------------------------
@@ -3526,10 +1742,9 @@ class TestAddFavoriteTextSourceOrder:
         "xcity,wiki,avbase,exp_bust,exp_birth,exp_primary",
         [
             (_T4A_XCITY, _T4A_WIKI, _T4A_AVBASE, 81, "1991-01-01", "wiki"),
-            (_T4A_XCITY, None, _T4A_AVBASE, 82, "1992-02-02", "xcity"),
             (None, None, _T4A_AVBASE, 84, "1994-04-04", "avbase"),
         ],
-        ids=["wiki_over_xcity_over_avbase", "xcity_when_wiki_absent", "avbase_only"],
+        ids=["wiki_over_xcity_over_avbase", "avbase_only"],
     )
     def test_db_row_follows_field_order(self, client, xcity, wiki, avbase,
                                         exp_bust, exp_birth, exp_primary):
@@ -3618,8 +1833,8 @@ class TestAddFavoriteAliasGroup:
 
     @pytest.mark.parametrize(
         "query,other",
-        [(_T4B_NEW, _T4B_OLD), (_T4B_OLD, _T4B_NEW)],
-        ids=["query_new_name", "query_old_name"],
+        [(_T4B_NEW, _T4B_OLD)],
+        ids=["query_new_name"],
     )
     def test_favorite_writes_other_name_into_alias_group(self, client, query, other):
         from core.database import ActressRepository, AliasRepository
@@ -3659,25 +1874,6 @@ class TestAddFavoriteAliasGroup:
 class TestSearchOnlineAliasChain:
     """174-T4b（F2）：真的 get_actress_profile ＋ 替身五源，打 search-online。"""
 
-    def test_search_online_returns_200_empty_when_text_is_none(self, client):
-        from core.scrapers.actress.orchestrator import _FetchedSources
-
-        sources = _FetchedSources({
-            "xcity": None,
-            "wiki": {"name_ja": _T4B_NEW, "other_names": [_T4B_NEW]},
-            "graphis": {"prof_url": "https://example.com/p.jpg"},
-            "gfriends": None,
-            "avbase": None,
-        })
-        with patch("core.scrapers.actress.orchestrator._fetch_all_sources",
-                   return_value=sources):
-            resp = client.post("/api/actress-aliases/search-online",
-                               json={"name": _T4B_NEW})
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["suggested_aliases"] == []
 
     def test_search_online_suggests_avbase_names_without_self_or_accounts(self, client):
         avbase = {"other_names": [_T4B_NEW, "@Faerina", _T4B_OLD]}

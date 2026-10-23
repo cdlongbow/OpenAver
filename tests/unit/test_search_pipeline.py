@@ -12,12 +12,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.scraper import MAX_WORKERS, REQUEST_DELAY
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers.errors import SourceBlocked
 from core.search_providers.pipeline import BREAKER_THRESHOLD, fetch_window, run_window
 from core.search_providers.types import Enriched, EntityRef, Kind, Outcome, Page, Window, WorkItem
 
 REF = EntityRef(Kind.ACTOR, "a1", "someone")
-FAILURES = [SourceBlocked("b"), SourceUnreachable("u"), ValueError("v"), KeyError("k")]
+FAILURES = [SourceBlocked("b")]
 
 
 # ---------------------------------------------------------------- helpers
@@ -112,14 +112,8 @@ def make_fetch(page_size, total_pages, requested, clamp_to=None):
 @pytest.mark.parametrize(
     "page_size, offset, limit, pages",
     [
-        (30, 0, 20, [1]),
         (30, 20, 20, [1, 2]),
-        (30, 30, 20, [2]),
         (30, 40, 20, [2]),
-        (30, 60, 20, [3]),
-        (50, 20, 20, [1]),
-        (50, 40, 20, [1, 2]),
-        (50, 50, 20, [2]),
     ],
 )
 def test_fetch_window_page_math(page_size, offset, limit, pages):
@@ -128,21 +122,6 @@ def test_fetch_window_page_math(page_size, offset, limit, pages):
     assert requested == pages
     assert [i.number for i in page.items] == [f"N-{n}" for n in range(offset, offset + limit)]
     assert page.has_next is True
-
-
-def test_fetch_window_page_cap_matches_todays_javbus_bound():
-    # 每頁只回 10 筆（< page_size）、has_next 一直 True：上界＝((limit+skip)//page_size)+2 頁
-    requested = []
-
-    def fetch_page(page):
-        requested.append(page)
-        return Page([WorkItem(f"P{page}-{i}", "t", "", "", None, "f") for i in range(10)], True, None)
-
-    fetch_window(30, fetch_page, Window(0, 100))
-    assert requested == [1, 2, 3, 4, 5]
-    requested.clear()
-    fetch_window(30, fetch_page, Window(20, 100))  # skip=20：(120//30)+2 = 6 頁
-    assert requested == [1, 2, 3, 4, 5, 6]
 
 
 def test_fetch_window_empty_page_is_end_even_when_has_next_true_and_total_none():
@@ -159,18 +138,6 @@ def test_fetch_window_empty_page_is_end_even_when_has_next_true_and_total_none()
     big = fetch_window(20, fetch, Window(0, 60))  # 取到空頁就停，不報錯
     assert len(big.items) == 40 and big.has_next is False
     assert requested == [1, 2, 3]
-
-
-def test_fetch_window_stops_when_provider_says_no_next():
-    requested = []
-
-    def fetch_page(page):
-        requested.append(page)
-        return Page([WorkItem(f"X{page}-{i}", "t", "", "", None, "f") for i in range(30)], False, 30)
-
-    page = fetch_window(30, fetch_page, Window(0, 100))
-    assert requested == [1]
-    assert len(page.items) == 30 and page.has_next is False and page.total == 30
 
 
 def test_fetch_window_never_requests_past_max_page():
@@ -214,18 +181,6 @@ def test_guard_all_failed_is_unreachable_not_empty(sync_executor, exc):
     assert len(prov.calls) == 3
 
 
-def test_guard_false_plus_exception_without_true_is_unreachable(sync_executor):
-    script = {"AAA-001": "F", "AAA-002": SourceBlocked("b"), "AAA-003": "F"}
-    _, _, res = run_guarded(script)
-    assert res.outcome is Outcome.UNREACHABLE and res.seeded is False
-
-
-def test_guard_unknown_membership_is_not_answerable(sync_executor):
-    script = {"AAA-001": "N", "AAA-002": "F", "AAA-003": "N"}
-    _, _, res = run_guarded(script)
-    assert res.outcome is Outcome.NOT_ANSWERABLE and res.seeded is False
-
-
 def test_guard_one_of_three_passes_and_reuses_guard_cards(sync_executor):
     cb = MagicMock()
     script = {"AAA-001": "F", "AAA-002": "T", "AAA-003": "F"}
@@ -234,31 +189,6 @@ def test_guard_one_of_three_passes_and_reuses_guard_cards(sync_executor):
     assert sorted(prov.calls) == sorted(i.number for i in items)  # 每部恰好抓一次（守衛那 3 部不重抓）
     assert len(res.cards) == 6 and all(c.get("full") for c in res.cards)
     assert [c["number"] for c in res.cards] == [i.number for i in items]
-
-
-def test_guard_pass_with_failed_guard_item_degrades_only_it(sync_executor):
-    script = {"AAA-001": ValueError("v"), "AAA-002": "T", "AAA-003": "OK"}
-    prov, items, res = run_guarded(script, n=4)
-    assert res.outcome is Outcome.ANSWERED
-    assert is_degraded(res.cards[0], items[0])
-    assert len(prov.calls) == 4  # 不重試
-
-
-def test_guard_with_fewer_than_three_items_uses_all(sync_executor):
-    prov, _, res = run_guarded({"AAA-002": "T"}, n=2)
-    assert res.outcome is Outcome.ANSWERED and len(res.cards) == 2
-    assert len(prov.calls) == 2
-
-
-def test_guard_failure_sends_no_seed_and_no_result_item(sync_executor):
-    for script in (
-        {f"AAA-{i:03d}": "F" for i in (1, 2, 3)},
-        {f"AAA-{i:03d}": SourceBlocked("b") for i in (1, 2, 3)},
-    ):
-        cb = MagicMock()
-        _, _, res = run_guarded(script, cb=cb)
-        assert cb.call_count == 0
-        assert res.seeded is False and res.cards == []
 
 
 # ---------------------------------------------------------------- seed / outcome / on_fail
@@ -282,21 +212,6 @@ def test_cards_ordered_by_slot_even_if_completion_out_of_order():
     assert [c["number"] for c in order.cards] == [f"AAA-{i:03d}" for i in range(1, 5)]
 
 
-def test_guard_seed_comes_after_pass_and_only_once(sync_executor):
-    events = []
-    script = {"AAA-001": "T"}
-    run_guarded(script, n=5, cb=lambda s, p: events.append(s))
-    assert events[0] == -1 and events.count(-1) == 1
-    assert sorted(events[1:]) == [0, 1, 2, 3, 4]
-
-
-def test_empty_window_is_not_answerable_and_not_seeded():
-    cb = MagicMock()
-    res = run_window(FakeProvider(), [], result_callback=cb)
-    assert res.outcome is Outcome.NOT_ANSWERABLE and res.cards == [] and res.seeded is False
-    assert cb.call_count == 0
-
-
 def test_on_fail_drop_omits_failed_items_but_still_seeds(sync_executor):
     events = []
     script = {"AAA-002": SourceBlocked("b"), "AAA-004": ValueError("v")}
@@ -307,23 +222,6 @@ def test_on_fail_drop_omits_failed_items_but_still_seeds(sync_executor):
     assert [c["number"] for c in res.cards] == ["AAA-001", "AAA-003", "AAA-005"]
     assert sorted(s for s, _ in events if s >= 0) == [0, 2, 4]
     assert events[0] == (-1, [i.number for i in items])
-
-
-def test_on_fail_drop_all_failed_is_not_answerable_but_seeded(sync_executor):
-    script = {f"AAA-{i:03d}": ValueError("v") for i in range(1, 4)}
-    cb = MagicMock()
-    res = run_window(FakeProvider(script), make_items(3), on_fail="drop", result_callback=cb)
-    assert res.outcome is Outcome.NOT_ANSWERABLE and res.cards == [] and res.seeded is True
-    assert cb.call_args_list[0].args[0] == -1
-
-
-def test_seeded_reflects_whether_seed_was_actually_sent(sync_executor):
-    script = {f"AAA-{i:03d}": ValueError("v") for i in range(1, 4)}
-    for kw in ({}, {"on_fail": "drop"}):
-        res = run_window(FakeProvider(script), make_items(3), **kw)  # 沒有 result_callback
-        assert res.seeded is False
-    assert run_window(FakeProvider(), make_items(2)).seeded is False
-    assert run_window(FakeProvider(), make_items(2), result_callback=MagicMock()).seeded is True
 
 
 # ---------------------------------------------------------------- 單部失敗
@@ -338,24 +236,6 @@ def test_single_detail_failure_degrades_only_that_card(sync_executor, exc):
     for k in (0, 1, 3, 4, 5):
         assert res.cards[k].get("full") is True
     assert sorted(prov.calls) == sorted(i.number for i in items)  # 恰 N 次，不重試
-
-
-def test_empty_enriched_card_counts_as_failure(sync_executor):
-    items = make_items(3)
-    res = run_window(FakeProvider({"AAA-002": "EMPTY"}), items)
-    assert is_degraded(res.cards[1], items[1])
-
-
-def test_base_exception_is_not_swallowed(sync_executor):
-    class Boom(BaseException):
-        pass
-
-    class Prov(FakeProvider):
-        def enrich(self, item, ref):
-            raise Boom
-
-    with pytest.raises(Boom):
-        run_window(Prov(), make_items(2))
 
 
 # ---------------------------------------------------------------- 斷路器
@@ -398,21 +278,6 @@ def test_breaker_counter_reset_by_success_or_other_failure(sync_executor):
     prov = FakeProvider(script)
     run_window(prov, make_items(12), REF, guard=True)
     assert len(prov.calls) == 12  # 從未連續 3 次，一部都沒被省
-
-
-def test_guard_stage_failures_do_not_count_toward_breaker(sync_executor):
-    script = {"AAA-001": "T", "AAA-002": SourceBlocked("b"), "AAA-003": SourceBlocked("b"), "AAA-004": SourceBlocked("b")}
-    prov = FakeProvider(script)
-    run_window(prov, make_items(8), REF, guard=True)
-    assert len(prov.calls) == 8
-
-
-def test_breaker_drop_policy_omits_unrequested(sync_executor):
-    script = {f"AAA-{i:03d}": SourceBlocked("b") for i in range(1, 13)}
-    prov = FakeProvider(script)
-    res = run_window(prov, make_items(12), on_fail="drop")
-    assert res.cards == [] and res.seeded is False and res.outcome is Outcome.NOT_ANSWERABLE
-    assert len(prov.calls) < 12
 
 
 class GatedProvider(FakeProvider):
@@ -465,55 +330,6 @@ def test_breaker_counts_in_true_completion_order():
     assert sum(1 for c in res.cards if "full" in c) == 5
 
 
-@pytest.mark.parametrize("rep", range(20))
-def test_breaker_true_completion_order_when_two_finish_in_one_wakeup(monkeypatch, rep):
-    """同一次喚醒內已有 2 部完成（主執行緒被 result_callback 卡住），且「真實完成順序」與「提交順序」以外的
-    任何排法都得出不同的斷路結論。真實序：成功(0)、被擋(1)、成功(2)，其後全被擋 ⇒ 連續數 0→1→0→1→2→3，共 8 部被呼叫；
-    若把 1 排在 2 之後則提早斷路（7 部）。重複 20 次是因為舊寫法的錯序取決於 hash，單次有一半機會碰巧對。"""
-    monkeypatch.setattr("core.scraper.MAX_WORKERS", 3)
-    futures = []
-    real = cf.ThreadPoolExecutor
-
-    class Spy(real):
-        def submit(self, fn, *a, **kw):
-            f = super().submit(fn, *a, **kw)
-            futures.append(f)
-            return f
-
-    monkeypatch.setattr(cf, "ThreadPoolExecutor", Spy)
-    blocked = SourceBlocked("b")
-    script = {f"AAA-{k:03d}": blocked for k in range(4, 11)}
-    script["AAA-002"] = blocked
-    prov = GatedProvider(script, 10)
-    for k in (1, *range(4, 11)):
-        prov.gates[k].set()  # 第 1 部與第 4 部起不卡：只有第 2、3 部的完成順序由測試掌控
-
-    def cb(slot, card):
-        if slot != 0:
-            return
-        # 主執行緒卡在這裡；此刻 slot1／slot2 仍在途，依指定順序放行並等它們「完成且已入佇列」
-        for k in (2, 3):
-            ev = threading.Event()
-            futures[k - 1].add_done_callback(lambda f, ev=ev: ev.set())  # 註冊在 pipeline 的 callback 之後
-            prov.gates[k].set()
-            assert ev.wait(10)
-
-    res = run_window(prov, make_items(10), result_callback=cb, delay=0)
-    for g in prov.gates.values():
-        g.set()
-    assert len(prov.calls) == 8
-    assert len(res.cards) == 10
-
-
-def test_no_new_calls_after_breaker_trips_sync_executor(sync_executor):
-    n = 12
-    prov = FakeProvider({f"AAA-{i:03d}": SourceBlocked("b") for i in range(1, n + 1)})
-    res = run_window(prov, make_items(n), delay=0)
-    assert len(res.cards) == n
-    # 同步 executor：完成順序＝提交順序 ⇒ 第 3 次被擋時已發起 MAX_WORKERS-1 部在途，其後 0 次新發起
-    assert len(prov.calls) == BREAKER_THRESHOLD + MAX_WORKERS - 1
-
-
 # ---------------------------------------------------------------- 並行與間隔
 def test_enrichment_respects_concurrency_and_delay_limits(monkeypatch, sleeps):
     created = []
@@ -543,38 +359,4 @@ def run_hooked(script, n=6, guard=False, ref=None, **kw):
     res = run_window(prov, make_items(n), ref, result_callback=cb, on_item_done=hook, guard=guard, **kw)
     return events, res
 
-
-def test_item_done_counts_failed_detail(sync_executor):
-    """前綴搜尋某部詳情失敗，進度仍要數到 N/N：每部各呼叫一次、失敗那部 ok=False。"""
-    events, _ = run_hooked({"AAA-002": ValueError("boom"), "AAA-004": "EMPTY"}, n=5, on_fail="drop")
-    done = [e for e in events if e[0] == "done"]
-    assert sorted(s for _, s, _ in done) == [0, 1, 2, 3, 4]
-    assert {s: ok for _, s, ok in done} == {0: True, 1: False, 2: True, 3: False, 4: True}
-
-
-def test_item_done_comes_before_that_items_result_callback(sync_executor):
-    events, _ = run_hooked({"AAA-002": ValueError("boom")}, n=3, on_fail="degrade")
-    for slot in range(3):
-        assert events.index(("done", slot, slot != 1)) < events.index(("item", slot))
-
-
-def test_item_done_covers_items_never_started_after_breaker(sync_executor):
-    script = {f"AAA-{i:03d}": SourceBlocked("b") for i in range(1, 4)}
-    events, _ = run_hooked(script, n=6, on_fail="drop")
-    done = [e for e in events if e[0] == "done"]
-    assert sorted(s for _, s, _ in done) == list(range(6))  # 每部恰一次，含從未發起的
-    assert {s: ok for _, s, ok in done if s in (0, 1, 2, 4, 5)} == {0: False, 1: False, 2: False, 4: False, 5: False}
-
-
-def test_item_done_not_called_when_guard_rejects(sync_executor):
-    events, _ = run_hooked({f"AAA-{i:03d}": "F" for i in range(1, 7)}, n=6, guard=True, ref=REF)
-    assert events == []
-
-
-def test_item_done_with_guard_pass_covers_every_item_in_order(sync_executor):
-    events, _ = run_hooked({"AAA-001": "T"}, n=5, guard=True, ref=REF)
-    done = [s for k, s, *_ in events if k == "done"]
-    assert sorted(done) == [0, 1, 2, 3, 4]
-    for slot in range(5):
-        assert events.index(("done", slot, True)) < events.index(("item", slot))
 

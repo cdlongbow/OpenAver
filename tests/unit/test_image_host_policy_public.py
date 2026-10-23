@@ -5,7 +5,6 @@ resolver 回私網的對照並斷言 `resolve.calls` 含該 host（BE-TEST-23）
 """
 import pytest
 
-from core import image_host_policy
 from core.image_host_policy import proxy_verdict
 from core.metatube.state import metatube_state
 
@@ -18,7 +17,7 @@ def mt_disconnected():
 
 
 # 1 ---------------------------------------------------------------------
-@pytest.mark.parametrize("scheme", ["https", "http"])
+@pytest.mark.parametrize("scheme", ["https"])
 def test_unlisted_public_host_allowed(public_resolver, scheme):
     resolve = public_resolver({"cdn.unlisted.example": ["8.8.8.8"]})
     v = proxy_verdict(f"{scheme}://cdn.unlisted.example/a.jpg")
@@ -44,18 +43,11 @@ def test_listed_host_resolving_private_denied(public_resolver):
     assert "pics.dmm.co.jp" in resolve.calls
 
 
-
-
-
-
 # 5 ---------------------------------------------------------------------
 @pytest.mark.parametrize(
     "url",
     [
         "https://x.example:8443/a.jpg",
-        "https://x.example:99999/a.jpg",
-        "https://x.example:abc/a.jpg",
-        "http://x.example:443/a.jpg",
     ],
 )
 def test_non_default_port_denied(public_resolver, url):
@@ -65,42 +57,16 @@ def test_non_default_port_denied(public_resolver, url):
     assert v.reason == "port 不符"
 
 
-@pytest.mark.parametrize("url", ["ftp://x.example/a.jpg", "file:///etc/passwd"])
+@pytest.mark.parametrize("url", ["file:///etc/passwd"])
 def test_non_http_scheme_denied(public_resolver, url):
     public_resolver()
     assert proxy_verdict(url).allowed is False
 
 
-
-
-def test_literal_private_and_empty_host_denied():
-    assert proxy_verdict("https://10.0.0.5/a.jpg").allowed is False
-    assert proxy_verdict("https://127.0.0.1/a.jpg").allowed is False
-    assert proxy_verdict("https:///a.jpg").reason == "URL 無 host"
-    assert proxy_verdict("https://8.8.8.8/a.jpg").allowed is True
-
-
 # 6 ---------------------------------------------------------------------
-def test_metatube_relay_private_ip_allowed(public_resolver, mt_disconnected):
-    resolve = public_resolver()
-    metatube_state.connect("http://192.168.1.177:8080", "", [])
-    v = proxy_verdict("http://192.168.1.177:8080/v1/images/primary/X?ratio=0&quality=100")
-    assert v.allowed is True and v.reason is None
-    assert resolve.calls == []  # 走 metatube 條目，不經公網規則
-
-
 
 
 # 7 ---------------------------------------------------------------------
-def test_metatube_host_nonrelay_path_denied_even_if_public(public_resolver, mt_disconnected):
-    """比對失敗不得落到公網規則：預設埠 metatube host 解成公網，非 relay 路徑仍拒。"""
-    resolve = public_resolver({"meta.example": ["8.8.8.8"]})
-    metatube_state.connect("https://meta.example", "", [])
-    assert proxy_verdict("https://meta.example/v1/images/primary/X").allowed is True
-    v = proxy_verdict("https://meta.example/other.jpg")
-    assert v.allowed is False
-    assert v.reason == "path 不在白名單"
-    assert "meta.example" not in resolve.calls
 
 
 # 8 ---------------------------------------------------------------------

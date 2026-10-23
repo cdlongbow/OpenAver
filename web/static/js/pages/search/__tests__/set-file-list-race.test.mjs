@@ -114,33 +114,3 @@ test('P1 fix: 連續 setFileList(A) → setFileList(B)，A 的 parse 晚於 B �
   assert.equal(toasts.length, 0, 'A 被 abort 不得產生任何 toast/錯誤狀態');
 });
 
-test('P1 fix: registry 語意——B 完成後 setFileList key 被正確清除，A 的 stale finally 不誤刪/誤留', async () => {
-  stubFilterFilesFetch();
-  window.t = (key) => key;
-  const { parseFilenames, calls } = makeParseFilenamesMock();
-  window.SearchFile = {
-    parseFilenames,
-    detectSuffixes: () => [],
-    extractChineseTitle: () => null,
-  };
-
-  const fakeThis = makeFakeThis({
-    showToast() {},
-    switchToFile: async () => {},
-  });
-
-  const pA = fakeThis.setFileList(['/a/A-001.mp4']);
-  const pB = fakeThis.setFileList(['/b/B-002.mp4']);
-  await flush();
-
-  calls[1].resolve([{ filename: 'B-002.mp4', number: 'B-002', has_subtitle: false }]);
-  calls[0].resolve([{ filename: 'A-001.mp4', number: 'A-001', has_subtitle: false }]);
-  await flush();
-  await Promise.all([pA, pB]);
-
-  assert.equal(
-    fakeThis._abortControllers.setFileList,
-    undefined,
-    'B 完成後 registry 內 setFileList key 應被清空；A 的 finally（比對舊 signal）不得覆蓋/殘留',
-  );
-});

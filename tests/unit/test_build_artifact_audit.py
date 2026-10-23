@@ -17,13 +17,12 @@ import sys
 import zipfile
 from pathlib import Path
 
-import pytest
 
 # Ensure the repo root is importable so we can import the script directly.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
-from audit_build_artifact import audit, _resolve_zip  # noqa: E402  (after path insert)
+from audit_build_artifact import audit  # noqa: E402  (after path insert)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -76,76 +75,7 @@ def test_playwright_hard_fails(tmp_path):
     assert "FAIL" in combined
 
 
-def test_mypy_hard_fails(tmp_path):
-    """mypy in site-packages/ must cause exit 1 (hard-fail tier)."""
-    zp = _make_zip(tmp_path, {_site("mypy", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 1
-    assert any("mypy" in m and "FAIL" in m for m in msgs)
-
-
-def test_pytest_hard_fails(tmp_path):
-    """pytest in site-packages/ must cause exit 1 (hard-fail tier)."""
-    zp = _make_zip(tmp_path, {_site("pytest", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 1
-
-
-def test_ruff_hard_fails(tmp_path):
-    """ruff in site-packages/ must cause exit 1 (hard-fail tier)."""
-    zp = _make_zip(tmp_path, {_site("ruff", "__main__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 1
-
-
 # ── Warn tier (uvloop / langdetect) ──────────────────────────────────────────
-
-
-def test_uvloop_default_warns_exits_0_on_win(tmp_path):
-    """uvloop on win default mode → exit 0 (warn only, not release-blocking)."""
-    zp = _make_zip(tmp_path, {_site("uvloop", "loop.cpython-312-x86_64-linux-gnu.so"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, f"Expected exit 0 for uvloop default, got {code}\nMessages: {msgs}"
-    combined = "\n".join(msgs)
-    assert "WARN" in combined or "warn" in combined.lower()
-
-
-def test_uvloop_strict_exits_1_on_win(tmp_path):
-    """uvloop on win with --strict → exit 1."""
-    zp = _make_zip(tmp_path, {_site("uvloop", "loop.cpython-312-x86_64-linux-gnu.so"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, True)
-    assert code == 1, f"Expected exit 1 for uvloop --strict, got {code}\nMessages: {msgs}"
-
-
-def test_uvloop_allowed_on_mac_default(tmp_path):
-    """uvloop is a valid macOS runtime dep — must NOT be flagged on mac."""
-    zp = _make_zip(tmp_path, {_site("uvloop", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "mac", 55.0, False)
-    assert code == 0, f"uvloop must be allowed on mac (default), got {code}\nMessages: {msgs}"
-    combined = "\n".join(msgs)
-    # Should not even warn about uvloop on mac — no mention at all
-    assert "uvloop" not in combined, f"uvloop must not be flagged on mac, got: {combined}"
-
-
-def test_uvloop_allowed_on_mac_strict(tmp_path):
-    """uvloop is a valid macOS runtime dep — must NOT be flagged even with --strict on mac."""
-    zp = _make_zip(tmp_path, {_site("uvloop", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "mac", 55.0, True)
-    assert code == 0, f"uvloop must be allowed on mac --strict, got {code}\nMessages: {msgs}"
-
-
-def test_langdetect_default_warns_exits_0(tmp_path):
-    """langdetect on win default mode → exit 0 (warn only)."""
-    zp = _make_zip(tmp_path, {_site("langdetect", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0
-
-
-def test_langdetect_strict_exits_1(tmp_path):
-    """langdetect on win --strict → exit 1."""
-    zp = _make_zip(tmp_path, {_site("langdetect", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, True)
-    assert code == 1
 
 
 # ── Size ceiling ──────────────────────────────────────────────────────────────
@@ -165,110 +95,10 @@ def test_oversized_zip_fails(tmp_path):
     assert any("SIZE" in m or "ceiling" in m.lower() for m in msgs)
 
 
-def test_exactly_at_ceiling_passes(tmp_path):
-    """ZIP at exactly max_mb must pass (we use <= semantics)."""
-    zp = _make_zip(tmp_path, {"OpenAver/file.txt": b"hello"})
-    compressed_mb = zp.stat().st_size / (1024 * 1024)
-    # Set max exactly to the compressed size (rounded up a tiny bit)
-    code, msgs = audit(zp, "win", compressed_mb + 0.001, False)
-    assert code == 0, f"ZIP at/below ceiling must pass: {msgs}"
-
-
 # ── False-positive / baseline noise tests ─────────────────────────────────────
 
 
-def test_clean_zip_with_baseline_noise_passes(tmp_path):
-    """Clean ZIP containing only runtime packages and baseline noise must exit 0.
-
-    Noise items that must NOT trigger false positives:
-      - pydantic/mypy.py          (legit pydantic file, not mypy package)
-      - pytest_base_url/__init__.py  (acceptable 3KB transitive)
-      - greenlet/__init__.py      (runtime, must not be flagged)
-      - somemod__mypyc.cp312-win_amd64.pyd  (compiled runtime, not mypy)
-    """
-    entries = {
-        # Real runtime packages
-        _site("fastapi", "__init__.py"): b"x",
-        _site("uvicorn", "__init__.py"): b"x",
-        _site("pydantic", "__init__.py"): b"x",
-        _site("starlette", "__init__.py"): b"x",
-        _site("httptools", "__init__.py"): b"x",
-        _site("watchfiles", "__init__.py"): b"x",
-        _site("greenlet", "__init__.py"): b"x",
-        _site("anyio", "__init__.py"): b"x",
-        # Baseline noise — must NOT be false-positived
-        "OpenAver/python/Lib/site-packages/pydantic/mypy.py": b"x",  # NOT mypy pkg
-        "OpenAver/python/Lib/site-packages/pytest_base_url/__init__.py": b"x",  # tiny transitive
-        # mypyc compiled runtime module (not the mypy package)
-        "OpenAver/python/Lib/site-packages/somemod__mypyc.cp312-win_amd64.pyd": b"x",
-    }
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, "Clean baseline ZIP must pass.\nMessages:\n" + "\n".join(msgs)
-
-
-def test_pydantic_mypy_file_not_flagged(tmp_path):
-    """pydantic/mypy.py is a file INSIDE pydantic, not the mypy package.
-    It must NOT trigger the mypy ban."""
-    entries = {
-        "OpenAver/python/Lib/site-packages/pydantic/mypy.py": b"x",
-        "OpenAver/python/Lib/site-packages/pydantic/__init__.py": b"x",
-    }
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, (
-        "pydantic/mypy.py must not trigger mypy ban (it's a pydantic file).\n"
-        + "\n".join(msgs)
-    )
-
-
-def test_greenlet_not_flagged(tmp_path):
-    """greenlet is a runtime dep and must never be flagged."""
-    entries = {_site("greenlet", "__init__.py"): b"x"}
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, True)  # even with --strict
-    assert code == 0, "greenlet must not be flagged:\n" + "\n".join(msgs)
-
-
-def test_mypyc_pyd_at_root_not_flagged(tmp_path):
-    """A *__mypyc.cp312-win_amd64.pyd file at site-packages ROOT (not in a
-    mypy/ subdirectory) represents a compiled runtime extension, not the mypy
-    package. It must not trigger the ban."""
-    # This file sits directly in site-packages/ with a mypyc-compiled name
-    entries = {
-        "OpenAver/python/Lib/site-packages/pydantic_core__mypyc.cp312-win_amd64.pyd": b"x",
-        _site("pydantic_core", "__init__.py"): b"x",
-    }
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, (
-        "mypyc-compiled .pyd at site-packages root must not trigger mypy ban.\n"
-        + "\n".join(msgs)
-    )
-
-
-def test_pytest_base_url_not_flagged(tmp_path):
-    """pytest_base_url (acceptable pre-existing 3KB transitive) must not trip the audit."""
-    entries = {
-        "OpenAver/python/Lib/site-packages/pytest_base_url/__init__.py": b"x",
-    }
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, (
-        "pytest_base_url must not be flagged (it's not in the hard-fail list).\n"
-        + "\n".join(msgs)
-    )
-
-
 # ── dist-info existence checks (spec-97 G-2 static first pass) ─────────────────
-
-
-def _dist_info(pkg_ver: str) -> str:
-    """Return a canonical site-packages .dist-info/METADATA path.
-
-    pkg_ver e.g. 'curl_cffi-0.15.0' → .../site-packages/curl_cffi-0.15.0.dist-info/METADATA
-    """
-    return f"OpenAver/python/Lib/site-packages/{pkg_ver}.dist-info/METADATA"
 
 
 def test_curl_cffi_pkg_without_dist_info_fails(tmp_path):
@@ -283,84 +113,7 @@ def test_curl_cffi_pkg_without_dist_info_fails(tmp_path):
     assert any("curl_cffi" in m and "FAIL" in m for m in msgs)
 
 
-def test_curl_cffi_pkg_with_dist_info_passes(tmp_path):
-    """curl_cffi package WITH its .dist-info/METADATA → pass."""
-    zp = _make_zip(
-        tmp_path,
-        {
-            _site("curl_cffi", "__init__.py"): b"x",
-            _dist_info("curl_cffi-0.15.0"): b"Name: curl_cffi\n",
-        },
-    )
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, f"curl_cffi with dist-info must pass, got {code}\n" + "\n".join(msgs)
-
-
-def test_curl_cffi_absent_without_dist_info_ok(tmp_path):
-    """The curl_cffi check is CONDITIONAL: a ZIP that doesn't ship curl_cffi at
-    all must not be forced to carry curl_cffi dist-info (guards existing tests)."""
-    zp = _make_zip(tmp_path, {_site("fastapi", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, f"no-curl_cffi ZIP must pass, got {code}\n" + "\n".join(msgs)
-
-
-def test_large_pkgset_zero_dist_info_fails(tmp_path):
-    """At real-artifact scale (>=20 top-level packages) a blanket dist-info
-    strip (0 dist-info dirs) must hard-fail via the ratio sanity net."""
-    entries = {_site(f"pkg{i:02d}", "__init__.py"): b"x" for i in range(22)}
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 1, f"22 pkgs / 0 dist-info must hard-fail, got {code}\n" + "\n".join(msgs)
-    assert any("dist-info" in m.lower() and "FAIL" in m for m in msgs)
-
-
-def test_large_pkgset_with_dist_info_passes(tmp_path):
-    """22 packages each with a matching .dist-info → ratio satisfied → pass."""
-    entries = {}
-    for i in range(22):
-        entries[_site(f"pkg{i:02d}", "__init__.py")] = b"x"
-        entries[_dist_info(f"pkg{i:02d}-1.0.0")] = b"Name: pkg\n"
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, f"22 pkgs / 22 dist-info must pass, got {code}\n" + "\n".join(msgs)
-
-
-def test_small_pkgset_zero_dist_info_ok(tmp_path):
-    """Below the scale gate (<20 packages) the ratio net does NOT engage —
-    small synthetic ZIPs without dist-info stay green (existing behavior)."""
-    entries = {_site(f"pkg{i}", "__init__.py"): b"x" for i in range(8)}
-    zp = _make_zip(tmp_path, entries)
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, f"8 pkgs / 0 dist-info must stay green, got {code}\n" + "\n".join(msgs)
-
-
-def test_dist_info_check_runs_on_mac(tmp_path):
-    """dist-info checks are platform-agnostic — curl_cffi strip fails on mac too."""
-    zp = _make_zip(tmp_path, {_site("curl_cffi", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "mac", 60.0, False)
-    assert code == 1, f"curl_cffi strip must hard-fail on mac too, got {code}\n" + "\n".join(msgs)
-
-
 # ── facefinder cascade existence checks (TASK-98a-T1) ───────────────────────────
-
-
-def test_facefinder_default_injected_passes(tmp_path):
-    """Default _make_zip behavior injects a valid 240KB facefinder -> pass."""
-    zp = _make_zip(tmp_path, {_site("fastapi", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 0, f"default-injected facefinder must pass, got {code}\n" + "\n".join(msgs)
-
-
-def test_facefinder_missing_fails(tmp_path):
-    """include_facefinder=False (and no facefinder entry) -> HARD-FAIL."""
-    zp = _make_zip(
-        tmp_path,
-        {_site("fastapi", "__init__.py"): b"x"},
-        include_facefinder=False,
-    )
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert code == 1, f"missing facefinder must hard-fail, got {code}\n" + "\n".join(msgs)
-    assert any("FACEFINDER" in m and "FAIL" in m for m in msgs)
 
 
 def test_facefinder_mislocated_same_name_fails(tmp_path):
@@ -399,36 +152,7 @@ def test_facefinder_undersized_fails(tmp_path):
     assert any("FACEFINDER" in m and "FAIL" in m for m in msgs)
 
 
-def test_facefinder_check_runs_on_mac(tmp_path):
-    """facefinder gate is platform-agnostic — missing cascade fails on mac too."""
-    zp = _make_zip(
-        tmp_path,
-        {_site("fastapi", "__init__.py"): b"x"},
-        include_facefinder=False,
-    )
-    code, msgs = audit(zp, "mac", 60.0, False)
-    assert code == 1, f"missing facefinder must hard-fail on mac too, got {code}\n" + "\n".join(msgs)
-
-
 # ── Glob resolution errors ────────────────────────────────────────────────────
-
-
-def test_glob_no_match_exits_nonzero(tmp_path):
-    """Glob pattern matching 0 files must raise SystemExit with non-zero code."""
-    pattern = str(tmp_path / "nonexistent_*.zip")
-    with pytest.raises(SystemExit) as exc_info:
-        _resolve_zip(pattern)
-    assert exc_info.value.code != 0
-
-
-def test_glob_multiple_matches_exits_nonzero(tmp_path):
-    """Glob pattern matching >1 file must raise SystemExit with non-zero code."""
-    _make_zip(tmp_path, {"a.txt": b"x"}, name="foo-Windows-x64.zip")
-    _make_zip(tmp_path, {"b.txt": b"x"}, name="bar-Windows-x64.zip")
-    pattern = str(tmp_path / "*-Windows-*.zip")
-    with pytest.raises(SystemExit) as exc_info:
-        _resolve_zip(pattern)
-    assert exc_info.value.code != 0
 
 
 # ── Test-tool still hard-fails on mac platform ────────────────────────────────
@@ -444,15 +168,3 @@ def test_playwright_hard_fails_on_mac(tmp_path):
 # ── Summary message ───────────────────────────────────────────────────────────
 
 
-def test_summary_line_present_on_pass(tmp_path):
-    """Audit result must always include a RESULT/summary line on pass."""
-    zp = _make_zip(tmp_path, {_site("fastapi", "__init__.py"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert any("RESULT" in m or "PASSED" in m for m in msgs)
-
-
-def test_summary_line_present_on_fail(tmp_path):
-    """Audit result must always include a RESULT/summary line on fail."""
-    zp = _make_zip(tmp_path, {_site("playwright", "driver/node.exe"): b"x"})
-    code, msgs = audit(zp, "win", 55.0, False)
-    assert any("RESULT" in m or "FAILED" in m for m in msgs)

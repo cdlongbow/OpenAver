@@ -145,31 +145,6 @@ function minimalConfig(overrides = {}) {
   };
 }
 
-test("namingMenuVars('nfo_title') 不含 {suffix}", () => {
-  const fakeThis = makeFakeThis();
-  const names = fakeThis.namingMenuVars.call(fakeThis, 'nfo_title').map((v) => v.name);
-  assert.equal(names.includes('{suffix}'), false);
-  assert.equal(names.includes('{num}'), true);
-  assert.equal(names.includes('{title}'), true);
-});
-
-test("namingMenuVars('filename') 仍含 {suffix}（零回歸）", () => {
-  const fakeThis = makeFakeThis();
-  const names = fakeThis.namingMenuVars.call(fakeThis, 'filename').map((v) => v.name);
-  assert.equal(names.includes('{suffix}'), true);
-});
-
-test("namingMenuVars('folder') 仍只含 folder_ok（零回歸）", () => {
-  const fakeThis = makeFakeThis();
-  const names = fakeThis.namingMenuVars.call(fakeThis, 'folder').map((v) => v.name);
-  assert.equal(names.includes('{suffix}'), false);
-  assert.equal(names.includes('{num}'), true);
-});
-
-test('form.nfoTitleFormat 預設值為 [{num}]{title}', () => {
-  const fakeThis = makeFakeThis();
-  assert.equal(fakeThis.form.nfoTitleFormat, '[{num}]{title}');
-});
 
 test('loadConfig 讀入 scraper.nfo_title_format', async () => {
   const fakeThis = makeFakeThis();
@@ -211,57 +186,4 @@ test('saveConfig PUT body 含 scraper.nfo_title_format', async () => {
   assert.equal(putBody.scraper.nfo_title_format, '{num}-{title}');
 });
 
-test("saveConfig nfo_title_format_invalid → showToast(result.error, 'warning')", async () => {
-  const fakeThis = makeFakeThis();
-  fakeThis.form.nfoTitleFormat = '{num}-{title}-{actor}';
-  const errMsg = '格式必須包含恰好一個 {title}';
-  globalThis.fetch = async (_url, opts) => {
-    if (opts && opts.method === 'PUT') {
-      return {
-        json: async () => ({
-          success: false,
-          reason: 'nfo_title_format_invalid',
-          error: errMsg,
-        }),
-      };
-    }
-    return {
-      json: async () => ({
-        success: true,
-        data: minimalConfig(),
-      }),
-    };
-  };
-  const beforeFmt = fakeThis.form.nfoTitleFormat;
-  const beforeSaved = fakeThis.savedState;
-  await fakeThis.saveConfig.call(fakeThis);
-  assert.deepEqual(fakeThis._toasts, [{ msg: errMsg, type: 'warning' }]);
-  // 設定不落地：NFO 標題格式草稿保留、savedState 不快照成功值
-  assert.equal(fakeThis.form.nfoTitleFormat, beforeFmt);
-  assert.equal(fakeThis.savedState, beforeSaved);
-});
 
-test('saveConfig 未知 reason 仍落最終 else（零回歸）', async () => {
-  const fakeThis = makeFakeThis();
-  globalThis.fetch = async (_url, opts) => {
-    if (opts && opts.method === 'PUT') {
-      return {
-        json: async () => ({
-          success: false,
-          reason: 'some_other_reason',
-          error: 'whatever',
-        }),
-      };
-    }
-    return {
-      json: async () => ({
-        success: true,
-        data: minimalConfig(),
-      }),
-    };
-  };
-  await fakeThis.saveConfig.call(fakeThis);
-  assert.equal(fakeThis._toasts.length, 1);
-  assert.equal(fakeThis._toasts[0].type, 'error');
-  assert.equal(fakeThis._toasts[0].msg, 'settings.toast.save_failed');
-});

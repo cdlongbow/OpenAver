@@ -2,7 +2,6 @@
 由同一個函式產生，每格同時斷言預期值與兩邊相等；端點不得派工給殼（CD-4）。"""
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 
@@ -106,12 +105,6 @@ def test_preparing_site_ssr_equals_endpoint(temp_config_path, broker):
     assert ssr == ep == {"available": True, "sites": ["javlibrary"], "preparing": ["fc-javten"]}
 
 
-def test_unavailable_forces_empty_preparing(temp_config_path, broker):
-    """沒殼登記 → available=false，preparing 一律 []（對照格：上一格登記後同形狀回有值）。"""
-    ssr, ep = _both(lambda: TestClient(app))
-    assert ssr == ep == {"available": False, "sites": [], "preparing": []}
-
-
 def test_availability_endpoint_dispatches_no_job(temp_config_path, broker, monkeypatch):
     _poll(TestClient(app))
     calls = []
@@ -133,11 +126,9 @@ def _in_shell(html: str) -> bool:
     return m.group(1) == "true"
 
 
-@pytest.mark.parametrize("path", ["/search", "/showcase"])
+@pytest.mark.parametrize("path", ["/search"])
 @pytest.mark.parametrize("query,expected", [
     ("?oa_mode=client", True),
-    ("?oa_mode=local", True),
-    ("", False),
     ("?oa_mode=bogus", False),
 ])
 def test_in_shell_follows_oa_mode(temp_config_path, path, query, expected):

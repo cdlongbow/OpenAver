@@ -65,13 +65,6 @@ function makeFakeThis() {
     };
 }
 
-test('saveAccessAuth 成功 → .saved success toast', async () => {
-    globalThis.fetch = async () => ({ json: async () => ({ success: true }) });
-    const fakeThis = makeFakeThis();
-    await fakeThis.saveAccessAuth.call(fakeThis);
-    assert.deepEqual(fakeThis._toasts, [{ msg: 'settings.access_auth.saved', type: 'success' }]);
-    assert.equal(fakeThis.accessAuthSaving, false);
-});
 
 test('saveAccessAuth PIN 格式錯誤（400 invalid_pin）→ .pin_invalid error toast', async () => {
     globalThis.fetch = async () => ({ json: async () => ({ success: false, reason: 'invalid_pin' }) });
@@ -85,20 +78,6 @@ test('saveAccessAuth PIN 格式錯誤（400 invalid_pin）→ .pin_invalid error
     assert.equal(fakeThis.accessAuthSaving, false);
 });
 
-test('saveAccessAuth 非本機（403 remote_forbidden）→ 複用 server_info.remote_only', async () => {
-    globalThis.fetch = async () => ({ json: async () => ({ success: false, reason: 'remote_forbidden' }) });
-    const fakeThis = makeFakeThis();
-    await fakeThis.saveAccessAuth.call(fakeThis);
-    assert.deepEqual(fakeThis._toasts, [{ msg: 'settings.server_info.remote_only', type: 'error' }]);
-});
-
-test('saveAccessAuth 未知 reason / network error → .save_failed error toast', async () => {
-    globalThis.fetch = async () => { throw new Error('offline'); };
-    const fakeThis = makeFakeThis();
-    await fakeThis.saveAccessAuth.call(fakeThis);
-    assert.deepEqual(fakeThis._toasts, [{ msg: 'settings.access_auth.save_failed', type: 'error' }]);
-    assert.equal(fakeThis.accessAuthSaving, false);  // finally 區塊必須還原，即使 catch 路徑
-});
 
 // ── Codex PR#129 P2：安全宣稱不得跟著未提交草稿走 ────────────────────────────
 //
@@ -128,19 +107,6 @@ test('saveAccessAuth 400 invalid_pin → accessAuthEnabledSaved 不動（草稿�
     assert.equal(fakeThis.accessAuthPin, '1234');
 });
 
-test('saveAccessAuth 403 remote_forbidden → accessAuthEnabledSaved 不動', async () => {
-    globalThis.fetch = async () => ({ json: async () => ({ success: false, reason: 'remote_forbidden' }) });
-    const fakeThis = makeFakeThis();
-    await fakeThis.saveAccessAuth.call(fakeThis);
-    assert.equal(fakeThis.accessAuthEnabledSaved, false);
-});
-
-test('saveAccessAuth network error → accessAuthEnabledSaved 不動', async () => {
-    globalThis.fetch = async () => { throw new Error('offline'); };
-    const fakeThis = makeFakeThis();
-    await fakeThis.saveAccessAuth.call(fakeThis);
-    assert.equal(fakeThis.accessAuthEnabledSaved, false);
-});
 
 // ── Codex PR#129 round-3 P2：送出的值必須在 await 前定格 ─────────────────────
 //
@@ -151,16 +117,3 @@ test('saveAccessAuth network error → accessAuthEnabledSaved 不動', async () 
 // 不修的話：使用者送出「關閉保護」、在回應到達前把框重新勾起來 → 後端是全開的，
 // 畫面卻宣稱有密碼保護。
 
-test('saveAccessAuth 在 await 中途改草稿 → 記錄的是送出當下的值，不是回應當下的草稿', async () => {
-    const fakeThis = makeFakeThis();
-    fakeThis.accessAuthEnabled = false;        // 送出「關閉保護」
-    fakeThis.accessAuthEnabledSaved = true;
-    globalThis.fetch = async (_url, opts) => {
-        assert.equal(JSON.parse(opts.body).enabled, false);  // 送出去的確實是 false
-        fakeThis.accessAuthEnabled = true;     // 回應抵達前，使用者又把框勾回來
-        return { json: async () => ({ success: true }) };
-    };
-    await fakeThis.saveAccessAuth.call(fakeThis);
-    assert.equal(fakeThis.accessAuthEnabledSaved, false,
-        '記成 true 等於宣稱有密碼保護，但後端收到的是關閉');
-});

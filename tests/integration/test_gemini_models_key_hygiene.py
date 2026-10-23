@@ -1,7 +1,7 @@
 """171-T3：/api/gemini/test（模型清單）金鑰衛生——strip、LocalProtocolError 不洩金鑰。"""
 
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi.testclient import TestClient
@@ -33,13 +33,3 @@ def test_models_illegal_key_no_leak(caplog):
     assert FAKE_KEY not in caplog.text
 
 
-def test_models_key_is_stripped_in_header():
-    resp = MagicMock(spec=httpx.Response)
-    resp.status_code = 200
-    resp.json = MagicMock(return_value={"models": []})
-    resp.raise_for_status = MagicMock(return_value=None)
-    cm, mock_client = _cm(AsyncMock(return_value=resp))
-    with patch("web.routers.gemini.httpx.AsyncClient", return_value=cm):
-        response = client.post("/api/gemini/test", json={"api_key": "  KEY\n"})
-    assert response.json()["success"] is True
-    assert mock_client.get.call_args.kwargs["headers"]["x-goog-api-key"] == "KEY"

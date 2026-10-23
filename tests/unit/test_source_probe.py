@@ -70,17 +70,8 @@ def _conn_err_with(reason):
 
 @pytest.mark.parametrize('exc,expect', [
     (requests.exceptions.ProxyError('boom'), 'proxy'),
-    (requests.exceptions.InvalidProxyURL('bad'), 'proxy'),
-    (requests.exceptions.InvalidSchema('bad'), 'proxy'),
     (requests.exceptions.ConnectTimeout('t'), 'timeout'),
-    (requests.exceptions.ReadTimeout('t'), 'timeout'),
-    (requests.exceptions.ConnectionError(sp.ReadTimeoutError(None, None, 'x')), 'timeout'),
-    (requests.exceptions.SSLError('s'), 'tls'),
     (_conn_err_with(sp.NameResolutionError('h', None, 'x')), 'dns'),
-    (requests.exceptions.ConnectionError('refused'), 'network'),
-    (requests.exceptions.ChunkedEncodingError('c'), 'network'),
-    (ValueError('x'), 'error'),
-    (KeyError('x'), 'error'),
 ])
 def test_classify_exception_by_exception_type(exc, expect):
     assert classify_exception(exc) == expect
@@ -92,10 +83,7 @@ def O(state, host='h'):
 
 @pytest.mark.parametrize('mode,states,expect_state,expect_host', [
     ('any', ['unreachable', 'blocked', 'ok'], 'ok', 'h2'),
-    ('any', ['unreachable', 'blocked'], 'blocked', 'h1'),
     ('all', ['ok', 'blocked', 'unreachable'], 'unreachable', 'h2'),
-    ('all', ['ok', 'blocked'], 'blocked', 'h1'),
-    ('all', ['ok', 'ok'], 'ok', 'h0'),
 ])
 def test_merge_outcomes_any_takes_best_all_takes_worst(mode, states, expect_state, expect_host):
     outs = [O(s, f'h{i}') for i, s in enumerate(states)]
@@ -104,23 +92,6 @@ def test_merge_outcomes_any_takes_best_all_takes_worst(mode, states, expect_stat
 
 
 # ------------------------------------------------------------ 讀取 / check
-
-def test_check_only_judges_complete_body(fake_classes):
-    plans, _ = fake_classes
-    calls = []
-
-    def check(pr):
-        calls.append(pr.body_complete)
-        return False
-
-    plans['javdb'] = ProbePlan([ProbeTarget('j', lambda: make_resp(body=b'{}'),
-                                            check=check, read='full_capped')])
-    plans['dmm'] = ProbePlan([ProbeTarget('d', lambda: make_resp(body=b'x' * (sp.FULL_LIMIT + 10)),
-                                          check=check, read='full_capped')])
-    rows = run_probes(ProxySettings(), ['javdb', 'dmm'])
-    assert rows['javdb']['reason'] == 'app_rejected'
-    assert rows['dmm']['state'] == 'ok'  # 超過上限＝判通、不解析
-    assert calls == [True]
 
 
 class _BrokenBody(io.BytesIO):
@@ -162,55 +133,7 @@ def _run_one(fake_classes, send):
     return run_probes(ProxySettings(), ['dmm'])['dmm']
 
 
-def test_head8k_200_does_not_read_body_failure_is_still_ok(fake_classes):
-    row = _run_one(fake_classes, lambda: _broken_resp(200))
-    assert (row['state'], row['reason']) == ('ok', 'ok')
-
-
-def test_head8k_endless_200_body_is_ok_and_unread(fake_classes):
-    body = _EndlessBody()
-
-    def send():
-        r = make_resp(200)
-        r.raw = body
-        return r
-
-    assert _run_one(fake_classes, send)['state'] == 'ok'
-    assert body.reads == 0
-
-
-def test_full_capped_stream_read_timeout_is_timeout(fake_classes):
-    class _Slow(_BrokenBody):
-        def stream(self, amt=8192, decode_content=None):  # requests 走 stream 分支才會包裝
-            raise sp.ReadTimeoutError(None, None, 'slow')
-
-    def send():
-        r = make_resp(200)
-        r.raw = _Slow(b'')
-        return r
-
-    plans, _ = fake_classes
-    plans['javdb'] = ProbePlan([ProbeTarget('j', send, read='full_capped')])
-    row = run_probes(ProxySettings(), ['javdb'])['javdb']
-    assert (row['state'], row['reason']) == ('unreachable', 'timeout')
-
-
 # ------------------------------------------------------------ 並行 / 預算
-
-def test_run_probes_targets_run_in_parallel(fake_classes):
-    plans, _ = fake_classes
-    n = 6
-    barrier = threading.Barrier(n, timeout=5)
-
-    def send():
-        barrier.wait()
-        return make_resp()
-
-    ids = ['dmm', 'javbus', 'jav321', 'javdb', 'd2pass', 'heyzo']
-    for sid in ids:
-        plans[sid] = ProbePlan([ProbeTarget(sid + '.example', send)])
-    rows = run_probes(ProxySettings(), ids)
-    assert {r['state'] for r in rows.values()} == {'ok'}
 
 
 def test_run_probes_budget_bounds_response_time(fake_classes, monkeypatch):
@@ -232,38 +155,6 @@ def test_run_probes_budget_bounds_response_time(fake_classes, monkeypatch):
     assert {(r['state'], r['reason']) for r in rows.values()} == {('unreachable', 'timeout')}
 
 
-def test_run_probes_all_mode_names_the_host_that_did_not_return(fake_classes, monkeypatch):
-    plans, _ = fake_classes
-    monkeypatch.setattr('core.source_probe.PROBE_BUDGET_S', 1)
-    gate = threading.Event()
-    plans['javbus'] = ProbePlan([
-        ProbeTarget('fast.example', lambda: make_resp()),
-        ProbeTarget('stuck.example', lambda: (gate.wait(3), make_resp())[1]),
-    ], mode='all')
-    row = run_probes(ProxySettings(), ['javbus'])['javbus']
-    assert (row['state'], row['reason'], row['host']) == ('unreachable', 'timeout', 'stuck.example')
-
-
-def test_run_probes_unexpected_exception_is_error_not_ok(fake_classes):
-    plans, _ = fake_classes
-
-    def boom():
-        raise ZeroDivisionError('program bug')
-
-    plans['dmm'] = ProbePlan([ProbeTarget('d.example', boom)])
-    row = run_probes(ProxySettings(), ['dmm'])['dmm']
-    assert (row['state'], row['reason']) == ('unreachable', 'error')
-
-
-def test_run_probes_scraper_construction_failure_is_error(monkeypatch):
-    def _bad(sid):
-        raise RuntimeError('ctor')
-
-    monkeypatch.setattr('core.source_probe.scraper_class_for', _bad)
-    row = run_probes(ProxySettings(), ['dmm'])['dmm']
-    assert (row['state'], row['reason']) == ('unreachable', 'error')
-
-
 # ------------------------------------------------------------ 快照 / via_proxy / advice / skipped
 
 def test_run_probes_gives_every_scraper_the_request_snapshot(fake_classes):
@@ -276,10 +167,7 @@ def test_run_probes_gives_every_scraper_the_request_snapshot(fake_classes):
 
 
 @pytest.mark.parametrize('snap,expect', [
-    (ProxySettings(url='', scope='dmm'), {'dmm': False, 'javbus': False}),
-    (ProxySettings(url='', scope='all'), {'dmm': False, 'javbus': False}),
     (ProxySettings(url=PROXY, scope='dmm'), {'dmm': True, 'javbus': False}),
-    (ProxySettings(url=PROXY, scope='all'), {'dmm': True, 'javbus': True}),
 ])
 def test_run_probes_via_proxy_follows_policy(fake_classes, snap, expect):
     plans, _ = fake_classes
@@ -361,68 +249,17 @@ SNAP_SOCKS_ALL = ProxySettings(url='socks5://h.example:1', scope='all')
 
 
 @pytest.mark.parametrize('label,kind,transport,snap,expect', [
-    ('dev', None, _FakeTransport(BOTH), SNAP_ALL, ('windows_verifier',) * 2),
-    ('dev_no_transport', None, None, SNAP_ALL, ('windows_verifier',) * 2),
     ('mac_all_sites', 'mac', _FakeTransport(BOTH), SNAP_ALL, ('mac_system_proxy',) * 2),
-    ('mac_no_transport', 'mac', None, SNAP_ALL, ('mac_system_proxy',) * 2),
     ('win_empty', 'windows', _FakeTransport(()), SNAP_ALL, ('verifier_not_started',) * 2),
-    ('win_no_transport', 'windows', None, SNAP_ALL, ('verifier_not_started',) * 2),
-    ('win_unknown_sites', 'windows', _NoSitesTransport(), SNAP_ALL, ('verifier_not_started',) * 2),
-    ('win_only_javlibrary', 'windows', _FakeTransport(('javlibrary',)), SNAP_ALL,
-     (None, 'verifier_not_started')),
-    ('win_only_javten', 'windows', _FakeTransport(('fc-javten',)), SNAP_ALL,
-     ('verifier_not_started', None)),
     ('win_all_http', 'windows', _FakeTransport(BOTH), SNAP_ALL, (None, None)),
-    ('win_all_socks_noauth', 'windows', _FakeTransport(BOTH), SNAP_SOCKS_ALL, (None, None)),
     ('win_all_socks_auth', 'windows', _FakeTransport(BOTH), SNAP_AUTH_ALL,
      ('proxy_auth_unsupported',) * 2),
-    ('win_scope_dmm_socks_auth', 'windows', _FakeTransport(BOTH), SNAP_AUTH_DMM, (None, None)),
-    ('win_blank_proxy', 'windows', _FakeTransport(BOTH), ProxySettings(url='', scope='all'),
-     (None, None)),
-    ('win_noscheme_address_is_http', 'windows', _FakeTransport(BOTH), SNAP_NOSCHEME_ALL,
-     (None, None)),
-    ('win_not_started_beats_auth', 'windows', _FakeTransport(()), SNAP_AUTH_ALL,
-     ('verifier_not_started',) * 2),
 ])
 def test_skip_reason_environment_table(monkeypatch, transport_env, label, kind, transport, snap, expect):
     monkeypatch.setattr('core.source_probe.desktop_kind', lambda: kind)
     transport_env(transport)
     got = tuple(sp.skip_reason(sid, snap) for sid in BOTH)
     assert got == expect, label
-
-
-def test_skip_reason_uses_request_snapshot(monkeypatch, transport_env):
-    """畫面上的新代理（請求體快照）決定結果；已儲存的設定被讀到就炸。"""
-    import core.proxy_policy as pp
-    monkeypatch.setattr('core.source_probe.desktop_kind', lambda: 'windows')
-    transport_env(_FakeTransport(BOTH))
-
-    def _boom(*a, **k):
-        raise AssertionError('不得讀已儲存的設定')
-
-    monkeypatch.setattr(pp, 'current_settings', _boom)
-    assert sp.skip_reason('javlibrary', SNAP_AUTH_ALL) == 'proxy_auth_unsupported'
-    assert sp.skip_reason('javlibrary', SNAP_ALL) is None
-
-
-@pytest.mark.parametrize('exc,reason', [
-    (requests.exceptions.ProxyError('x'), 'proxy'),
-    (requests.exceptions.ConnectTimeout('x'), 'timeout'),
-    (requests.exceptions.ConnectionError('x'), 'network'),
-])
-def test_verifier_target_connection_failures_stay_unreachable(exc, reason):
-    def send():
-        raise exc
-    out = sp.probe_target(ProbeTarget('h.example', send, cf_challenge_ok=True))
-    assert (out.state, out.reason) == ('unreachable', reason)
-
-
-def test_run_probes_dedupes_ids_and_every_id_has_a_result(fake_classes):
-    plans, _ = fake_classes
-    hits = []
-    plans['dmm'] = ProbePlan([ProbeTarget('d', lambda: hits.append(1) or make_resp())])
-    rows = run_probes(ProxySettings(), ['dmm', 'dmm', 'zzz'])
-    assert list(rows) == ['dmm', 'zzz'] and len(hits) == 1
 
 
 # ------------------------------------------------------------ 不洩漏

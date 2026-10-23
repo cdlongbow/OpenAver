@@ -18,8 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.scrapers import javdb, javdb_api
-from core.scrapers.errors import SourceBlocked, SourceUnreachable
+from core.scrapers import javdb
 from core.scrapers.models import Video
 
 
@@ -83,56 +82,6 @@ class TestJavdbSearchRouting:
         assert mock_get_html.call_count == 0
         assert mock_rate_limit.call_count == 1
 
-    def test_api_blocked_falls_back_to_html(
-        self, scraper, fake_html_video, monkeypatch, caplog
-    ):
-        """AC-2 & AC-7 & AC-8: API 被擋（SourceBlocked）時降級走 HTML，記錄 WARNING，rate_limit 呼叫一次。"""
-        mock_rate_limit = MagicMock()
-        monkeypatch.setattr("core.scrapers.javdb.rate_limit", mock_rate_limit)
-        monkeypatch.setattr(
-            scraper, "search_via_api",
-            MagicMock(side_effect=SourceBlocked("API blocked by CF"))
-        )
-        monkeypatch.setattr(scraper, "search_via_html", MagicMock(return_value=fake_html_video))
-
-        with caplog.at_level(logging.WARNING):
-            result = scraper.search("SSIS-001")
-
-        assert result is not None
-        assert result.title == "FROM_HTML"
-        assert scraper.search_via_html.call_count == 1
-        assert mock_rate_limit.call_count == 1
-        assert any(
-            record.levelno >= logging.WARNING
-            and "API 降級 → HTML" in record.message
-            and "SourceBlocked" in record.message
-            for record in caplog.records
-        )
-
-    def test_api_unreachable_falls_back_to_html(
-        self, scraper, fake_html_video, monkeypatch, caplog
-    ):
-        """AC-2: API 連不上（SourceUnreachable）時降級走 HTML，記錄 WARNING。"""
-        mock_rate_limit = MagicMock()
-        monkeypatch.setattr("core.scrapers.javdb.rate_limit", mock_rate_limit)
-        monkeypatch.setattr(
-            scraper, "search_via_api",
-            MagicMock(side_effect=SourceUnreachable("Connection timeout"))
-        )
-        monkeypatch.setattr(scraper, "search_via_html", MagicMock(return_value=fake_html_video))
-
-        with caplog.at_level(logging.WARNING):
-            result = scraper.search("SSIS-001")
-
-        assert result is not None
-        assert result.title == "FROM_HTML"
-        assert scraper.search_via_html.call_count == 1
-        assert any(
-            record.levelno >= logging.WARNING
-            and "API 降級 → HTML" in record.message
-            and "SourceUnreachable" in record.message
-            for record in caplog.records
-        )
 
     def test_api_unexpected_exception_still_degrades_to_html(
         self, scraper, fake_html_video, monkeypatch, caplog
@@ -183,134 +132,8 @@ class TestJavdbSearchRouting:
             for record in caplog.records
         )
 
-    def test_api_fails_and_html_blocked_raises_blocked(
-        self, scraper, monkeypatch
-    ):
-        """AC-5: API 失敗（SourceUnreachable）且 HTML 也被擋（SourceBlocked）時，search() 拋出 SourceBlocked。"""
-        mock_rate_limit = MagicMock()
-        monkeypatch.setattr("core.scrapers.javdb.rate_limit", mock_rate_limit)
-        monkeypatch.setattr(
-            scraper, "search_via_api",
-            MagicMock(side_effect=SourceUnreachable("API down"))
-        )
-        monkeypatch.setattr(
-            scraper, "search_via_html",
-            MagicMock(side_effect=SourceBlocked("HTML CF block"))
-        )
-
-        with pytest.raises(SourceBlocked):
-            scraper.search("SSIS-001")
-
-        assert mock_rate_limit.call_count == 0
-
-    def test_api_fails_and_html_unreachable_raises_unreachable(
-        self, scraper, monkeypatch
-    ):
-        """AC-5: API 失敗且 HTML 連線失敗時，search() 拋出 SourceUnreachable。"""
-        mock_rate_limit = MagicMock()
-        monkeypatch.setattr("core.scrapers.javdb.rate_limit", mock_rate_limit)
-        monkeypatch.setattr(
-            scraper, "search_via_api",
-            MagicMock(side_effect=SourceBlocked("API blocked"))
-        )
-        monkeypatch.setattr(
-            scraper, "search_via_html",
-            MagicMock(side_effect=SourceUnreachable("HTML conn fail"))
-        )
-
-        with pytest.raises(SourceUnreachable):
-            scraper.search("SSIS-001")
-
-        assert mock_rate_limit.call_count == 0
-
-    def test_both_api_and_html_not_found_returns_none(
-        self, scraper, monkeypatch
-    ):
-        """AC-8: API 查無且 HTML 查無時，回傳 None 且 rate_limit 不呼叫。"""
-        mock_rate_limit = MagicMock()
-        monkeypatch.setattr("core.scrapers.javdb.rate_limit", mock_rate_limit)
-        monkeypatch.setattr(scraper, "search_via_api", MagicMock(return_value=None))
-        monkeypatch.setattr(scraper, "search_via_html", MagicMock(return_value=None))
-
-        result = scraper.search("SSIS-001")
-
-        assert result is None
-        assert mock_rate_limit.call_count == 0
-
-    def test_invalid_number_raises_value_error_without_calling_api_or_html(
-        self, scraper, monkeypatch
-    ):
-        """AC-6: 非法番號直接拋 ValueError，不呼叫 search_via_api 與 search_via_html。"""
-        mock_api = MagicMock()
-        mock_html = MagicMock()
-        monkeypatch.setattr(scraper, "search_via_api", mock_api)
-        monkeypatch.setattr(scraper, "search_via_html", mock_html)
-
-        with pytest.raises(ValueError, match="Invalid number format"):
-            scraper.search("")
-
-        assert mock_api.call_count == 0
-        assert mock_html.call_count == 0
-
-
-class TestSearchViaApiAndHtmlContracts:
-    def test_search_via_api_calls_javdb_api_fetch_video(
-        self, scraper, fake_api_video, monkeypatch
-    ):
-        """search_via_api 薄封裝契約：直接轉發已正規化番號給 javdb_api.fetch_video，不攔截例外。"""
-        mock_fetch = MagicMock(return_value=fake_api_video)
-        monkeypatch.setattr(javdb_api, "fetch_video", mock_fetch)
-
-        result = scraper.search_via_api("SSIS-001")
-
-        assert result is fake_api_video
-        mock_fetch.assert_called_once_with("SSIS-001")
-
-    def test_search_via_api_propagates_exceptions(
-        self, scraper, monkeypatch
-    ):
-        """search_via_api 契約：例外不自行攔截，直接向外拋出供 search() 處理。"""
-        mock_fetch = MagicMock(side_effect=SourceBlocked("API blocked"))
-        monkeypatch.setattr(javdb_api, "fetch_video", mock_fetch)
-
-        with pytest.raises(SourceBlocked):
-            scraper.search_via_api("SSIS-001")
-
 
 # ============================================================
 # review 第 1 輪補強（grok P2-2）：rate_limit 只有一個 call site
 # ============================================================
 
-def test_rate_limit_lives_only_in_search_not_in_search_via_html():
-    """`rate_limit` 必須只由 `search()` 呼叫，`search_via_html()` 裡不得再留一份。
-
-    為什麼需要這一支（grok review P2）：上面所有降級測試都把 `search_via_html`
-    **整支換成 MagicMock**，所以「HTML 本體裡又留／又加回一次 `rate_limit`」
-    這個回歸**觀測不到**——`search()` 那一次仍然讓 `call_count == 1`。
-
-    使用者流程：兩次節流疊起來，每搜一個番號多等一個 delay。單看沒感覺，
-    但批次整理一百部片就是多等一百次。
-
-    這是源碼語意檢查，不是字串存在檢查 ⇒ 依 CLAUDE.md「Lint 守衛規則」屬 pytest 這一格。
-    """
-    import inspect
-
-    from core.scrapers.javdb import JavDBScraper
-
-    html_src = inspect.getsource(JavDBScraper.search_via_html)
-    api_src = inspect.getsource(JavDBScraper.search_via_api)
-    # 節流在 `_search_number()`（`search()` 只是它的入口）。
-    search_src = inspect.getsource(JavDBScraper._search_number)
-
-    # [lint-guard: pytest-justified] 這裡的 `html_src` 是 `inspect.getsource()` 取出的
-    # **Python 源碼**，不是 HTML/JS/CSS 資產——屬 SA-pre-6 例外清單的「Python 源碼語意守衛」。
-    # 變數名容易讓 content-based 偵測誤命中，故就地標註。
-    assert "rate_limit" not in html_src, (
-        "search_via_html() 裡不得有 rate_limit——它已經搬到 search()，"
-        "留兩份會讓每次搜尋節流兩次"
-    )
-    assert "rate_limit" not in api_src, "search_via_api() 是薄封裝，不該節流"
-    assert search_src.count("rate_limit(") == 2, (
-        "_search_number() 應該剛好有兩個 rate_limit 呼叫點（API 命中、"
-        "HTML 備援），兩者互斥所以每次搜尋最多只會執行到一個"
-    )

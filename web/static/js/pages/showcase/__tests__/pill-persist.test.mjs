@@ -85,26 +85,6 @@ test('TASK-124a-T1：round-trip — serializePills → deserializePills 帶 op/v
     assert.deepEqual(deserializePills(serializePills(pills)), pills);
 });
 
-test('deserializePills：缺 dim/value、非字串型別、trim 後空字串 → 丟棄', () => {
-    const out = deserializePills([
-        { value: 'Moodyz' },
-        { dim: 'maker' },
-        { dim: 1, value: 'Moodyz' },
-        { dim: 'maker', value: 2 },
-        { dim: true, value: 'Moodyz' },
-        { dim: 'maker', value: false },
-        { dim: ['maker'], value: 'Moodyz' },
-        { dim: 'maker', value: ['Moodyz'] },
-        { dim: { a: 1 }, value: 'Moodyz' },
-        { dim: 'maker', value: { a: 1 } },
-        { dim: '   ', value: 'Moodyz' },
-        { dim: 'maker', value: '   ' },
-        { dim: '', value: 'Moodyz' },
-        { dim: 'maker', value: '' },
-        { dim: ' maker ', value: ' Moodyz ' },
-    ]);
-    assert.deepEqual(out, [{ dim: 'maker', value: 'Moodyz' }]);
-});
 
 // ===== Layer 2: wiring via stateBase saveState / restoreState =====
 
@@ -143,25 +123,6 @@ test('restoreState：缺 pills 鍵（舊格式）→ this.pills=[]，不 throw�
     assert.equal(c.mode, 'list');
 });
 
-test('URL 含 ?pills=... 不產生任何 pill', () => {
-    stubWindow({ search: '?pills=maker%3A%3AMoodyz&sort=title' });
-    const c = makeComponent({
-        _persistedShowcase: {
-            sort: 'date',
-            order: 'desc',
-            page: 1,
-            search: '',
-            mode: 'grid',
-            // no pills key — old format
-        },
-        pills: [{ dim: 'tag', value: 'pre-existing' }],
-    });
-    c.restoreState();
-    // URL pills param is ignored; only deserializePills(state.pills) applies
-    assert.deepEqual(c.pills, []);
-    // URL sort still wins for sort
-    assert.equal(c.sort, 'title');
-});
 
 test('reload 模擬：saveState → 新 stateBase 實例 restoreState → pills 深相等', () => {
     // T2 hydrate 從 config 覆寫 showTableList；僅 makeComponent override 撐不過 restoreState

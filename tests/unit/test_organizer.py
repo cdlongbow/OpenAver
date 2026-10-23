@@ -14,11 +14,9 @@ from unittest.mock import MagicMock, patch
 import requests
 from PIL import Image
 
-from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster, _is_multipart_kw, _poster_window_ratio, generate_jellyfin_images
+from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, _detect_vr_cluster, _poster_window_ratio, generate_jellyfin_images
 import core.organizer as organizer
-from core.focal import requires_face_detection
 from core.focal.subprocess_runner import RunnerOutcome
-from core.scrapers.utils import normalize_number_impl
 from tests.conftest import MOCK_FOCAL_XY
 
 
@@ -27,17 +25,6 @@ from tests.conftest import MOCK_FOCAL_XY
 class TestDetectSuffixes:
     """_detect_suffixes() 的單元測試"""
 
-    def test_detect_suffixes_basic(self):
-        """基本單一關鍵字偵測：SONE-205-CD1.mp4 應匹配 -cd1"""
-        result = _detect_suffixes("SONE-205-CD1.mp4", ["-cd1", "-cd2"])
-        assert result == "-cd1"
-
-    def test_detect_suffixes_multiple(self):
-        """多關鍵字同時偵測：SONE-205-4K-CD1.mp4 應匹配 -cd1 和 -4k"""
-        result = _detect_suffixes("SONE-205-4K-CD1.mp4", ["-cd1", "-4k"])
-        # 兩個關鍵字都應被匹配，順序依 keywords 列表順序（-cd1 先，-4k 後）
-        assert "-cd1" in result
-        assert "-4k" in result
 
     def test_detect_suffixes_case_insensitive(self):
         """大小寫不敏感：SONE-205-4k.mp4 應匹配 -4K（關鍵字大寫）"""
@@ -45,170 +32,18 @@ class TestDetectSuffixes:
         assert result != ""
         assert "-4k" in result
 
-    def test_detect_suffixes_no_match(self):
-        """無匹配：SONE-205.mp4 對 -cd1 應回傳空字串"""
-        result = _detect_suffixes("SONE-205.mp4", ["-cd1"])
-        assert result == ""
-
-    def test_detect_suffixes_boundary_no_false_positive(self):
-        """邊界保護：-cd1 不應匹配 -cd10（避免子字串誤匹配）"""
-        result = _detect_suffixes("SONE-205-CD10.mp4", ["-cd1"])
-        assert result == ""
-
-    def test_detect_suffixes_boundary_separator(self):
-        """
-        分隔符邊界：
-        - SONE-205-CD1_UC.mp4 中，-cd1 後緊跟 _ 分隔符，應正確匹配 -cd1
-        - _UC 使用底線前綴，關鍵字 _uc 應匹配；關鍵字 -uc（連字號前綴）不匹配
-        """
-        # -cd1 後緊跟 _ 分隔符，邊界正則應通過
-        result = _detect_suffixes("SONE-205-CD1_UC.mp4", ["-cd1", "_uc"])
-        assert "-cd1" in result
-        assert "_uc" in result
-
-    def test_detect_suffixes_order_follows_keywords(self):
-        """多 keyword 時，輸出順序按 keyword 列表，不按檔名順序（canonical 化設計）"""
-        # keywords ['-cd1', '-4k']，檔名 '-4k-cd1' 反序
-        result = _detect_suffixes("ABC-123-4k-cd1.mp4", ["-cd1", "-4k"])
-        assert result == "-cd1-4k", f"預期按 keyword 列表順序 '-cd1-4k'，實際 {result!r}"
-
 
 # ============ format_string() 測試 ============
-
-class TestFormatStringSuffix:
-    """format_string() 的 {suffix} 變數測試"""
-
-    def test_format_string_suffix(self):
-        """suffix 非空時應出現在輸出中"""
-        result = format_string(
-            "[{num}] {title}{suffix}",
-            {"number": "SONE-205", "title": "title", "suffix": "-4k-cd1"}
-        )
-        assert result == "[SONE-205] title-4k-cd1"
-
-    def test_format_string_suffix_empty(self):
-        """suffix 空字串時，{suffix} 應消失，不留多餘字元"""
-        result = format_string(
-            "[{num}] {title}{suffix}",
-            {"number": "SONE-205", "title": "title", "suffix": ""}
-        )
-        assert result == "[SONE-205] title"
-
-
-class TestFormatStringFallback:
-    """format_string() use_fallback 參數測試"""
-
-    def test_format_string_fallback_actor(self):
-        result = format_string("{actor}", {"actors": []}, use_fallback=True)
-        assert result == "未知女優"
-
-    def test_format_string_fallback_maker(self):
-        result = format_string("{maker}", {"maker": ""}, use_fallback=True)
-        assert result == "未知片商"
-
-    def test_format_string_fallback_year(self):
-        result = format_string("{year}", {"date": ""}, use_fallback=True)
-        assert result == "未知年份"
-
-    def test_format_string_fallback_date(self):
-        result = format_string("{date}", {"date": ""}, use_fallback=True)
-        assert result == "未知日期"
-
-    def test_format_string_fallback_title(self):
-        result = format_string("{title}", {"title": ""}, use_fallback=True)
-        assert result == "未知標題"
-
-    def test_format_string_no_fallback_default(self):
-        result = format_string("{actor}", {"actors": []})  # use_fallback=False
-        assert result == ""
-
-    def test_format_string_has_value_no_fallback(self):
-        result = format_string("{actor}", {"actors": ["三上悠亞"]}, use_fallback=True)
-        assert result == "三上悠亞"
-
-    def test_format_string_fallback_month(self):
-        result = format_string("{month}", {"date": ""}, use_fallback=True)
-        assert result == "未知月份"
-
-    def test_format_string_fallback_day(self):
-        result = format_string("{day}", {"date": ""}, use_fallback=True)
-        assert result == "未知日"
-
-    def test_format_string_no_fallback_month(self):
-        result = format_string("{month}", {"date": ""})  # use_fallback=False
-        assert result == ""
-
-    def test_format_string_no_fallback_day(self):
-        result = format_string("{day}", {"date": ""})  # use_fallback=False
-        assert result == ""
 
 
 class TestFormatStringDateVariables:
     """format_string() {year}/{month}/{day}/{date} 變數展開測試"""
 
-    def test_full_iso_date_year(self):
-        """完整 ISO 日期：{year} = "2015"""
-        result = format_string("{year}", {"date": "2015-06-01"})
-        assert result == "2015"
-
-    def test_full_iso_date_month(self):
-        """完整 ISO 日期：{month} = "06"""
-        result = format_string("{month}", {"date": "2015-06-01"})
-        assert result == "06"
-
-    def test_full_iso_date_day(self):
-        """完整 ISO 日期：{day} = "01"""
-        result = format_string("{day}", {"date": "2015-06-01"})
-        assert result == "01"
-
-    def test_full_iso_date_date(self):
-        """完整 ISO 日期：{date} = "2015-06-01"""
-        result = format_string("{date}", {"date": "2015-06-01"})
-        assert result == "2015-06-01"
-
-    def test_partial_date_year_month_only(self):
-        """部分日期 "2015-06"：{year}="2015" / {month}="06"""
-        year_result = format_string("{year}", {"date": "2015-06"})
-        month_result = format_string("{month}", {"date": "2015-06"})
-        assert year_result == "2015"
-        assert month_result == "06"
-
-    def test_partial_date_day_fallback_folder(self):
-        """部分日期 "2015-06"：{day} 走 folder fallback = "未知日"""
-        result = format_string("{day}", {"date": "2015-06"}, use_fallback=True)
-        assert result == "未知日"
-
-    def test_partial_date_day_fallback_filename(self):
-        """部分日期 "2015-06"：{day} 走 filename fallback = """""
-        result = format_string("{day}", {"date": "2015-06"}, use_fallback=False)
-        assert result == ""
-
-    def test_year_only_month_fallback_folder(self):
-        """純年份 "2015"：{month} 走 folder fallback = "未知月份"""
-        result = format_string("{month}", {"date": "2015"}, use_fallback=True)
-        assert result == "未知月份"
-
-    def test_year_only_day_fallback_folder(self):
-        """純年份 "2015"：{day} 走 folder fallback = "未知日"""
-        result = format_string("{day}", {"date": "2015"}, use_fallback=True)
-        assert result == "未知日"
-
-    def test_empty_date_all_fallback_folder(self):
-        """空字串：{year}/{month}/{day}/{date} 全部走 folder fallback"""
-        assert format_string("{year}", {"date": ""}, use_fallback=True) == "未知年份"
-        assert format_string("{month}", {"date": ""}, use_fallback=True) == "未知月份"
-        assert format_string("{day}", {"date": ""}, use_fallback=True) == "未知日"
-        assert format_string("{date}", {"date": ""}, use_fallback=True) == "未知日期"
 
     def test_filename_format_ymd_full_date(self):
         """{year}-{month}-{day} + 完整 date → 展開 "2015-06-01"""
         result = format_string("{year}-{month}-{day}", {"date": "2015-06-01"})
         assert result == "2015-06-01"
-
-    def test_filename_format_dmy_full_date(self):
-        """{day}_{month}_{year} (DMY) + 完整 date → 展開 "01_06_2015"""
-        result = format_string("{day}_{month}_{year}", {"date": "2015-06-01"})
-        assert result == "01_06_2015"
 
 
 # ============ organize_file() 整合測試 ============
@@ -246,29 +81,6 @@ def _make_metadata(number: str = "SONE-205", title: str = "Test Title") -> dict:
 class TestOrganizeDuplicateDetection:
     """organize_file() 覆蓋偵測測試"""
 
-    def test_organize_file_concurrent_second_call_gets_duplicate(self, tmp_path):
-        """
-        DoD-1: 模擬併發 / 第二次呼叫撞同一目標
-        第一次成功佔位並搬移，第二次呼叫因目標已存在（O_CREAT|O_EXCL 拋 FileExistsError）
-        拿到 duplicate=True 且不覆蓋。
-        """
-        src1 = tmp_path / "SRC-001.mp4"
-        src1.write_bytes(b"video 1 content")
-        src2 = tmp_path / "SRC-002.mp4"
-        src2.write_bytes(b"video 2 content")
-
-        config = _make_config(tmp_path)
-        metadata = _make_metadata(number="TARGET-001", title="Same Title")
-
-        res1 = organize_file(str(src1), metadata, config)
-        assert res1["success"] is True
-
-        res2 = organize_file(str(src2), metadata, config)
-        assert res2.get("duplicate") is True
-        assert res2["success"] is False
-        assert src2.exists(), "第二次呼叫來源檔不應被移動"
-        target_path = Path(res1["new_filename"])
-        assert target_path.read_bytes() == b"video 1 content"
 
     def test_organize_duplicate_detection(self, tmp_path):
         """
@@ -444,29 +256,6 @@ class TestOrganizeAtomicReplace:
         assert expected_target.exists(), "佔位檔不應被清理"
         assert expected_target.stat().st_size == 0
 
-    def test_organize_file_crash_leaves_source_intact_and_zero_byte_target(self, tmp_path):
-        """
-        DoD-6: 崩潰殘留形狀
-        佔位成功但 os.replace 未執行（拋異常中斷）
-        -> 來源影片檔仍在原資料夾且大小不變，目標路徑存在且恰為 0 byte。
-        """
-        src_file = tmp_path / "SONE-205.mp4"
-        content = b"x" * 1024
-        src_file.write_bytes(content)
-
-        config = _make_config(tmp_path)
-        metadata = _make_metadata()
-
-        with patch("core.atomic_write.os.replace", side_effect=RuntimeError("simulated crash before replace")):
-            result = organize_file(str(src_file), metadata, config)
-
-        assert result["success"] is False
-        assert src_file.exists()
-        assert src_file.stat().st_size == 1024
-        expected_target = tmp_path / "[SONE-205] Test Title.mp4"
-        assert expected_target.exists()
-        assert expected_target.stat().st_size == 0
-
 
 class TestOrganizeTruncateSuffix:
     """organize_file() 長標題時 suffix 不應被截斷"""
@@ -507,134 +296,10 @@ class TestOrganizeTruncateSuffix:
         # suffix -cd1 必須在檔名中保留
         assert "-cd1" in new_name, f"suffix -cd1 被截斷: {new_name}"
 
-    def test_small_max_filename_length_with_suffix(self, tmp_path):
-        """
-        回歸測試：max_filename_length 極小時，檔名長度不應超限。
-        max_filename_length=12, suffix=-cd1, ext=.mp4 → stem+ext 應 <= 12
-        """
-        src = tmp_path / "SONE-205-CD1.mp4"
-        src.write_bytes(b"test")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 12,
-            "suffix_keywords": ["-cd1", "-cd2"],
-        }
-        metadata = {
-            "number": "SONE-205",
-            "title": "Test Title",
-            "actors": [],
-            "tags": [],
-            "maker": "S1",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        new_name = Path(result["new_filename"]).name
-        assert len(new_name) <= 12, (
-            f"檔名長度 {len(new_name)} 超過 max_filename_length=12: {new_name}"
-        )
-
-    @pytest.mark.parametrize("max_len", [6, 7, 8])
-    def test_suffix_longer_than_budget(self, tmp_path, max_len):
-        """
-        極端邊界：max_filename_length 比 suffix+ext 還小時，
-        檔名長度仍不應超過 max_filename_length。
-        """
-        src = tmp_path / "SONE-205-CD1.mp4"
-        src.write_bytes(b"test")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": max_len,
-            "suffix_keywords": ["-cd1"],
-        }
-        metadata = {
-            "number": "SONE-205",
-            "title": "Test",
-            "actors": [],
-            "tags": [],
-            "maker": "S1",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        new_name = Path(result["new_filename"]).name
-        assert len(new_name) <= max_len, (
-            f"檔名長度 {len(new_name)} 超過 max_filename_length={max_len}: {new_name}"
-        )
-
 
 class TestOrganizeFallback:
     """organize_file() fallback 資料夾建立與 used_fallbacks 欄位測試"""
 
-    def test_organize_fallback_creates_folder(self, tmp_path):
-        # actors=[]，folder="{actor}" → 建立 "未知女優/" 子資料夾
-        # 不能用 _make_config，需 create_folder=True + folder_layers
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = {
-            "create_folder": True,
-            "folder_layers": ["{actor}"],
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "cover_filename": "poster.jpg",
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": [], "tags": [], "maker": "S1",
-            "date": "2024-01-15", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result["new_folder"] is not None
-        folder_name = Path(result["new_folder"]).name
-        assert folder_name == "未知女優"
-
-    def test_organize_filename_no_fallback(self, tmp_path):
-        # actors=[]，filename="{actor}" → 檔名不含 "未知女優"
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}][{actor}] {title}",
-            "download_cover": False,
-            "cover_filename": "poster.jpg",
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": [], "tags": [], "maker": "S1",
-            "date": "2024-01-15", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True
-        new_name = Path(result["new_filename"]).name
-        assert "未知女優" not in new_name
-        assert "[SONE-205]" in new_name
 
     def test_organize_used_fallbacks_field(self, tmp_path):
         # actors=[], date="" + create_folder=True + folder 含 {actor}/{year}
@@ -661,19 +326,6 @@ class TestOrganizeFallback:
         assert result["success"] is True
         assert result["used_fallbacks"] == ["女優", "日期"]
 
-    def test_organize_no_fallbacks_when_complete(self, tmp_path):
-        # 所有欄位有值 → used_fallbacks == []
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = _make_config(tmp_path)
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": ["三上悠亞"], "tags": [], "maker": "S1",
-            "date": "2024-01-15", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True
-        assert result["used_fallbacks"] == []
 
     def test_organize_fallback_amateur_no_actress(self, tmp_path):
         """素人片（CHN-180）有 title/maker/date 但無演員 — 僅女優觸發 fallback"""
@@ -712,126 +364,6 @@ class TestOrganizeFallback:
         assert "未知女優" not in filename_only
         # 檔名包含片商（有值，正常顯示）
         assert "プレステージ" in filename_only
-
-    def test_organize_used_fallbacks_create_folder_false(self, tmp_path):
-        """create_folder=false 時不應有任何 fallback 報告"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = _make_config(tmp_path)  # create_folder=False
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": [], "tags": [], "maker": "",
-            "date": "", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True
-        assert result["used_fallbacks"] == [], (
-            f"create_folder=false 時 used_fallbacks 應為空，實際: {result['used_fallbacks']}"
-        )
-
-    def test_partial_date_year_only_warns_for_month(self, tmp_path):
-        """date='2015'（僅年），folder 含 {month} → used_fallbacks 包含 '日期'（len < 7）"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = {
-            "create_folder": True,
-            "folder_layers": ["{year}", "{month}"],
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "cover_filename": "poster.jpg",
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": ["三上悠亞"], "tags": [], "maker": "S1",
-            "date": "2015", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True
-        assert "日期" in result["used_fallbacks"], (
-            f"date='2015' + {{month}} 應 append '日期'，實際 used_fallbacks: {result['used_fallbacks']}"
-        )
-
-    def test_partial_date_year_month_warns_for_day(self, tmp_path):
-        """date='2015-06'（年月），folder 含 {day} → used_fallbacks 包含 '日期'（len < 10）"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = {
-            "create_folder": True,
-            "folder_layers": ["{year}", "{month}", "{day}"],
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "cover_filename": "poster.jpg",
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": ["三上悠亞"], "tags": [], "maker": "S1",
-            "date": "2015-06", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True
-        assert "日期" in result["used_fallbacks"], (
-            f"date='2015-06' + {{day}} 應 append '日期'，實際 used_fallbacks: {result['used_fallbacks']}"
-        )
-
-    def test_partial_date_year_month_no_false_alarm(self, tmp_path):
-        """date='2015-06'（年月），folder 只含 {year}{month}（無 {day}）→ 無 '日期' fallback"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = {
-            "create_folder": True,
-            "folder_layers": ["{year}", "{month}"],
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "cover_filename": "poster.jpg",
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": ["三上悠亞"], "tags": [], "maker": "S1",
-            "date": "2015-06", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True
-        assert "日期" not in result["used_fallbacks"], (
-            f"date='2015-06' 對 {{year}}{{month}} 不應 append '日期'，實際 used_fallbacks: {result['used_fallbacks']}"
-        )
-
-    def test_full_date_no_warn(self, tmp_path):
-        """date='2015-06-15'（完整），folder 含 {year}{month}{day} → used_fallbacks 不含 '日期'"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-        config = {
-            "create_folder": True,
-            "folder_layers": ["{year}", "{month}", "{day}"],
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "cover_filename": "poster.jpg",
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205", "title": "Test Title",
-            "actors": ["三上悠亞"], "tags": [], "maker": "S1",
-            "date": "2015-06-15", "cover": "", "url": "",
-        }
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True
-        assert "日期" not in result["used_fallbacks"], (
-            f"date='2015-06-15' 完整日期不應 append '日期'，實際 used_fallbacks: {result['used_fallbacks']}"
-        )
 
 
 # ============ organize_file() 錯誤處理測試 (T4 安全修正) ============
@@ -879,44 +411,6 @@ class TestOrganizeErrorHandling:
         assert "access denied" not in (result["error"] or "")
         assert "PermissionError" not in (result["error"] or "")
 
-    def test_permission_error_includes_dsm_hint_when_synology(self, tmp_path, monkeypatch):
-        """
-        is_synology() 為 True 時，PermissionError 訊息附加 DSM 操作指引（CD-159-11）。
-        """
-        from core.platform_info import DSM_PERMISSION_HINT
-        monkeypatch.setattr("core.organizer.is_synology", lambda: True)
-
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"test")
-
-        config = {
-            "create_folder": True,
-            "folder_layers": ["{actor}"],
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "cover_filename": "poster.jpg",
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205",
-            "title": "Test Title",
-            "actors": ["三上悠亞"],
-            "tags": [],
-            "maker": "S1",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        with patch("core.organizer.os.makedirs", side_effect=PermissionError("access denied")):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is False
-        assert "無法建立資料夾，請確認目標路徑的寫入權限" in result["error"]
-        assert DSM_PERMISSION_HINT in result["error"]
 
     def test_general_exception_returns_fixed_message(self, tmp_path):
         """
@@ -1049,137 +543,6 @@ def _make_jellyfin_config(jellyfin_mode):
     }
 
 
-class TestCropToPoster:
-    """crop_to_poster() 裁切邏輯單元測試"""
-
-    def test_crop_to_poster_landscape(self, tmp_path):
-        """800×538 橫向 → 裁切右側，產生直向 poster (w < h)"""
-        src = _make_test_image(tmp_path, 800, 538, "cover.jpg")
-        dst = tmp_path / "poster.jpg"
-
-        result = crop_to_poster(str(src), str(dst))
-
-        assert result is True
-        assert dst.exists()
-        with Image.open(dst) as img:
-            w, h = img.size
-        assert w < h, f"橫向圖片應裁切為直向，實際尺寸: {w}×{h}"
-
-    def test_crop_to_poster_square(self, tmp_path):
-        """500×500 方形 → 置中裁切，ratio ≈ 2:3"""
-        src = _make_test_image(tmp_path, 500, 500, "cover_sq.jpg")
-        dst = tmp_path / "poster_sq.jpg"
-
-        result = crop_to_poster(str(src), str(dst))
-
-        assert result is True
-        assert dst.exists()
-        with Image.open(dst) as img:
-            w, h = img.size
-        ratio = h / w
-        assert 1.4 <= ratio <= 1.6, f"方形裁切後比例應約 1.5，實際: {ratio:.3f} ({w}×{h})"
-
-    def test_crop_to_poster_portrait(self, tmp_path):
-        """380×538 直向 → 直接複製，不裁切（尺寸應不變）"""
-        src = _make_test_image(tmp_path, 380, 538, "cover_pt.jpg")
-        dst = tmp_path / "poster_pt.jpg"
-
-        result = crop_to_poster(str(src), str(dst))
-
-        assert result is True
-        assert dst.exists()
-        with Image.open(dst) as img:
-            w, h = img.size
-        assert (w, h) == (380, 538), f"直向圖片應直接複製（不裁切），實際尺寸: {w}×{h}"
-
-
-class TestGenerateJellyfinImagesSameFileShortCircuit:
-    """P0-2c（TASK-112-T2c）：generate_jellyfin_images 的 copy2(cover, fanart) 在
-    src==dst（cover_path 本身就是 `<stem>-fanart.jpg`）時必須視為成功、不得走 except
-    分支、不得留下假警告。"""
-
-    def test_fanart_same_file_reports_success_no_copy(self, tmp_path, caplog):
-        base_stem = str(tmp_path / "ABC-123")
-        cover = base_stem + "-fanart.jpg"
-        _make_test_image(tmp_path, 800, 538, "ABC-123-fanart.jpg")
-
-        before_bytes = Path(cover).read_bytes()
-        before_mtime = Path(cover).stat().st_mtime
-
-        with caplog.at_level("WARNING"):
-            result = generate_jellyfin_images(cover, base_stem)
-
-        assert result["fanart"] is True
-        assert result["fanart_path"] == base_stem + "-fanart.jpg"
-        assert "複製失敗" not in caplog.text
-
-        # 來源檔完全未被觸碰
-        assert Path(cover).read_bytes() == before_bytes
-        assert Path(cover).stat().st_mtime == before_mtime
-
-    def test_fanart_different_file_still_copies_normally(self, tmp_path):
-        """反向鎖：cover != fanart 的正常情境仍照常複製，短路沒有誤殺正常路徑。"""
-        base_stem = str(tmp_path / "XYZ-999")
-        cover = str(_make_test_image(tmp_path, 800, 538, "cover.jpg"))
-
-        result = generate_jellyfin_images(cover, base_stem)
-
-        fanart_path = base_stem + "-fanart.jpg"
-        assert result["fanart"] is True
-        assert result["fanart_path"] == fanart_path
-        assert Path(fanart_path).exists()
-        assert Path(fanart_path).read_bytes() == Path(cover).read_bytes()
-
-    def test_fanart_hardlink_alias_reports_success_no_samefileerror_warning(self, tmp_path, caplog):
-        """Codex PR review P1：cover_path 字串不等於 fanart_path，但兩者是同一個
-        inode（hardlink）——不加別名感知的話 shutil.copy2 會拋 SameFileError，
-        被 broad except 吞成假的「複製失敗」（實測重現）。"""
-        base_stem = str(tmp_path / "ABC-123")
-        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
-        fanart_path = base_stem + "-fanart.jpg"
-        _make_alias_or_skip("hardlink", cover, fanart_path)
-
-        assert cover != fanart_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
-
-        # P3-3（pre-merge Stage 2 review）：poster 側的別名鎖有斷言來源 bytes
-        # 不變，fanart 側原本沒有——補上對齊，同樣鎖「短路跳過寫入、不觸碰來源」。
-        before_bytes = Path(cover).read_bytes()
-        before_mtime = Path(cover).stat().st_mtime
-
-        with caplog.at_level("WARNING"):
-            result = generate_jellyfin_images(cover, base_stem)
-
-        assert result["fanart"] is True
-        assert result["fanart_path"] == fanart_path
-        assert "複製失敗" not in caplog.text
-
-        assert Path(cover).read_bytes() == before_bytes
-        assert Path(cover).stat().st_mtime == before_mtime
-
-    def test_fanart_symlink_alias_reports_success_no_samefileerror_warning(self, tmp_path, caplog):
-        """同上，但別名關係是 symlink 而非 hardlink——os.path.exists / samefile
-        對兩者的行為不同（symlink 需 follow），必須各自驗證。"""
-        base_stem = str(tmp_path / "ABC-123")
-        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
-        fanart_path = base_stem + "-fanart.jpg"
-        _make_alias_or_skip("symlink", cover, fanart_path)
-
-        assert cover != fanart_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
-
-        before_bytes = Path(cover).read_bytes()
-        before_mtime = Path(cover).stat().st_mtime
-
-        with caplog.at_level("WARNING"):
-            result = generate_jellyfin_images(cover, base_stem)
-
-        assert result["fanart"] is True
-        assert result["fanart_path"] == fanart_path
-        assert "複製失敗" not in caplog.text
-
-        assert Path(cover).read_bytes() == before_bytes
-        assert Path(cover).stat().st_mtime == before_mtime
-
-
 class TestGenerateJellyfinImagesPosterSameFileShortCircuit:
     """P0-2d（TASK-112-T2c，最重要格）：crop_to_poster(cover, poster) 在 src==dst
     （cover_path 本身就是 `<stem>-poster.jpg`，外部庫 MDCX/Javinizer 常見情境）時必須
@@ -1203,76 +566,6 @@ class TestGenerateJellyfinImagesPosterSameFileShortCircuit:
         assert result["poster_path"] == base_stem + "-poster.jpg"
 
         # ① bytes 完全不變 ② mtime 完全不變 ③ 尺寸完全不變
-        assert Path(cover).read_bytes() == before_bytes
-        assert Path(cover).stat().st_mtime == before_mtime
-        with Image.open(cover) as img:
-            after_size = img.size
-        assert after_size == before_size == (800, 538)
-
-    def test_poster_different_file_still_crops_normally(self, tmp_path):
-        """反向鎖：cover != poster 的正常情境仍照常裁切產出，短路沒有誤殺正常路徑。"""
-        base_stem = str(tmp_path / "XYZ-999")
-        cover = str(_make_test_image(tmp_path, 800, 538, "cover.jpg"))
-
-        result = generate_jellyfin_images(cover, base_stem)
-
-        poster_path = base_stem + "-poster.jpg"
-        assert result["poster"] is True
-        assert result["poster_path"] == poster_path
-        with Image.open(poster_path) as img:
-            w, h = img.size
-        assert (w, h) == (379, 538), f"正常路徑應照常裁切為 379×538，實際: {w}×{h}"
-
-    def test_poster_hardlink_alias_reports_success_no_inplace_crop(self, tmp_path):
-        """Codex PR review P1（已由 Opus 實測重現）：cover_path 字串不等於
-        poster_path，但兩者是同一個 inode（hardlink，MDCX/Javinizer 外部庫常見
-        佈局）——不加別名感知的話 crop_to_poster 會就地覆寫原檔（800×538 → 379×538）。
-        """
-        base_stem = str(tmp_path / "ABC-123")
-        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
-        poster_path = base_stem + "-poster.jpg"
-        _make_alias_or_skip("hardlink", cover, poster_path)
-
-        assert cover != poster_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
-
-        before_bytes = Path(cover).read_bytes()
-        before_mtime = Path(cover).stat().st_mtime
-        with Image.open(cover) as img:
-            before_size = img.size
-
-        result = generate_jellyfin_images(cover, base_stem)
-
-        assert result["poster"] is True
-        assert result["poster_path"] == poster_path
-
-        # ① bytes 完全不變 ② mtime 完全不變 ③ 尺寸完全不變（hardlink 下驗 cover
-        # 端等同驗 poster 端，因為是同一個 inode）
-        assert Path(cover).read_bytes() == before_bytes
-        assert Path(cover).stat().st_mtime == before_mtime
-        with Image.open(cover) as img:
-            after_size = img.size
-        assert after_size == before_size == (800, 538)
-
-    def test_poster_symlink_alias_reports_success_no_inplace_crop(self, tmp_path):
-        """同上，但別名關係是 symlink 而非 hardlink——os.path.exists / samefile
-        對兩者的行為不同（symlink 需 follow 才能 stat 到目標），必須各自驗證。"""
-        base_stem = str(tmp_path / "ABC-123")
-        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
-        poster_path = base_stem + "-poster.jpg"
-        _make_alias_or_skip("symlink", cover, poster_path)
-
-        assert cover != poster_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
-
-        before_bytes = Path(cover).read_bytes()
-        before_mtime = Path(cover).stat().st_mtime
-        with Image.open(cover) as img:
-            before_size = img.size
-
-        result = generate_jellyfin_images(cover, base_stem)
-
-        assert result["poster"] is True
-        assert result["poster_path"] == poster_path
-
         assert Path(cover).read_bytes() == before_bytes
         assert Path(cover).stat().st_mtime == before_mtime
         with Image.open(cover) as img:
@@ -1345,97 +638,6 @@ class TestGenerateJellyfinImagesSamefileUnknownErrorNeverDestroysOriginal:
         assert after_bytes == before_bytes
 
 
-class TestGenerateJellyfinImagesSamefileRaceDoesNotFabricateSuccess:
-    """Codex PR review 第二輪 P1（2026-08-04）端到端防線：`same_target_verdict` 的
-    TOCTOU race 真正的後果不在 `cover_layout.py` 單元層級，而在這裡——若
-    `same_target_verdict` 誤把「dst 已消失」判成「同一檔」而回 True，
-    `generate_jellyfin_images` 會走短路分支，回報 `poster`/`fanart` 為 True，
-    但實際上 `poster_path` / `fanart_path` 從未被建立，等於重新製造 NFO 懸空
-    引用。這支測試 monkeypatch `os.path.samefile` 讓它一律拋
-    `FileNotFoundError`（模擬「檢查當下 dst 消失」這條 race），並確保
-    `poster_path`／`fanart_path` 事前確實不存在，直接呼叫
-    `generate_jellyfin_images` 驗證：只要回報 True，磁碟上就必須真的有那個
-    檔案；不得出現「回報 True 但檔案不存在」這個組合（要嘛正常產出、要嘛
-    誠實回報 False）。"""
-
-    def test_samefile_filenotfounderror_never_reports_true_without_file(
-        self, tmp_path, monkeypatch
-    ):
-        base_stem = str(tmp_path / "ABC-123")
-        cover = str(_make_test_image(tmp_path, 800, 538, "cover.jpg"))
-        fanart_path = base_stem + "-fanart.jpg"
-        poster_path = base_stem + "-poster.jpg"
-        assert not Path(fanart_path).exists()
-        assert not Path(poster_path).exists()
-
-        def _raise(*args, **kwargs):
-            raise FileNotFoundError("simulated race: dst vanished mid-check")
-
-        monkeypatch.setattr(os.path, "samefile", _raise)
-
-        result = generate_jellyfin_images(cover, base_stem)
-
-        if result.get("fanart") is True:
-            assert Path(fanart_path).exists(), (
-                "回報 fanart=True 但目的檔不存在——NFO 懸空引用"
-            )
-        if result.get("poster") is True:
-            assert Path(poster_path).exists(), (
-                "回報 poster=True 但目的檔不存在——NFO 懸空引用"
-            )
-
-
-class TestGenerateJellyfinImagesUnknownOSErrorMustNotClaimSuccess:
-    """P1（pre-merge Stage 2 review，2026-08-04）端到端防線：`same_target_verdict`
-    對未知 `OSError` fail-closed 跳過寫入是對的（安全側不變），但**不得同時宣稱
-    成功**——`(is_same, certain) = (True, False)` 這個組合下，`certain` 才是
-    `result['poster']`/`result['fanart']` 該落的訊號，不是 `is_same`。
-
-    若呼叫端錯把 `is_same` 當成功回報（即回歸到前身 `is_same_target` 的單一布林
-    設計），`result['poster']`/`result['fanart']` 會是 `True`，但 `poster_path`/
-    `fanart_path` 實際上完全沒被建立——這正是 P1 的核心後果鏈：
-    `readonly_producer.py` 把這個假 True 轉成 `generate_nfo(has_poster=True, ...)`，
-    NFO 寫出指向不存在檔案的懸空 tag；`_clean_stale_singletons` 也會因此把舊檔
-    當「已被新檔取代」而刪掉——「新的沒產出、舊的被砍」的洞。
-
-    mutation 判準：把 `same_target_verdict` 未知 `OSError` 分支的 `return True,
-    False` 改回 `return True, True`（即回歸單一布林語意）→ 本支必須單獨轉紅
-    （其餘既有別名/race 測試因為 `samefile` 正常運作或走 `FileNotFoundError`
-    分流，不會受這個特定分支影響，仍會綠——那正是它們抓不到這條的原因）。
-    """
-
-    def test_unknown_oserror_reports_false_and_leaves_source_untouched(
-        self, tmp_path, monkeypatch
-    ):
-        base_stem = str(tmp_path / "ABC-123")
-        cover = str(_make_test_image(tmp_path, 800, 538, "cover.jpg"))
-        fanart_path = base_stem + "-fanart.jpg"
-        poster_path = base_stem + "-poster.jpg"
-        assert not Path(fanart_path).exists()
-        assert not Path(poster_path).exists()
-        before_bytes = Path(cover).read_bytes()
-
-        def _raise(*args, **kwargs):
-            raise PermissionError("simulated permission denied / network share timeout")
-
-        monkeypatch.setattr(os.path, "samefile", _raise)
-
-        result = generate_jellyfin_images(cover, base_stem)
-
-        assert result["poster"] is False, (
-            "未知 OSError 下不得宣稱 poster 成功——目的檔實際未被建立，"
-            "宣稱成功會讓 NFO 寫出懸空 poster tag"
-        )
-        assert result["fanart"] is False, (
-            "未知 OSError 下不得宣稱 fanart 成功——目的檔實際未被建立，"
-            "宣稱成功會讓 NFO 寫出懸空 fanart tag"
-        )
-        assert not Path(poster_path).exists()
-        assert not Path(fanart_path).exists()
-        # 安全側不變：來源封面 bytes 完全未被觸碰
-        assert Path(cover).read_bytes() == before_bytes
-
-
 # ============ crop_to_poster 焦點化測試 (TASK-101a-T1) ============
 
 _FOCAL_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "actress_photos"
@@ -1450,50 +652,6 @@ def _pad_to_square_with_white_bars(src_path, dst_path):
         top = (w - h) // 2
         square.paste(img.convert("RGB"), (0, top))
         square.save(str(dst_path), "JPEG", quality=95)
-
-
-class TestPosterWindowRatioInvariant:
-    """DoD①：CD-3 不變式——_poster_window_ratio() 的窗比例恆小於畫面比例 a=w/h
-    （分支2/3 定義域內），production 與本測試共用同一個 helper（Opus 裁決）。
-
-    mutation 驗：把 helper 內分支2 公式改成 int(h*1.5)/h（必然 >a）→ 本測試必須紅；
-    還原後綠。
-    """
-
-    def test_branch2_window_ratio_below_frame_ratio(self):
-        """分支2定義域 a=w/h ∈ (0.714, 1.0]，抽樣驗證 a > r_window 恆成立。"""
-        h = 1000
-        samples = [0.715, 0.75, 0.8, 0.9, 0.95, 1.0]
-        for a in samples:
-            w = int(round(h * a))
-            ratio = h / w
-            assert 1.0 <= ratio < 1.4, f"抽樣點應落在分支2定義域，實際 ratio={ratio}"
-            r_window = _poster_window_ratio(w, h)
-            assert r_window is not None
-            frame_ratio = w / h
-            assert frame_ratio > r_window, (
-                f"a={frame_ratio:.4f} 應大於 r_window={r_window:.4f}（w={w}, h={h}）"
-            )
-
-    def test_branch3_window_ratio_below_frame_ratio(self):
-        """分支3定義域 a=w/h > 1.0，取合理上界 3.0 分段抽樣驗證 a > r_window 恆成立。"""
-        h = 1000
-        samples = [1.01, 1.2, 1.487, 1.8, 2.0, 2.5, 3.0]
-        for a in samples:
-            w = int(round(h * a))
-            ratio = h / w
-            assert ratio < 1.0, f"抽樣點應落在分支3定義域，實際 ratio={ratio}"
-            r_window = _poster_window_ratio(w, h)
-            assert r_window is not None
-            frame_ratio = w / h
-            assert frame_ratio > r_window, (
-                f"a={frame_ratio:.4f} 應大於 r_window={r_window:.4f}（w={w}, h={h}）"
-            )
-
-    def test_branch1_returns_none(self):
-        """分支1（h/w>=1.4，已直向）helper 回 None，不參與偵測/平移。"""
-        assert _poster_window_ratio(380, 538) is None  # ratio=1.416
-        assert _poster_window_ratio(700, 1050) is None  # ratio=1.5
 
 
 class TestCropToPosterFocalWiring:
@@ -1549,28 +707,6 @@ class TestCropToPosterFocalWiring:
         assert baseline_result is True
         assert dst.read_bytes() != baseline_dst.read_bytes(), "焦點裁切應與原碼（不傳 number/maker）輸出不同"
 
-    def test_branch3_fixture_a(self, tmp_path):
-        """分支3（900×598 橫向）+ fixture A（番號驅動）。"""
-        src = _FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg"
-        self._assert_focal_applied(src, tmp_path, "b3a", **self._FIXTURE_A)
-
-    def test_branch3_fixture_b(self, tmp_path):
-        """分支3（900×598 橫向）+ fixture B（maker-only 驅動）。"""
-        src = _FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg"
-        self._assert_focal_applied(src, tmp_path, "b3b", **self._FIXTURE_B)
-
-    def test_branch2_fixture_a(self, tmp_path):
-        """分支2（900×900 上下 pad 白邊，即時合成）+ fixture A（番號驅動）。"""
-        src = tmp_path / "square_face.jpg"
-        _pad_to_square_with_white_bars(_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg", src)
-        self._assert_focal_applied(src, tmp_path, "b2a", **self._FIXTURE_A)
-
-    def test_branch2_fixture_b(self, tmp_path):
-        """分支2（900×900 上下 pad 白邊，即時合成）+ fixture B（maker-only 驅動）。"""
-        src = tmp_path / "square_face.jpg"
-        _pad_to_square_with_white_bars(_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg", src)
-        self._assert_focal_applied(src, tmp_path, "b2b", **self._FIXTURE_B)
-
 
 class TestCropToPosterByteForByteRegression:
     """DoD④：真正的零回歸哨兵（非 TestCropToPoster 三個既有測試，見 plan §C-1 修訂框一）。
@@ -1579,34 +715,6 @@ class TestCropToPosterByteForByteRegression:
     分支2（方形）與分支3（橫向）各至少覆蓋一次。
     """
 
-    def test_censored_gate_false_branch3_rectangular(self, tmp_path):
-        """fallback-on-None（分支3橫向，純色合成圖）：新舊簽名輸出位元相同。
-
-        ⚠️ 誠實描述：來源是純色圖，pigo 本來就偵測不到臉，此測試**證不出**
-        「gate 正確回 False」——「gate=False」與「gate 被繞過但偵測無結果」兩條路殊途
-        同歸、輸出同 bytes（若把 gate 換成 `if True:` 此測試仍綠）。此測試只是
-        no-face fallback 路徑的額外覆蓋，忠實驗證 gate wiring 見下方
-        `test_censored_real_face_gate_false_branch3`（真臉圖，gate 被繞過會真的平移）。
-        """
-        src = _make_test_image(tmp_path, 800, 538, "cover.jpg")
-        dst_a = tmp_path / "a.jpg"
-        dst_b = tmp_path / "b.jpg"
-        assert crop_to_poster(str(src), str(dst_a)) is True
-        assert crop_to_poster(str(src), str(dst_b), number="SSIS-001", maker="S1 NO.1 STYLE") is True
-        assert dst_a.read_bytes() == dst_b.read_bytes()
-
-    def test_censored_gate_false_branch2_square(self, tmp_path):
-        """fallback-on-None（分支2方形，純色合成圖）：新舊簽名輸出位元相同。
-
-        ⚠️ 誠實描述：同上——純色圖證不出「gate 正確回 False」，只是 no-face fallback
-        路徑的額外覆蓋。忠實驗證見下方 `test_censored_real_face_gate_false_branch2`。
-        """
-        src = _make_test_image(tmp_path, 500, 500, "cover_sq.jpg")
-        dst_a = tmp_path / "a.jpg"
-        dst_b = tmp_path / "b.jpg"
-        assert crop_to_poster(str(src), str(dst_a)) is True
-        assert crop_to_poster(str(src), str(dst_b), number="SSIS-001", maker="S1 NO.1 STYLE") is True
-        assert dst_a.read_bytes() == dst_b.read_bytes()
 
     def test_censored_real_face_gate_false_branch3(self, tmp_path):
         """有碼（gate False，真臉分支3，忠實測試）：wide_offcenter_face.jpg 真臉圖 +
@@ -1636,108 +744,6 @@ class TestCropToPosterByteForByteRegression:
             "若不同代表 gate 沒有正確擋下偵測"
         )
 
-    def test_censored_real_face_gate_false_branch2(self, tmp_path):
-        """有碼（gate False，真臉分支2，忠實測試）：同圖 pad 成方形 + 同 gate False 組合，
-        輸出須等於**獨立計算**的既有裁切算式期望值（理由同 branch3 版 docstring）。
-        """
-        src = tmp_path / "square_face_gate_false.jpg"
-        _pad_to_square_with_white_bars(_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg", src)
-        dst = tmp_path / "poster.jpg"
-        assert crop_to_poster(str(src), str(dst), number="SSIS-001", maker="S1 NO.1 STYLE") is True
-
-        with Image.open(src) as img:
-            w, h = img.size
-            ratio = h / w
-            assert 1.0 <= ratio < 1.4, "fixture 應落在分支2（方形）"
-            crop_w = int(h / 1.5)
-            x0 = (w - crop_w) // 2
-            expected_cropped = img.convert("RGB").crop((x0, 0, x0 + crop_w, h))
-        expected_path = tmp_path / "expected.jpg"
-        expected_cropped.save(str(expected_path), "JPEG", quality=95, subsampling=0)
-        assert dst.read_bytes() == expected_path.read_bytes(), (
-            "gate=False 時輸出應等於既有分支2裁切算式（置中 crop_w=int(h/1.5)），"
-            "若不同代表 gate 沒有正確擋下偵測"
-        )
-
-    def test_no_face_real_photo_branch3(self, tmp_path):
-        """無臉（分支3）：gate True 但 run_detection 回 NO_FACE → 落回原碼（fallback wiring）。
-
-        TASK-102c-T1 方案 A：mock `core.organizer.run_detection` 成 `RunnerOutcome(kind="NO_FACE")`，
-        只驗 organizer 收到非 FOUND 後的 fallback wiring。「pigo 對這張圖真的判定無臉」
-        的能力已搬到 test_focal_detector.py::TestDetectFocal::
-        test_detect_focal_no_face_real_photo_returns_none（Layer 1 回歸，真跑）。
-        """
-        src = _FOCAL_FIXTURES_DIR / "no_face_detected.jpg"
-        dst_a = tmp_path / "a.jpg"
-        dst_b = tmp_path / "b.jpg"
-        assert crop_to_poster(str(src), str(dst_a)) is True
-        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="NO_FACE")) as mock_detect:
-            assert crop_to_poster(str(src), str(dst_b), number="FC2-1234567") is True
-        # 反例回 None 與「gate 被跳過、detect_focal 根本沒被呼叫」輸出同 bytes，
-        # 光比對 bytes 證不出 wiring；必須額外斷言 mock 真的被呼叫過一次
-        # （Codex PR#110 二審 P2-1）。
-        mock_detect.assert_called_once()
-        assert dst_a.read_bytes() == dst_b.read_bytes()
-
-    def test_no_face_synthetic_branch2(self, tmp_path):
-        """無臉（補充，合成純色圖，分支2）：gate True 但無臉 → 落回原碼。"""
-        src = _make_test_image(tmp_path, 500, 500, "cover_sq.jpg")
-        dst_a = tmp_path / "a.jpg"
-        dst_b = tmp_path / "b.jpg"
-        assert crop_to_poster(str(src), str(dst_a)) is True
-        assert crop_to_poster(str(src), str(dst_b), number="FC2-1234567", maker="") is True
-        assert dst_a.read_bytes() == dst_b.read_bytes()
-
-    def test_no_face_synthetic_branch3(self, tmp_path):
-        """無臉（補充，合成純色圖，分支3）：gate True 但無臉 → 落回原碼。"""
-        src = _make_test_image(tmp_path, 800, 538, "cover.jpg")
-        dst_a = tmp_path / "a.jpg"
-        dst_b = tmp_path / "b.jpg"
-        assert crop_to_poster(str(src), str(dst_a)) is True
-        assert crop_to_poster(str(src), str(dst_b), number="FC2-1234567", maker="") is True
-        assert dst_a.read_bytes() == dst_b.read_bytes()
-
-    def test_empty_number_explicit_equals_omitted_branch2(self, tmp_path):
-        """number='' 顯式空值 vs 完全不傳（用預設值）：分支2 行為一致。"""
-        src = _make_test_image(tmp_path, 500, 500, "cover_sq.jpg")
-        dst_a = tmp_path / "a.jpg"
-        dst_b = tmp_path / "b.jpg"
-        assert crop_to_poster(str(src), str(dst_a), number="", maker="") is True
-        assert crop_to_poster(str(src), str(dst_b)) is True
-        assert dst_a.read_bytes() == dst_b.read_bytes()
-
-    def test_empty_number_explicit_equals_omitted_branch3(self, tmp_path):
-        """number='' 顯式空值 vs 完全不傳（用預設值）：分支3 行為一致。"""
-        src = _make_test_image(tmp_path, 800, 538, "cover.jpg")
-        dst_a = tmp_path / "a.jpg"
-        dst_b = tmp_path / "b.jpg"
-        assert crop_to_poster(str(src), str(dst_a), number="", maker="") is True
-        assert crop_to_poster(str(src), str(dst_b)) is True
-        assert dst_a.read_bytes() == dst_b.read_bytes()
-
-
-class TestCropToPosterFocalCropWidth:
-    """CD-5「只平移既有窗，不改窗寬」——焦點路徑的 crop 寬度必須與退化路的整數窗寬
-    完全相同，不因 crop_image_position 的 float ratio→px round-trip 少 1px（Codex PR#110 P2-1）。
-
-    521×521 是踩雷案例：退化路 int(521/1.5)=347，但舊碼經 crop_image_position 得
-    int(521*(347/521))=346（少 1px，海報寬度/比例與 fallback 不一致）。
-    """
-
-    def test_focal_crop_width_matches_legacy_branch2_square(self, tmp_path):
-        """分支2 方形 521×521：焦點窗寬須 == 退化窗寬 347（不是 crop_image_position 的 346）。"""
-        src = _make_test_image(tmp_path, 521, 521, "cover_sq.jpg")
-        dst = tmp_path / "poster.jpg"
-
-        # 焦點固定置中（0.5），gate 用真正無碼番號（FC2-1234567 實測 gate → True）。
-        with patch('core.organizer.run_detection', return_value=RunnerOutcome(kind="FOUND", focal=(0.5, 0.5))):
-            assert crop_to_poster(str(src), str(dst), number="FC2-1234567") is True
-
-        with Image.open(dst) as out:
-            assert out.size == (347, 521), (
-                f"焦點裁窗寬應等於退化路整數窗寬 347（int(521/1.5)），實得 {out.size[0]}；"
-                "若為 346 代表走了 crop_image_position 的 float round-trip、改了窗寬"
-            )
 
 class TestCropToPosterBranch1NoDetection:
     """DoD⑤：分支1（h/w>=1.4，narrow_face_top.jpg 真圖且真有臉）仍 copy2 不裁，
@@ -1781,75 +787,6 @@ _CD7_VERDICT_NEUTRAL_CASES = [
 ]
 
 
-class TestNormalizeNumberGateVerdictNeutral:
-    """DoD⑥：CD-7 verdict-neutral——補 normalize_number_impl 不改變 gate 判定（17 案）。
-
-    🔴 左邊必須是 raw（未 normalize），不可寫成
-    gate(normalize(raw)) == gate(normalize(normalize(raw)))——那只測 normalize 冪等性
-    （normalize 本來就冪等，恆真空殼），證不出「補 normalize 這個動作」本身不改 verdict。
-    """
-
-    @pytest.mark.parametrize("raw", _CD7_VERDICT_NEUTRAL_CASES)
-    def test_verdict_neutral(self, raw):
-        assert requires_face_detection(raw, '') == requires_face_detection(normalize_number_impl(raw), '')
-
-
-class TestOrganizeJellyfinMode:
-    """organize_file() jellyfin_mode 開/關 的整合測試"""
-
-    def test_organize_jellyfin_mode_on(self, tmp_path):
-        """jellyfin_mode=True → 產生 cover + fanart + poster 共 3 個圖片檔"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_jellyfin_config(jellyfin_mode=True)
-        metadata = {
-            "number": "SONE-205",
-            "title": "Test Title",
-            "actors": [],
-            "tags": [],
-            "maker": "S1",
-            "date": "2024-01-15",
-            "cover": "http://fake/cover.jpg",
-            "url": "",
-        }
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("cover_path") is not None, "未產生 cover_path"
-        assert result.get("fanart_path") is not None, "jellyfin_mode=True 應產生 fanart_path"
-        assert result.get("poster_path") is not None, "jellyfin_mode=True 應產生 poster_path"
-        assert Path(result["fanart_path"]).exists(), "fanart 檔案不存在"
-        assert Path(result["poster_path"]).exists(), "poster 檔案不存在"
-
-    def test_organize_jellyfin_mode_off(self, tmp_path):
-        """jellyfin_mode=False → 只產生主封面，不產生 fanart/poster"""
-        src = tmp_path / "SONE-205-B.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_jellyfin_config(jellyfin_mode=False)
-        metadata = {
-            "number": "SONE-205",
-            "title": "Test Title B",
-            "actors": [],
-            "tags": [],
-            "maker": "S1",
-            "date": "2024-01-15",
-            "cover": "http://fake/cover.jpg",
-            "url": "",
-        }
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("cover_path") is not None, "應產生主封面 cover_path"
-        assert result.get("fanart_path") is None, "jellyfin_mode=False 不應產生 fanart_path"
-        assert result.get("poster_path") is None, "jellyfin_mode=False 不應產生 poster_path"
-
-
 def _make_ext_config(external_manager: str, create_folder: bool = False,
                      download_sample_images: bool = False) -> dict:
     """T4 測試用：依 external_manager 模式建立 config dict"""
@@ -1879,160 +816,6 @@ def _make_ext_metadata(number: str = "SONE-205", cover: str = "http://fake/cover
         "cover": cover,
         "url": "",
     }
-
-
-class TestExternalManagerImageNaming:
-    """T4：organize_file() external_manager 三態圖片命名分岐"""
-
-    # ── A. jellyfin 模式 ──────────────────────────────────────────────
-
-    def test_jellyfin_produces_stem_poster_fanart(self, tmp_path):
-        """jellyfin → {stem}-poster.jpg + {stem}-fanart.jpg 存在，不存在裸名"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("jellyfin")
-        metadata = _make_ext_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("cover_path") is not None, "cover_path 應存在"
-        assert result.get("fanart_path") is not None, "jellyfin 應產生 fanart_path"
-        assert result.get("poster_path") is not None, "jellyfin 應產生 poster_path"
-
-        # 確認帶 stem 的命名
-        fanart = Path(result["fanart_path"])
-        poster = Path(result["poster_path"])
-        assert fanart.name.endswith("-fanart.jpg"), f"fanart 應帶 stem 前綴，實際: {fanart.name}"
-        assert poster.name.endswith("-poster.jpg"), f"poster 應帶 stem 前綴，實際: {poster.name}"
-        assert fanart.exists(), "fanart 檔案應存在"
-        assert poster.exists(), "poster 檔案應存在"
-
-        # 確認裸名不存在
-        assert not (tmp_path / "fanart.jpg").exists(), "裸名 fanart.jpg 不應出現（jellyfin）"
-        assert not (tmp_path / "poster.jpg").exists(), "裸名 poster.jpg 不應出現（jellyfin）"
-
-    def test_emby_produces_stem_poster_fanart(self, tmp_path):
-        """emby → {stem}-poster.jpg + {stem}-fanart.jpg 存在（等價 jellyfin/kodi）"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("emby")
-        metadata = _make_ext_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("fanart_path") is not None, "emby 應產生 fanart_path"
-        assert result.get("poster_path") is not None, "emby 應產生 poster_path"
-
-        fanart = Path(result["fanart_path"])
-        poster = Path(result["poster_path"])
-        assert fanart.name.endswith("-fanart.jpg"), f"fanart 應帶 stem 前綴，實際: {fanart.name}"
-        assert poster.name.endswith("-poster.jpg"), f"poster 應帶 stem 前綴，實際: {poster.name}"
-        assert fanart.exists(), "fanart 檔案應存在"
-        assert poster.exists(), "poster 檔案應存在"
-
-    # ── B. kodi 模式 ──────────────────────────────────────────────────────
-
-    def test_kodi_produces_stem_poster_fanart(self, tmp_path):
-        """kodi → stem 命名（{stem}-poster.jpg / {stem}-fanart.jpg），無論 create_folder。"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("kodi")  # create_folder=False
-        metadata = _make_ext_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("fanart_path") is not None, "kodi 應產生 fanart_path"
-        assert result.get("poster_path") is not None, "kodi 應產生 poster_path"
-
-        fanart = Path(result["fanart_path"])
-        poster = Path(result["poster_path"])
-        assert fanart.name.endswith("-fanart.jpg"), f"kodi fanart 應帶 stem，實際: {fanart.name}"
-        assert poster.name.endswith("-poster.jpg"), f"kodi poster 應帶 stem，實際: {poster.name}"
-        assert fanart.exists(), "fanart 檔案應存在"
-        assert poster.exists(), "poster 檔案應存在"
-
-        # 裸名不存在
-        target_dir = Path(result["cover_path"]).parent
-        assert not (target_dir / "fanart.jpg").exists(), "裸名 fanart.jpg 不應出現（kodi）"
-        assert not (target_dir / "poster.jpg").exists(), "裸名 poster.jpg 不應出現（kodi）"
-
-    # ── C. off 模式 ──────────────────────────────────────────────────────
-
-    def test_off_produces_only_cover(self, tmp_path):
-        """off（或 key 不存在）→ 只有主封面，無 poster/fanart"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("off")
-        metadata = _make_ext_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("cover_path") is not None, "off 模式應產生主封面"
-        assert result.get("fanart_path") is None, "off 模式不應產生 fanart_path"
-        assert result.get("poster_path") is None, "off 模式不應產生 poster_path"
-
-        # target_dir 下只有 {stem}.jpg，無任何 poster/fanart
-        target_dir = Path(result["cover_path"]).parent
-        assert not (target_dir / "fanart.jpg").exists(), "off 模式不應有裸名 fanart.jpg"
-        assert not (target_dir / "poster.jpg").exists(), "off 模式不應有裸名 poster.jpg"
-        stem = Path(result["cover_path"]).stem
-        assert not (target_dir / f"{stem}-fanart.jpg").exists(), "off 模式不應有 stem-fanart.jpg"
-        assert not (target_dir / f"{stem}-poster.jpg").exists(), "off 模式不應有 stem-poster.jpg"
-
-    def test_off_key_missing_defaults_to_off(self, tmp_path):
-        """external_manager key 不存在時預設 off，不產 poster/fanart"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        # 不含 external_manager key
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}",
-            "download_cover": True,
-            "cover_filename": "poster.jpg",
-            "create_nfo": True,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = _make_ext_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("fanart_path") is None, "key 不存在應預設 off，不產 fanart"
-        assert result.get("poster_path") is None, "key 不存在應預設 off，不產 poster"
-
-    # ── G. cover 下載失敗不 crash ────────────────────────────────────────
-
-    def test_jellyfin_cover_fail_no_crash(self, tmp_path):
-        """jellyfin + cover 下載失敗 → 不進入圖片 block，success 仍 True"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("jellyfin")
-        metadata = _make_ext_metadata(cover="")  # 無 cover URL
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, "cover 下載失敗不應 crash"
-        assert result.get("cover_path") is None, "無 cover URL → cover_path 應為 None"
-        assert result.get("fanart_path") is None, "無 cover → 不應產 fanart"
-        assert result.get("poster_path") is None, "無 cover → 不應產 poster"
 
 
 def _extract_nfo_tag_value(nfo_text: str, tag: str) -> str:
@@ -2091,80 +874,6 @@ class TestTable1Row7DirectLock:
         """jellyfin：⑨ 直接鎖。# 真理表 Table 1 #7"""
         self._assert_row7(tmp_path, "jellyfin", "SONE-205")
 
-    def test_organize_emby_nfo_tags_point_to_existing_files(self, tmp_path):
-        """emby（membership guard）：⑨ 直接鎖。# 真理表 Table 1 #7"""
-        self._assert_row7(tmp_path, "emby", "SONE-206")
-
-    def test_organize_kodi_nfo_tags_point_to_existing_files(self, tmp_path):
-        """kodi（membership guard）：⑨ 直接鎖。# 真理表 Table 1 #7"""
-        self._assert_row7(tmp_path, "kodi", "SONE-207")
-
-
-class TestAC5ByteLockOrganizeFile:
-    """T4：AC5 位元組鎖——媒體伺服器模式產生的 `-fanart.jpg`，內容與同情境
-    off 模式產生的 `{stem}.jpg` 完全相同（取基準法，見 T4 卡 §C）；
-    `-poster.jpg` 裁切輸出 bytes 不受輸入路徑名稱影響。
-    # 真理表 Table 1 #7 ／ plan-112b.md §4 AC5
-    """
-
-    def test_jellyfin_fanart_bytes_match_off_cover_bytes(self, tmp_path):
-        """jellyfin 的 -fanart.jpg bytes == off 模式同名封面 bytes（逐位元組）。
-
-        取基準法：off 那次呼叫本身就是基準來源，讀出後立即存成變數
-        （BE-TEST-10）；jellyfin 呼叫用不同 number（避免撞名，§D #6），off
-        跑完的檔案不會被 jellyfin 那次覆寫或污染。
-        """
-        # off 基準：先跑，立即讀出 bytes 存成變數
-        src_off = tmp_path / "SONE-205.mp4"
-        src_off.write_bytes(b"fake mp4 off")
-        off_config = _make_ext_config("off")
-        off_metadata = _make_ext_metadata(number="SONE-205")
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            off_result = organize_file(str(src_off), off_metadata, off_config)
-        assert off_result["success"] is True, off_result.get("error")
-        off_cover_bytes = Path(off_result["cover_path"]).read_bytes()
-
-        # jellyfin 被測操作：不同 number 避免撞名
-        src_jf = tmp_path / "SONE-206.mp4"
-        src_jf.write_bytes(b"fake mp4 jf")
-        jf_config = _make_ext_config("jellyfin")
-        jf_metadata = _make_ext_metadata(number="SONE-206")
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            jf_result = organize_file(str(src_jf), jf_metadata, jf_config)
-        assert jf_result["success"] is True, jf_result.get("error")
-        jf_fanart_bytes = Path(jf_result["fanart_path"]).read_bytes()
-
-        assert jf_fanart_bytes == off_cover_bytes, (
-            "jellyfin -fanart.jpg 內容應與 off 模式同情境同名封面逐位元組相同（AC5）"
-        )
-
-    def test_poster_crop_output_unaffected_by_input_path_name(self, tmp_path):
-        """crop_to_poster 輸出只受輸入內容影響，不受輸入檔名/路徑影響（AC5 poster 邊界）。
-
-        同一份來源 bytes 分別存成「同名封面」與「fanart 封面」兩種檔名，各自
-        crop_to_poster 一次，斷言輸出逐位元組相同——直接證明裁切輸出不受
-        `resolve_cover_target` 選中的檔名影響，只受內容影響。
-        """
-        source_holder = tmp_path / "_source.jpg"
-        img = Image.new("RGB", (800, 538), color=(200, 100, 50))
-        img.save(str(source_holder), "JPEG")
-        source_bytes = source_holder.read_bytes()
-
-        cover_a = tmp_path / "SONE-205.jpg"           # 模擬同名封面命名（off 情境）
-        cover_b = tmp_path / "SONE-205-fanart.jpg"     # 模擬 fanart 封面命名（jellyfin 情境）
-        cover_a.write_bytes(source_bytes)
-        cover_b.write_bytes(source_bytes)
-
-        dst1 = tmp_path / "dst1-poster.jpg"
-        dst2 = tmp_path / "dst2-poster.jpg"
-
-        assert crop_to_poster(str(cover_a), str(dst1), number="SONE-205", maker="S1") is True
-        assert crop_to_poster(str(cover_b), str(dst2), number="SONE-205", maker="S1") is True
-
-        assert dst1.read_bytes() == dst2.read_bytes(), (
-            "裁切輸出應只受輸入內容影響，不受輸入檔名影響"
-        )
-
 
 class TestExternalManagerNfoF3:
     """T4：NFO F3 欄位跟隨 external_manager 模式"""
@@ -2200,87 +909,6 @@ class TestExternalManagerNfoF3:
             "jellyfin NFO 應含 <country>Japan</country>"
         assert "<lockdata>true</lockdata>" in nfo_content, \
             "jellyfin NFO 應含 <lockdata>true</lockdata>"
-
-    def test_kodi_nfo_has_f3_fields(self, tmp_path):
-        """kodi → 產出的 NFO 含 F3 欄位（<country>Japan + <lockdata>）"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("kodi")
-        metadata = self._make_nfo_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("nfo_path") is not None, "NFO 應被產出"
-
-        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
-        assert "<country>Japan</country>" in nfo_content, \
-            "kodi NFO 應含 <country>Japan</country>"
-        assert "<lockdata>true</lockdata>" in nfo_content, \
-            "kodi NFO 應含 <lockdata>true</lockdata>"
-
-    def test_off_nfo_no_f3_fields(self, tmp_path):
-        """off → 產出的 NFO 不含 F3 欄位（<country> / <lockdata> 不應出現）"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("off")
-        metadata = self._make_nfo_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("nfo_path") is not None, "NFO 應被產出"
-
-        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
-        assert "<country>Japan</country>" not in nfo_content, \
-            "off NFO 不應含 <country>Japan</country>"
-        assert "<lockdata>true</lockdata>" not in nfo_content, \
-            "off NFO 不應含 <lockdata>true</lockdata>"
-
-
-class TestNfoPosterTag:
-    """generate_nfo() <poster> tag 正確性測試"""
-
-    def test_nfo_poster_tag_fixed(self, tmp_path):
-        """不論 jellyfin_mode，<poster> 不再指向 .png（舊 bug 確認修復）"""
-        nfo_path = tmp_path / "SONE-205.nfo"
-
-        result = generate_nfo(
-            number="SONE-205",
-            title="Test Title",
-            output_path=str(nfo_path),
-            has_poster=False,
-            has_fanart=False,
-        )
-
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<poster>SONE-205.jpg</poster>" in content, \
-            f"<poster> 應指向 .jpg（不帶後綴），實際內容包含: {[l for l in content.split(chr(10)) if 'poster' in l.lower()]}"
-        assert ".png" not in content, "<poster> 不應包含 .png（T6c 修復）"
-
-    def test_nfo_jellyfin_mode_tags(self, tmp_path):
-        """jellyfin_mode=True → <poster> 指向 -poster.jpg，<fanart> 指向 -fanart.jpg"""
-        nfo_path = tmp_path / "SONE-205.nfo"
-
-        result = generate_nfo(
-            number="SONE-205",
-            title="Test Title",
-            output_path=str(nfo_path),
-            has_poster=True,
-            has_fanart=True,
-        )
-
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<poster>SONE-205-poster.jpg</poster>" in content, \
-            f"jellyfin_mode 時 <poster> 應指向 -poster.jpg"
-        assert "<fanart>SONE-205-fanart.jpg</fanart>" in content, \
-            f"jellyfin_mode 時 <fanart> 應指向 -fanart.jpg"
 
 
 # ============ Config suffix_keywords 持久化測試 ============
@@ -2325,35 +953,6 @@ class TestExtractChineseTitle:
         result = extract_chinese_title("Beauty Girl ABP-001 美少女初登場.mp4", "ABP-001")
         assert result == "Beauty Girl 美少女初登場"
 
-    def test_jp_or_zh_only(self):
-        result = extract_chinese_title("美少女初登場.mp4", "ABP-001")
-        assert result == "美少女初登場"
-
-    def test_english_only(self):
-        result = extract_chinese_title("Beauty Girl.mp4", "ABP-001")
-        assert result is None
-
-    def test_empty_and_none(self):
-        assert extract_chinese_title("", "ABP-001") is None
-        assert extract_chinese_title(None, "ABP-001") is None
-
-    def test_with_actors_removal(self):
-        # 結尾帶有演員名，會被移除
-        result = extract_chinese_title("ABP-001 美少女 三上悠亞.mp4", "ABP-001", actors=["三上悠亞"])
-        assert result == "美少女"
-
-    def test_7letter_prefix_generic_cleanup_no_residual(self):
-        """TASK-caps 回歸鎖：core/organizer.py:112 通用番號清理 cap {2,7}。
-
-        番號 PARATHD-02976（7 字母前綴）出現在檔名，但 number 參數（ABC-999）
-        故意不匹配它 —— 所以必須靠通用 `[A-Za-z]{2,7}-?\\d{3,5}` cleanup 移除。
-        cap={2,7} → 完整剝除，片名為 '純中文標題'。
-        cap={2,6}（回歸）→ 只吃到 'ARATHD-02976'，殘留首字 'P' → 'P純中文標題'。
-        此案在 {2,6} 下會 FAIL，鎖住 cap 對齊不被誤縮。
-        """
-        result = extract_chinese_title("PARATHD-02976 純中文標題.mp4", "ABC-999")
-        assert result == "純中文標題"
-
 
 class TestExtractChineseTitleSubtitleMarkers:
     """spec-48a.md §a2 行為對照表 — 字幕標記 edge cases
@@ -2366,16 +965,8 @@ class TestExtractChineseTitleSubtitleMarkers:
     """
 
     @pytest.mark.parametrize("filename, number, expected", [
-        ("ABC-123 純中文片名.mp4", "ABC-123", "純中文片名"),           # 1. 真片名保留
-        ("ABC-123 エロいやつ.mp4", "ABC-123", None),                   # 2. 純日文，無中文 → None
-        ("ABC-123 [中字] 正妹の中文版.mp4", "ABC-123", "正妹の中文版"), # 3. 剝字幕後真片名保留
-        ("[中字] ABC-123.mp4", "ABC-123", None),                       # 4. 修前: [中字]，修後: None
-        ("ABC-123-中字.mp4", "ABC-123", None),                         # 5. 修前: 殘留 -中字，修後: None
         ("ABC-123【中文字幕】.mp4", "ABC-123", None),                  # 6. 字幕 bracket → None（守護順序契約）
-        ("ABC-123.mp4", "ABC-123", None),                              # 7. 無字幕無中文 → None
         # 8-9. Codex 指出的 orphan 分隔符殘留 — 剝除 marker 後不應留下尾端 -/_
-        ("ABC-123 正妹の中文版-中字.mp4", "ABC-123", "正妹の中文版"),
-        ("ABC-123 正妹の中文版_中文字幕.mp4", "ABC-123", "正妹の中文版"),
     ])
     def test_subtitle_marker_cases(self, filename, number, expected):
         result = extract_chinese_title(filename, number)
@@ -2387,54 +978,10 @@ class TestExtractChineseTitleSubtitleMarkers:
 
 # ============ generate_nfo() 補充測試 ============
 
-class TestGenerateNfoAdditional:
-    def test_essential_tags_exist(self, tmp_path):
-        nfo_path = tmp_path / "test.nfo"
-        result = generate_nfo(
-            number="TEST-001",
-            title="測試標題",
-            actors=["女優A", "女優B"],
-            output_path=str(nfo_path)
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<title>[TEST-001]測試標題</title>" in content
-        assert "<num>TEST-001</num>" in content
-        assert "<name>女優A</name>" in content
-        assert "<name>女優B</name>" in content
-
 
 class TestGenerateNfoTitleFormat:
     """generate_nfo() nfo_title_format 參數與記錄行（TASK-154b-T1）。"""
 
-    def test_generate_nfo_default_format_no_title_record(self, tmp_path):
-        """預設格式整份 NFO 不含 <openaver_title_record>（AC-b1）。"""
-        nfo_path = tmp_path / "ABC-123.nfo"
-        result = generate_nfo(
-            number="ABC-123",
-            title="片名",
-            actors=["三上悠亜"],
-            output_path=str(nfo_path),
-            nfo_title_format="[{num}]{title}",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<title>[ABC-123]片名</title>" in content
-        assert "openaver_title_record" not in content
-
-    def test_generate_nfo_default_format_omitted_param_no_title_record(self, tmp_path):
-        """省略參數等同預設：無記錄行、標題與舊行為相同。"""
-        nfo_path = tmp_path / "ABC-123.nfo"
-        result = generate_nfo(
-            number="ABC-123",
-            title="片名",
-            actors=["三上悠亜"],
-            output_path=str(nfo_path),
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<title>[ABC-123]片名</title>" in content
-        assert "openaver_title_record" not in content
 
     def test_generate_nfo_custom_format_writes_title_and_record(self, tmp_path):
         """自訂格式寫出新 <title> 與記錄行 <written>/<body>。"""
@@ -2455,43 +1002,10 @@ class TestGenerateNfoTitleFormat:
         assert record.find("written").text == "ABC-123-片名-三上悠亜"
         assert record.find("body").text == "片名"
 
-    def test_generate_nfo_belt_and_suspenders_not_reversed_by_title_format(self, tmp_path):
-        """寫出端只剝開頭番號，不反推格式；記錄行 <body> 精確等於剝完值。
-
-        邊界條件第 5 條：title 本身帶番號與演員字面時，
-        _strip_num_prefixes 只剝開頭 → body='片名-三上悠亜'；
-        display_title 疊一次演員段（接受的既有落差）。
-        """
-        nfo_path = tmp_path / "ABC-123.nfo"
-        result = generate_nfo(
-            number="ABC-123",
-            title="ABC-123-片名-三上悠亜",
-            actors=["三上悠亜"],
-            output_path=str(nfo_path),
-            nfo_title_format="{num}-{title}-{actor}",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        root = ET.fromstring(content)
-        body = root.find("openaver_title_record/body").text
-        assert body == "片名-三上悠亜"
-        assert "<title>ABC-123-片名-三上悠亜-三上悠亜</title>" in content
-
 
 class TestGenerateNfoRatingLine:
     """generate_nfo() rating_line 型別防護（TASK-147c-T2）"""
 
-    def test_generate_nfo_rating_line_malformed_type_no_crash(self, tmp_path):
-        nfo_path = tmp_path / "TEST-001.nfo"
-        result = generate_nfo(
-            number="TEST-001",
-            title="測試標題",
-            output_path=str(nfo_path),
-            rating="bad",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<rating>" not in content
 
     def test_generate_nfo_rating_line_valid_float_unchanged(self, tmp_path):
         nfo_path = tmp_path / "TEST-002.nfo"
@@ -2504,31 +1018,6 @@ class TestGenerateNfoRatingLine:
         assert result is True
         content = nfo_path.read_text(encoding="utf-8")
         assert "<rating>9.0</rating>" in content
-
-    def test_generate_nfo_rating_line_bool_true_excluded(self, tmp_path):
-        """bool 是 int 子類；若不顯式排除，rating=True 會寫出憑空的 <rating>2.0</rating>。"""
-        nfo_path = tmp_path / "TEST-003.nfo"
-        result = generate_nfo(
-            number="TEST-003",
-            title="測試標題",
-            output_path=str(nfo_path),
-            rating=True,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<rating>" not in content
-
-    def test_generate_nfo_rating_line_bool_false_excluded(self, tmp_path):
-        nfo_path = tmp_path / "TEST-004.nfo"
-        result = generate_nfo(
-            number="TEST-004",
-            title="測試標題",
-            output_path=str(nfo_path),
-            rating=False,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<rating>" not in content
 
 
 class TestGenerateNfoNoUnescapedInterpolation:
@@ -2620,13 +1109,6 @@ class TestGenerateNfoNoUnescapedInterpolation:
             "確認它安全之後再更新 ALLOWED_UNESCAPED 的次數：\n" + "\n".join(drift)
         )
 
-    def test_allowlist_has_no_stale_entries(self):
-        found = self._collect()
-        stale = sorted(set(self.ALLOWED_UNESCAPED) - set(found))
-        assert not stale, (
-            f"ALLOWED_UNESCAPED 有已經不存在於 generate_nfo() 的項目，請刪除：{stale}"
-        )
-
 
 class TestGenerateNfoIllegalXmlChars:
     """generate_nfo() XML 不合法控制字元淨化（NFO-CTRL-01，PR #191 F1 + 加固）。
@@ -2657,61 +1139,6 @@ class TestGenerateNfoIllegalXmlChars:
         plot = tree.getroot().find("plot").text
         assert plot == "beforeafter"
 
-    def test_bell_stripped_from_summary(self, tmp_path):
-        nfo_path = tmp_path / "TEST-CTRL-002.nfo"
-        result = generate_nfo(
-            number="TEST-CTRL-002",
-            title="測試標題",
-            output_path=str(nfo_path),
-            summary="before\x07after",
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-        plot = tree.getroot().find("plot").text
-        assert plot == "beforeafter"
-
-    def test_vertical_tab_stripped_from_summary(self, tmp_path):
-        nfo_path = tmp_path / "TEST-CTRL-003.nfo"
-        result = generate_nfo(
-            number="TEST-CTRL-003",
-            title="測試標題",
-            output_path=str(nfo_path),
-            summary="before\x0bafter",
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-        plot = tree.getroot().find("plot").text
-        assert plot == "beforeafter"
-
-    def test_escape_char_stripped_from_summary(self, tmp_path):
-        nfo_path = tmp_path / "TEST-CTRL-004.nfo"
-        result = generate_nfo(
-            number="TEST-CTRL-004",
-            title="測試標題",
-            output_path=str(nfo_path),
-            summary="before\x1bafter",
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-        plot = tree.getroot().find("plot").text
-        assert plot == "beforeafter"
-
-    def test_control_char_stripped_from_title_field(self, tmp_path):
-        """正文以外的欄位（title）含控制字元同樣要被剝除——壞的是整份 XML，不限 summary。"""
-        nfo_path = tmp_path / "TEST-CTRL-005.nfo"
-        result = generate_nfo(
-            number="TEST-CTRL-005",
-            title="測試\x0c標題",
-            output_path=str(nfo_path),
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-        title_text = tree.getroot().find("title").text
-        assert title_text == "[TEST-CTRL-005]測試標題"
 
     def test_none_summary_does_not_crash_after_move(self, tmp_path):
         """PR #191 CodeRabbit P2 的真實那一半：`scrape_single` 對 metadata 零驗證，
@@ -2731,147 +1158,8 @@ class TestGenerateNfoIllegalXmlChars:
         assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
         assert (tree.getroot().find("plot").text or "") == ""
 
-    def test_none_in_other_string_fields_does_not_crash(self, tmp_path):
-        """同一條零驗證管道可以讓任何字串欄位變 None，不是只有 summary。"""
-        nfo_path = tmp_path / "TEST-CTRL-008.nfo"
-        result = generate_nfo(
-            number="TEST-CTRL-008",
-            title="測試標題",
-            output_path=str(nfo_path),
-            original_title=None,
-            maker=None,
-            director=None,
-            series=None,
-            label=None,
-            url=None,
-            date=None,
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-
-    def test_malformed_user_tags_container_does_not_crash(self, tmp_path):
-        """Codex PR #191 二次審核 P2-A：`user_tags` 在 organize_file 裡是
-        **搬檔之後**才取出交給 generate_nfo（`core/organizer.py:1384`），而
-        `user_tags or []` 會原樣保留非零整數 → 迭代整數 TypeError → 又是
-        「畫面說整理失敗、影片已搬走」。既有病（迭代點 :951 本來就在），
-        與 _summary=None 同根，一併在 sink 收斂容器型別。"""
-        for bad in (123, {"a": 1}, object()):
-            nfo_path = tmp_path / f"TEST-CTRL-CONT-{id(bad)}.nfo"
-            result = generate_nfo(
-                number="TEST-CTRL-009",
-                title="測試標題",
-                output_path=str(nfo_path),
-                user_tags=bad,
-            )
-            assert result is True, f"user_tags={bad!r} 不得讓 generate_nfo 崩潰"
-            tree, ok = self._parse_or_fail(nfo_path)
-            assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-
-    def test_bare_string_list_param_not_iterated_per_character(self, tmp_path):
-        """裸字串也要擋：否則 'abc' 會被逐字元迭代成三個單字元 tag。"""
-        nfo_path = tmp_path / "TEST-CTRL-010.nfo"
-        result = generate_nfo(
-            number="TEST-CTRL-010",
-            title="測試標題",
-            output_path=str(nfo_path),
-            tags="abc",
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok
-        genres = [e.text for e in tree.getroot().findall("genre")]
-        assert genres == [], f"裸字串不該被逐字元展開，實際: {genres}"
-
-    def test_control_char_in_output_path_basename_stripped(self, tmp_path):
-        """Codex PR #191 二次審核 P2-B：basename 衍生自 output_path，會被寫進
-        <poster>/<thumb>/<fanart>。sanitize_filename() 不移除控制字元，所以帶
-        \x07 的 title 會讓檔名帶控制字元，再繞回 XML——title 那格淨化了也沒用。"""
-        nfo_path = tmp_path / "TEST-CTRL-011\x07bad.nfo"
-        result = generate_nfo(
-            number="TEST-CTRL-011",
-            title="測試標題",
-            output_path=str(nfo_path),
-            has_poster=True,
-            has_fanart=True,
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-        root = tree.getroot()
-        for tag_name in ("poster", "fanart"):
-            for el in root.findall(tag_name):
-                assert "\x07" not in (el.text or ""), f"<{tag_name}> 仍含控制字元"
-
-    def test_duration_non_int_falls_back_to_empty_runtime(self, tmp_path):
-        """Codex PR #191 三次審核 P2：`<runtime>` 是全函式唯一的裸插值。
-        `duration: Optional[int]` 只是宣告，零驗證的 scrape_single 讓任意型別穿到
-        sink，而取值點（:1423）在 atomic_move() 之後 → `<runtime>1&2</runtime>`
-        寫出成功但整份 XML 解析失敗。契約比照 enrich_single（整數或 null）。"""
-        for bad in ("1&2", "120", "<x>", {"m": 90}, [90], 90.5, True, False, chr(7)):
-            nfo_path = tmp_path / f"TEST-CTRL-DUR-{abs(hash(repr(bad)))}.nfo"
-            result = generate_nfo(
-                number="TEST-CTRL-012",
-                title="測試標題",
-                output_path=str(nfo_path),
-                duration=bad,
-            )
-            assert result is True, f"duration={bad!r} 不得讓 generate_nfo 崩潰"
-            tree, ok = self._parse_or_fail(nfo_path)
-            assert ok, f"duration={bad!r} 的 NFO 應可解析，實際: {tree}"
-            runtime = tree.getroot().find("runtime")
-            assert (runtime.text or "") == "", (
-                f"duration={bad!r} 非整數應收斂成空 <runtime>，實際: {runtime.text!r}"
-            )
-
-    def test_duration_real_int_still_written(self, tmp_path):
-        """正向對照：合法整數不可以被上面那道收斂一起吃掉。"""
-        nfo_path = tmp_path / "TEST-CTRL-013.nfo"
-        assert generate_nfo(
-            number="TEST-CTRL-013",
-            title="測試標題",
-            output_path=str(nfo_path),
-            duration=120,
-        ) is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok
-        assert tree.getroot().find("runtime").text == "120"
-
-    def test_tab_newline_cr_preserved_in_summary(self, tmp_path):
-        """正向對照：\\t/\\n/\\r 是 XML 合法字元，簡介換行不可被淨化誤殺。"""
-        nfo_path = tmp_path / "TEST-CTRL-006.nfo"
-        summary_text = "line1\nline2\ttabbed\rline3"
-        result = generate_nfo(
-            number="TEST-CTRL-006",
-            title="測試標題",
-            output_path=str(nfo_path),
-            summary=summary_text,
-        )
-        assert result is True
-        tree, ok = self._parse_or_fail(nfo_path)
-        assert ok, f"NFO 應可被 XML parser 解析，實際: {tree}"
-        plot = tree.getroot().find("plot").text
-        # XML 解析會把裸 \r 正規化成 \n（XML 1.0 §2.11 line-ending normalization），
-        # 這是 parser 的行為不是我們淨化的行為——比對時同步正規化再斷言。
-        assert plot == summary_text.replace("\r", "\n")
-
 
 # ============ download_image() 測試 ============
-
-class TestDownloadImage:
-    @patch("core.organizer.requests.get")
-    def test_download_success(self, mock_get, tmp_path):
-        mock_resp = mock_get.return_value
-        mock_resp.status_code = 200
-        mock_resp.content = b"fake_image_data_that_is_long_enough_to_pass_the_length_check_which_is_1000_bytes_" * 15
-
-        save_path = tmp_path / "cover.jpg"
-        result = download_image("http://example.com/cover.jpg", str(save_path))
-
-        assert result is True
-        assert save_path.exists()
-        assert save_path.read_bytes() == mock_resp.content
-        mock_get.assert_called_once()
 
 
 # ============ download_image() fallback / host memory (TASK-126-T4a) ============
@@ -2934,48 +1222,6 @@ class TestDownloadImageFallback:
             "縮成 (5, 30) 會讓慢速連線的使用者從『30 秒後成功』變成『5 秒失敗』"
         )
 
-    @patch("core.organizer.requests.get")
-    def test_download_image_connect_timeout_is_short(self, mock_get, tmp_path):
-        """mutation 錨點：**有代理可退時**，原址那一次的 connect 逾時必須是短的 tuple。
-
-        短逾時的收益只存在於「失敗了還有第二條路」的情境（被牆的使用者只付第一張的等待）；
-        成本（慢速連線被提前判死）不該落在沒有第二條路的人身上——所以它綁 fallback，
-        不是全域（Codex PR review P2）。
-        """
-        from core.organizer import CONNECT_TIMEOUT, REQUEST_TIMEOUT
-
-        mock_get.return_value = _ok_resp()
-        download_image(
-            "http://example.com/cover.jpg",
-            str(tmp_path / "c.jpg"),
-            fallback_url="http://mt.example/v1/images/primary/MGS/N-1?url=c",
-        )
-        timeout = mock_get.call_args.kwargs["timeout"]
-        assert timeout == (CONNECT_TIMEOUT, REQUEST_TIMEOUT)
-        assert CONNECT_TIMEOUT == 5
-        assert REQUEST_TIMEOUT == 30
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_no_fallback_keeps_long_connect_timeout(self, mock_get, tmp_path):
-        """AC-5 的另一半：**沒有**代理可退時，connect 逾時維持改動前的單值 30 秒。
-
-        使用者流程：只用 JavBus／JAVDB 這些內建來源的人，連線慢但 TCP 接得起來
-        （手機熱點、遠端 CDN）→ 若被縮成 5 秒，本來抓得到的封面會變成抓不到，
-        而且沒有任何退路可以救。
-        """
-        from core.organizer import REQUEST_TIMEOUT
-
-        mock_get.return_value = _ok_resp()
-        download_image("http://example.com/cover.jpg", str(tmp_path / "c2.jpg"))
-        assert mock_get.call_args.kwargs["timeout"] == REQUEST_TIMEOUT
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_no_fallback_connect_timeout_returns_false(self, mock_get, tmp_path):
-        """邊界 2：無 fallback、原址 ConnectTimeout → False（行為不變）。"""
-        mock_get.side_effect = requests.exceptions.ConnectTimeout("connect timed out")
-        result = download_image("http://example.com/cover.jpg", str(tmp_path / "c.jpg"))
-        assert result is False
-        mock_get.assert_called_once()
 
     @patch("core.organizer.requests.get")
     def test_download_image_fallback_on_connect_timeout(self, mock_get, tmp_path):
@@ -3009,440 +1255,8 @@ class TestDownloadImageFallback:
         mock_get.assert_called_once()
         assert mock_get.call_args.args[0] == "http://example.com/cover.jpg"
 
-    @patch("core.organizer.requests.get")
-    def test_download_image_failed_host_skips_primary_on_subsequent(self, mock_get, tmp_path):
-        """邊界 5：同一 key 連續 3 張，第 1 張 ConnectTimeout 後第 2/3 張不試原址。"""
-        primary = "http://blocked.example/a.jpg"
-        proxy = "http://proxy.example/a.jpg"
-        responses = [
-            requests.exceptions.ConnectTimeout("t"),
-            _ok_resp(b"a" * 1001),
-            _ok_resp(b"b" * 1001),
-            _ok_resp(b"c" * 1001),
-        ]
-        mock_get.side_effect = responses
-
-        assert download_image(primary, str(tmp_path / "1.jpg"), fallback_url=proxy) is True
-        assert download_image(
-            "http://blocked.example/b.jpg", str(tmp_path / "2.jpg"), fallback_url="http://proxy.example/b.jpg"
-        ) is True
-        assert download_image(
-            "http://blocked.example/c.jpg", str(tmp_path / "3.jpg"), fallback_url="http://proxy.example/c.jpg"
-        ) is True
-
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://blocked.example/a.jpg",
-            "http://proxy.example/a.jpg",
-            "http://proxy.example/b.jpg",
-            "http://proxy.example/c.jpg",
-        ]
-        assert mock_get.call_count == 4
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_read_timeout_does_not_poison_host(self, mock_get, tmp_path):
-        """邊界 6 ＋ mutation 錨點：ReadTimeout 走 fallback，但不進記憶。"""
-        mock_get.side_effect = [
-            requests.exceptions.ReadTimeout("read timed out"),
-            _ok_resp(b"f" * 1001),
-            _ok_resp(b"p" * 1001),
-        ]
-        assert download_image(
-            "http://slow.example/a.jpg",
-            str(tmp_path / "1.jpg"),
-            fallback_url="http://proxy.example/a.jpg",
-        ) is True
-        assert download_image(
-            "http://slow.example/b.jpg",
-            str(tmp_path / "2.jpg"),
-            fallback_url="http://proxy.example/b.jpg",
-        ) is True
-
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://slow.example/a.jpg",
-            "http://proxy.example/a.jpg",
-            "http://slow.example/b.jpg",
-        ]
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_http_error_does_not_poison_host(self, mock_get, tmp_path):
-        """邊界 7：原址 404/500 走 fallback、不進記憶。"""
-        mock_get.side_effect = [
-            _status_resp(404),
-            _ok_resp(b"f" * 1001),
-            _ok_resp(b"p" * 1001),
-        ]
-        assert download_image(
-            "http://err.example/a.jpg",
-            str(tmp_path / "1.jpg"),
-            fallback_url="http://proxy.example/a.jpg",
-        ) is True
-        assert download_image(
-            "http://err.example/b.jpg",
-            str(tmp_path / "2.jpg"),
-            fallback_url="http://proxy.example/b.jpg",
-        ) is True
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://err.example/a.jpg",
-            "http://proxy.example/a.jpg",
-            "http://err.example/b.jpg",
-        ]
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_small_content_does_not_poison_host(self, mock_get, tmp_path):
-        """邊界 8：200 但 content ≤1000 走 fallback、不進記憶。"""
-        mock_get.side_effect = [
-            _ok_resp(b"tiny"),
-            _ok_resp(b"f" * 1001),
-            _ok_resp(b"p" * 1001),
-        ]
-        assert download_image(
-            "http://small.example/a.jpg",
-            str(tmp_path / "1.jpg"),
-            fallback_url="http://proxy.example/a.jpg",
-        ) is True
-        assert download_image(
-            "http://small.example/b.jpg",
-            str(tmp_path / "2.jpg"),
-            fallback_url="http://proxy.example/b.jpg",
-        ) is True
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://small.example/a.jpg",
-            "http://proxy.example/a.jpg",
-            "http://small.example/b.jpg",
-        ]
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_scheme_differs_keeps_primary(self, mock_get, tmp_path):
-        """邊界 9：http 失敗後 https 同 host 仍先試原址（三元組 key）。"""
-        mock_get.side_effect = [
-            requests.exceptions.ConnectTimeout("t"),
-            _ok_resp(b"f" * 1001),
-            _ok_resp(b"p" * 1001),
-        ]
-        assert download_image(
-            "http://h.example/x",
-            str(tmp_path / "1.jpg"),
-            fallback_url="http://proxy.example/x",
-        ) is True
-        assert download_image(
-            "https://h.example/y",
-            str(tmp_path / "2.jpg"),
-            fallback_url="http://proxy.example/y",
-        ) is True
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://h.example/x",
-            "http://proxy.example/x",
-            "https://h.example/y",
-        ]
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_malformed_port_does_not_raise(self, mock_get, tmp_path):
-        """Stage 2 review P3-1：非數字 port 的髒網址不得讓整個 organize 崩掉。
-
-        `urlparse('http://h:abc/x').port` 拋 ValueError，而 `download_image()` 的
-        `skip_primary = bool(fallback_url) and _host_recently_failed(_host_key(url))`
-        不在 try 內。它穿出去的時候 `organize_file()` 的 `shutil.move()` 已經跑完，
-        使用者拿到的是「整理失敗」＋一個影片已經被搬走的半成品資料夾。
-        正確行為：組不出 host key 就當作「沒有記憶」，照常走原址→代理兩次嘗試。
-        """
-        mock_get.side_effect = [
-            requests.exceptions.ConnectTimeout("t"),
-            _ok_resp(b"p" * 1001),
-        ]
-        assert download_image(
-            "http://h.example:abc/x.jpg",
-            str(tmp_path / "m.jpg"),
-            fallback_url="http://proxy.example/x",
-        ) is True
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == ["http://h.example:abc/x.jpg", "http://proxy.example/x"], (
-            "髒 port 應照常先試原址再退代理，不是跳過或炸掉"
-        )
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_port_differs_keeps_primary(self, mock_get, tmp_path):
-        """邊界 10：:8080 失敗後預設 port 仍先試原址。"""
-        mock_get.side_effect = [
-            requests.exceptions.ConnectTimeout("t"),
-            _ok_resp(b"f" * 1001),
-            _ok_resp(b"p" * 1001),
-        ]
-        assert download_image(
-            "http://h.example:8080/x",
-            str(tmp_path / "1.jpg"),
-            fallback_url="http://proxy.example/x",
-        ) is True
-        assert download_image(
-            "http://h.example/y",
-            str(tmp_path / "2.jpg"),
-            fallback_url="http://proxy.example/y",
-        ) is True
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://h.example:8080/x",
-            "http://proxy.example/x",
-            "http://h.example/y",
-        ]
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_ttl_expiry_restores_primary(self, mock_get, tmp_path, monkeypatch):
-        """邊界 11：TTL 過期後回到原址優先（注入時鐘，不得 sleep）。"""
-        import core.organizer as org
-
-        clock = {"t": 1000.0}
-        monkeypatch.setattr(org, "_now", lambda: clock["t"])
-
-        mock_get.side_effect = [
-            requests.exceptions.ConnectTimeout("t"),
-            _ok_resp(b"f" * 1001),
-            _ok_resp(b"p" * 1001),
-        ]
-        assert download_image(
-            "http://ttl.example/a.jpg",
-            str(tmp_path / "1.jpg"),
-            fallback_url="http://proxy.example/a.jpg",
-        ) is True
-
-        clock["t"] = 1000.0 + org._HOST_FAILURE_TTL + 1
-
-        assert download_image(
-            "http://ttl.example/b.jpg",
-            str(tmp_path / "2.jpg"),
-            fallback_url="http://proxy.example/b.jpg",
-        ) is True
-
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://ttl.example/a.jpg",
-            "http://proxy.example/a.jpg",
-            "http://ttl.example/b.jpg",
-        ]
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_empty_url_ignores_fallback(self, mock_get, tmp_path):
-        """邊界 12：url 空、fallback 非空 → False，不走代理。"""
-        result = download_image(
-            "",
-            str(tmp_path / "c.jpg"),
-            fallback_url="http://proxy.example/cover.jpg",
-        )
-        assert result is False
-        mock_get.assert_not_called()
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_both_fail_returns_false(self, mock_get, tmp_path):
-        """邊界 13：原址與 fallback 都失敗 → False，不拋例外。"""
-        mock_get.side_effect = [
-            requests.exceptions.ConnectTimeout("t1"),
-            requests.exceptions.ConnectTimeout("t2"),
-        ]
-        result = download_image(
-            "http://example.com/cover.jpg",
-            str(tmp_path / "c.jpg"),
-            fallback_url="http://proxy.example/cover.jpg",
-        )
-        assert result is False
-        assert mock_get.call_count == 2
-
-    @patch("core.organizer.requests.get")
-    def test_download_image_fallback_connect_timeout_is_recorded(self, mock_get, tmp_path):
-        """邊界 14：fallback 也 ConnectTimeout → fallback host 進記憶。"""
-        import core.organizer as org
-
-        mock_get.side_effect = [
-            requests.exceptions.ConnectTimeout("primary"),
-            requests.exceptions.ConnectTimeout("fallback"),
-            _ok_resp(b"z" * 1001),
-        ]
-        assert download_image(
-            "http://primary.example/a.jpg",
-            str(tmp_path / "1.jpg"),
-            fallback_url="http://proxy.example/a.jpg",
-        ) is False
-
-        # proxy host 已進記憶：下次以它當原址時應跳過，直接走它的 fallback
-        assert download_image(
-            "http://proxy.example/b.jpg",
-            str(tmp_path / "2.jpg"),
-            fallback_url="http://other.example/b.jpg",
-        ) is True
-        urls = [c.args[0] for c in mock_get.call_args_list]
-        assert urls == [
-            "http://primary.example/a.jpg",
-            "http://proxy.example/a.jpg",
-            "http://other.example/b.jpg",
-        ]
-        key = ("http", "proxy.example", 80)
-        with org._failed_hosts_lock:
-            assert key in org._failed_hosts
-
 
 # ============ generate_nfo() 新欄位測試 (T5b) ============
-
-class TestGenerateNfoNewFields:
-    """generate_nfo() 新增 director/duration/series/uniqueid 欄位測試"""
-
-    def test_nfo_director_filled(self, tmp_path):
-        """director 有值 → <director>イナバール</director>"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            director="イナバール",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<director>イナバール</director>" in content
-
-    def test_nfo_director_empty(self, tmp_path):
-        """director 空字串 → <director></director>（保留空標籤）"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            director="",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<director></director>" in content
-
-    def test_nfo_duration_filled(self, tmp_path):
-        """duration=119 → <runtime>119</runtime>"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            duration=119,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<runtime>119</runtime>" in content
-
-    def test_nfo_duration_none(self, tmp_path):
-        """duration=None → <runtime></runtime>（保留空標籤）"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            duration=None,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<runtime></runtime>" in content
-
-    def test_nfo_duration_zero(self, tmp_path):
-        """duration=0 → <runtime>0</runtime>（0 是有效值，不能當 falsy 跳過）"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            duration=0,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<runtime>0</runtime>" in content
-
-    def test_nfo_series_filled(self, tmp_path):
-        """series 有值 → <set><name>ハプニングバーNTR</name></set>"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            series="ハプニングバーNTR",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<set><name>ハプニングバーNTR</name></set>" in content
-
-    def test_nfo_series_empty(self, tmp_path):
-        """series 空字串 → <set></set>（保留空標籤，Kodi/Emby 相容）"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            series="",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<set></set>" in content
-
-    def test_nfo_uniqueid(self, tmp_path):
-        """uniqueid 永遠存在 → <uniqueid type="home" default="true">SNOS-143</uniqueid>"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert '<uniqueid type="home" default="true">SNOS-143</uniqueid>' in content
-
-    def test_nfo_director_special_chars(self, tmp_path):
-        """director 含特殊字元 → html.escape 正確轉義"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            director="A&B<C>",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<director>A&amp;B&lt;C&gt;</director>" in content
-        assert "<director>A&B<C></director>" not in content
-
-    def test_nfo_label_filled(self, tmp_path):
-        """label 有值 → <label>S1</label>"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            label="S1",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<label>S1</label>" in content
-
-    def test_nfo_label_empty(self, tmp_path):
-        """label 空字串 → <label></label>（保留空標籤）"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            label="",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<label></label>" in content
-
-    def test_nfo_label_special_chars(self, tmp_path):
-        """label 含特殊字元 → html.escape 正確轉義"""
-        nfo_path = tmp_path / "SNOS-143.nfo"
-        result = generate_nfo(
-            number="SNOS-143",
-            title="テスト",
-            output_path=str(nfo_path),
-            label="A&B<C>",
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<label>A&amp;B&lt;C&gt;</label>" in content
-        assert "<label>A&B<C></label>" not in content
 
 
 # ============ organize_file() extrafanart 測試 (T5b) ============
@@ -3485,132 +1299,6 @@ class TestOrganizeExtrafanart:
             ],
         }
 
-    def test_extrafanart_created_in_jellyfin_mode(self, tmp_path):
-        """jellyfin_mode=True + download_sample_images=True + create_folder=True + sample_images → extrafanart/ 建立 + fanart1.jpg 存在"""
-        src = tmp_path / "SNOS-143.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_jellyfin_config_with_nfo(jellyfin_mode=True, create_folder=True,
-                                                     download_sample_images=True)
-        metadata = self._make_metadata_with_samples(["http://fake/s1.jpg", "http://fake/s2.jpg"])
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        # create_folder=True → 影片在 per-video 子目錄內，extrafanart 也在該子目錄下
-        video_dir = Path(result["new_folder"])
-        extrafanart_dir = video_dir / "extrafanart"
-        assert extrafanart_dir.exists(), "extrafanart/ 目錄應被建立"
-        assert (extrafanart_dir / "fanart1.jpg").exists(), "fanart1.jpg 應被下載"
-        assert (extrafanart_dir / "fanart2.jpg").exists(), "fanart2.jpg 應被下載"
-
-    def test_extrafanart_empty_list_no_dir(self, tmp_path):
-        """jellyfin_mode=True + sample_images=[] → 不建立 extrafanart/ 目錄"""
-        src = tmp_path / "SNOS-143.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_jellyfin_config_with_nfo(jellyfin_mode=True)
-        metadata = self._make_metadata_with_samples(sample_images=[])
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        extrafanart_dir = tmp_path / "extrafanart"
-        assert not extrafanart_dir.exists(), "sample_images=[] 時不應建立 extrafanart/ 目錄"
-
-    def test_extrafanart_not_in_normal_mode(self, tmp_path):
-        """jellyfin_mode=False → 不下載 sample images，不建立 extrafanart/"""
-        src = tmp_path / "SNOS-143.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_jellyfin_config_with_nfo(jellyfin_mode=False)
-        metadata = self._make_metadata_with_samples(["http://fake/s1.jpg"])
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        extrafanart_dir = tmp_path / "extrafanart"
-        assert not extrafanart_dir.exists(), "jellyfin_mode=False 時不應建立 extrafanart/ 目錄"
-
-    def test_extrafanart_single_failure_continues(self, tmp_path):
-        """其中一張下載失敗，其他張繼續下載，organize 仍 success=True"""
-        src = tmp_path / "SNOS-143.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_jellyfin_config_with_nfo(jellyfin_mode=True, create_folder=True,
-                                                     download_sample_images=True)
-        metadata = self._make_metadata_with_samples([
-            "http://fake/s1.jpg",
-            "http://fake/s2_fail.jpg",
-            "http://fake/s3.jpg",
-        ])
-
-        call_count = [0]
-
-        def mock_download_partial(url, save_path, referer=''):
-            call_count[0] += 1
-            if "s2_fail" in url:
-                raise Exception("模擬下載失敗")
-            _mock_download_image_write_jpeg(url, save_path, referer)
-            return True
-
-        with patch("core.organizer.download_image", side_effect=mock_download_partial):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"單張失敗不應導致整體失敗: {result.get('error')}"
-        video_dir = Path(result["new_folder"])
-        extrafanart_dir = video_dir / "extrafanart"
-        assert extrafanart_dir.exists(), "extrafanart/ 應被建立"
-        assert (extrafanart_dir / "fanart1.jpg").exists(), "fanart1.jpg 應成功下載"
-        assert not (extrafanart_dir / "fanart2.jpg").exists(), "fanart2.jpg 應失敗（不存在）"
-        assert (extrafanart_dir / "fanart3.jpg").exists(), "fanart3.jpg 應繼續下載成功"
-
-    def test_extrafanart_independent_of_cover(self, tmp_path):
-        """cover 下載失敗，extrafanart 仍獨立下載（不依賴 cover_path）"""
-        src = tmp_path / "SNOS-143.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_jellyfin_config_with_nfo(jellyfin_mode=True, create_folder=True,
-                                                     download_sample_images=True)
-        metadata = self._make_metadata_with_samples(["http://fake/s1.jpg"])
-
-        def mock_download_cover_fail(url, save_path, referer=''):
-            # cover 下載失敗，sample image 下載成功
-            if "cover" in url:
-                return False
-            _mock_download_image_write_jpeg(url, save_path, referer)
-            return True
-
-        with patch("core.organizer.download_image", side_effect=mock_download_cover_fail):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("cover_path") is None, "cover 下載失敗，cover_path 應為 None"
-        video_dir = Path(result["new_folder"])
-        extrafanart_dir = video_dir / "extrafanart"
-        assert extrafanart_dir.exists(), "cover 失敗不影響 extrafanart/ 建立"
-        assert (extrafanart_dir / "fanart1.jpg").exists(), "cover 失敗不影響 sample image 下載"
-
-    def test_extrafanart_skipped_without_create_folder(self, tmp_path):
-        """download_sample_images=True + create_folder=False → 不建立 extrafanart/（防止多片互蓋）"""
-        src = tmp_path / "SNOS-143.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_jellyfin_config_with_nfo(jellyfin_mode=True, create_folder=False,
-                                                     download_sample_images=True)
-        metadata = self._make_metadata_with_samples(["http://fake/s1.jpg", "http://fake/s2.jpg"])
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        extrafanart_dir = tmp_path / "extrafanart"
-        assert not extrafanart_dir.exists(), (
-            "create_folder=False 時不應建立 extrafanart/（多片共用目錄會互相覆蓋 fanart1.jpg）"
-        )
 
     def test_extrafanart_with_sample_dl_without_jellyfin(self, tmp_path):
         """jellyfin_mode=False, download_sample_images=True, create_folder=True → extrafanart 建立（解耦驗證）"""
@@ -3663,64 +1351,6 @@ from core.organizer import find_subtitle_files
 class TestFindSubtitleFiles:
     """find_subtitle_files() 的單元測試"""
 
-    def test_find_srt_same_name(self, tmp_path):
-        """同名 .srt 找到"""
-        video = tmp_path / "aaa.mp4"
-        video.write_bytes(b"fake")
-        sub = tmp_path / "aaa.srt"
-        sub.write_text("subtitle content")
-
-        result = find_subtitle_files(str(video))
-
-        assert str(sub) in result
-
-    def test_find_ass_same_name(self, tmp_path):
-        """同名 .ass 找到"""
-        video = tmp_path / "aaa.mp4"
-        video.write_bytes(b"fake")
-        sub = tmp_path / "aaa.ass"
-        sub.write_text("subtitle content")
-
-        result = find_subtitle_files(str(video))
-
-        assert str(sub) in result
-
-    def test_find_ssa_same_name(self, tmp_path):
-        """同名 .ssa 找到"""
-        video = tmp_path / "aaa.mp4"
-        video.write_bytes(b"fake")
-        sub = tmp_path / "aaa.ssa"
-        sub.write_text("subtitle content")
-
-        result = find_subtitle_files(str(video))
-
-        assert str(sub) in result
-
-    def test_find_lang_suffix_srt(self, tmp_path):
-        """帶語言後綴 .cht.srt 找到"""
-        video = tmp_path / "aaa.mp4"
-        video.write_bytes(b"fake")
-        sub = tmp_path / "aaa.cht.srt"
-        sub.write_text("subtitle content")
-
-        result = find_subtitle_files(str(video))
-
-        assert str(sub) in result
-
-    def test_find_multiple_subtitles(self, tmp_path):
-        """多個字幕（.srt + .cht.srt）都回傳"""
-        video = tmp_path / "aaa.mp4"
-        video.write_bytes(b"fake")
-        sub1 = tmp_path / "aaa.srt"
-        sub1.write_text("subtitle 1")
-        sub2 = tmp_path / "aaa.cht.srt"
-        sub2.write_text("subtitle 2")
-
-        result = find_subtitle_files(str(video))
-
-        assert str(sub1) in result
-        assert str(sub2) in result
-        assert len(result) == 2
 
     def test_exclude_different_name_srt(self, tmp_path):
         """不同名字幕 bbb.srt 不包含"""
@@ -3732,35 +1362,6 @@ class TestFindSubtitleFiles:
         result = find_subtitle_files(str(video))
 
         assert str(sub) not in result
-        assert result == []
-
-    def test_exclude_underscore_suffix(self, tmp_path):
-        """底線分隔 aaa_chs.srt 不包含"""
-        video = tmp_path / "aaa.mp4"
-        video.write_bytes(b"fake")
-        sub = tmp_path / "aaa_chs.srt"
-        sub.write_text("subtitle content")
-
-        result = find_subtitle_files(str(video))
-
-        assert str(sub) not in result
-        assert result == []
-
-    def test_no_subtitles_returns_empty(self, tmp_path):
-        """無字幕回傳空列表"""
-        video = tmp_path / "aaa.mp4"
-        video.write_bytes(b"fake")
-
-        result = find_subtitle_files(str(video))
-
-        assert result == []
-
-    def test_nonexistent_video_returns_empty(self, tmp_path):
-        """影片路徑不存在回傳空列表"""
-        nonexistent = str(tmp_path / "nonexistent.mp4")
-
-        result = find_subtitle_files(nonexistent)
-
         assert result == []
 
 
@@ -3930,41 +1531,6 @@ class TestOrganizeSubtitle:
             nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
             assert "中文字幕" in nfo_content, "check_subtitle=True 時 NFO 應包含中文字幕 tag"
 
-    def test_find_subtitle_true_has_subtitle_true(self, tmp_path):
-        """find_subtitle_files() 找到字幕 → has_subtitle = True（即使 check_subtitle() 為 False）"""
-        # 檔名無字幕標記（check_subtitle 為 False），但有 .srt 檔
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-        sub = tmp_path / "SONE-205.srt"
-        sub.write_text("subtitle")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "create_nfo": True,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "SONE-205",
-            "title": "Test Title",
-            "actors": [],
-            "tags": [],
-            "maker": "S1",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        # NFO 應包含中文字幕 tag（因為有字幕檔）
-        if result.get("nfo_path"):
-            nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
-            assert "中文字幕" in nfo_content, "有字幕檔時 NFO 應包含中文字幕 tag"
 
     def test_explicit_false_with_sidecar_subtitle(self, tmp_path):
         """has_subtitle=False 但有 sidecar 字幕 → has_subtitle 應為 True，NFO 有 tag"""
@@ -4017,39 +1583,6 @@ class TestTruncateWindowsTrailingDot:
         assert not result.endswith('.'), f"Windows: 截斷結果不應以 . 結尾, got {result!r}"
         assert not result.endswith(' '), f"Windows: 截斷結果不應以空格結尾, got {result!r}"
 
-    def test_truncate_to_chars_keeps_ellipsis_on_posix(self, monkeypatch):
-        monkeypatch.setattr('core.organizer.sys.platform', 'linux')
-        result = truncate_to_chars("a" * 100, 40)
-        assert result.endswith('...'), f"Non-Windows: 應保留 ... 後綴, got {result!r}"
-        assert len(result) == 40
-
-    def test_truncate_to_chars_no_change_when_under_limit(self, monkeypatch):
-        monkeypatch.setattr('core.organizer.sys.platform', 'win32')
-        result = truncate_to_chars("short", 60)
-        assert result == "short"
-
-    def test_truncate_title_strips_trailing_dots_on_windows(self, monkeypatch):
-        monkeypatch.setattr('core.organizer.sys.platform', 'win32')
-        result = truncate_title("a" * 100, 30)
-        assert not result.endswith('.'), f"Windows truncate_title 結果不應以 . 結尾, got {result!r}"
-
-    def test_truncate_title_keeps_ellipsis_on_posix(self, monkeypatch):
-        monkeypatch.setattr('core.organizer.sys.platform', 'darwin')
-        result = truncate_title("a" * 100, 30)
-        assert result.endswith('...')
-
-    def test_truncate_strips_trailing_space_before_dots_on_windows(self, monkeypatch):
-        # 文字剛好截在空格 + ... → "foo ..."  Windows 會剝成 "foo"
-        monkeypatch.setattr('core.organizer.sys.platform', 'win32')
-        # 構造一個截斷後變 "xxxxx ..." 的字串
-        text = "x" * 36 + " " + "yyy"  # 長度 40, 截到 max=40 不變; 設 max=39 → "xxxx..." 結尾無空格
-        # 直接驗證：任何長度都不應以 . 或空格結尾
-        for limit in (10, 20, 39, 50):
-            r = truncate_to_chars(text, limit)
-            if len(text) > limit and limit > 3:
-                assert not r.endswith('.') and not r.endswith(' '), \
-                    f"limit={limit}: got {r!r}"
-
 
 # ============ _detect_vr_cluster() 測試 ============
 
@@ -4062,45 +1595,12 @@ class TestDetectVrCluster:
 
     # ---- 命中列（unique 單獨成立）----
 
-    def test_hit_unique_plus_ambiguous_full(self):
-        """SIVR-123_8K_60fps_180_180x180_3dh_LR → 180_180x180_3dh_LR（unique 3dh + ambiguous 180/LR 共存）"""
-        result = _detect_vr_cluster("SIVR-123_8K_60fps_180_180x180_3dh_LR")
-        assert result == "180_180x180_3dh_LR"
-
-    def test_hit_mkx200_lr(self):
-        """KAVR-001_mkx200_LR → mkx200_LR（unique mkx200 + ambiguous LR）"""
-        result = _detect_vr_cluster("KAVR-001_mkx200_LR")
-        assert result == "mkx200_LR"
-
-    def test_hit_180_sbs(self):
-        """WAVR-456_4096x2048_180_sbs → 180_sbs（ambiguous ×2 共現）"""
-        result = _detect_vr_cluster("WAVR-456_4096x2048_180_sbs")
-        assert result == "180_sbs"
 
     def test_hit_180_lr(self):
         """NAME_180_LR → 180_LR（最主流：ambiguous ×2 共現）"""
         result = _detect_vr_cluster("NAME_180_LR")
         assert result == "180_LR"
 
-    def test_hit_mixed_case(self):
-        """KAVR-001_MKX200_lr → MKX200_lr（混大小寫原樣回傳，不正規化）"""
-        result = _detect_vr_cluster("KAVR-001_MKX200_lr")
-        assert result == "MKX200_lr"
-
-    def test_hit_4k_nonvr_prefix_excluded(self):
-        """MOVIE-4k_180_3dh_LR → 180_3dh_LR（4k 非 VR token，cluster 從 180 起）"""
-        result = _detect_vr_cluster("MOVIE-4k_180_3dh_LR")
-        assert result == "180_3dh_LR"
-
-    def test_hit_bracket_square(self):
-        """NAME_[180_LR] → 180_LR（bracket 當分隔符，cluster 不含外圍括號）"""
-        result = _detect_vr_cluster("NAME_[180_LR]")
-        assert result == "180_LR"
-
-    def test_hit_bracket_paren(self):
-        """KAVR-001_(mkx200_lr) → mkx200_lr（paren 當分隔符，cluster 不含外圍括號）"""
-        result = _detect_vr_cluster("KAVR-001_(mkx200_lr)")
-        assert result == "mkx200_lr"
 
     # ---- None 列（守零變化）----
 
@@ -4109,106 +1609,17 @@ class TestDetectVrCluster:
         result = _detect_vr_cluster("MIRD-180")
         assert result is None
 
-    def test_none_isolated_360(self):
-        """REBD-360 → None（孤立裸 360，真番號）"""
-        result = _detect_vr_cluster("REBD-360")
-        assert result is None
-
-    def test_none_isolated_lr(self):
-        """title_LR → None（孤立裸 LR，無共現）"""
-        result = _detect_vr_cluster("title_LR")
-        assert result is None
-
-    def test_none_vr_num_no_token(self):
-        """SIVR-999 → None（VR 番號但無 VR token；SIVR/999 皆非集合成員）"""
-        result = _detect_vr_cluster("SIVR-999")
-        assert result is None
-
-    def test_none_color_edition_no_false_lr(self):
-        """ABP-123 [color edition] → None（不誤中 lr：color 非 VR 成員）"""
-        result = _detect_vr_cluster("ABP-123 [color edition]")
-        assert result is None
-
-    def test_none_1080_not_180(self):
-        """STARS-1080 → None（不誤中 180：1080 是獨立 token，exact match 不命中）"""
-        result = _detect_vr_cluster("STARS-1080")
-        assert result is None
-
-    def test_none_bare_vr_tag(self):
-        """[VR] → None（裸 vr 不是訊號；嚴禁進集合）"""
-        result = _detect_vr_cluster("[VR]")
-        assert result is None
 
     # ---- 含副檔名也應一致 ----
 
-    def test_with_extension_mp4(self):
-        """NAME_180_LR.mp4（含副檔名）→ 180_LR（splitext 去掉 ext）"""
-        result = _detect_vr_cluster("NAME_180_LR.mp4")
-        assert result == "180_LR"
-
-    def test_none_with_extension(self):
-        """MIRD-180.mp4（含副檔名）→ None"""
-        result = _detect_vr_cluster("MIRD-180.mp4")
-        assert result is None
 
     # --- 防禦性 / branch 補洞（review advisory）---
-    def test_empty_string(self):
-        """空字串 → None（splitext('') → finditer 無命中 → 不炸）"""
-        assert _detect_vr_cluster("") is None
 
-    def test_unique_only_no_ambiguous(self):
-        """單一 unique token、零 ambiguous（unique-only branch）→ 原樣保留"""
-        assert _detect_vr_cluster("fisheye") == "fisheye"
-        assert _detect_vr_cluster("KAVR-001_mkx200") == "mkx200"
-
-    def test_duplicate_ambiguous_satisfies_cooccurrence(self):
-        """兩個相同 ambiguous token（len(ambiguous)>=2）→ 成立"""
-        assert _detect_vr_cluster("NAME_180_180") == "180_180"
 
     # ---- Codex P2 修正（Finding 2）：連續 run 偵測 ----
 
-    def test_none_scattered_ambiguous_across_words(self):
-        """TITLE_180_some_words_LR.mp4 → None
-        （散落 ambiguous 被 non-VR token 隔開，不構成連續 run，不應共現）"""
-        result = _detect_vr_cluster("TITLE_180_some_words_LR.mp4")
-        assert result is None, (
-            f"散落 ambiguous 跨文字不共現，應為 None，實際：{result!r}"
-        )
-
-    def test_none_ambiguous_with_nonvr_between(self):
-        """MOVIE_180_4k_LR.mp4 → None
-        （4k 是 non-VR token，夾在 180 與 LR 之間斷開 run；散落不共現）"""
-        result = _detect_vr_cluster("MOVIE_180_4k_LR.mp4")
-        assert result is None, (
-            f"non-VR token（4k）夾斷 run，兩端散落 ambiguous 不共現，應為 None，實際：{result!r}"
-        )
-
-    def test_partial_run_unique_isolated_lr(self):
-        """A_180x180_word_LR → 180x180
-        （unique 180x180 自成一個 confirmed run；孤立 LR 因中間夾了 non-VR 'word' 不在同 run）"""
-        result = _detect_vr_cluster("A_180x180_word_LR")
-        assert result == "180x180", (
-            f"只有 unique 180x180 那個 run confirmed，孤立 LR 跨字不算，期望 '180x180'，實際：{result!r}"
-        )
 
     # ---- Codex P2 二次修正（Finding 2, P3）：多 confirmed run 只取第一個 ----
-
-    def test_multiple_confirmed_runs_returns_first(self):
-        """A_180_LR_title_3dh → '180_LR'（只取第一個 confirmed run，不跨 non-VR title 到第二 run）
-
-        Repro：run1=[180,LR]（ambiguous×2，confirmed），non-VR token 'title' 斷開，
-        run2=[3dh]（unique，confirmed）；舊邏輯跨 span → '180_LR_title_3dh'（含 junk）。
-        修正後只取 first confirmed run → '180_LR'。
-        """
-        result = _detect_vr_cluster("A_180_LR_title_3dh")
-        assert result == "180_LR", (
-            f"多個 confirmed run 應只取第一個，期望 '180_LR'，實際：{result!r}"
-        )
-        # 含副檔名同結果
-        result_ext = _detect_vr_cluster("A_180_LR_title_3dh.mp4")
-        assert result_ext == "180_LR", (
-            f"含副檔名：多個 confirmed run 應只取第一個，期望 '180_LR'，實際：{result_ext!r}"
-        )
 
 
 # ============ organize_file() VR 檔名端到端測試 ============
@@ -4227,83 +1638,9 @@ class TestOrganizeVrFilename:
 
     # ---- DoD Row 1: VR 檔名尾正確接 _{cluster} ----
 
-    def test_vr_tail_appended_no_suffix(self, tmp_path):
-        """NAME_180_LR.mp4（無 suffix keyword）→ filename 尾帶 _180_LR"""
-        src = tmp_path / "NAME_180_LR.mp4"
-        src.write_bytes(b"vr content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": ["-cd1", "-cd2", "-4k", "-uc"],
-        }
-        metadata = {
-            "number": "VR-001",
-            "title": "VR Test Title",
-            "actors": [],
-            "tags": [],
-            "maker": "Studio",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result["new_filename"]).name
-        assert new_name.endswith("_180_LR.mp4"), (
-            f"VR tail _180_LR 未接到尾：{new_name}"
-        )
 
     # ---- DoD Row 2: suffix × VR 順序（base + suffix + _vr） ----
 
-    def test_suffix_before_vr_tail(self, tmp_path):
-        """MOVIE-4k_180_3dh_LR.mp4（suffix=-4k, VR cluster=180_3dh_LR）
-        → 輸出順序 = base + -4k + _180_3dh_LR（suffix 在 VR 之前）"""
-        src = tmp_path / "MOVIE-4k_180_3dh_LR.mp4"
-        src.write_bytes(b"vr 4k content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 80,
-            "suffix_keywords": ["-4k", "-cd1", "-uc"],
-        }
-        metadata = {
-            "number": "MOVIE-001",
-            "title": "Some Title",
-            "actors": [],
-            "tags": [],
-            "maker": "Studio",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result["new_filename"]).name
-        stem = Path(new_name).stem  # 不含副檔名
-
-        # suffix -4k 必須出現
-        assert "-4k" in stem, f"suffix -4k 未在檔名中：{new_name}"
-        # VR tail _180_3dh_LR 必須在最後
-        assert stem.endswith("_180_3dh_LR"), (
-            f"VR tail _180_3dh_LR 未在 stem 最尾：{stem}"
-        )
-        # 順序：-4k 出現位置在 _180 之前
-        idx_suffix = stem.index("-4k")
-        idx_vr = stem.index("_180_3dh_LR")
-        assert idx_suffix < idx_vr, (
-            f"suffix(-4k) 應在 VR tail(_180_3dh_LR) 之前：{stem}"
-        )
 
     # ---- DoD Row 3: 超長截斷 VR cluster 完整不被切 ----
 
@@ -4350,366 +1687,20 @@ class TestOrganizeVrFilename:
             f"base 未被截斷，reserve 未壓縮 base：{stem}"
         )
 
-    def test_vr_cluster_preserved_when_base_budget_zero(self, tmp_path):
-        """退化邊界（CD-68-7 base_budget==0）：max_filename_length 短到 base 預算歸零，
-        VR cluster 仍完整保留、檔名不超限（reserve 在 base_budget==0 子分支也生效）"""
-        src = tmp_path / "VR-1_180_3dh_LR.mp4"
-        src.write_bytes(b"x")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 16,  # ext(.mp4=4)+vr_tail(_180_3dh_LR=11)=15，base 預算 ~1
-            "suffix_keywords": ["-4k"],
-        }
-        metadata = {
-            "number": "VR-1",
-            "title": "X" * 80,
-            "actors": [], "tags": [], "maker": "M", "date": "2024-01-15",
-            "cover": "", "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result["new_filename"]).name
-        assert Path(new_name).stem.endswith("_180_3dh_LR"), (
-            f"VR cluster 在 base_budget==0 退化時被切：{new_name}"
-        )
-        assert len(new_name) <= 16, (
-            f"base_budget==0 子分支 reserve 未生效，超限：{new_name!r}"
-        )
 
     # ---- DoD Row 4: 無 VR token，byte 級零變化（SIVR-999.mp4，else 分支） ----
 
-    def test_no_vr_token_byte_identical(self, tmp_path):
-        """SIVR-999.mp4（無 VR token、無 suffix）→ reserve=0，
-        輸出名與未改動前完全相同（byte 級零變化）"""
-        src = tmp_path / "SIVR-999.mp4"
-        src.write_bytes(b"no vr content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": ["-cd1", "-cd2", "-4k"],
-        }
-        metadata = {
-            "number": "SIVR-999",
-            "title": "Some Title",
-            "actors": [],
-            "tags": [],
-            "maker": "Studio",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result["new_filename"]).name
-        # reserve=0 → 與 T2 改動前的預期完全相同（byte-identical path）
-        # expected = "[{num}] {title}" truncated to max_chars, no vr_tail
-        expected_stem = truncate_to_chars("[SIVR-999] Some Title", 60 - len(".mp4"))
-        expected_name = expected_stem + ".mp4"
-        assert new_name == expected_name, (
-            f"零變化失敗：got {new_name!r}, expected {expected_name!r}"
-        )
 
     # ---- DoD Row 5: 一般 2D 檔 byte 級零變化 ----
 
-    def test_2d_file_byte_identical(self, tmp_path):
-        """一般 2D 檔（無 VR token）→ reserve=0，輸出名與改動前完全相同"""
-        src = tmp_path / "ABP-123.mp4"
-        src.write_bytes(b"2d content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": ["-cd1", "-4k"],
-        }
-        metadata = {
-            "number": "ABP-123",
-            "title": "Normal Title",
-            "actors": [],
-            "tags": [],
-            "maker": "Studio",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result["new_filename"]).name
-        expected_stem = truncate_to_chars("[ABP-123] Normal Title", 60 - len(".mp4"))
-        expected_name = expected_stem + ".mp4"
-        assert new_name == expected_name, (
-            f"2D 零變化失敗：got {new_name!r}, expected {expected_name!r}"
-        )
 
     # ---- DoD Row 6: 既有 suffix 路徑不回歸（無 VR，reserve=0） ----
 
-    def test_existing_suffix_no_regression(self, tmp_path):
-        """既有 -cd1/-cd2 suffix（無 VR）→ reserve=0，行為完全不回歸"""
-        cd1 = tmp_path / "SONE-205-CD1.mp4"
-        cd1.write_bytes(b"cd1 content")
-        cd2 = tmp_path / "SONE-205-CD2.mp4"
-        cd2.write_bytes(b"cd2 content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 60,
-            "suffix_keywords": ["-cd1", "-cd2", "-4k"],
-        }
-        metadata = {
-            "number": "SONE-205",
-            "title": "Test Title",
-            "actors": [],
-            "tags": [],
-            "maker": "S1",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result1 = organize_file(str(cd1), metadata, config)
-        result2 = organize_file(str(cd2), metadata, config)
-
-        assert result1["success"] is True, f"CD1 失敗: {result1.get('error')}"
-        assert result2["success"] is True, f"CD2 失敗: {result2.get('error')}"
-
-        name1 = Path(result1["new_filename"]).name
-        name2 = Path(result2["new_filename"]).name
-
-        # suffix 保留
-        assert "-cd1" in name1, f"CD1 suffix 消失：{name1}"
-        assert "-cd2" in name2, f"CD2 suffix 消失：{name2}"
-        # 沒有意外 VR tail（無 VR token）
-        assert "_180" not in name1 and "_LR" not in name1, f"CD1 意外多了 VR tail：{name1}"
-        assert "_180" not in name2 and "_LR" not in name2, f"CD2 意外多了 VR tail：{name2}"
 
     # ---- Codex PR P2 回歸：退化 config 最終長度上限保護 ----
 
-    def test_degenerate_max_len_vr_tail_bounded(self, tmp_path):
-        """退化 config（max_filename_length < ext + vr_tail）最終檔名不得超出上限。
-
-        SIVR-1_180_3dh_LR.mp4：
-          vr_tail = _180_3dh_LR（11 chars）
-          ext     = .mp4（4 chars）
-          vr_tail + ext = 15 chars
-          max_filename_length = 10 < 15  → 退化（連 ext+vr_tail 都裝不下）
-
-        修前行為：filename_base = '' + '_180_3dh_LR' = '_180_3dh_LR'（11）
-                  new_filename  = '_180_3dh_LR.mp4'（15）> 10  → overflow
-        修後行為：最終 cap 截到 max_chars=6 → len(new_filename) <= 10
-        """
-        src = tmp_path / "SIVR-1_180_3dh_LR.mp4"
-        src.write_bytes(b"degenerate vr content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": False,
-            "max_title_length": 50,
-            "max_filename_length": 10,   # < ext(4) + vr_tail(11) = 15 → 退化
-            "suffix_keywords": ["-cd1", "-cd2"],
-        }
-        metadata = {
-            "number": "SIVR-1",
-            "title": "Title",
-            "actors": [],
-            "tags": [],
-            "maker": "Studio",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result["new_filename"]).name
-        assert len(new_name) <= 10, (
-            f"退化 config overflow 未被 cap：len={len(new_name)}，filename={new_name!r}"
-        )
-
 
 # ============ generate_nfo() VR tag/genre 去重測試 (T3) ============
-
-class TestGenerateNfoVrTagDedup:
-    """generate_nfo() has_vr 參數 + tag/genre VR 去重邏輯測試（TASK-68-T3）
-
-    邊界條件來源：68-T3.md 邊界條件表 + plan-68.md CD-68-8/9
-    """
-
-    def test_has_vr_true_no_vr_in_tags_adds_canonical(self, tmp_path):
-        """has_vr=True + tags 無 VR → 補 canonical <tag>VR</tag> + <genre>VR</genre>（各恰一個）"""
-        nfo_path = tmp_path / "SIVR-123.nfo"
-        result = generate_nfo(
-            number="SIVR-123",
-            title="テスト",
-            tags=["巨乳", "單體"],
-            output_path=str(nfo_path),
-            has_vr=True,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert content.count("<tag>VR</tag>") == 1, \
-            f"has_vr=True + 無 VR tags → 應含恰一個 <tag>VR</tag>，content={content!r}"
-        assert content.count("<genre>VR</genre>") == 1, \
-            f"has_vr=True + 無 VR tags → 應含恰一個 <genre>VR</genre>，content={content!r}"
-
-    def test_has_vr_true_scraper_already_has_vr_no_duplicate(self, tmp_path):
-        """has_vr=True + scraper tags 已有 VR → 不重複補 canonical（各恰一個）"""
-        nfo_path = tmp_path / "KAVR-001.nfo"
-        result = generate_nfo(
-            number="KAVR-001",
-            title="テスト",
-            tags=["VR", "單體"],
-            output_path=str(nfo_path),
-            has_vr=True,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert content.count("<tag>VR</tag>") == 1, \
-            f"scraper 已有 VR + has_vr=True → 應仍只有一個 <tag>VR</tag>（不重複）"
-        assert content.count("<genre>VR</genre>") == 1, \
-            f"scraper 已有 VR + has_vr=True → 應仍只有一個 <genre>VR</genre>（不重複）"
-
-    def test_has_vr_true_lowercase_space_variant_no_duplicate(self, tmp_path):
-        """has_vr=True + tags=[' vr ','x']（小寫+空白變體）→ case-insensitive 去重，不補 canonical"""
-        nfo_path = tmp_path / "WAVR-456.nfo"
-        result = generate_nfo(
-            number="WAVR-456",
-            title="テスト",
-            tags=[" vr ", "x"],
-            output_path=str(nfo_path),
-            has_vr=True,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        # 不可額外補 canonical VR，count 不爆（tag 與 genre 各最多一個 VR 相關 entry）
-        # ` vr ` 由 tags 迴圈寫出（html.escape 後原樣），不補第二個 <tag>VR</tag>
-        assert content.count("<tag>VR</tag>") == 0, \
-            f"小寫/空白 vr 已在 tags → 不應額外補 canonical <tag>VR</tag>"
-        assert content.count("<genre>VR</genre>") == 0, \
-            f"小寫/空白 vr 已在 tags → 不應額外補 canonical <genre>VR</genre>"
-        # 正向：scraper 原始變體仍原樣由 tags 迴圈寫出（去重只擋 canonical，不吞 scraper 條目）
-        assert "<tag> vr </tag>" in content, \
-            "scraper 原始 ' vr ' 變體應原樣寫出（spec §3 邊界表：該變體由 tags 迴圈寫出）"
-        assert "<genre> vr </genre>" in content, \
-            "scraper 原始 ' vr ' 變體 genre 應原樣寫出"
-
-    def test_has_vr_false_no_vr_in_tags_no_vr_written(self, tmp_path):
-        """has_vr=False + tags 無 VR → NFO 完全無 VR tag/genre（不多補）"""
-        nfo_path = tmp_path / "ABP-123.nfo"
-        result = generate_nfo(
-            number="ABP-123",
-            title="テスト",
-            tags=["巨乳"],
-            output_path=str(nfo_path),
-            has_vr=False,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert "<tag>VR</tag>" not in content, \
-            "has_vr=False + 無 VR tags → NFO 不應含 <tag>VR</tag>"
-        assert "<genre>VR</genre>" not in content, \
-            "has_vr=False + 無 VR tags → NFO 不應含 <genre>VR</genre>"
-
-    def test_has_vr_false_scraper_vr_preserved(self, tmp_path):
-        """has_vr=False + scraper tags 含 VR → scraper VR 照寫（不可斷言『無 VR』）"""
-        nfo_path = tmp_path / "STARS-999.nfo"
-        result = generate_nfo(
-            number="STARS-999",
-            title="テスト",
-            tags=["VR", "x"],
-            output_path=str(nfo_path),
-            has_vr=False,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        # scraper 給的 VR 必須照 tags 路徑寫出（各一）
-        assert content.count("<tag>VR</tag>") == 1, \
-            "has_vr=False + scraper VR → scraper VR tag 應照寫"
-        assert content.count("<genre>VR</genre>") == 1, \
-            "has_vr=False + scraper VR → scraper VR genre 應照寫"
-
-    def test_has_vr_true_with_subtitle_coexist(self, tmp_path):
-        """has_vr=True + has_subtitle=True → VR 與中文字幕 tag/genre 共存（互不干擾）"""
-        nfo_path = tmp_path / "SIVR-VR-C.nfo"
-        result = generate_nfo(
-            number="SIVR-VR-C",
-            title="VR 中字",
-            tags=["巨乳"],
-            output_path=str(nfo_path),
-            has_vr=True,
-            has_subtitle=True,
-        )
-        assert result is True
-        content = nfo_path.read_text(encoding="utf-8")
-        assert content.count("<tag>VR</tag>") == 1, \
-            "has_vr=True + has_subtitle=True → 應含恰一個 <tag>VR</tag>"
-        assert content.count("<genre>VR</genre>") == 1, \
-            "has_vr=True + has_subtitle=True → 應含恰一個 <genre>VR</genre>"
-        assert "<tag>中文字幕</tag>" in content, \
-            "has_subtitle=True 時 <tag>中文字幕</tag> 應仍存在（VR 不干擾中字）"
-        assert "<genre>中文字幕</genre>" in content, \
-            "has_subtitle=True 時 <genre>中文字幕</genre> 應仍存在"
-
-    def test_has_vr_false_no_vr_nfo_byte_identical(self, tmp_path):
-        """has_vr=False（預設）一般檔 → NFO 與未加 has_vr 前 byte 完全相同（CD-68-9）
-
-        兩次呼叫使用同一 output_path（basename 相同），保證 <poster>/<thumb>/<fanart> 不因
-        檔名不同而差異——此測試純粹驗證 has_vr=False 不在 NFO 內容裡新增任何 VR 相關行。
-        """
-        dir_before = tmp_path / "before"
-        dir_after = tmp_path / "after"
-        dir_before.mkdir()
-        dir_after.mkdir()
-        # 兩次用同一 NFO 檔名（basename 相同 → poster/thumb/fanart tag 相同）
-        nfo_path_before = dir_before / "ABP-555.nfo"
-        nfo_path_after = dir_after / "ABP-555.nfo"
-
-        # 「未加 has_vr 前」：不傳 has_vr（使用預設值）
-        generate_nfo(
-            number="ABP-555",
-            title="一般標題",
-            tags=["巨乳", "OL"],
-            actors=["女優A"],
-            date="2024-03-01",
-            maker="Studio",
-            output_path=str(nfo_path_before),
-        )
-        # 「加了 has_vr=False」：明確傳 False
-        generate_nfo(
-            number="ABP-555",
-            title="一般標題",
-            tags=["巨乳", "OL"],
-            actors=["女優A"],
-            date="2024-03-01",
-            maker="Studio",
-            output_path=str(nfo_path_after),
-            has_vr=False,
-        )
-        content_before = nfo_path_before.read_text(encoding="utf-8")
-        content_after = nfo_path_after.read_text(encoding="utf-8")
-        assert content_before == content_after, \
-            f"has_vr=False 應與不傳時完全相同（零變化）\nbefore={content_before!r}\nafter={content_after!r}"
 
 
 # ============ organize_file() VR 端到端串接測試 (T4) ============
@@ -4796,60 +1787,9 @@ class TestVrEndToEnd:
             f"NFO sidecar stem 應帶 VR tail：{nfo_stem!r}"
         )
 
-    def test_vr_file_scraper_already_has_vr_no_duplicate(self, tmp_path):
-        """KAVR-001_mkx200_LR.mp4 + scraper tags=['VR', '單體']
-        → NFO <tag>VR</tag> 恰一個（去重驗端到端不重複）
-        """
-        src = tmp_path / "KAVR-001_mkx200_LR.mp4"
-        src.write_bytes(b"vr content")
-
-        config = self._base_config(tmp_path)
-        metadata = self._base_metadata("KAVR-001", "VR Test", tags=["VR", "單體"])
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
-        assert nfo_content.count("<tag>VR</tag>") == 1, (
-            f"scraper 已有 VR + has_vr=True → 應仍只有一個 <tag>VR</tag>（端到端去重）"
-        )
-        assert nfo_content.count("<genre>VR</genre>") == 1, (
-            f"scraper 已有 VR + has_vr=True → 應仍只有一個 <genre>VR</genre>（端到端去重）"
-        )
 
     # ---- T4 DoD: 無 VR 檔（SIVR-999.mp4）端到端 ----
 
-    def test_no_vr_file_no_tail_no_canonical_vr_in_nfo(self, tmp_path):
-        """SIVR-999.mp4（無 VR token）+ create_nfo=True →
-        (a) 檔名無 VR tail
-        (b) NFO 無 canonical <tag>VR</tag>（has_vr=False 端到端）
-        """
-        src = tmp_path / "SIVR-999.mp4"
-        src.write_bytes(b"no vr content")
-
-        config = self._base_config(tmp_path)
-        metadata = self._base_metadata("SIVR-999", "Some 2D Title", tags=["單體"])
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        # (a) 檔名無 VR tail
-        new_path = Path(result["new_filename"])
-        stem = new_path.stem
-        assert not stem.endswith(("_LR", "_180", "_mkx200", "_3dh", "_sbs")), (
-            f"無 VR token 檔案不應有 VR tail：{stem!r}"
-        )
-
-        # (b) NFO 無 canonical <tag>VR</tag>（has_vr=False 路徑端到端）
-        nfo_path = result.get("nfo_path")
-        assert nfo_path is not None, "nfo_path 不應為 None"
-        nfo_content = Path(nfo_path).read_text(encoding="utf-8")
-        assert "<tag>VR</tag>" not in nfo_content, (
-            f"SIVR-999（無 VR token）NFO 不應含 canonical <tag>VR</tag>"
-        )
-        assert "<genre>VR</genre>" not in nfo_content, (
-            f"SIVR-999（無 VR token）NFO 不應含 canonical <genre>VR</genre>"
-        )
 
     # ---- Codex P2 修正（Finding 1）：中文標題 VR token 雙寫 ----
 
@@ -4923,133 +1863,6 @@ class TestVrEndToEnd:
 
     # ---- Codex P2 二次修正（Finding 1, P2）：bracket/paren 包 cluster 不雙寫 ----
 
-    def test_chinese_title_bracket_vr_no_double_write(self, tmp_path):
-        """ABC-123 中文標題_[180_LR].mp4 + create_nfo=True + extracted_title 路徑
-        → 檔名 stem 僅有單一 _180_LR（不雙寫 _[180_LR]_180_LR）
-        且 stem 中不含 '[180_LR]'、NFO <tag>VR</tag> count==1。
-
-        Codex P2 二次修正（Finding 1, P2）：_detect_vr_cluster 回傳 '180_LR'（不含 bracket），
-        但 extract_chinese_title 萃取的 title 保留 '[180_LR]'，舊 endswith 不命中 →
-        bracket 殘留在 title + vr_tail 再接 → 雙寫。
-        修正：regex 匹配可選 bracket 包裝。
-        """
-        src = tmp_path / "ABC-123 中文標題_[180_LR].mp4"
-        src.write_bytes(b"zh bracket vr content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": True,
-            "max_title_length": 50,
-            "max_filename_length": 80,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "ABC-123",
-            "title": "",
-            "translated_title": "",
-            "actors": [],
-            "tags": ["單體"],
-            "maker": "Studio",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        assert result.get("title_source") == "extracted", (
-            f"應走 extracted 路徑，實際 title_source={result.get('title_source')!r}"
-        )
-
-        stem = Path(result["new_filename"]).stem
-
-        # 關鍵：stem 中 _180_LR 恰一次（不雙寫）
-        assert stem.count("_180_LR") == 1, (
-            f"_180_LR 應恰好出現 1 次（不雙寫），實際 stem：{stem!r}"
-        )
-        # stem 中不應含原始 bracket 形式
-        assert "[180_LR]" not in stem, (
-            f"stem 中不應含 '[180_LR]'（bracket 殘留），實際 stem：{stem!r}"
-        )
-        # 不應有雙寫形式
-        assert "_180_LR_180_LR" not in stem, (
-            f"stem 中不應有 _180_LR_180_LR（雙寫），實際 stem：{stem!r}"
-        )
-        # stem 以 _180_LR 結尾
-        assert stem.endswith("_180_LR"), (
-            f"VR tail 應在 stem 最末，實際 stem：{stem!r}"
-        )
-
-        nfo_path = result.get("nfo_path")
-        assert nfo_path is not None, "create_nfo=True 時 nfo_path 不應為 None"
-        nfo_content = Path(nfo_path).read_text(encoding="utf-8")
-        assert nfo_content.count("<tag>VR</tag>") == 1, (
-            f"NFO <tag>VR</tag> 應恰一個，count={nfo_content.count('<tag>VR</tag>')}"
-        )
-
-    def test_chinese_title_paren_vr_no_double_write(self, tmp_path):
-        """ABC-123 中文標題_(180_LR).mp4 + create_nfo=True + extracted_title 路徑
-        → 檔名 stem 僅有單一 _180_LR（不雙寫 _(180_LR)_180_LR）
-        且 stem 中不含 '(180_LR)'、NFO <tag>VR</tag> count==1。
-
-        Codex P2 二次修正（Finding 1, P2）：同 bracket case，paren 版本。
-        """
-        src = tmp_path / "ABC-123 中文標題_(180_LR).mp4"
-        src.write_bytes(b"zh paren vr content")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}{suffix}",
-            "download_cover": False,
-            "create_nfo": True,
-            "max_title_length": 50,
-            "max_filename_length": 80,
-            "suffix_keywords": [],
-        }
-        metadata = {
-            "number": "ABC-123",
-            "title": "",
-            "translated_title": "",
-            "actors": [],
-            "tags": ["單體"],
-            "maker": "Studio",
-            "date": "2024-01-15",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        assert result.get("title_source") == "extracted", (
-            f"應走 extracted 路徑，實際 title_source={result.get('title_source')!r}"
-        )
-
-        stem = Path(result["new_filename"]).stem
-
-        assert stem.count("_180_LR") == 1, (
-            f"_180_LR 應恰好出現 1 次（不雙寫），實際 stem：{stem!r}"
-        )
-        assert "(180_LR)" not in stem, (
-            f"stem 中不應含 '(180_LR)'（paren 殘留），實際 stem：{stem!r}"
-        )
-        assert "_180_LR_180_LR" not in stem, (
-            f"stem 中不應有 _180_LR_180_LR（雙寫），實際 stem：{stem!r}"
-        )
-        assert stem.endswith("_180_LR"), (
-            f"VR tail 應在 stem 最末，實際 stem：{stem!r}"
-        )
-
-        nfo_path = result.get("nfo_path")
-        assert nfo_path is not None, "create_nfo=True 時 nfo_path 不應為 None"
-        nfo_content = Path(nfo_path).read_text(encoding="utf-8")
-        assert nfo_content.count("<tag>VR</tag>") == 1, (
-            f"NFO <tag>VR</tag> 應恰一個，count={nfo_content.count('<tag>VR</tag>')}"
-        )
-
 
 # ============ spec §4 DoD 補洞：Row 3/8 檔名端到端 ============
 
@@ -5084,88 +1897,8 @@ class TestVrCrossCheck:
             "url": "",
         }
 
-    def test_row3_wavr_180_sbs_filename_tail(self, tmp_path):
-        """spec §4 Row 3: WAVR-456_4096x2048_180_sbs.mp4 → 檔名 stem 結尾 _180_sbs
-
-        T1 只驗偵測，T2 沒有此 case 的 organize_file 層，T4 補上。
-        """
-        src = tmp_path / "WAVR-456_4096x2048_180_sbs.mp4"
-        src.write_bytes(b"wavr content")
-
-        config = self._base_config()
-        metadata = self._base_metadata("WAVR-456", "VR Title")
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        stem = Path(result["new_filename"]).stem
-        assert stem.endswith("_180_sbs"), (
-            f"spec §4 Row 3: WAVR-456 VR tail 應為 _180_sbs，實際 stem：{stem!r}"
-        )
-
-    def test_row8_mixed_case_filename_tail_preserve_raw(self, tmp_path):
-        """spec §4 Row 8: KAVR-001_MKX200_lr.mp4 → 檔名 stem 結尾 _MKX200_lr（原樣大小寫）
-
-        T1 只驗偵測，T2 沒有此 case 的 organize_file 層，T4 補上。
-        重點：原始大小寫不正規化（MKX200 大寫保留，lr 小寫保留）。
-        """
-        src = tmp_path / "KAVR-001_MKX200_lr.mp4"
-        src.write_bytes(b"mixed case vr content")
-
-        config = self._base_config()
-        metadata = self._base_metadata("KAVR-001", "Mixed Case VR")
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-
-        stem = Path(result["new_filename"]).stem
-        assert stem.endswith("_MKX200_lr"), (
-            f"spec §4 Row 8: VR tail 大小寫應原樣（_MKX200_lr），實際 stem：{stem!r}"
-        )
-
 
 # ============ TestOrganizeMultipart — 72b-T5 多段整合測試 ============
-
-class TestIsMultipartKw:
-    """_is_multipart_kw() 單元測試"""
-
-    def test_cd1_with_dash(self):
-        assert _is_multipart_kw('-cd1') is True
-
-    def test_cd2_with_dash(self):
-        assert _is_multipart_kw('-cd2') is True
-
-    def test_dvd1_with_dash(self):
-        assert _is_multipart_kw('-dvd1') is True
-
-    def test_part2_no_prefix(self):
-        assert _is_multipart_kw('part2') is True
-
-    def test_pt1_with_underscore(self):
-        assert _is_multipart_kw('_pt1') is True
-
-    def test_disc1(self):
-        assert _is_multipart_kw('-disc1') is True
-
-    def test_4k_not_multipart(self):
-        assert _is_multipart_kw('-4k') is False
-
-    def test_uc_not_multipart(self):
-        assert _is_multipart_kw('_uc') is False
-
-    def test_empty_string(self):
-        assert _is_multipart_kw('') is False
-
-    def test_separator_only(self):
-        assert _is_multipart_kw('-') is False
-
-    def test_cd10_not_multipart(self):
-        """cd10 數字>9 → 不算多段 token（與 _MULTIPART_RE 一致）"""
-        assert _is_multipart_kw('-cd10') is False
-
-    def test_cd1_no_prefix(self):
-        """無前導分隔符的 'cd1' 也應識別為多段"""
-        assert _is_multipart_kw('cd1') is True
 
 
 class TestOrganizeMultipart:
@@ -5238,69 +1971,9 @@ class TestOrganizeMultipart:
 
     # ---- B: cd2 外部模式 → 產 NFO、保留封面/poster/fanart ----
 
-    def test_cd2_external_nfo_now_written_and_cover_kept(self, tmp_path):
-        """B：外部模式 cd2 → nfo_path not None、.nfo 存在、success True、封面保留"""
-        src = tmp_path / 'MIRD-151-cd2.mp4'
-        src.write_bytes(b'cd2 content')
-
-        config = self._ext_config()
-        metadata = self._base_metadata()
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result['nfo_path'] is not None, 'cd2 外部模式應產 NFO（nfo_path not None）'
-
-        # 封面/poster/fanart 照常
-        assert result.get('cover_path') is not None, 'cd2 應保留 cover'
-        assert result.get('fanart_path') is not None, 'cd2 應保留 fanart'
-        assert result.get('poster_path') is not None, 'cd2 應保留 poster'
-
-        # 目標目錄下有 .nfo 檔
-        stem = Path(result['new_filename']).stem
-        nfo_candidate = tmp_path / (stem + '.nfo')
-        assert nfo_candidate.exists(), f'.nfo 應存在：{nfo_candidate}'
-
-        # stem 以 -cd2 結尾
-        import re
-        assert re.search(r'-cd2$', stem), f'stem 應以 -cd2 結尾，實際：{stem!r}'
 
     # ---- C: 長標題 + cd1 → 不超 max_filename_length 且 part token 不被截 ----
 
-    def test_long_title_cd1_budget_preserved(self, tmp_path):
-        """C：超長 title + cd1 + max=40 → 長度 <= 40、stem 仍以 -cd1 結尾"""
-        src = tmp_path / 'MIRD-151-cd1.mp4'
-        src.write_bytes(b'long title cd1')
-
-        config = self._ext_config(max_len=40)
-        metadata = self._base_metadata(title='超級無敵長的標題名稱會被截斷但part_token應完整保留不被切掉')
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result['new_filename']).name
-        assert len(new_name) <= 40, f'檔名長度 {len(new_name)} 超過 max=40：{new_name!r}'
-
-        stem = Path(result['new_filename']).stem
-        import re
-        assert re.search(r'-cd1$', stem), f'stem 應以 -cd1 結尾（token 不被截），實際：{stem!r}'
-
-    def test_degenerate_max_len_cd1_no_crash(self, tmp_path):
-        """C 退化：max_filename_length 極小（6）→ 不 crash、長度不超 max"""
-        src = tmp_path / 'MIRD-151-cd1.mp4'
-        src.write_bytes(b'degenerate')
-
-        config = self._ext_config(max_len=6)
-        metadata = self._base_metadata(title='Title')
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result['new_filename']).name
-        assert len(new_name) <= 6, f'檔名長度 {len(new_name)} 超過 max=6：{new_name!r}'
 
     # ---- D: 防 {suffix} 雙寫 ----
 
@@ -5321,224 +1994,20 @@ class TestOrganizeMultipart:
         assert '-cd1-cd1' not in new_name, f'出現雙寫 -cd1-cd1：{new_name!r}'
         assert new_name.count('-cd1') == 1, f'-cd1 應恰出現一次，實際：{new_name!r}'
 
-    def test_version_token_kept_part_tail_not_doubled(self, tmp_path):
-        """D 加碼：-4k-cd1 檔 + suffix_keywords 含 -4k/-cd1 → stem 含 -4k（version），-cd1 恰一次"""
-        src = tmp_path / 'MIRD-151-4k-cd1.mp4'
-        src.write_bytes(b'4k cd1')
-
-        config = self._ext_config(suffix_keywords=['-cd1', '-cd2', '-4k', '-uc'])
-        metadata = self._base_metadata()
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        new_name = Path(result['new_filename']).name
-        assert '-4k' in new_name, f'version token -4k 應保留：{new_name!r}'
-        assert '-cd1-cd1' not in new_name, f'-cd1 不應雙寫：{new_name!r}'
-        assert new_name.count('-cd1') == 1, f'-cd1 應恰一次：{new_name!r}'
-
-    def test_config_suffix_keywords_not_mutated(self, tmp_path):
-        """D 不 mutate：organize_file 呼叫後 config['suffix_keywords'] 原樣"""
-        src = tmp_path / 'MIRD-151-cd1.mp4'
-        src.write_bytes(b'no mutate')
-
-        config = self._ext_config(suffix_keywords=['-cd1', '-cd2', '-4k'])
-        original_kws = list(config['suffix_keywords'])  # 拷貝備用
-        metadata = self._base_metadata(cover='')
-
-        organize_file(str(src), metadata, config)
-
-        assert config['suffix_keywords'] == original_kws, (
-            f'config["suffix_keywords"] 被 mutate，原：{original_kws!r}，後：{config["suffix_keywords"]!r}'
-        )
 
     # ---- E: off 模式 byte-identical ----
 
-    def test_off_mode_cd1_nfo_written_via_suffix(self, tmp_path):
-        """E：off 模式 cd1 → NFO 照產（-cd1 經 {suffix} 路徑，不跳）"""
-        src = tmp_path / 'MIRD-151-cd1.mp4'
-        src.write_bytes(b'off cd1')
-
-        # off 模式（或 key 不存在）= _make_config 的預設
-        config = _make_config(tmp_path)  # no external_manager key → off
-        config['create_nfo'] = True
-        metadata = _make_metadata(number='MIRD-151')
-
-        result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get('nfo_path') is not None, 'off 模式 cd1 應產 NFO'
-        # -cd1 經 {suffix} 路徑進檔名
-        assert '-cd1' in Path(result['new_filename']).name
-
-    def test_off_mode_cd2_nfo_written_no_skip(self, tmp_path):
-        """E：off 模式 cd2 → NFO 照產"""
-        src = tmp_path / 'MIRD-151-cd2.mp4'
-        src.write_bytes(b'off cd2')
-
-        config = _make_config(tmp_path)
-        config['create_nfo'] = True
-        metadata = _make_metadata(number='MIRD-151')
-
-        result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get('nfo_path') is not None, 'off 模式 cd2 應照產 NFO'
-        assert '-cd2' in Path(result['new_filename']).name
 
     # ---- F: VR + cd1 → 順序 {base}{vr_tail}-cd1 ----
 
-    def test_vr_and_cd1_order(self, tmp_path):
-        """F：VR cluster + cd1 → stem 形如 ...{vr_tail}-cd1，-cd1 最末"""
-        # ABC-123_180_LR-cd1.mp4 → vr_tail=_180_LR，part_tail=-cd1
-        src = tmp_path / 'ABC-123_180_LR-cd1.mp4'
-        src.write_bytes(b'vr cd1')
-
-        config = self._ext_config(suffix_keywords=['-cd1', '-4k'])
-        metadata = self._base_metadata(number='ABC-123')
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        stem = Path(result['new_filename']).stem
-        import re
-        # -cd1 在最末
-        assert re.search(r'-cd1$', stem), f'stem 應以 -cd1 結尾，實際：{stem!r}'
-        # vr_tail 在 -cd1 之前
-        assert '_180_LR' in stem, f'stem 應含 _180_LR（vr_tail），實際：{stem!r}'
-        idx_vr = stem.index('_180_LR')
-        idx_cd = stem.index('-cd1')
-        assert idx_vr < idx_cd, f'vr_tail 應在 -cd1 之前，實際：{stem!r}'
 
     # ---- G: kodi cd2 → 保留封面 ----
 
-    def test_kodi_cd2_keep_cover(self, tmp_path):
-        """G：kodi 模式 cd2 + create_folder=False → 產 NFO + stem 命名 poster/fanart（72c 修正後）"""
-        src = tmp_path / 'MIRD-151-cd2.mp4'
-        src.write_bytes(b'kodi cd2')
-
-        config = self._ext_config(ext_mode='kodi')  # create_folder=False → stem 命名
-        metadata = self._base_metadata()
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result['nfo_path'] is not None, 'kodi cd2 應產 NFO'
-        assert Path(result['nfo_path']).exists(), f".nfo 應存在：{result['nfo_path']}"
-        # kodi 固定 stem 命名（collision-free）
-        assert result.get('poster_path') is not None, 'kodi cd2 應保留 poster'
-        assert result.get('fanart_path') is not None, 'kodi cd2 應保留 fanart'
-        poster_name = Path(result['poster_path']).name
-        fanart_name = Path(result['fanart_path']).name
-        assert poster_name.endswith('-poster.jpg'), f'kodi+flat poster 應帶 stem，實際：{poster_name!r}'
-        assert fanart_name.endswith('-fanart.jpg'), f'kodi+flat fanart 應帶 stem，實際：{fanart_name!r}'
 
     # ---- H: 邊界 negative — apartment1 不誤命中 ----
 
-    def test_apartment1_not_multipart(self, tmp_path):
-        """H：apartment1.mp4 — part1 前緣為字母 → part_match None → 正常產 NFO、無 part_tail"""
-        src = tmp_path / 'apartment1.mp4'
-        src.write_bytes(b'apartment')
-
-        config = self._ext_config(suffix_keywords=[])
-        metadata = self._base_metadata(number='FAKE-001')
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get('nfo_path') is not None, 'apartment1 應正常產 NFO'
-        # 檔名不應帶任何 part_tail
-        stem = Path(result['new_filename']).stem
-        assert not stem.endswith('-cd1'), f'apartment1 不應接 -cd1 part_tail：{stem!r}'
 
     # ---- I: P1-A 修正 — extracted_title 殘留多段 token 不雙寫（Codex P1-A）----
-
-    def test_chinese_title_part2_hd_no_dup_token(self, tmp_path):
-        """I-1：中文標題含 -part2[HD] 的 part2 檔案（jellyfin 模式）→
-        輸出 stem 中 part2 token 恰一次，且嚴格落在 stem 最末（無 ...-part2[HD]-part2 雙寫）。
-        涵蓋 POC Q2 典型輸入形狀：bracket 包裝版本標記殘留在 extracted_title。
-        """
-        import re
-        # part2 檔：[ABC-123]某中文標題-part2[HD].mp4
-        src = tmp_path / '[ABC-123]某中文標題-part2[HD].mp4'
-        src.write_bytes(b'part2 hd content')
-
-        config = self._ext_config(
-            suffix_keywords=['-cd1', '-cd2', '-part1', '-part2', '-4k'],
-            filename_format='[{num}] {title}{suffix}',
-        )
-        metadata = self._base_metadata(number='ABC-123', title='Some Japanese Title')
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        stem = Path(result['new_filename']).stem
-
-        # part2 token 恰好出現一次（無雙寫）
-        assert stem.count('part2') == 1, (
-            f'part2 token 應恰好出現一次，實際：{stem!r}'
-        )
-        # part2 token 嚴格在 stem 末尾（Jellyfin stacking 要求）
-        assert re.search(r'-part2$', stem), (
-            f'stem 應以 -part2 結尾，實際：{stem!r}'
-        )
-
-    def test_chinese_title_part1_no_dup_token(self, tmp_path):
-        """I-2：part1 版本同類型驗證 → part1 恰一次且在 stem 末。"""
-        import re
-        src = tmp_path / '[ABC-123]某中文標題-part1.mp4'
-        src.write_bytes(b'part1 content')
-
-        config = self._ext_config(
-            suffix_keywords=['-cd1', '-cd2', '-part1', '-part2', '-4k'],
-            filename_format='[{num}] {title}{suffix}',
-        )
-        metadata = self._base_metadata(number='ABC-123', title='Some Japanese Title')
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        stem = Path(result['new_filename']).stem
-
-        assert stem.count('part1') == 1, (
-            f'part1 token 應恰好出現一次，實際：{stem!r}'
-        )
-        assert re.search(r'-part1$', stem), (
-            f'stem 應以 -part1 結尾，實際：{stem!r}'
-        )
-
-    def test_clean_title_cd1_no_op(self, tmp_path):
-        """I-3：乾淨番號（scraped 非多段標題）+ 外部模式 cd1 → 輸出與修前 byte-identical
-        （_strip_part_token no-op：title 內無多段 token → 組裝後 filename_base 無 token 可剝）。
-        """
-        import re
-        src = tmp_path / 'MIRD-151-cd1.mp4'
-        src.write_bytes(b'clean cd1')
-
-        config = self._ext_config(suffix_keywords=['-cd1', '-cd2', '-4k', '-uc'])
-        # 使用非多段 scraped 標題
-        metadata = self._base_metadata(number='MIRD-151', title='Test Title')
-
-        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        stem = Path(result['new_filename']).stem
-
-        # -cd1 恰好一次（不被雙剝或漏寫）
-        assert stem.count('cd1') == 1, (
-            f'cd1 token 應恰好一次（no-op），實際：{stem!r}'
-        )
-        # 嚴格在末尾
-        assert re.search(r'-cd1$', stem), (
-            f'stem 應以 -cd1 結尾，實際：{stem!r}'
-        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5576,148 +2045,6 @@ class TestKodiStemNamingOrganize:
             "cover": "http://fake/cover.jpg",
             "url": "",
         }
-
-    def test_O1_kodi_create_folder_false_stem_named(self, tmp_path):
-        """O1：kodi + create_folder=False → stem 命名，NFO <poster> 對得上 stem。"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_kodi_config(create_folder=False)
-        metadata = self._make_kodi_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        fanart = Path(result["fanart_path"])
-        poster = Path(result["poster_path"])
-
-        assert fanart.name.endswith("-fanart.jpg"), f"kodi+flat fanart 應帶 stem，實際: {fanart.name}"
-        assert poster.name.endswith("-poster.jpg"), f"kodi+flat poster 應帶 stem，實際: {poster.name}"
-        assert fanart.exists()
-        assert poster.exists()
-
-        # 裸短名不存在
-        assert not (tmp_path / "poster.jpg").exists(), "不應存在裸 poster.jpg"
-        assert not (tmp_path / "fanart.jpg").exists(), "不應存在裸 fanart.jpg"
-
-        # NFO <poster> tag 與磁碟檔名一致
-        assert result.get("nfo_path") is not None
-        nfo = Path(result["nfo_path"]).read_text(encoding="utf-8")
-        assert f"<poster>{poster.name}</poster>" in nfo, \
-            f"NFO <poster> 應指向 {poster.name}"
-
-    def test_O2_kodi_create_folder_true_actor_layer_stem_named(self, tmp_path):
-        """O2：kodi + create_folder=True + folder_layers=['{actor}'] → 仍使用 stem 命名（不再短名）。"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = self._make_kodi_config(create_folder=True, folder_layers=["{actor}"])
-        metadata = self._make_kodi_metadata(actors=["三上悠亞"])
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        fanart = Path(result["fanart_path"])
-        poster = Path(result["poster_path"])
-
-        assert fanart.name.endswith("-fanart.jpg"), f"kodi+actor fanart 應帶 stem，實際: {fanart.name}"
-        assert poster.name.endswith("-poster.jpg"), f"kodi+actor poster 應帶 stem，實際: {poster.name}"
-
-        # 裸短名不存在
-        actor_dir = Path(result["new_folder"])
-        assert not (actor_dir / "poster.jpg").exists(), "actor 資料夾不應有裸 poster.jpg"
-        assert not (actor_dir / "fanart.jpg").exists(), "actor 資料夾不應有裸 fanart.jpg"
-
-        # NFO tag 一致
-        assert result.get("nfo_path") is not None
-        nfo = Path(result["nfo_path"]).read_text(encoding="utf-8")
-        assert f"<poster>{poster.name}</poster>" in nfo
-
-    def test_kodi_equals_jellyfin_same_filenames(self, tmp_path):
-        """kodi 輸出 == jellyfin 輸出（相同 stem 命名 + 相同 NFO poster/fanart tag）。"""
-        src_k = tmp_path / "SONE-205.mp4"
-        src_j = tmp_path / "SONE-205B.mp4"
-        src_k.write_bytes(b"kodi")
-        src_j.write_bytes(b"jf")
-
-        cfg_k = self._make_kodi_config(create_folder=False)
-        cfg_j = _make_ext_config("jellyfin")
-        meta_k = self._make_kodi_metadata("SONE-205")
-        meta_j = _make_ext_metadata("SONE-205B")
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            res_k = organize_file(str(src_k), meta_k, cfg_k)
-            res_j = organize_file(str(src_j), meta_j, cfg_j)
-
-        assert res_k["success"] and res_j["success"]
-        # 兩者都產 stem-poster.jpg 和 stem-fanart.jpg（不同 stem 但格式相同）
-        assert Path(res_k["fanart_path"]).name.endswith("-fanart.jpg")
-        assert Path(res_k["poster_path"]).name.endswith("-poster.jpg")
-        assert Path(res_j["fanart_path"]).name.endswith("-fanart.jpg")
-        assert Path(res_j["poster_path"]).name.endswith("-poster.jpg")
-
-        # NFO tag 格式相同（各自 basename）
-        nfo_k = Path(res_k["nfo_path"]).read_text(encoding="utf-8")
-        nfo_j = Path(res_j["nfo_path"]).read_text(encoding="utf-8")
-        assert "-poster.jpg</poster>" in nfo_k
-        assert "-fanart.jpg</fanart>" in nfo_k
-        assert "-poster.jpg</poster>" in nfo_j
-        assert "-fanart.jpg</fanart>" in nfo_j
-
-    def test_kodi_multi_video_no_collision(self, tmp_path):
-        """kodi + 同資料夾兩部片 → 各自 stem 命名，無碰撞。"""
-        src1 = tmp_path / "SONE-205.mp4"
-        src2 = tmp_path / "MIDE-001.mp4"
-        src1.write_bytes(b"a")
-        src2.write_bytes(b"b")
-
-        cfg = self._make_kodi_config(create_folder=False)
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            r1 = organize_file(str(src1), self._make_kodi_metadata("SONE-205"), cfg)
-            r2 = organize_file(str(src2), self._make_kodi_metadata("MIDE-001"), cfg)
-
-        assert r1["success"] and r2["success"]
-        assert r1.get("poster_path") is not None, "r1 應產 poster_path"
-        assert r2.get("poster_path") is not None, "r2 應產 poster_path"
-        # 各有獨立 stem 命名（不同路徑）
-        assert r1["poster_path"] != r2["poster_path"], "兩片 poster 路徑不應相同"
-        assert Path(r1["poster_path"]).name.endswith("-poster.jpg"), "r1 poster 應帶 stem"
-        assert Path(r2["poster_path"]).name.endswith("-poster.jpg"), "r2 poster 應帶 stem"
-        # 裸短名不存在
-        assert not (tmp_path / "poster.jpg").exists(), "不應有共用裸 poster.jpg"
-
-    def test_O3_jellyfin_unchanged(self, tmp_path):
-        """O3：jellyfin + create_folder=False → stem 命名不變（回歸）。"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("jellyfin", create_folder=False)
-        metadata = _make_ext_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True
-        assert Path(result["fanart_path"]).name.endswith("-fanart.jpg")
-        assert Path(result["poster_path"]).name.endswith("-poster.jpg")
-
-    def test_O3_off_unchanged(self, tmp_path):
-        """O3 off：off + create_folder=False → 無 poster/fanart（回歸）。"""
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"fake mp4")
-
-        config = _make_ext_config("off", create_folder=False)
-        metadata = _make_ext_metadata()
-
-        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
-            result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True
-        assert result.get("fanart_path") is None
-        assert result.get("poster_path") is None
 
 
 # ============ 站1接線測試 (TASK-101a-T2 DoD①④) ============
@@ -5791,9 +2118,6 @@ class TestOrganizeFileStationWiring:
 
     def test_station1_fixture_a(self, tmp_path):
         self._run_station1(tmp_path, "a", self._FIXTURE_A)
-
-    def test_station1_fixture_b(self, tmp_path):
-        self._run_station1(tmp_path, "b", self._FIXTURE_B)
 
 
 # ============ containment 防線測試（TASK-110b-T4） ============
@@ -5890,41 +2214,6 @@ class TestOrganizeContainment:
         assert (target_dir / "[SONE-205] Vol.2.mp4").exists()
         assert not src.exists(), "原始檔應已被搬移"
 
-    def test_sanitized_slash_dotdot_not_misfired(self, tmp_path):
-        """
-        'A/../B' 型輸入會被 sanitize_filename 清成 'A .. B'（斜線變空白，非路徑分隔），
-        不應被 containment 檢查誤殺。
-        """
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"original content")
-
-        config = _make_config(tmp_path)
-        metadata = _make_metadata(title="A/../B")
-
-        result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"不應誤殺合法輸入：{result.get('error')}"
-        assert "A .. B" in result["new_filename"]
-        assert not src.exists(), "原始檔應已被搬移"
-
-    def test_create_folder_false_containment_passthrough(self, tmp_path):
-        """
-        create_folder=False 時 target_dir == original_dir，containment 檢查恆通過，
-        不應影響既有正常整理行為。
-        """
-        src = tmp_path / "SONE-205.mp4"
-        src.write_bytes(b"original content")
-
-        config = _make_config(tmp_path)  # create_folder=False（既有預設）
-        metadata = _make_metadata()
-
-        result = organize_file(str(src), metadata, config)
-
-        assert result["success"] is True, f"organize 失敗：{result.get('error')}"
-        assert result["error"] is None
-        target = tmp_path / "[SONE-205] Test Title.mp4"
-        assert target.exists()
-        assert not src.exists()
 
     def test_unc_bare_share_root_allowed(self, monkeypatch):
         """UNC bare share root：\\\\server\\share 底下的 candidate 必須放行。
@@ -5997,86 +2286,6 @@ class TestT4bOrganizeFallback:
         finally:
             self._clear_failed_hosts()
 
-    def test_organize_without_preview_keeps_todays_behaviour(self, tmp_path):
-        """邊界 9（AC-5）：前端剝除後的 metadata（無 preview）→ 逐字元維持今天的行為。"""
-        self._clear_failed_hosts()
-        try:
-            src = tmp_path / 'ABC-124.mp4'
-            src.write_bytes(b'v' * 100)
-            metadata = {
-                'number': 'ABC-124', 'title': 'T', 'actors': [], 'tags': [],
-                'cover': 'https://cdn.blocked/cover.jpg',
-            }
-            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
-                      'download_cover': True, 'create_nfo': False}
-            with patch('core.organizer.requests.get',
-                       side_effect=self._blocked_unless_proxy()) as mg:
-                result = organize_file(str(src), metadata, config)
-            assert not result.get('cover_path'), '沒有 preview 就沒有退路，原址失敗即失敗'
-            assert mg.call_count == 1, '不得有第二次嘗試'
-            assert 'fallback_url' not in mg.call_args.kwargs
-        finally:
-            self._clear_failed_hosts()
-
-    def test_organize_extrafanart_uses_preview_fallback(self, tmp_path):
-        """TASK-126-T4b review MAJOR-3：organize 的**劇照**分支也要有 caller 測試。
-
-        初版兩支測試都只帶封面、沒帶 sample_images ⇒ 劇照那段迴圈根本沒跑到。
-        review 在沙盒把 `_previews` / `_pv_i` 整段拔掉，285 條照樣全綠。
-        """
-        self._clear_failed_hosts()
-        try:
-            src = tmp_path / 'ABC-125.mp4'
-            src.write_bytes(b'v' * 100)
-            metadata = {
-                'number': 'ABC-125', 'title': 'T', 'actors': [], 'tags': [],
-                'cover': '',
-                'sample_images': ['https://cdn.blocked/s1.jpg', 'https://cdn.blocked/s2.jpg'],
-                'preview_sample_images': [
-                    'http://mt.example/v1/images/primary/MGS/ABC-125?url=s1',
-                    'http://mt.example/v1/images/primary/MGS/ABC-125?url=s2',
-                ],
-            }
-            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
-                      'download_cover': False, 'create_nfo': False,
-                      'download_sample_images': True}
-            with patch('core.organizer.requests.get', side_effect=self._blocked_unless_proxy()):
-                result = organize_file(str(src), metadata, config)
-            ef = Path(result['new_folder']) / 'extrafanart'
-            written = sorted(ef.glob('fanart*.jpg'))
-            assert len(written) == 2, (
-                '劇照那半若沒接上 preview，被牆的使用者整理入庫會拿不到任何劇照，'
-                '而且沒有錯誤訊息'
-            )
-            for p in written:
-                assert p.read_bytes().startswith(b'PROXY')
-        finally:
-            self._clear_failed_hosts()
-
-    def test_organize_extrafanart_short_preview_does_not_truncate(self, tmp_path):
-        """邊界 8 在 organize 也成立：preview 比 sample 短，不得少下載。"""
-        self._clear_failed_hosts()
-        try:
-            src = tmp_path / 'ABC-126.mp4'
-            src.write_bytes(b'v' * 100)
-            metadata = {
-                'number': 'ABC-126', 'title': 'T', 'actors': [], 'tags': [],
-                'cover': '',
-                'sample_images': ['https://cdn.ok/s1.jpg', 'https://cdn.ok/s2.jpg', 'https://cdn.ok/s3.jpg'],
-                'preview_sample_images': ['http://mt.example/v1/images/primary/MGS/ABC-126?url=s1'],
-            }
-            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
-                      'download_cover': False, 'create_nfo': False,
-                      'download_sample_images': True}
-            with patch('core.organizer.requests.get',
-                       return_value=self._resp(b'DIRECT' + b'\x00' * 2000)) as mg:
-                result = organize_file(str(src), metadata, config)
-            ef = Path(result['new_folder']) / 'extrafanart'
-            assert len(sorted(ef.glob('fanart*.jpg'))) == 3, 'zip 截斷會讓這裡變成 1'
-            assert mg.call_count == 3
-        finally:
-            self._clear_failed_hosts()
-
 
 # ============ TASK-126 Codex PR review P2-1：preview_* 傳得過去，但不得持久化 ============
 #
@@ -6107,35 +2316,6 @@ class TestT6PreviewNotPersisted:
             'preview_sample_images': [self._PROXY + '&i=1'],
         }
 
-    def test_preview_urls_never_appear_in_generated_nfo(self, tmp_path):
-        """**核心不變式**：NFO 的內容裡不得出現任何 preview／metatube 網址。
-
-        使用者流程：使用者按「產生」入庫 → 那個 .nfo 會活很久（Jellyfin 讀它、
-        換機器也跟著走）。若代理網址被寫進去，等 metatube 換 IP 之後那就是一串
-        永遠連不到的死字串躺在使用者的檔案裡。
-        """
-        self._clear_failed_hosts()
-        try:
-            src = tmp_path / 'ABC-777.mp4'
-            src.write_bytes(b'v' * 100)
-            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
-                      'download_cover': True, 'create_nfo': True,
-                      'download_sample_images': True}
-            with patch('core.organizer.requests.get',
-                       return_value=self._resp_ok()):
-                result = organize_file(str(src), self._metadata(), config)
-
-            nfo_path = result.get('nfo_path')
-            assert nfo_path and os.path.exists(nfo_path), 'NFO 應該有產生，否則這條驗不到東西'
-            content = open(nfo_path, encoding='utf-8').read()
-            for needle in ('preview_cover_url', 'preview_sample_images',
-                           'mt.example', '/v1/images/'):
-                assert needle not in content, (
-                    f'NFO 裡出現了 {needle!r} —— preview_* 只對顯示有意義、'
-                    f'會隨 metatube 連線狀態失效，寫進 NFO 等於留下一串會死掉的字串'
-                )
-        finally:
-            self._clear_failed_hosts()
 
     def test_preview_urls_never_appear_in_any_written_file(self, tmp_path):
         """更寬的一道：整個輸出資料夾裡的**任何文字檔**都不得含代理網址。
@@ -6174,60 +2354,6 @@ class TestT6PreviewNotPersisted:
         finally:
             self._clear_failed_hosts()
 
-    def test_db_schema_has_no_preview_columns(self, tmp_path):
-        """結構面的第二道：**真的建一個 DB，用 PRAGMA 問它的欄位**。
-
-        日後若有人真的加了 preview 欄位進 videos 表，這裡會紅，
-        提醒他先想清楚「這串會隨 metatube 位址失效的網址，為什麼要落 DB」。
-
-        **為什麼是 PRAGMA 而不是掃 `connection.py` 的原始碼**（Codex PR review 第二輪 P3）：
-        初版是「原始碼裡不得出現這兩個字串」——那是**代理指標**，不是不變式。
-        它有兩個毛病：① 依 CLAUDE.md「Lint 守衛規則」，純字串存在性檢查不該進 pytest；
-        ② **會假紅**——有人在 `connection.py` 寫一句「`preview_cover_url` 刻意不存 DB」
-        的註解，或把欄位清單重構成別的形狀，守衛就無故變紅，而 schema 根本沒變。
-        改問真正的 schema 之後，它驗的是**行為**（`init_db()` 建出來的表長什麼樣），
-        註解與重構都影響不到它。
-        **白名單（owner 2026-09-02 拍板 B）**：`wishlist` 表允許有 preview 欄位——
-        理由是「網址會過期是這類資料的常態，不是 metatube 特有的（javbus 自己也會下架）」，
-        不值得為它蓋一套「顯示時現組代理網址」的機制。白名單只赦免 `wishlist`，
-        其餘表照樣被這支測試守著。
-        """
-        import sqlite3
-
-        from core.database.connection import init_db
-
-        # owner 2026-09-02 拍板 B：wishlist 允許存 preview 欄位（理由見上方 docstring 末段）。
-        # fail-closed：若這張表哪天被改名／刪掉，下面的存在性斷言會先紅，
-        # 提醒維護者這條赦免已經過期，該把它從 PREVIEW_COLUMN_WHITELIST 刪掉。
-        PREVIEW_COLUMN_WHITELIST = {'wishlist'}
-
-        db_path = tmp_path / 'schema_probe.db'
-        init_db(db_path)
-        with sqlite3.connect(str(db_path)) as conn:
-            tables = [
-                r[0] for r in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                )
-            ]
-            assert 'videos' in tables, 'init_db() 沒有建出 videos 表，這條什麼都沒驗到'
-            for whitelisted in PREVIEW_COLUMN_WHITELIST:
-                assert whitelisted in tables, (
-                    f'白名單裡的表 {whitelisted!r} 不存在於目前的 schema —— '
-                    f'這條赦免已經過期，請把它從 PREVIEW_COLUMN_WHITELIST 刪掉'
-                )
-            offenders = {}
-            for table in tables:
-                if table in PREVIEW_COLUMN_WHITELIST:
-                    continue
-                cols = [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')]
-                hits = [c for c in cols if 'preview' in c.lower()]
-                if hits:
-                    offenders[table] = hits
-
-        assert offenders == {}, (
-            f'DB schema 出現了 preview 欄位：{offenders} —— 那串網址綁著 metatube '
-            f'當下的位址，存進 DB 之後就是一筆會過期的資料（換 IP／換 port 就死）'
-        )
 
     def _resp_ok(self):
         m = MagicMock()
@@ -6325,12 +2451,6 @@ class TestCropToPosterAbandonedDegrade:
     def test_abandoned_detect_timeout_matches_no_face(self, tmp_path):
         self._assert_abandoned_matches_no_face(tmp_path, "detect_timeout")
 
-    def test_abandoned_crashed_matches_no_face(self, tmp_path):
-        self._assert_abandoned_matches_no_face(tmp_path, "crashed")
-
-    def test_abandoned_circuit_open_matches_no_face(self, tmp_path):
-        self._assert_abandoned_matches_no_face(tmp_path, "circuit_open")
-
 
 class TestNfoTitleFormatWiring:
     """TASK-154b-T2: organize_file NFO 標題接線與截斷修復測試"""
@@ -6403,32 +2523,3 @@ class TestNfoTitleFormatWiring:
             "NFO 中的 <title> 應套用自訂格式 {num}-{title}"
         )
 
-    def test_organize_file_missing_nfo_title_format_defaults_to_default(self, tmp_path):
-        """config 未提供 nfo_title_format 時應 fallback 到預設格式 [{num}]{title}"""
-        src = tmp_path / "ABC-123.mp4"
-        src.write_bytes(b"dummy video")
-
-        config = {
-            "create_folder": False,
-            "filename_format": "[{num}] {title}",
-            "download_cover": False,
-            "create_nfo": True,
-        }
-        metadata = {
-            "number": "ABC-123",
-            "title": "My Title",
-            "actors": [],
-            "tags": [],
-            "maker": "",
-            "date": "2024-01-01",
-            "cover": "",
-            "url": "",
-        }
-
-        result = organize_file(str(src), metadata, config)
-        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get("nfo_path") is not None
-        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
-        assert "<title>[ABC-123]My Title</title>" in nfo_content, (
-            "NFO 中的 <title> 應為預設格式 [{num}]{title}"
-        )

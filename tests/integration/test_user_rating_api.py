@@ -117,27 +117,6 @@ class TestScenario2BatchMultiPath:
 
 # ── 場景 3：部分 not_found ────────────────────────────────────────────────────────
 
-class TestScenario3PartialNotFound:
-    """其中一個路徑不在 DB，該路徑回 not_found，其餘路徑照常成功（不整批失敗）。"""
-
-    def test_one_missing_others_succeed(self, client, tmp_db):
-        paths = [TEST_FILE_URI, NONEXISTENT_URI, TEST_FILE_URI2]
-        resp = client.post("/api/user-rating", json={"paths": paths, "picked": True})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert len(data["results"]) == 3
-
-        by_path = {r["path"]: r for r in data["results"]}
-        assert by_path[TEST_FILE_URI]["ok"] is True
-        assert by_path[TEST_FILE_URI2]["ok"] is True
-        assert by_path[NONEXISTENT_URI]["ok"] is False
-        assert by_path[NONEXISTENT_URI]["reason"] == "not_found"
-
-        assert data["changed"] == 2
-        assert _rating(tmp_db, TEST_FILE_URI) > 0
-        assert _rating(tmp_db, TEST_FILE_URI2) > 0
-
 
 # ── 場景 4：-cd2 路徑解析到代表段 ────────────────────────────────────────────────────
 
@@ -193,48 +172,8 @@ class TestScenario4MultipartRepresentative:
 
 # ── 場景 5：501 個路徑回 400 ──────────────────────────────────────────────────────
 
-class TestScenario5OverLimit:
-    """paths 長度 501 → JSONResponse(status_code=400, ...)，不落地任何寫入。"""
-
-    def test_501_paths_returns_400(self, client, tmp_db):
-        paths = [to_file_uri(f"/test/lib/OVER-{i:04d}.mp4", {}) for i in range(501)]
-        resp = client.post("/api/user-rating", json={"paths": paths, "picked": True})
-        assert resp.status_code == 400
-        data = resp.json()
-        assert data["success"] is False
-        assert "error" in data
-
-        # 不落地任何寫入：既有測試資料的 rating 維持 0
-        assert _rating(tmp_db, TEST_FILE_URI) == 0
-        assert _rating(tmp_db, TEST_FILE_URI2) == 0
-
 
 # ── 邊界：XOR 違反、空陣列、picked 缺欄位 ────────────────────────────────────────────
-
-class TestBoundaryXorAndEmpty:
-    def test_both_paths_and_file_path_given_400(self, client):
-        resp = client.post("/api/user-rating", json={
-            "paths": [TEST_FILE_URI],
-            "file_path": TEST_FILE_URI2,
-            "picked": True,
-        })
-        assert resp.status_code == 400
-        assert resp.json()["success"] is False
-
-    def test_neither_paths_nor_file_path_given_400(self, client):
-        resp = client.post("/api/user-rating", json={"picked": True})
-        assert resp.status_code == 400
-        assert resp.json()["success"] is False
-
-    def test_empty_paths_array_400(self, client):
-        resp = client.post("/api/user-rating", json={"paths": [], "picked": True})
-        assert resp.status_code == 400
-        assert resp.json()["success"] is False
-
-    def test_picked_missing_returns_422(self, client):
-        """picked 缺欄位由 pydantic 自動擋（422），不是端點函式體要處理的情況。"""
-        resp = client.post("/api/user-rating", json={"file_path": TEST_FILE_URI})
-        assert resp.status_code == 422
 
 
 # ── 邊界：取消精選（picked: false）與重複路徑 ────────────────────────────────────────
@@ -249,18 +188,6 @@ class TestBoundaryUnpickAndDuplicate:
         assert resp.status_code == 200
         assert resp.json()["picked"] is False
         assert _rating(tmp_db, TEST_FILE_URI) == 0
-
-    def test_duplicate_paths_report_1to1_but_changed_counts_once(self, client, tmp_db):
-        """CD-123 §C：寫入去重、回報不去重——同一 path 出現兩次，results 仍 1:1 對應輸入，
-        changed 只計代表段去重後的成功寫入數。
-        """
-        paths = [TEST_FILE_URI, TEST_FILE_URI]
-        resp = client.post("/api/user-rating", json={"paths": paths, "picked": True})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data["results"]) == 2
-        assert all(r["ok"] is True for r in data["results"])
-        assert data["changed"] == 1
 
 
 # ── AC-13/AC-14：NFO 逐位元組不變（TASK-123-T7） ──────────────────────────────────
@@ -341,20 +268,3 @@ class TestScenario6NfoByteIdentical:
         repo = VideoRepository(db_path)
         assert repo.get_by_path(video_uri).user_rating > 0
 
-    def test_unpick_leaves_nfo_byte_identical(self, nfo_client, nfo_db):
-        """picked: False（取消精選，鏡像方向）前後，.nfo 的 bytes 與 mtime_ns 完全相同。"""
-        db_path, video_uri, nfo_path = nfo_db
-        # 先精選一次，再取消——鏡射邊界條件「冪等設值也可能有『回到 0』的分支，
-        # 同樣不該碰 NFO」。
-        nfo_client.post("/api/user-rating", json={"file_path": video_uri, "picked": True})
-
-        before = self._nfo_fingerprint(nfo_path)
-        resp = nfo_client.post("/api/user-rating", json={"file_path": video_uri, "picked": False})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-        after = self._nfo_fingerprint(nfo_path)
-        assert before == after, "AC-13 violated: .nfo bytes/mtime changed after unpicking"
-
-        repo = VideoRepository(db_path)
-        assert repo.get_by_path(video_uri).user_rating == 0

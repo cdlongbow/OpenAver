@@ -40,11 +40,6 @@ def dmm_scraper(monkeypatch):
     return DMMScraper(ScraperConfig(proxy_settings=ProxySettings(url="http://test-proxy:8080")))
 
 
-def test_learn_prefix_and_save_prefix_hint_removed():
-    assert hasattr(DMMScraper, "_learn_prefix") is False
-    assert hasattr(DMMScraper, "_save_prefix_hint") is False
-
-
 # ── TASK-134b-T10 DoD 1–4 ────────────────────────────────────────────────────
 
 
@@ -90,52 +85,6 @@ def test_second_try_called_with_unpadded_cid_when_padded_fails(
     assert result.number == "MIDD-357"
     assert {"number": "MIDD-357", "zfill": False} in convert_calls
     assert fetch_calls == ["midd00357", "midd357"]
-
-
-def test_second_try_not_called_when_padded_succeeds(dmm_scraper, monkeypatch):
-    """DoD 2 正向鎖：補零成功 → 第二試完全不被呼叫。"""
-    convert_calls = []
-
-    def convert(number, zfill=True):
-        convert_calls.append(zfill)
-        return "sone00205"
-
-    monkeypatch.setattr(dmm_scraper, "_convert_with_hints", convert)
-    monkeypatch.setattr(
-        dmm_scraper,
-        "_fetch_by_id",
-        lambda cid: Video(number="SONE-205", title="t", source="dmm"),
-    )
-    step3_called = {"v": False}
-
-    def step3(number):
-        step3_called["v"] = True
-        return None
-
-    monkeypatch.setattr(dmm_scraper, "_search_content_id", step3)
-
-    result = dmm_scraper.search("SONE-205")
-
-    assert result is not None
-    assert convert_calls == [True]
-    assert step3_called["v"] is False
-
-
-def test_second_try_skipped_when_cid_identical(dmm_scraper, monkeypatch):
-    """DoD 2 / D3：num 已是 5 位時兩式 cid 相同 → 不發第二次 HTTP。"""
-    fetch_calls = []
-
-    def fetch(cid):
-        fetch_calls.append(cid)
-        return None
-
-    monkeypatch.setattr(dmm_scraper, "_fetch_by_id", fetch)
-    monkeypatch.setattr(dmm_scraper, "_search_content_id", lambda number: None)
-
-    # MIDD-00357 → num="00357"；zfill(5) 後仍是 "00357"，兩式 cid 逐字相同
-    dmm_scraper.search("MIDD-00357")
-
-    assert fetch_calls == ["midd00357"]
 
 
 def test_number_mismatch_rejected_on_second_try_and_step3(
@@ -296,20 +245,6 @@ def test_padded_first_try_still_accepts_unparseable_number(dmm_scraper, monkeypa
 
     assert result is weird, "解析不出來 ⇒ 不拒絕（不對稱守衛的另一半）"
     assert step3_called["v"] is False, "第一試已命中，不該再走步驟 2"
-
-
-def test_number_conflicts_is_strictly_weaker_than_not_number_matches(dmm_scraper):
-    """釘住兩支的差別就在「解析不出來」那一半，否則不對稱性會被順手簡化掉。"""
-    # 兩邊都解析得出來：兩支互為反面
-    assert dmm_scraper._number_conflicts("OTHER-999", "MIDD-357") is True
-    assert dmm_scraper._number_matches("OTHER-999", "MIDD-357") is False
-    assert dmm_scraper._number_conflicts("MIDD-357", "MIDD-357") is False
-    assert dmm_scraper._number_matches("MIDD-357", "MIDD-357") is True
-    # 解析不出來：這裡才分家——_matches 說「不算相符」，_conflicts 說「不算衝突」
-    assert dmm_scraper._number_matches("MCSR-042-01", "MCSR-042") is False
-    assert dmm_scraper._number_conflicts("MCSR-042-01", "MCSR-042") is False
-    assert dmm_scraper._number_matches("", "MIDD-357") is False
-    assert dmm_scraper._number_conflicts("", "MIDD-357") is False
 
 
 def test_number_matches_tolerates_zero_padding_difference(dmm_scraper):

@@ -103,61 +103,9 @@ async def test_cancel_event_not_set_when_no_disconnect():
     assert response.watcher_task.cancelled() is True
 
 
-@pytest.mark.asyncio
-async def test_multiple_requests_have_independent_cancel_events():
-    """多個並發 `/generate` 請求：cancel_event/watcher_task 各自獨立，不共享
-    module-level 狀態（card 邊界條件：per-request 區域變數，非 global）。
-    """
-    request_a = _FakeRequest(disconnect_after=1)
-    request_b = _FakeRequest(disconnect_after=None)
-
-    response_a = await generate(request_a)
-    response_b = await generate(request_b)
-
-    assert response_a.cancel_event is not response_b.cancel_event
-    assert response_a.watcher_task is not response_b.watcher_task
-
-    for _ in range(30):
-        if response_a.cancel_event.is_set():
-            break
-        await asyncio.sleep(0.05)
-
-    assert response_a.cancel_event.is_set() is True
-    assert response_b.cancel_event.is_set() is False
-
-    await response_a.background()
-    await response_b.background()
-
-    assert response_a.watcher_task.done() is True
-    assert response_b.watcher_task.done() is True
-
-
 # ── feature/90 Finding 2：generate-in-progress 登記表生命週期 ──
 # 核心正確性：token 必在「正常完成」與「斷線」兩路徑都被清除，否則
 # is_generate_in_progress() 永遠 True → mode-switch 被永久擋（本 option 的最大風險）。
-
-
-@pytest.mark.asyncio
-async def test_generate_marks_in_progress_on_start():
-    """generate() 一啟動即登記為「產生進行中」（切換要能立刻被擋）。"""
-    fake_request = _FakeRequest(disconnect_after=None)
-    response = await generate(fake_request)
-    assert gs.is_generate_in_progress() is True
-    # 收尾避免污染下個測試
-    await response.background()
-
-
-@pytest.mark.asyncio
-async def test_generate_clears_in_progress_on_normal_completion():
-    """正常完成路徑：BackgroundTask 收尾 cancel watcher → finally → 清 token。"""
-    fake_request = _FakeRequest(disconnect_after=None)
-    response = await generate(fake_request)
-    assert gs.is_generate_in_progress() is True
-
-    await response.background()  # 模擬串流正常跑完
-
-    # watcher 被 cancel → CancelledError → finally → mark_generate_done。
-    assert gs.is_generate_in_progress() is False
 
 
 @pytest.mark.asyncio

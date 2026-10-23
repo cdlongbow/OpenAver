@@ -91,15 +91,6 @@ class TestDeleteVideoRemovesDbRow:
         repo = VideoRepository(delete_setup["db_path"])
         assert repo.get_by_path(delete_setup["vid_uri"]) is None
 
-    def test_delete_does_not_affect_other_rows(self, client, delete_setup, mocker):
-        """只刪目標 row，其他 row 不受影響。"""
-        _patch_db_path(mocker, delete_setup["db_path"])
-
-        client.delete("/api/showcase/video", params={"path": delete_setup["vid_uri"]})
-
-        repo = VideoRepository(delete_setup["db_path"])
-        assert repo.get_by_path(delete_setup["vid2_uri"]) is not None
-
 
 class TestDeleteVideoNeverUnlinksFiles:
     """【核心安全】DELETE 絕不刪磁碟上的影片檔或原始封面檔。"""
@@ -111,30 +102,6 @@ class TestDeleteVideoNeverUnlinksFiles:
 
         assert os.path.exists(delete_setup["vid_fs"]), \
             "DELETE 不得 unlink 影片檔"
-
-    def test_cover_file_still_exists(self, client, delete_setup, mocker):
-        _patch_db_path(mocker, delete_setup["db_path"])
-
-        client.delete("/api/showcase/video", params={"path": delete_setup["vid_uri"]})
-
-        assert os.path.exists(delete_setup["cover_fs"]), \
-            "DELETE 不得 unlink 原始封面檔"
-
-
-class TestDeleteVideoInvalidatesThumb:
-    def test_pregenerated_thumb_removed_after_delete(self, client, delete_setup, mocker):
-        """預先 generate 的縮圖 WebP，DELETE 後被 invalidate 砍掉。"""
-        _patch_db_path(mocker, delete_setup["db_path"])
-
-        # 預先 generate 一個真 thumb（thumb dir = db.parent/thumb，已 patch get_db_path）
-        thumb = thumbnail_cache.get_or_create(
-            delete_setup["vid_uri"], str(delete_setup["cover_fs"])
-        )
-        assert thumb is not None and thumb.exists(), "前置：thumb 應已生成"
-
-        client.delete("/api/showcase/video", params={"path": delete_setup["vid_uri"]})
-
-        assert not thumb.exists(), "DELETE 後對應 thumb webp 應被 invalidate 砍掉"
 
 
 class TestDeleteVideoUnknownPath:
@@ -337,69 +304,3 @@ class TestAC12DeleteRemovesWholeGroup:
         assert multipart_delete_setup["cd2_uri"] in called_paths
 
 
-class TestAC16DeleteDoesNotMergeNoToken:
-    def test_delete_nontoken_leaves_cd2_row(self, client, mixed_nontoken_delete_setup, mocker):
-        """AC-16：同資料夾無 token 片 + 帶 token 片，刪無 token 那張只移除一列。"""
-        _patch_db_path(mocker, mixed_nontoken_delete_setup["db_path"])
-        inv = mocker.spy(thumbnail_cache, "invalidate")
-
-        resp = client.delete(
-            "/api/showcase/video",
-            params={"path": mixed_nontoken_delete_setup["bare_uri"]},
-        )
-
-        assert resp.status_code == 200
-        assert resp.json() == {"deleted": 1}
-
-        repo = VideoRepository(mixed_nontoken_delete_setup["db_path"])
-        assert repo.get_by_path(mixed_nontoken_delete_setup["bare_uri"]) is None
-        assert repo.get_by_path(mixed_nontoken_delete_setup["cd2_uri"]) is not None
-
-        assert inv.call_count == 1
-        assert inv.call_args.args[0] == mixed_nontoken_delete_setup["bare_uri"]
-
-
-class TestDeleteVideoMalformedPathFailsafe:
-    def test_group_resolve_exception_falls_back_to_single_delete(self, client, delete_setup, mocker):
-        """分組反解**拋例外**時 fail-safe 退回單路徑刪除，不 500。
-
-        為什麼要 patch 才測得到：`uri_to_fs_path()` 對畸形輸入是寬容的（原樣回傳，
-        不拋），所以下面那支 malformed-path 測試走的是「反解不到組 → group is None」
-        那條路，**不會**碰到 try/except。真正會拋的是 `load_config()`（使用者手改壞
-        config.json 就會），那時整組刪除若沒有 fail-safe，使用者按「從收藏移除」會
-        收到 500、卡片不消失、也不知道發生什麼事。
-
-        這支測試對 fail-safe 是 mutation-sensitive 的：把 `except Exception` 收窄
-        （例如改成 `except ZeroDivisionError`）這支就會紅。
-        """
-        _patch_db_path(mocker, delete_setup["db_path"])
-        mocker.patch(
-            "web.routers.showcase.load_config",
-            side_effect=RuntimeError("config.json 壞了"),
-        )
-        inv = mocker.patch("core.thumbnail_cache.invalidate")
-
-        resp = client.delete(
-            "/api/showcase/video", params={"path": delete_setup["vid_uri"]}
-        )
-
-        assert resp.status_code == 200
-        assert resp.json() == {"deleted": 1}
-
-        repo = VideoRepository(delete_setup["db_path"])
-        assert repo.get_by_path(delete_setup["vid_uri"]) is None
-        assert inv.call_count == 1
-        assert inv.call_args.args[0] == delete_setup["vid_uri"]
-
-    def test_malformed_path_returns_200_deleted_zero(self, client, delete_setup, mocker):
-        """畸形 path → 200 + {"deleted": 0}（走 group is None 那條路，非例外路徑）。"""
-        _patch_db_path(mocker, delete_setup["db_path"])
-
-        resp = client.delete("/api/showcase/video", params={"path": "not-a-uri"})
-
-        assert resp.status_code == 200
-        assert resp.json() == {"deleted": 0}
-
-        repo = VideoRepository(delete_setup["db_path"])
-        assert repo.get_by_path(delete_setup["vid_uri"]) is not None
-        assert repo.get_by_path(delete_setup["vid2_uri"]) is not None

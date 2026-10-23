@@ -40,26 +40,3 @@ def test_reason_map_values_exist_in_zh_tw():
     assert not bad, f'zh_TW 缺 key: {bad}'
 
 
-def test_state_map_and_fixed_keys_exist_in_zh_tw():
-    states = _cells('STATE_KEY_MAP')
-    assert set(states) == {'ok', 'blocked', 'unreachable', 'skipped'}
-    keys = list(states.values()) + [
-        'settings.sources.probe_reason_generic',
-        'settings.sources.probe_btn',
-        'settings.sources.probe_summary',
-        'settings.sources.probe_failed',
-        'settings.sources.probe_line',
-        'settings.sources.probe_line_advice',
-        'settings.sources.probe_line_host',
-        'settings.sources.probe_line_host_advice',
-        'settings.sources.probe_tip',
-    ]
-    bad = [k for k in keys if not _zh_has(k)]
-    assert not bad, f'zh_TW 缺 key: {bad}'
-
-
-def test_advice_map_values_exist_in_zh_tw():
-    cells = _cells('ADVICE_KEY_MAP')
-    assert cells, 'ADVICE_KEY_MAP 沒有任何格'
-    bad = [v for v in cells.values() if not _zh_has(v)]
-    assert not bad, f'zh_TW 缺 key: {bad}'

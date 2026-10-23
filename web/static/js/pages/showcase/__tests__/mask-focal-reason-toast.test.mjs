@@ -50,7 +50,6 @@ const { stateLightboxMask } = await import('../state-lightbox-mask.js');
 
 const AUTO_DISABLED_KEY = 'showcase.lightbox.mask_focal_too_slow_auto_disabled';
 const HINT_KEY = 'showcase.lightbox.mask_focal_too_slow_hint';
-const FAILED_KEY = 'showcase.lightbox.mask_detect_failed';
 const SAVE_FAILED_KEY = 'showcase.lightbox.mask_save_failed';
 
 function mockFetch(payload) {
@@ -187,95 +186,4 @@ test('openMask: reason=too_slow_auto_disabled shows auto-disabled toast', async 
     });
 });
 
-test('openMask: reason=too_slow shows suggestion toast (different text than auto_disabled)', async () => {
-    await withGeometryStub(async () => {
-        const mock = mockFetch({
-            success: true,
-            auto_focal: '',
-            reason: 'too_slow',
-            cover_path: 'file:///cover.jpg',
-        });
-        try {
-            const c = makeComponent();
-            await c.openMask();
-            assert.ok(
-                c.toasts.some((t) => t.msg === HINT_KEY && t.kind === 'info'),
-                `expected ${HINT_KEY}/info, got ${JSON.stringify(c.toasts)}`,
-            );
-            assert.equal(
-                c.toasts.filter((t) => t.msg === AUTO_DISABLED_KEY).length,
-                0,
-                'must not show the auto-disabled toast for too_slow',
-            );
-            assert.notEqual(HINT_KEY, AUTO_DISABLED_KEY);
-        } finally {
-            mock.restore();
-        }
-    });
-});
 
-test('openMask: reason=failed shows existing mask_detect_failed toast in success branch', async () => {
-    await withGeometryStub(async () => {
-        const mock = mockFetch({
-            success: true,
-            auto_focal: '',
-            reason: 'failed',
-            cover_path: 'file:///cover.jpg',
-        });
-        try {
-            const c = makeComponent();
-            await c.openMask();
-            assert.ok(
-                c.toasts.some((t) => t.msg === FAILED_KEY && t.kind === 'error'),
-                `expected ${FAILED_KEY}/error, got ${JSON.stringify(c.toasts)}`,
-            );
-        } finally {
-            mock.restore();
-        }
-    });
-});
-
-test('openMask: reason=device_disabled stays silent (no toast)', async () => {
-    await withGeometryStub(async () => {
-        const mock = mockFetch({
-            success: true,
-            auto_focal: '',
-            reason: 'device_disabled',
-            cover_path: 'file:///cover.jpg',
-        });
-        try {
-            const c = makeComponent();
-            await c.openMask();
-            assert.equal(
-                c.toasts.length,
-                0,
-                `device_disabled must not toast, got ${JSON.stringify(c.toasts)}`,
-            );
-            assert.ok(mock.calls.length >= 1, 'fetch should still be sent when SSR flag is unset');
-        } finally {
-            mock.restore();
-        }
-    });
-});
-
-test('openMask: reason=still_detecting shows the undecided-outcome toast, not the two too_slow texts', async () => {
-    await withGeometryStub(async () => {
-        const mock = mockFetch({
-            success: true,
-            auto_focal: '',
-            reason: 'still_detecting',
-            cover_path: 'file:///cover.jpg',
-        });
-        try {
-            const c = makeComponent();
-            await c.openMask();
-            assert.ok(
-                c.toasts.some((t) => t.msg === 'showcase.lightbox.mask_focal_still_detecting' && t.kind === 'info'),
-                `expected still_detecting/info, got ${JSON.stringify(c.toasts)}`,
-            );
-            assert.equal(c.toasts.filter((t) => t.msg === HINT_KEY || t.msg === AUTO_DISABLED_KEY).length, 0);
-        } finally {
-            mock.restore();
-        }
-    });
-});

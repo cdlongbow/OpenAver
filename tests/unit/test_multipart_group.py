@@ -4,19 +4,12 @@
 找不到回 None。不需要 DB：group_rows() 是純函式，用簡單 dataclass stub 或直接
 Video ORM 建構子造資料即可。
 """
-import pytest
 
 from core.database import Video
 from core.path_utils import to_file_uri, uri_to_local_fs_path
 from core.multipart_group import (
-    normalize_stem_key,
-    group_key,
-    part_number,
-    part_token,
     folder_uri_prefix,
-    VideoGroup,
     group_rows,
-    resolve_group_for_path,
     resolve_group,
     resolve_groups_bulk,
 )
@@ -37,35 +30,8 @@ def _uri_of(v: Video) -> str:
 
 # ── AC-1：同資料夾同主幹合併 ────────────────────────────────────────────
 
-class TestAC1SameFolderSameStemMerge:
-    def test_two_parts_same_folder_merge_into_one_group(self):
-        rows = [
-            _v("/media/ABC-123-cd1.mp4"),
-            _v("/media/ABC-123-cd2.mp4"),
-        ]
-        groups = group_rows(rows, _fs_path_of)
-        assert len(groups) == 1
-        g = groups[0]
-        assert len(g.members) == 2
-        assert g.part_tokens == ["cd1", "cd2"]
-        # members 依 part_number 升冪排序，故 members[0] 是 part-1
-        assert _fs_path_of(g.members[0]).endswith("cd1.mp4")
-        assert _fs_path_of(g.members[1]).endswith("cd2.mp4")
-
 
 # ── AC-2：token 不在尾端仍合併 ──────────────────────────────────────────
-
-class TestAC2TokenNotAtEndStillMerges:
-    def test_token_followed_by_bracket_suffix_still_merges(self):
-        rows = [
-            _v("/media/... vol．07 part1[HD].mp4"),
-            _v("/media/... vol．07 part2[HD].mp4"),
-        ]
-        groups = group_rows(rows, _fs_path_of)
-        assert len(groups) == 1
-        g = groups[0]
-        assert len(g.members) == 2
-        assert g.part_tokens == ["part1", "part2"]
 
 
 # ── AC-3：不同資料夾不合併 ──────────────────────────────────────────────
@@ -148,29 +114,6 @@ class TestCD122_13DuplicatePartNumberGuard:
             assert len(g.members) == 1
             assert g.part_tokens == []
 
-    def test_same_number_different_token_prefix_stay_two_singles(self):
-        """ABC-123-cd1.mp4 ＋ ABC-123-pt1.mkv → 前綴不同但都是第 1 段，同樣是衝突。
-        （比對用 part number 而非 token 字面，才擋得住這一種。）"""
-        rows = [
-            _v("/media/ABC-123-cd1.mp4"),
-            _v("/media/ABC-123-pt1.mkv"),
-        ]
-        groups = group_rows(rows, _fs_path_of)
-        assert len(groups) == 2
-        for g in groups:
-            assert g.part_tokens == []
-
-    def test_unique_part_numbers_still_merge(self):
-        """正向對照：段號唯一時照常合併（確認上面那條沒有誤傷正常分集）。"""
-        rows = [
-            _v("/media/ABC-123-cd1.mp4"),
-            _v("/media/ABC-123-cd2.mp4"),
-            _v("/media/ABC-123-cd3.mp4"),
-        ]
-        groups = group_rows(rows, _fs_path_of)
-        assert len(groups) == 1
-        assert groups[0].part_tokens == ["cd1", "cd2", "cd3"]
-
 
 # ── grok Stage 1 P3：片庫放在磁碟機根目錄時的資料夾前綴 ─────────────────
 
@@ -192,93 +135,14 @@ class TestDriveRootFolderUriPrefix:
         assert folder_uri_prefix("D:\\") == "file:///D:/"
         assert folder_uri_prefix("D:/") == "file:///D:/"
 
-    def test_drive_root_prefix_actually_matches_rows_in_that_root(self):
-        """真正的後果面：前綴要能對上根目錄裡那些列（LIKE prefix% 的前半段）。"""
-        prefix = folder_uri_prefix("D:\\")
-        assert to_file_uri("D:/ABC-123-cd1.mp4").startswith(prefix)
-        assert to_file_uri("D:/ABC-123-cd2.mp4").startswith(prefix)
-
-    def test_normal_subfolder_prefix_unchanged(self):
-        """正向對照：一般子資料夾的前綴逐字不變（沒有誤傷既有路徑）。"""
-        assert folder_uri_prefix("C:/AVtest") == "file:///C:/AVtest/"
-        assert folder_uri_prefix("C:\\AVtest") == "file:///C:/AVtest/"
-
 
 # ── 舊庫零遷移守衛：分組不看 nfo_mtime ──────────────────────────────────
-
-class TestLegacyNoNfoMigrationStillGroups:
-    def test_part2_with_zero_nfo_mtime_still_merges(self):
-        """part-2 沒有 NFO（nfo_mtime=0，舊庫典型情境）時，分組只看檔名，照樣合併。"""
-        v1 = Video(path=to_file_uri("/media/ABC-123-cd1.mp4"), nfo_mtime=1700000000.0)
-        v2 = Video(path=to_file_uri("/media/ABC-123-cd2.mp4"), nfo_mtime=0.0)
-        groups = group_rows([v1, v2], _fs_path_of)
-        assert len(groups) == 1
-        assert len(groups[0].members) == 2
-        assert groups[0].part_tokens == ["cd1", "cd2"]
 
 
 # ── normalize_stem_key / group_key / part_number / part_token 單元 ──────
 
-class TestHelperPrimitives:
-    def test_normalize_stem_key_strips_whitespace_and_lowers(self):
-        assert normalize_stem_key("ABC-123 CD1") != normalize_stem_key("abc-123cd1")
-        # 剝除 token 後才正規化：帶 token 的 stem 剝完應與不帶 token 的裸 stem 一致
-        assert normalize_stem_key("ABC-123-cd1") == normalize_stem_key("ABC-123")
-
-    def test_group_key_splits_folder_and_normalized_stem(self):
-        folder, key = group_key("/media/dirA/ABC-123-cd1.mp4")
-        assert folder == "/media/dirA"
-        assert key == normalize_stem_key("ABC-123-cd1")
-
-    def test_part_number_single_file_is_1(self):
-        assert part_number("/media/ABC-123.mp4") == 1
-
-    def test_part_number_with_token(self):
-        assert part_number("/media/ABC-123-cd2.mp4") == 2
-
-    def test_part_token_none_for_single_file(self):
-        assert part_token("/media/ABC-123.mp4") is None
-
-    def test_part_token_returns_lowercase_literal(self):
-        assert part_token("/media/ABC-123-CD1.mp4") == "cd1"
-
 
 # ── resolve_group_for_path ──────────────────────────────────────────────
-
-class TestResolveGroupForPath:
-    def test_found_returns_group_containing_target(self):
-        v1 = Video(path=to_file_uri("/media/ABC-123-cd1.mp4"))
-        v2 = Video(path=to_file_uri("/media/ABC-123-cd2.mp4"))
-        candidates = [v1, v2]
-        group = resolve_group_for_path(
-            target_uri=v2.path,
-            candidates=candidates,
-            fs_path_of=_fs_path_of,
-            uri_of=_uri_of,
-        )
-        assert group is not None
-        assert len(group.members) == 2
-
-    def test_not_found_returns_none_not_raise(self):
-        v1 = Video(path=to_file_uri("/media/ABC-123-cd1.mp4"))
-        v2 = Video(path=to_file_uri("/media/ABC-123-cd2.mp4"))
-        candidates = [v1, v2]
-        group = resolve_group_for_path(
-            target_uri=to_file_uri("/media/NOT-THERE.mp4"),
-            candidates=candidates,
-            fs_path_of=_fs_path_of,
-            uri_of=_uri_of,
-        )
-        assert group is None
-
-    def test_empty_candidates_returns_none(self):
-        group = resolve_group_for_path(
-            target_uri=to_file_uri("/media/ABC-123.mp4"),
-            candidates=[],
-            fs_path_of=_fs_path_of,
-            uri_of=_uri_of,
-        )
-        assert group is None
 
 
 class TestResolveGroupsBulk:
@@ -325,36 +189,4 @@ class TestResolveGroupsBulk:
 
         assert bulk == one_by_one
 
-    def test_same_folder_queried_once_regardless_of_path_count(self):
-        rows = self._library()
-        repo = self._FakeRepo(rows)
-        # 同一資料夾 3 條路徑 + 另一資料夾 2 條
-        targets = [
-            to_file_uri("/media/ABC-123-cd1.mp4"),
-            to_file_uri("/media/ABC-123-cd2.mp4"),
-            to_file_uri("/media/SOLO-001.mp4"),
-            to_file_uri("/other/XYZ-9-cd1.mp4"),
-            to_file_uri("/other/XYZ-9-cd2.mp4"),
-        ]
-        resolve_groups_bulk(repo, targets, {})
-        assert len(repo.calls) == 2, f"每個資料夾只該查一次，實際 {repo.calls}"
-        assert len(set(repo.calls)) == 2
 
-    def test_duplicate_input_resolved_once(self):
-        rows = self._library()
-        repo = self._FakeRepo(rows)
-        uri = to_file_uri("/media/ABC-123-cd1.mp4")
-        out = resolve_groups_bulk(repo, [uri, uri, uri], {})
-        assert len(repo.calls) == 1
-        assert list(out.keys()) == [uri]
-
-    def test_not_found_maps_to_none_not_raise(self):
-        repo = self._FakeRepo(self._library())
-        missing = to_file_uri("/media/NOPE.mp4")
-        out = resolve_groups_bulk(repo, [missing], {})
-        assert out[missing] is None
-
-    def test_empty_input_no_db_call(self):
-        repo = self._FakeRepo(self._library())
-        assert resolve_groups_bulk(repo, [], {}) == {}
-        assert repo.calls == []

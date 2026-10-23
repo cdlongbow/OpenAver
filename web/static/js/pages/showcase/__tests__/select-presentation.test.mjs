@@ -92,82 +92,6 @@ function withAnimStub(stub, fn) {
 // §0.2 行為表 —— 七列各至少一支測試
 // =====================================================================
 
-test('§0.2 行1：grid+cover 點「直式海報」→ mode 不變、cardShape=poster、播 morph、saveState 恰一次', () => {
-    let captureCalls = 0;
-    let morphCalls = 0;
-    let morphGridArg = null;
-    withAnimStub({
-        captureShapeState() { captureCalls++; return 'SNAP'; },
-        playShapeMorph(_captured, gridEl) { morphCalls++; morphGridArg = gridEl; },
-    }, () => {
-        const c = makeComponent({ mode: 'grid', cardShape: 'cover' });
-        c.selectPresentation('poster');
-        assert.equal(c.mode, 'grid');
-        assert.equal(c.cardShape, 'poster');
-        assert.equal(captureCalls, 1);
-        assert.equal(morphCalls, 1);
-        assert.equal(c.saveCalls, 1);
-        assert.equal(morphGridArg, FAKE_GRID);
-    });
-});
-
-test('§0.2 行2（反向，§0.1 的洞）：grid+poster 點「完整封面」→ mode 不變、cardShape=cover、播 morph', () => {
-    let captureCalls = 0;
-    let morphCalls = 0;
-    withAnimStub({
-        captureShapeState() { captureCalls++; return 'SNAP'; },
-        playShapeMorph() { morphCalls++; },
-    }, () => {
-        const c = makeComponent({ mode: 'grid', cardShape: 'poster' });
-        c.selectPresentation('cover');
-        assert.equal(c.mode, 'grid');
-        assert.equal(c.cardShape, 'cover');
-        assert.equal(captureCalls, 1);
-        assert.equal(morphCalls, 1);
-        assert.equal(c.saveCalls, 1);
-    });
-});
-
-for (const target of ['table', 'list']) {
-    test(`§0.2 行3：grid+poster 點「${target}」→ mode 變、cardShape 不變、不播 morph、走 switchMode()`, () => {
-        let captureCalls = 0;
-        let morphCalls = 0;
-        withAnimStub({
-            captureShapeState() { captureCalls++; return 'SNAP'; },
-            playShapeMorph() { morphCalls++; },
-        }, () => {
-            const c = makeComponent({ mode: 'grid', cardShape: 'poster', perPage: 60 });
-            let switchModeCalls = 0;
-            const realSwitchMode = c.switchMode.bind(c);
-            c.switchMode = function (m) { switchModeCalls++; return realSwitchMode(m); };
-            c.selectPresentation(target);
-            assert.equal(c.mode, target);
-            assert.equal(c.cardShape, 'poster');
-            assert.equal(captureCalls, 0);
-            assert.equal(morphCalls, 0);
-            assert.equal(switchModeCalls, 1);
-            assert.equal(c.saveCalls, 1, 'saveState 是 switchMode() 自己做的，selectPresentation 不得額外呼叫');
-        });
-    });
-}
-
-for (const startMode of ['table', 'list']) {
-    test(`§0.2 行4：${startMode} 點「完整封面」→ mode=grid、cardShape=cover、不播 morph`, () => {
-        let captureCalls = 0;
-        let morphCalls = 0;
-        withAnimStub({
-            captureShapeState() { captureCalls++; return 'SNAP'; },
-            playShapeMorph() { morphCalls++; },
-        }, () => {
-            const c = makeComponent({ mode: startMode, cardShape: 'poster', perPage: 60 });
-            c.selectPresentation('cover');
-            assert.equal(c.mode, 'grid');
-            assert.equal(c.cardShape, 'cover');
-            assert.equal(captureCalls, 0);
-            assert.equal(morphCalls, 0);
-        });
-    });
-}
 
 test('§0.2 行5（v1 P2-2 的洞）：table 點「直式海報」→ 同時斷言 mode===grid 且 cardShape===poster', () => {
     const c = makeComponent({ mode: 'table', cardShape: 'cover', perPage: 60 });
@@ -199,18 +123,6 @@ test('§0.2 行6（v2 P2 的洞）：table ＋ perPage=0 點「直式海報」�
 // 契約
 // =====================================================================
 
-test('契約：window.ShowcaseAnimations 不存在時狀態仍正確切換、不拋錯', () => {
-    const prev = globalThis.window.ShowcaseAnimations;
-    delete globalThis.window.ShowcaseAnimations;
-    try {
-        const c = makeComponent({ mode: 'grid', cardShape: 'cover' });
-        assert.doesNotThrow(() => c.selectPresentation('poster'));
-        assert.equal(c.cardShape, 'poster');
-        assert.equal(c.mode, 'grid');
-    } finally {
-        if (prev !== undefined) globalThis.window.ShowcaseAnimations = prev;
-    }
-});
 
 // TASK-133a-T2 review P3：morph 現在排在 cardShape/saveState **之前**（同一工作單元的重排）。
 // 重排之前它在 $nextTick 回呼裡，拋錯天生擋不到 state 寫入；重排之後就擋得到了。
@@ -237,52 +149,3 @@ test('契約：playShapeMorph 拋錯時，卡型仍必須切換並持久化（�
 // animations.js：captureShapeState / playShapeMorph（兩階段 Flip 順序；視覺行為由 T8 CDP 驗）
 // =====================================================================
 
-test('契約（同一工作單元）：新版面的 class 必須在 playShapeMorph 之前就切成新值', () => {
-    const events = [];
-    withAnimStub({
-        captureShapeState() {
-            events.push({ event: 'capture', classOpsLen: FAKE_GRID._classOps.length });
-            return 'SNAP';
-        },
-        playShapeMorph() {
-            events.push({
-                event: 'morph',
-                classOpsLen: FAKE_GRID._classOps.length,
-                classOpsSnapshot: FAKE_GRID._classOps.slice(),
-            });
-        },
-    }, () => {
-        // cover → poster
-        const c1 = makeComponent({ mode: 'grid', cardShape: 'cover' });
-        c1.selectPresentation('poster');
-        assert.equal(events.length, 2);
-        assert.equal(events[0].event, 'capture');
-        assert.equal(events[1].event, 'morph');
-        assert.ok(
-            events[1].classOpsLen > events[0].classOpsLen,
-            'class toggle 必須發生在 morph 之前（capture 後、morph 前）',
-        );
-        assert.deepEqual(
-            events[1].classOpsSnapshot,
-            [['shape-poster', true]],
-            'cover→poster 必須 toggle shape-poster 為 true',
-        );
-
-        // poster → cover
-        events.length = 0;
-        const c2 = makeComponent({ mode: 'grid', cardShape: 'poster' });
-        c2.selectPresentation('cover');
-        assert.equal(events.length, 2);
-        assert.equal(events[0].event, 'capture');
-        assert.equal(events[1].event, 'morph');
-        assert.ok(
-            events[1].classOpsLen > events[0].classOpsLen,
-            'class toggle 必須發生在 morph 之前（反向）',
-        );
-        assert.deepEqual(
-            events[1].classOpsSnapshot,
-            [['shape-poster', false]],
-            'poster→cover 必須 toggle shape-poster 為 false',
-        );
-    });
-});

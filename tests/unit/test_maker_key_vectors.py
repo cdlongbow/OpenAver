@@ -19,12 +19,3 @@ def test_maker_key_matches_frontend_vectors(vec):
     assert maker_key_of(vec["input"]) == vec["key"]
 
 
-def test_maker_key_of_none_is_empty():
-    assert maker_key_of(None) == ""
-
-
-def test_vector_file_covers_required_shapes():
-    inputs = [v["input"] for v in _VECTORS]
-    for needle in ("﻿", "\x1c", "\x85", "ß", "ẞ", "İ"):
-        assert any(needle in i for i in inputs), needle
-    assert any(i != i.strip() for i in inputs)

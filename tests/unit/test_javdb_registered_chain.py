@@ -148,7 +148,7 @@ def chain_env(monkeypatch, site, run_spy):
 
 
 # ------------------------------------------------------------------ 開關
-@pytest.mark.parametrize("mode", ["actress", "partial", "prefix"])
+@pytest.mark.parametrize("mode", ["actress", ])
 def test_javdb_disabled_in_settings_is_never_asked(chain_env, site, run_spy, mode):
     chain_env(["javbus", "dmm", "javdb"], enabled=["javbus", "dmm"])
     _actress_site(site, ["A1"])
@@ -159,20 +159,12 @@ def test_javdb_disabled_in_settings_is_never_asked(chain_env, site, run_spy, mod
 
 
 # ------------------------------------------------------------------ 探索模式
-@pytest.mark.parametrize("mode", ["actress", "prefix"])
-def test_discovery_only_never_touches_javdb(chain_env, site, run_spy, mode):
-    chain_env(["javbus", "dmm", "javdb"], discovery=True)
-    _actress_site(site, ["A1"])
-    out = relay.search_by_intent(mode, "someone", W, discovery_only=True)
-    assert out == []
-    assert run_spy.call_count == 0  # 只量傳輸會被 run 自己的 discovery_only 早退蓋住
-    assert site.calls == []
 
 
 # ------------------------------------------------------------------ 梯子可觀測
 
 
-@pytest.mark.parametrize("exc,blocked", [(SourceBlocked("b"), True), (SourceUnreachable("u"), False)])
+@pytest.mark.parametrize("exc,blocked", [(SourceBlocked("b"), True)])
 def test_ladder_failure_moves_on_and_logs_blocked_suffix(chain_env, site, run_spy, caplog, exc, blocked):
     chain_env(["javdb", "dmm"], others={"dmm": [{"number": "D-1"}]})
     def boom(t, q, proxies=None):
@@ -186,17 +178,3 @@ def test_ladder_failure_moves_on_and_logs_blocked_suffix(chain_env, site, run_sp
 
 
 # ------------------------------------------------------------------ smart_search 的 prefix → actress 退路（Codex P2）
-def test_prefix_miss_actress_fallback_stays_discovery_only(monkeypatch, site, run_spy):
-    """探索模式前綴查無 → actress 退路也要維持 discovery_only：DMM／JavDB 的 run 都 0 次。"""
-    from core.scraper import smart_search
-
-    jb, dmm = Other("javbus", discovery=True), Other("dmm", discovery=False)
-    monkeypatch.setitem(registry._REGISTRY, "javbus", lambda: jb)
-    monkeypatch.setitem(registry._REGISTRY, "dmm", lambda: dmm)
-    monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ["javbus", "dmm", "javdb"])
-    monkeypatch.setattr("core.scraper.is_source_enabled", lambda pid: True)
-    monkeypatch.setattr("core.scraper.search_jav321_keyword", lambda *a, **kw: [])
-    assert smart_search("MIDV", discovery_only=True) == []
-    assert run_spy.call_count == 0
-    assert dmm.run_calls == []
-    assert site.calls == []

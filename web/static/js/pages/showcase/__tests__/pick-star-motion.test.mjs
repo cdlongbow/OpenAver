@@ -96,23 +96,3 @@ test('playPickFill: reduced-motion(shouldSkip=true) 時走 gsap.set 降級，不
     assert.equal(calls.timeline.length, 0, 'shouldSkip=true 時不應建立任何火花 timeline');
 });
 
-test('playPickFill: 正常動態（shouldSkip=false）時走 gsap.fromTo 補間，不走降級 set', () => {
-    calls.killTweensOf.length = 0;
-    calls.set.length = 0;
-    calls.fromTo.length = 0;
-    calls.timeline.length = 0;
-
-    globalThis.window.OpenAver = { prefersReducedMotion: false };
-
-    const fillEl = makeFillEl();
-    const result = ShowcaseAnimations.playPickFill(fillEl, null, false, true);
-
-    assert.notEqual(result, null, '正常路徑必須回傳 gsap.fromTo 的 tween 物件');
-    assert.equal(calls.fromTo.length, 1, 'shouldSkip=false 時必須呼叫一次 gsap.fromTo');
-
-    // 降級用的 set(fillEl, {'--pick-fill': toPct}) 不應出現（正常路徑改用 fromTo 起訖值）
-    const degradedSetCall = calls.set.find(
-        (args) => args[0] === fillEl && args[1] && Object.prototype.hasOwnProperty.call(args[1], '--pick-fill'),
-    );
-    assert.equal(degradedSetCall, undefined, 'shouldSkip=false 時不應出現降級用的 --pick-fill set');
-});

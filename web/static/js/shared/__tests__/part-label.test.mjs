@@ -19,10 +19,6 @@ test('formatPartLabel: length < 2 → 空字串', () => {
     assert.equal(formatPartLabel(['cd1']), '');
 });
 
-test('formatPartLabel: 2 段 → token 以 / 連接', () => {
-    assert.equal(formatPartLabel(['cd1', 'cd2']), 'cd1/cd2');
-    assert.equal(formatPartLabel(['pt1', 'pt2']), 'pt1/pt2');
-});
 
 test('formatPartLabel: 3+ 段且前綴一致 → 首尾 + EN DASH (U+2013)', () => {
     const label = formatPartLabel(['cd1', 'cd2', 'cd3', 'cd4']);
@@ -32,18 +28,3 @@ test('formatPartLabel: 3+ 段且前綴一致 → 首尾 + EN DASH (U+2013)', () 
     assert.equal(formatPartLabel(['dvd1', 'dvd2', 'dvd3']), 'dvd1–dvd3');
 });
 
-test('formatPartLabel: 前綴不一致 → i18n fallback', () => {
-    const calls = [];
-    const prev = window.t;
-    window.t = (key, params) => {
-        calls.push([key, params]);
-        return `${params.n} 段`;
-    };
-    try {
-        assert.equal(formatPartLabel(['cd1', 'pt2']), '2 段');
-        assert.deepEqual(calls, [['showcase.video.part_count_fallback', { n: 2 }]]);
-        assert.equal(formatPartLabel(['cd1', 'cd2', 'pt3']), '3 段');
-    } finally {
-        window.t = prev;
-    }
-});

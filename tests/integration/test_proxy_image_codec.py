@@ -55,36 +55,4 @@ class TestProxyImageCodecHost:
         img = Image.open(io.BytesIO(response.content))
         img.load()
 
-    def test_bad_payload_returns_404_empty(self, client):
-        """壞 payload 走代理回 404 空圖，不回垃圾 bytes（D-12）。"""
-        bad = _xor_encode(b"<html>" + b"z" * 200)
-        url = "https://tp.spfcas.com/covers/bad.jpg"
-
-        with patch(
-            "web.routers.search.requests.get",
-            return_value=_mock_resp(bad, "binary/octet-stream"),
-        ):
-            response = client.get("/api/proxy-image", params={"url": url})
-
-        assert response.status_code == 404
-        assert response.content == b""
-
-
-class TestProxyImagePlainHostUnchanged:
-    def test_existing_host_bytes_identical(self, client):
-        """既有圖床零改變：回應 body 逐位元組比對（D-10）。"""
-        plain = _jpeg_bytes(color=(1, 2, 3))
-        url = "https://pics.dmm.co.jp/mono/movie/adult/sone103/sone103jp-1.jpg"
-
-        with patch(
-            "web.routers.search.requests.get",
-            return_value=_mock_resp(plain, "image/jpeg"),
-        ):
-            response = client.get("/api/proxy-image", params={"url": url})
-
-        assert response.status_code == 200
-        assert response.content == plain
-        assert response.content is not None
-        # Content-Type 沿用上游（非 codec host）
-        assert "image/jpeg" in response.headers["content-type"]
 

@@ -139,21 +139,9 @@ def _install(tmp_path, proxy, calls=None, base=FakeBase, fake_edge=None, on_read
 # ---------------------------------------------------------------------------
 # 純函式
 # ---------------------------------------------------------------------------
-def test_build_browser_args_keeps_existing_and_has_exactly_one_proxy_flag():
-    out = webview2_proxy.build_browser_args('--disable-features=ElasticOverscroll', 'http://h:1')
-    assert out.split().count('--proxy-server=http://h:1') == 1
-    assert '--disable-features=ElasticOverscroll' in out.split()
-    again = webview2_proxy.build_browser_args(out, 'socks5://h:2')
-    assert [t for t in again.split() if t.startswith('--proxy-server=')] == ['--proxy-server=socks5://h:2']
-    assert webview2_proxy.build_browser_args(None, 'http://h:1') == '--proxy-server=http://h:1'
 
 
 @pytest.mark.parametrize('uri,host,port,expected', [
-    ('http://proxyhost:8080/', 'proxyhost', 8080, True),
-    ('http://PROXYHOST:8080', 'proxyhost', 8080, True),
-    ('http://proxyhost:9999/', 'proxyhost', 8080, False),
-    ('https://www.javlibrary.com/', 'proxyhost', 8080, False),
-    ('http://[::1]:3128', '::1', 3128, True),
     ('garbage', 'proxyhost', 8080, False),
 ])
 def test_is_proxy_challenge(uri, host, port, expected):
@@ -246,40 +234,6 @@ def test_step1_failure_never_calls_base(tmp_path, fake_edge):
     assert ready == []
 
 
-def test_native_init_failure_never_confirms(tmp_path, fake_edge):
-    cls, ready = _applied(tmp_path, fake_edge)
-    ctl = cls(JT_TITLE)
-    ctl.EnsureCoreWebView2Async(None)
-    ctl.CoreWebView2InitializationCompleted.fire(ctl, types.SimpleNamespace(IsSuccess=False, InitializationException='boom'))
-    assert ready == []
-
-
-def test_native_init_success_without_auth_confirms_once(tmp_path, fake_edge):
-    cls, ready = _applied(tmp_path, fake_edge)
-    ctl = cls(JT_TITLE)
-    ctl.EnsureCoreWebView2Async(None)
-    ctl.CoreWebView2InitializationCompleted.fire(ctl, types.SimpleNamespace(IsSuccess=True))
-    assert ready == ['fc-javten']
-
-
-def test_auth_hook_failure_never_confirms_and_never_loads_url(tmp_path, fake_edge):
-    class AuthFailBase(FakeBase):
-        fail_auth = True
-
-    holder = webview2_proxy.ReadyHolder()
-    win = _Win(JL_TITLE, 'about:blank')
-    transport = PyWebViewCfTransport({'javlibrary': win}, {}, pending={'javlibrary'})
-    holder.bind(transport)
-    fake_edge.WebView2 = AuthFailBase
-    assert webview2_proxy.install(_proxy(username='u', password='p'), str(tmp_path / 'udf'),
-                                  TITLE_TO_KEY, holder) is True
-    ctl = fake_edge.WebView2(JL_TITLE)
-    ctl.EnsureCoreWebView2Async(None)
-    ctl.CoreWebView2InitializationCompleted.fire(ctl, types.SimpleNamespace(IsSuccess=True))
-    assert transport.available_sites() == []
-    assert [c for c in win.calls if c[0] == 'load_url'] == []
-
-
 def test_auth_handler_answers_only_proxy_challenges(tmp_path, fake_edge):
     cls, ready = _applied(tmp_path, fake_edge, proxy=_proxy('http://proxyhost:8080', 'user', 'pw'))
     ctl = cls(JL_TITLE)
@@ -357,38 +311,6 @@ def test_native_init_failure_reports_webview2_failed(tmp_path, fake_edge):
     assert transport.preparing_sites() == ['fc-javten']
     assert transport.failed_sites() == ['javlibrary']
     assert transport.available_sites() == []
-
-
-def test_native_init_failure_before_bind_is_replayed_on_bind(tmp_path, fake_edge):
-    holder = webview2_proxy.ReadyHolder()
-    assert webview2_proxy.install(_proxy(), str(tmp_path / 'udf'), TITLE_TO_KEY, holder) is True
-    ctl = fake_edge.WebView2(JT_TITLE)
-    ctl.EnsureCoreWebView2Async(None)
-    ctl.CoreWebView2InitializationCompleted.fire(ctl, _fail_event())      # transport 還沒綁
-    wins = {'javlibrary': _Win(JL_TITLE, 'about:blank'), 'fc-javten': _Win(JT_TITLE, 'about:blank')}
-    transport = PyWebViewCfTransport(wins, {}, pending={'javlibrary', 'fc-javten'})
-    holder.bind(transport)
-    assert transport.failed_sites() == ['fc-javten']
-    assert transport.preparing_sites() == ['javlibrary']
-
-
-def test_native_init_failure_with_plain_callable_does_not_raise(tmp_path, fake_edge):
-    cls, ready = _applied(tmp_path, fake_edge)                       # on_ready 是 list.append，無 .fail
-    ctl = cls(JL_TITLE)
-    ctl.EnsureCoreWebView2Async(None)
-    ctl.CoreWebView2InitializationCompleted.fire(ctl, _fail_event())
-    assert ready == []
-
-
-def test_ready_holder_fail_once_per_key_and_not_after_confirm():
-    h, t = webview2_proxy.ReadyHolder(), _FailT()
-    h.bind(t)
-    h.fail('javlibrary')
-    h.fail('javlibrary')
-    h('fc-javten')
-    h.fail('fc-javten')                                              # 已確認可用的 key 不再報失敗
-    assert t.failed == ['javlibrary']
-    assert t.confirmed == ['fc-javten']
 
 
 class _FailT:

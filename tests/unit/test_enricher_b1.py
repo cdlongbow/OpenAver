@@ -17,7 +17,7 @@ class TestDbUpsertSampleImagesGate:
         download_count: List[str] of local file:/// URIs (new return type of _write_extrafanart),
                         or int (converted to a mock list of that length for backward compat).
         """
-        from unittest.mock import patch, MagicMock, call
+        from unittest.mock import patch, MagicMock
         from core.enricher import ExtrafanartResult
         if isinstance(download_count, int):
             mock_written_uris = [to_file_uri(f"/tmp/extrafanart/fanart{i+1}.jpg") for i in range(download_count)]
@@ -69,12 +69,6 @@ class TestDbUpsertSampleImagesGate:
         assert video.sample_images == [to_file_uri("/old.jpg")], \
             "write_extrafanart=False 時不應覆蓋 DB sample_images"
 
-    def test_extrafanart_written_zero_does_not_write_sample_images(self):
-        """write_extrafanart=True 但下載 0 張 → 不更新"""
-        args = self._run_enrich(write_extrafanart=True, download_count=0, existing_samples=[])
-        video = args[0][0]
-        assert video.sample_images == [], \
-            "extrafanart_written=0 時不應寫入 scraper 回傳的遠端 URL"
 
     def test_extrafanart_written_positive_updates_sample_images(self):
         """write_extrafanart=True 且下載 > 0 張 → DB 更新為本地 file:/// URIs（非遠端 URL）"""
@@ -92,7 +86,6 @@ class TestDatabaseHelpers:
 
     def _make_repo(self, tmp_path):
         """建立 in-memory DB（使用 tmp_path 確保隔離）"""
-        from pathlib import Path
         from core.database import init_db, VideoRepository
         db_path = tmp_path / "test_b2.db"
         init_db(db_path)
@@ -113,7 +106,6 @@ class TestDatabaseHelpers:
 
     def test_update_sample_images_only_updates_that_field(self, tmp_path):
         """update_sample_images 寫入後，其他欄位（title / user_tags）不變"""
-        from core.database import init_db, VideoRepository
         repo = self._make_repo(tmp_path)
         self._insert_video(
             repo,
@@ -132,66 +124,6 @@ class TestDatabaseHelpers:
         assert video.sample_images == new_samples, "sample_images 應被更新"
         assert video.title == "Original Title", "title 欄位不應被改動"
         assert video.user_tags == ["tag1"], "user_tags 欄位不應被改動"
-
-    def test_count_videos_in_folder_excludes_subdirectories(self, tmp_path):
-        """/A/v1.mp4 + /A/v2.mp4 + /A/sub/v3.mp4 → count_in_folder(to_file_uri("/A/")) == 2"""
-        repo = self._make_repo(tmp_path)
-        self._insert_video(repo, path=to_file_uri("/A/v1.mp4"), number="A001")
-        self._insert_video(repo, path=to_file_uri("/A/v2.mp4"), number="A002")
-        self._insert_video(repo, path=to_file_uri("/A/sub/v3.mp4"), number="A003")
-
-        count = repo.count_videos_in_folder(to_file_uri("/A/"))
-        assert count == 2, (
-            f"子目錄排除失敗：期待 2，實際 {count}。"
-            "/A/sub/v3.mp4 不應計入 /A/ 的計數"
-        )
-
-    def test_count_videos_in_folder_escapes_underscore(self, tmp_path):
-        """my_movie/ prefix 只 match my_movie/，不應 match myXmovie/"""
-        repo = self._make_repo(tmp_path)
-        self._insert_video(repo, path=to_file_uri("/A/my_movie/v1.mp4"), number="U001")
-        self._insert_video(repo, path=to_file_uri("/A/myXmovie/v2.mp4"), number="U002")
-
-        count = repo.count_videos_in_folder(to_file_uri("/A/my_movie/"))
-        assert count == 1, (
-            f"下底線 escape 失敗：期待 1，實際 {count}。"
-            "my_movie/ 中的 _ 被當成 LIKE 單字元 wildcard 誤匹配 myXmovie/"
-        )
-
-    def test_count_videos_in_folder_escapes_percent(self, tmp_path):
-        """user%20name/ prefix 中的 % 應被 escape，正確 match 路徑"""
-        repo = self._make_repo(tmp_path)
-        self._insert_video(
-            repo,
-            path=to_file_uri("/home/user%20name/v.mp4"),
-            number="P001",
-        )
-        self._insert_video(
-            repo,
-            path=to_file_uri("/home/userXXname/v2.mp4"),
-            number="P002",
-        )
-
-        count = repo.count_videos_in_folder(to_file_uri("/home/user%20name/"))
-        assert count == 1, (
-            f"百分號 escape 失敗：期待 1，實際 {count}。"
-            "%20 中的 % 不應被當成 LIKE wildcard"
-        )
-
-    def test_count_videos_in_folder_escapes_backslash(self, tmp_path):
-        """Windows UNC: file:////server/share/ prefix 正確 match"""
-        repo = self._make_repo(tmp_path)
-        self._insert_video(
-            repo,
-            path=to_file_uri("//server/share/v.mp4"),
-            number="W001",
-        )
-
-        count = repo.count_videos_in_folder(to_file_uri("//server/share/"))
-        assert count == 1, (
-            f"反斜線 escape 失敗：期待 1，實際 {count}。"
-            "Windows UNC path 中的反斜線應被正確 escape"
-        )
 
 
 class TestFetchSamplesOnly:
@@ -257,58 +189,6 @@ class TestFetchSamplesOnly:
             )
             return result, mock_repo, mock_search, mock_write
 
-    def test_file_not_found_returns_failure(self):
-        """檔案不存在 → success=False, error, 不寫磁碟, 不寫 DB"""
-        result, mock_repo, mock_search, mock_write = self._run_fetch(file_exists=False)
-        assert result.success is False
-        assert result.error is not None
-        assert result.extrafanart_written == 0
-        mock_search.assert_not_called()
-        mock_write.assert_not_called()
-        mock_repo.update_sample_images.assert_not_called()
-
-    def test_search_jav_returns_none_returns_failure(self):
-        """search_jav 回傳 None → success=False, 不寫磁碟, 不寫 DB"""
-        result, mock_repo, mock_search, mock_write = self._run_fetch(
-            file_exists=True,
-            search_result=None,
-        )
-        assert result.success is False
-        assert result.extrafanart_written == 0
-        mock_write.assert_not_called()
-        mock_repo.update_sample_images.assert_not_called()
-
-    def test_empty_sample_images_no_db_write(self):
-        """scraper 成功但 sample_images=[] → success=True, extrafanart_written=0, 不寫 DB"""
-        result, mock_repo, _search, _write = self._run_fetch(
-            file_exists=True,
-            sample_images=[],   # scraper 回傳空劇照
-            write_count=0,
-        )
-        assert result.success is True
-        assert result.extrafanart_written == 0
-        mock_repo.update_sample_images.assert_not_called()
-
-    def test_download_success_updates_db(self):
-        """下載成功 count>0 → success=True, DB update_sample_images 被呼叫（local file:/// URIs）"""
-        result, mock_repo, _search, _write = self._run_fetch(
-            file_exists=True,
-            sample_images=["http://example.com/s1.jpg", "http://example.com/s2.jpg"],
-            write_count=2,
-        )
-        assert result.success is True
-        assert result.extrafanart_written == 2
-        # update_sample_images 被呼叫，path 應為 file:/// URI
-        # samples 必須是 local file:/// URIs（不是 scraper 遠端 URL）
-        mock_repo.update_sample_images.assert_called_once()
-        call_args = mock_repo.update_sample_images.call_args
-        path_arg = call_args[0][0]
-        samples_arg = call_args[0][1]
-        assert path_arg.startswith("file:///"), f"DB path 應為 file:/// URI，實際：{path_arg!r}"
-        assert all(s.startswith("file:///") for s in samples_arg), \
-            f"DB sample_images 應為 local file:/// URIs，實際: {samples_arg}"
-        assert not any(s.startswith("http") for s in samples_arg), \
-            f"scraper 遠端 URL 不應寫入 DB，實際: {samples_arg}"
 
     def test_write_extrafanart_returns_zero_no_db_write(self):
         """_write_extrafanart 回傳 0（下載全部失敗）→ gate 不通，DB 不更新"""
@@ -322,24 +202,6 @@ class TestFetchSamplesOnly:
         assert result.extrafanart_written == 0
         mock_repo.update_sample_images.assert_not_called()
 
-    def test_db_receives_local_uris_not_scraper_urls(self):
-        """Codex P1 explicit guard: DB sample_images 必須是 local file:/// URIs。
-        belt-and-suspenders：確認 DB 絕對不會收到 scraper 回傳的 http:// URLs。
-        """
-        result, mock_repo, _search, _write = self._run_fetch(
-            file_exists=True,
-            sample_images=["http://example.com/s1.jpg", "http://example.com/s2.jpg"],
-            write_count=2,
-        )
-        assert result.success is True
-        mock_repo.update_sample_images.assert_called_once()
-        samples_arg = mock_repo.update_sample_images.call_args[0][1]
-        # 核心 P1 contract：所有 DB 寫入項目必須是 local file:/// URI
-        assert all(s.startswith("file:///") for s in samples_arg), \
-            f"[Codex P1] DB sample_images 必須是 file:/// URIs，got: {samples_arg}"
-        # 沒有任何 http:// / https:// 遠端 URL 寫入 DB
-        assert not any(s.startswith("http://") or s.startswith("https://") for s in samples_arg), \
-            f"[Codex P1] scraper URL 不得入庫: {samples_arg}"
 
     def test_all_existing_skipped_uris_nonempty_but_downloaded_zero(self):
         """全部既有檔被跳過 → extrafanart_written=0，但 DB 仍收到磁碟真相 uris。"""

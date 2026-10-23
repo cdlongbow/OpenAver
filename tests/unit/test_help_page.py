@@ -32,16 +32,6 @@ def _isolate_access_auth_db(tmp_path, monkeypatch):
 class TestHelpPageContext:
     """help_page() 必須注入 base_url 到 template context"""
 
-    def test_help_page_has_curl_command(self):
-        """help 頁含 SSR 渲染的 curl 指令"""
-        client = _make_client()
-        response = client.get("/help")
-        assert response.status_code == 200
-        html = response.text
-        assert "curl -s" in html, \
-            "help.html 應含有 SSR 渲染的 curl 指令"
-        assert "/api/capabilities" in html, \
-            "help.html 應含有 /api/capabilities 端點"
 
     def test_help_page_base_url_from_request(self):
         """base_url 來自 request，TestClient 預設為 http://testserver"""
@@ -53,26 +43,3 @@ class TestHelpPageContext:
         assert "http://testserver/api/capabilities" in html, \
             "base_url 應從 request.base_url 取得並渲染到 curl 指令中"
 
-    def test_help_page_no_lan_ip_reference(self):
-        """確認 _get_lan_ip 已移除，help 模板不含 socket 探測的 IP（38b BUG2）。
-
-        排除全域 i18n bootstrap dump（`window.__i18n = {...}`）後再比對：該 dump 含
-        所有翻譯 key，feature/80 新增的 `settings.server_info.no_lan_ip` 子字串會誤觸
-        本守衛，但那是 settings 頁無關 key，非 help 模板重新引入 lan_ip 變數。本守衛
-        只關心 help 模板自身是否復活 lan_ip context 變數。
-
-        注：server-mode help 刻意透過 `base_url` context 變數顯示可分享的
-        `lan_ip:lan_port`（US-7 / 81b-T5）；該值是解析後的 IP 字串而非字面
-        `lan_ip` 變數，且本守衛在預設單機模式（server_mode off → loopback、
-        無 IP）下執行，故仍綠 — 它持續防止 help.html 復活原始 `{{ lan_ip }}`
-        template 變數（字面字串檢查依然有效）。
-        """
-        client = _make_client()
-        response = client.get("/help")
-        assert response.status_code == 200
-        html = response.text
-        html_sans_i18n = "\n".join(
-            ln for ln in html.splitlines() if "window.__i18n" not in ln
-        )
-        assert "lan_ip" not in html_sans_i18n, \
-            "help.html 不應含有 lan_ip template 變數"

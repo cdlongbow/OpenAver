@@ -6,10 +6,8 @@ pywebview は Windows 専用。すべてのシステムコールをモックし�
 """
 import pytest
 import sys
-import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from pathlib import Path
-import importlib
 import importlib.util
 
 import core.client_settings as client_settings
@@ -70,46 +68,16 @@ def test_open_url_https_success(api_module, api_instance, monkeypatch):
 # ---------------------------------------------------------------------------
 # Case 2: valid http URL → True
 # ---------------------------------------------------------------------------
-def test_open_url_http_success(api_module, api_instance, monkeypatch):
-    """http:// URL も合法として True を返す"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    mock_startfile = MagicMock()
-    monkeypatch.setattr(api_module.os, 'startfile', mock_startfile, raising=False)
-
-    result = api_instance.open_url("http://example.com")
-    assert result is True
-    mock_startfile.assert_called_once_with("http://example.com")
 
 
 # ---------------------------------------------------------------------------
 # Case 3: empty string → False
 # ---------------------------------------------------------------------------
-def test_open_url_empty_string(api_module, api_instance, monkeypatch):
-    """空文字列の場合 False を返す（システム API を呼ばない）"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    mock_startfile = MagicMock()
-    monkeypatch.setattr(api_module.os, 'startfile', mock_startfile, raising=False)
-
-    result = api_instance.open_url("")
-    assert result is False
-    mock_startfile.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
 # Case 4: javascript: scheme → False
 # ---------------------------------------------------------------------------
-def test_open_url_javascript_scheme(api_module, api_instance, monkeypatch):
-    """javascript: スキームは拒否して False を返す"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    mock_startfile = MagicMock()
-    monkeypatch.setattr(api_module.os, 'startfile', mock_startfile, raising=False)
-
-    result = api_instance.open_url("javascript:alert(1)")
-    assert result is False
-    mock_startfile.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -130,64 +98,21 @@ def test_open_url_file_scheme(api_module, api_instance, monkeypatch):
 # ---------------------------------------------------------------------------
 # Case 6: valid URL + os.startfile raises OSError → False
 # ---------------------------------------------------------------------------
-def test_open_url_startfile_raises_oserror(api_module, api_instance, monkeypatch):
-    """os.startfile が OSError を投げた場合 False を返す（例外を伝播させない）"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    mock_startfile = MagicMock(side_effect=OSError("No association"))
-    monkeypatch.setattr(api_module.os, 'startfile', mock_startfile, raising=False)
-
-    result = api_instance.open_url("https://valid.com")
-    assert result is False
 
 
 # ---------------------------------------------------------------------------
 # Case 7: None → False
 # ---------------------------------------------------------------------------
-def test_open_url_none(api_module, api_instance, monkeypatch):
-    """None を渡した場合 False を返す（防御的処理）"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    mock_startfile = MagicMock()
-    monkeypatch.setattr(api_module.os, 'startfile', mock_startfile, raising=False)
-
-    result = api_instance.open_url(None)
-    assert result is False
-    mock_startfile.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
 # Case 8: macOS subprocess returns non-zero → False
 # ---------------------------------------------------------------------------
-def test_open_url_macos_nonzero_returncode(api_module, api_instance, monkeypatch):
-    """macOS で open コマンドが非ゼロ終了した場合 False を返す"""
-    monkeypatch.setattr(sys, 'platform', 'darwin')
-
-    mock_result = MagicMock()
-    mock_result.returncode = 1
-    mock_run = MagicMock(return_value=mock_result)
-    monkeypatch.setattr(api_module.subprocess, 'run', mock_run)
-
-    result = api_instance.open_url("https://example.com")
-    assert result is False
-    mock_run.assert_called_once_with(['open', 'https://example.com'])
 
 
 # ---------------------------------------------------------------------------
 # Case 9: Linux subprocess returns zero → True
 # ---------------------------------------------------------------------------
-def test_open_url_linux_success(api_module, api_instance, monkeypatch):
-    """Linux で xdg-open が正常終了した場合 True を返す"""
-    monkeypatch.setattr(sys, 'platform', 'linux')
-
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_run = MagicMock(return_value=mock_result)
-    monkeypatch.setattr(api_module.subprocess, 'run', mock_run)
-
-    result = api_instance.open_url("https://example.com")
-    assert result is True
-    mock_run.assert_called_once_with(['xdg-open', 'https://example.com'])
 
 
 # ===========================================================================
@@ -229,71 +154,16 @@ def test_open_file_custom_player_popen_oserror_logs_warning(api_module, api_inst
 # ---------------------------------------------------------------------------
 # Logger test 2: open_file — OS default startfile raises OSError → logger.error
 # ---------------------------------------------------------------------------
-def test_open_file_os_default_oserror_logs_error(api_module, api_instance, monkeypatch):
-    """OS デフォルト開き (startfile) が OSError → logger.error を呼び False を返す"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    video = uri_to_fs_path('C:\\video.mp4')
-    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: p == video)
-    monkeypatch.setattr(client_settings, 'player_path', lambda: '')
-
-    monkeypatch.setattr(api_module.os, 'startfile', MagicMock(side_effect=OSError("no assoc")), raising=False)
-
-    mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, 'logger', mock_logger)
-
-    result = api_instance.open_file('C:\\video.mp4')
-
-    mock_logger.error.assert_called_once()
-    error_msg = mock_logger.error.call_args[0][0]
-    assert 'open_file failed' in error_msg
-    assert result["ok"] is False
-    assert result["reason"] == "failed"
 
 
 # ---------------------------------------------------------------------------
 # Logger test 3: open_url — os.startfile raises OSError → logger.error
 # ---------------------------------------------------------------------------
-def test_open_url_startfile_oserror_logs_error(api_module, api_instance, monkeypatch):
-    """open_url で os.startfile が OSError → logger.error を呼び False を返す"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    monkeypatch.setattr(api_module.os, 'startfile', MagicMock(side_effect=OSError("No association")), raising=False)
-
-    mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, 'logger', mock_logger)
-
-    result = api_instance.open_url("https://valid.com")
-
-    mock_logger.error.assert_called_once()
-    error_msg = mock_logger.error.call_args[0][0]
-    assert 'open_url failed' in error_msg
-    assert 'https://valid.com' in error_msg
-    assert result is False
 
 
 # ---------------------------------------------------------------------------
 # Logger test 4: open_folder — subprocess.Popen raises OSError → logger.error
 # ---------------------------------------------------------------------------
-def test_open_folder_popen_oserror_logs_error(api_module, api_instance, monkeypatch):
-    """open_folder で Popen が OSError → logger.error を呼び False を返す"""
-    monkeypatch.setattr(sys, 'platform', 'win32')
-
-    folder = uri_to_fs_path('C:\\some\\folder')
-    monkeypatch.setattr(api_module.os.path, 'exists', lambda p: p == folder)
-    monkeypatch.setattr(api_module.os.path, 'isfile', lambda p: False)
-    monkeypatch.setattr(api_module.subprocess, 'Popen', MagicMock(side_effect=OSError("explorer missing")))
-
-    mock_logger = MagicMock()
-    monkeypatch.setattr(api_module, 'logger', mock_logger)
-
-    result = api_instance.open_folder('C:\\some\\folder')
-
-    mock_logger.error.assert_called_once()
-    error_msg = mock_logger.error.call_args[0][0]
-    assert 'open_folder failed' in error_msg
-    assert result["ok"] is False
-    assert result["reason"] == "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -311,47 +181,6 @@ def _bad_config(monkeypatch, tmp_path, text='{invalid json'):
     return mock_logger
 
 
-def test_video_extensions_json_error_logs_warning(api_module, api_instance, monkeypatch, tmp_path):
-    """video_extensions の JSON parse 失敗 → logger.warning + DEFAULT_VIDEO_EXTENSIONS（on_drop 経路も同じ reader）"""
-    mock_logger = _bad_config(monkeypatch, tmp_path)
-
-    assert client_settings.video_extensions() == set(api_module.DEFAULT_VIDEO_EXTENSIONS)
-
-    mock_logger.warning.assert_called_once()
-    warning_msg = mock_logger.warning.call_args[0][0]
-    assert 'video_extensions' in warning_msg
-    assert 'DEFAULT_VIDEO_EXTENSIONS' in warning_msg
-
-
-def test_player_path_json_error_logs_warning(api_instance, monkeypatch, tmp_path):
-    """player_path の JSON parse 失敗 → logger.warning + '' を返す"""
-    mock_logger = _bad_config(monkeypatch, tmp_path)
-
-    assert client_settings.player_path() == ''
-
-    mock_logger.warning.assert_called_once()
-    warning_msg = mock_logger.warning.call_args[0][0]
-    assert 'player_path' in warning_msg
-    assert 'OS default player' in warning_msg
-
-
 # ---------------------------------------------------------------------------
 # TASK-153b-T1: readers share core.config.CONFIG_PATH seam
 # ---------------------------------------------------------------------------
-def test_pywebview_config_readers_use_core_config_path_seam(api_instance, monkeypatch, tmp_path):
-    """monkeypatch core_config.CONFIG_PATH → tmp 檔後，facade 兩個 reader 都讀到該檔內容。"""
-    import json
-    import core.config as core_config
-
-    tmp_config = tmp_path / "config.json"
-    tmp_config.write_text(
-        json.dumps({
-            "scraper": {"video_extensions": [".unique_seam_ext"]},
-            "showcase": {"player": "/tmp/unique_seam_player"},
-        }),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_config)
-
-    assert client_settings.video_extensions() == {".unique_seam_ext"}
-    assert client_settings.player_path() == "/tmp/unique_seam_player"

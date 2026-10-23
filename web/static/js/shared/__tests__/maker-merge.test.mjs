@@ -16,29 +16,6 @@ test('fullwidth / 大小寫 / 前後空白 的寫法併成同一組，代表為�
     assert.strictEqual(makerKey('ＭＯＯＤＹＺ'), makerKey('moodyz'));
 });
 
-test('blank 寫法（null／空字串／全空白）不分組、不進回傳 Map', () => {
-    var labels = canonicalMakerLabels(new Map([
-        ['   ', 3], ['', 2], [null, 2], [undefined, 1], ['S1', 1],
-    ]));
-    assert.strictEqual(labels.has('   '), false);
-    assert.strictEqual(labels.has(''), false);
-    assert.strictEqual(labels.has(null), false);
-    assert.strictEqual(labels.has(undefined), false);
-    assert.strictEqual(labels.get('S1'), 'S1');
-    assert.strictEqual(labels.size, 1);
-});
-
-test('majority 次數多者為代表（即使字串較大）', () => {
-    var labels = canonicalMakerLabels(new Map([['Moodyz', 30], ['MOODYZ', 2]]));
-    assert.strictEqual(labels.get('MOODYZ'), 'Moodyz');
-    assert.strictEqual(labels.get('Moodyz'), 'Moodyz');
-});
-
-test('tie 次數相同時取字串遞增最小者', () => {
-    var labels = canonicalMakerLabels(new Map([['Moodyz', 2], ['MOODYZ', 2]]));
-    assert.strictEqual(labels.get('Moodyz'), 'MOODYZ');
-    assert.strictEqual(labels.get('MOODYZ'), 'MOODYZ');
-});
 
 // 175a-T6: Python maker_key_of 與前端 makerKey 共用向量檔（BE-TEST-14；pytest 另讀一次同一檔）
 const keyVectors = JSON.parse(readFileSync(

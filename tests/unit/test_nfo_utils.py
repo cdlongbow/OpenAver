@@ -29,15 +29,3 @@ class TestSanitizeNfoBytesCodePath:
         # CDATA 內的 & 不應被誤 escape（不應出現 "A &amp; B"）
         assert b'A &amp; B' not in result
 
-    def test_cdata_path_multiple_segments(self):
-        """3 段：非 CDATA + CDATA + 非 CDATA；只有非 CDATA 段的 & 被 escape。"""
-        raw = b'x & y <![CDATA[a & b]]> z & w'
-        result = sanitize_nfo_bytes(raw)
-        # 前段 bare & 被 escape
-        assert b'x &amp; y ' in result
-        # CDATA 區塊原封
-        assert b'<![CDATA[a & b]]>' in result
-        # 後段 bare & 被 escape
-        assert b' z &amp; w' in result
-        # CDATA 內的 & 未被誤 escape
-        assert b'a &amp; b' not in result

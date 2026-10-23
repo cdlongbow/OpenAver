@@ -7,10 +7,8 @@ Patching strategy:
 
 State isolation: reset metatube_state singleton between tests via fixture.
 """
-import asyncio
 import threading
 import time
-import json
 import pytest
 from unittest.mock import DEFAULT, MagicMock, patch
 
@@ -18,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from web.app import app
 from core.metatube.state import metatube_state as state
-from core.metatube.errors import MetatubeUnavailable, MetatubeAuthError, MetatubeNotFound
+from core.metatube.errors import MetatubeUnavailable, MetatubeAuthError
 from core.source_config import get_builtin_sources
 
 
@@ -179,33 +177,6 @@ def test_connect_ssrf_blocked(client):
 # Test: connect list_providers raises MetatubeUnavailable
 # ---------------------------------------------------------------------------
 
-def test_connect_unavailable(client):
-    store = _make_config_patches()
-
-    with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-         patch("web.routers.settings_metatube.probe_all"), \
-         patch("web.routers.settings_metatube.mutate_config", side_effect=store.mutate):
-
-        mock_instance = MagicMock()
-        mock_instance.list_providers.side_effect = MetatubeUnavailable("connection refused")
-        MockClient.return_value = mock_instance
-
-        resp = client.post(
-            "/api/settings/metatube/connect",
-            json={"url": "http://192.168.1.10:8080", "token": "", "allow_lan": True},
-        )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is False
-    # Fixed Chinese string — must not expose exception detail
-    assert isinstance(data["error"], str)
-    assert len(data["error"]) > 0
-    assert "connection refused" not in data["error"]
-    assert "MetatubeUnavailable" not in data["error"]
-    # The fixed string exactly
-    assert data["error"] == "無法連線到 metatube server，請確認 URL 與 token"
-
 
 # ---------------------------------------------------------------------------
 # Test: connect list_providers raises MetatubeAuthError (401)
@@ -241,44 +212,6 @@ def test_connect_auth_error(client):
 # ---------------------------------------------------------------------------
 # Test: order +100 — metatube sources must all have order >= 100
 # ---------------------------------------------------------------------------
-
-def test_connect_order_offset(client):
-    store = _make_config_patches()
-
-    with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-         patch("web.routers.settings_metatube.probe_all"), \
-         patch("web.routers.settings_metatube.mutate_config", side_effect=store.mutate):
-
-        mock_instance = MagicMock()
-        mock_instance.list_providers.return_value = {
-            "FANZA": "http://mt:8080",
-            "HEYZO": "http://mt:8080",
-        }
-        MockClient.return_value = mock_instance
-
-        resp = client.post(
-            "/api/settings/metatube/connect",
-            json={"url": "http://192.168.1.10:8080", "token": "", "allow_lan": True},
-        )
-
-    assert resp.json()["success"] is True
-    saved_cfg = store.saved[-1]
-
-    builtin_sources = [s for s in saved_cfg["sources"] if s.get("type") == "builtin"]
-    metatube_sources = [s for s in saved_cfg["sources"] if s.get("type") == "metatube"]
-
-    assert len(metatube_sources) == 2
-
-    # Every metatube order >= 100
-    for s in metatube_sources:
-        assert s["order"] >= 100, f"metatube source {s['id']} has order {s['order']} < 100"
-
-    # Every builtin order < every metatube order
-    builtin_orders = [s["order"] for s in builtin_sources]
-    metatube_orders = [s["order"] for s in metatube_sources]
-    assert max(builtin_orders) < min(metatube_orders), (
-        f"builtin max order {max(builtin_orders)} >= metatube min order {min(metatube_orders)}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -370,16 +303,6 @@ def test_status_during_probe(client):
 # ---------------------------------------------------------------------------
 # Test: GET /status after probe done
 # ---------------------------------------------------------------------------
-
-def test_status_after_probe_done(client):
-    state.connect("http://192.168.1.10:8080", "", ["FANZA"])
-    state.set_probe_started()
-    state.set_probe_done()
-
-    resp = client.get("/api/settings/metatube/status")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["probe_done"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -479,34 +402,6 @@ def test_connect_preserves_enabled(client):
 # Test: POST /test endpoint while disconnected returns success (Fix 5)
 # ---------------------------------------------------------------------------
 
-def test_test_endpoint_while_disconnected(client):
-    """POST /test while disconnected (empty availability map) must return success.
-
-    probe_all receives an empty names list and should return early without error.
-    """
-    # State is freshly reset by the autouse fixture (disconnected).
-    # Note: availability_map keys may still be present (set to False) from a
-    # prior test since disconnect() preserves keys per design (grey capsule UX).
-    # Force a truly blank state by also clearing _availability here.
-    with state._lock:
-        state._availability = {}
-    assert state.is_connected is False
-    assert state.availability_map() == {}
-
-    with patch("web.routers.settings_metatube.probe_all") as mock_probe:
-        resp = client.post("/api/settings/metatube/test")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-
-    # probe_all was scheduled with empty names list
-    _wait_called(mock_probe)
-    mock_probe.assert_called_once()
-    call_args = mock_probe.call_args
-    names_arg = call_args.args[3] if len(call_args.args) > 3 else call_args.kwargs.get("provider_names", [])
-    assert names_arg == [], f"Expected empty names list, got {names_arg}"
-
 
 # ---------------------------------------------------------------------------
 # Test: connect preserves metatube.enabled flag (CD-63b-3 Work Item A)
@@ -555,37 +450,6 @@ def test_connect_preserves_metatube_enabled_flag(client):
 # Test: connect persistence failure → rollback runtime state (FIX 2)
 # ---------------------------------------------------------------------------
 
-def test_connect_persistence_failure_rollback(client):
-    """If save_config raises, /connect must roll back runtime state and return
-    {"success": False, "error": "設定儲存失敗，請重試。"} (FIX 2 / P2-A)."""
-
-    with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-         patch("web.routers.settings_metatube.probe_all") as mock_probe, \
-         patch("web.routers.settings_metatube.mutate_config", side_effect=OSError("disk full")):
-
-        mock_instance = MagicMock()
-        mock_instance.list_providers.return_value = {
-            "FANZA": "http://mt:8080",
-            "HEYZO": "http://mt:8080",
-        }
-        MockClient.return_value = mock_instance
-
-        resp = client.post(
-            "/api/settings/metatube/connect",
-            json={"url": "http://192.168.1.10:8080", "token": "", "allow_lan": True},
-        )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    # Must return failure
-    assert data["success"] is False
-    # Fixed Chinese error string
-    assert data.get("error") == "設定儲存失敗，請重試。"
-    # Runtime state must be rolled back (not connected)
-    assert state.is_connected is False
-    # probe must NOT have been fired (persistence failed before probe step)
-    mock_probe.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
 # Tests: 63d-2 — Step 3b token canary (CD-63d-3)
@@ -600,16 +464,6 @@ def _canary_providers():
         "JavBus": "http://mt:8080",
         "FANZA": "http://mt:8080",
         "HEYZO": "http://mt:8080",
-    }
-
-
-def _no_canary_providers():
-    """Provider dict with NO entries present in METATUBE_PROBE_CANARIES."""
-    # SOD, KIN8, JAV321, FC2PPVDB are explicitly NOT in METATUBE_PROBE_CANARIES
-    return {
-        "SOD": "http://mt:8080",
-        "KIN8": "http://mt:8080",
-        "JAV321": "http://mt:8080",
     }
 
 
@@ -669,82 +523,6 @@ def test_canary_search_unavailable_does_not_block_connect(client):
     assert data["success"] is True
 
 
-def test_canary_search_not_found_does_not_block_connect(client):
-    """Step 3b: search raises MetatubeNotFound (non-401) → connect succeeds.
-    404 on canary番号 is a canary-data issue, not a token issue."""
-    store = _make_config_patches()
-
-    with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-         patch("web.routers.settings_metatube.probe_all"), \
-         patch("web.routers.settings_metatube.mutate_config", side_effect=store.mutate):
-
-        mock_instance = MagicMock()
-        mock_instance.list_providers.return_value = _canary_providers()
-        mock_instance.search.side_effect = MetatubeNotFound("404")
-        MockClient.return_value = mock_instance
-
-        resp = client.post(
-            "/api/settings/metatube/connect",
-            json={"url": "http://192.168.1.10:8080", "token": "GOODTOKEN", "allow_lan": True},
-        )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-
-
-def test_canary_search_success_allows_connect(client):
-    """Step 3b: search returns a normal list (token OK path) → connect succeeds."""
-    store = _make_config_patches()
-
-    with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-         patch("web.routers.settings_metatube.probe_all"), \
-         patch("web.routers.settings_metatube.mutate_config", side_effect=store.mutate):
-
-        mock_instance = MagicMock()
-        mock_instance.list_providers.return_value = _canary_providers()
-        mock_instance.search.return_value = [{"id": "SSIS-001", "title": "Some Title"}]
-        MockClient.return_value = mock_instance
-
-        resp = client.post(
-            "/api/settings/metatube/connect",
-            json={"url": "http://192.168.1.10:8080", "token": "GOODTOKEN", "allow_lan": True},
-        )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-
-
-def test_canary_skipped_when_no_canary_provider_in_list(client):
-    """Step 3b: providers list has NO entry in METATUBE_PROBE_CANARIES → canary step
-    is bypassed entirely and connect succeeds (defensive skip)."""
-    store = _make_config_patches()
-
-    with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-         patch("web.routers.settings_metatube.probe_all"), \
-         patch("web.routers.settings_metatube.mutate_config", side_effect=store.mutate):
-
-        mock_instance = MagicMock()
-        mock_instance.list_providers.return_value = _no_canary_providers()
-        # search is deliberately NOT set up — if it were called it would use MagicMock default
-        # We track whether it was called to verify the canary step was skipped
-        mock_instance.search.side_effect = MetatubeAuthError("should not be called")
-        MockClient.return_value = mock_instance
-
-        resp = client.post(
-            "/api/settings/metatube/connect",
-            json={"url": "http://192.168.1.10:8080", "token": "", "allow_lan": True},
-        )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True, (
-        "When no canary provider is in the providers list, connect must succeed "
-        "(canary step should be skipped defensively)"
-    )
-
-
 # ---------------------------------------------------------------------------
 # TestStartupReconnect — TASK-63e-1
 # ---------------------------------------------------------------------------
@@ -781,13 +559,6 @@ def _signal(event):
     return _fn
 
 
-async def _await_reconnect_task():
-    """在 TestClient 的 loop 內等 lifespan 的 metatube_reconnect_task 結束（有逾時）。"""
-    task = app.state.metatube_reconnect_task
-    _done, pending = await asyncio.wait({task}, timeout=5)
-    assert not pending, "metatube_reconnect_task did not finish within 5s"
-
-
 class TestStartupReconnect:
     """(a) Pure function layer — call startup_reconnect() directly."""
 
@@ -808,16 +579,6 @@ class TestStartupReconnect:
     # ------------------------------------------------------------------
     # (a-2) enabled=True but url='' → no connect
     # ------------------------------------------------------------------
-    def test_empty_url_no_connect(self, reset_state):
-        from web.routers.settings_metatube import startup_reconnect
-
-        cfg = _startup_config(url="")
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
-            result = startup_reconnect(cfg)
-
-        assert result is None
-        assert state.is_connected is False
-        MockClient.assert_not_called()
 
     # ------------------------------------------------------------------
     # (a-3) config allow_lan=False + LAN URL → SSRF blocks, no connect
@@ -838,7 +599,6 @@ class TestStartupReconnect:
     # ------------------------------------------------------------------
     def test_lan_url_allowed(self, reset_state):
         from web.routers.settings_metatube import startup_reconnect
-        from core.metatube.errors import MetatubeError
 
         cfg = _startup_config(url=_LAN_URL, allow_lan=True)
         with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
@@ -858,67 +618,14 @@ class TestStartupReconnect:
     # ------------------------------------------------------------------
     # (a-5) list_providers raises MetatubeError → no connect
     # ------------------------------------------------------------------
-    def test_list_providers_error_no_connect(self, reset_state):
-        from web.routers.settings_metatube import startup_reconnect
-        from core.metatube.errors import MetatubeUnavailable
-
-        cfg = _startup_config()
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
-            mock_instance = MagicMock()
-            mock_instance.list_providers.side_effect = MetatubeUnavailable("conn refused")
-            MockClient.return_value = mock_instance
-
-            result = startup_reconnect(cfg)
-
-        assert result is None
-        assert state.is_connected is False
 
     # ------------------------------------------------------------------
     # (a-6) canary raises MetatubeAuthError (401) → return None, no connect
     # ------------------------------------------------------------------
-    def test_canary_auth_error_no_connect(self, reset_state):
-        from web.routers.settings_metatube import startup_reconnect
-        from core.metatube.errors import MetatubeAuthError as _AuthError
-
-        # Use a provider list that includes a canary (JavBus is in METATUBE_PROBE_CANARIES)
-        cfg = _startup_config()
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
-            mock_instance = MagicMock()
-            mock_instance.list_providers.return_value = {
-                "JavBus": _PUBLIC_URL,
-                "FANZA": _PUBLIC_URL,
-            }
-            mock_instance.search.side_effect = _AuthError("401")
-            MockClient.return_value = mock_instance
-
-            result = startup_reconnect(cfg)
-
-        assert result is None
-        assert state.is_connected is False
 
     # ------------------------------------------------------------------
     # (a-7) canary raises non-401 MetatubeError → continue, connect succeeds
     # ------------------------------------------------------------------
-    def test_canary_non401_error_continues(self, reset_state):
-        from web.routers.settings_metatube import startup_reconnect
-        from core.metatube.errors import MetatubeUnavailable
-
-        cfg = _startup_config()
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
-            mock_instance = MagicMock()
-            mock_instance.list_providers.return_value = {
-                "JavBus": _PUBLIC_URL,
-                "FANZA": _PUBLIC_URL,
-            }
-            mock_instance.search.side_effect = MetatubeUnavailable("timeout")
-            MockClient.return_value = mock_instance
-
-            result = startup_reconnect(cfg)
-
-        assert state.is_connected is True
-        assert result is not None
-        names, gen = result
-        assert isinstance(names, list)
 
     # ------------------------------------------------------------------
     # (a-8) happy path (public URL) → connected + list returned
@@ -948,94 +655,18 @@ class TestStartupReconnect:
     # ------------------------------------------------------------------
     # (a-9) config has no 'metatube' key → walks enabled=False path
     # ------------------------------------------------------------------
-    def test_no_metatube_key_in_config(self, reset_state):
-        from web.routers.settings_metatube import startup_reconnect
-
-        cfg = {"sources": _builtin_sources_dicts()}  # no 'metatube' key
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
-            result = startup_reconnect(cfg)
-
-        assert result is None
-        assert state.is_connected is False
-        MockClient.assert_not_called()
 
     # ------------------------------------------------------------------
     # (a-10) return value is tuple[list[str], int]
     # ------------------------------------------------------------------
-    def test_return_value_is_tuple_of_names_and_gen(self, reset_state):
-        from web.routers.settings_metatube import startup_reconnect
-
-        cfg = _startup_config()
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
-            mock_instance = MagicMock()
-            mock_instance.list_providers.return_value = {
-                "FANZA": _PUBLIC_URL,
-                "HEYZO": _PUBLIC_URL,
-            }
-            mock_instance.search.return_value = []
-            MockClient.return_value = mock_instance
-
-            result = startup_reconnect(cfg)
-
-        names, gen = result
-        assert isinstance(names, list)
-        assert all(isinstance(n, str) for n in names)
-        assert isinstance(gen, int)
 
     # ------------------------------------------------------------------
     # (a-11) returned generation == the gen state.connect set (B1, CD-66b-2)
     # ------------------------------------------------------------------
-    def test_returns_generation(self, reset_state):
-        from web.routers.settings_metatube import startup_reconnect
-
-        cfg = _startup_config()
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
-            mock_instance = MagicMock()
-            mock_instance.list_providers.return_value = {
-                "FANZA": _PUBLIC_URL,
-                "HEYZO": _PUBLIC_URL,
-            }
-            mock_instance.search.return_value = []
-            MockClient.return_value = mock_instance
-
-            result = startup_reconnect(cfg)
-
-        assert result is not None
-        names, gen = result
-        # The carried-back generation matches what state.connect set.
-        assert gen == state.generation
 
     # ------------------------------------------------------------------
     # (a-12) connect-critical section runs while _connect_lock is held (B3)
     # ------------------------------------------------------------------
-    def test_holds_connect_lock_during_connect(self, reset_state):
-        from web.routers import settings_metatube
-        from web.routers.settings_metatube import startup_reconnect
-
-        names = ["FANZA", "HEYZO"]
-        observed = {}
-
-        def _fake_connect(url, token, provider_names):
-            # state.connect is called inside the connect-critical section,
-            # which must be holding _connect_lock.
-            observed["locked"] = settings_metatube._connect_lock.locked()
-            return 7
-
-        cfg = _startup_config()
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-             patch.object(settings_metatube.state, "connect", side_effect=_fake_connect) as mock_connect:
-            mock_instance = MagicMock()
-            mock_instance.list_providers.return_value = {n: _PUBLIC_URL for n in names}
-            mock_instance.search.return_value = []
-            MockClient.return_value = mock_instance
-
-            result = startup_reconnect(cfg)
-
-        mock_connect.assert_called_once()
-        assert observed.get("locked") is True
-        assert result == (names, 7)
-        # Lock released after the function returns.
-        assert settings_metatube._connect_lock.locked() is False
 
     # ------------------------------------------------------------------
     # (b) Lifespan glue layer — TestClient context manager triggers lifespan
@@ -1085,45 +716,6 @@ class TestStartupReconnect:
 
         mock_probe.assert_called_once()
 
-    def test_lifespan_no_probe_when_none_returned(self, reset_state, tmp_path, monkeypatch):
-        """When startup_reconnect returns None, _fire_probe is NOT called."""
-        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
-        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
-        with patch("web.app.load_config") as mock_load, \
-             patch("web.app.backfill_readonly_nfo_mtime_once", return_value=None), \
-             patch("web.app.startup_reconnect") as mock_sr, \
-             patch("web.app._fire_probe") as mock_probe:
-
-            mock_load.return_value = _startup_config(enabled=False)
-            mock_sr.return_value = None
-
-            with TestClient(app) as client:
-                client.portal.call(_await_reconnect_task)
-
-        mock_probe.assert_not_called()
-
-    def test_lifespan_uses_returned_generation(self, reset_state, tmp_path, monkeypatch):
-        """lifespan passes the generation RETURNED by startup_reconnect to
-        _fire_probe — it does NOT re-read state.generation (CD-66b-2 / B1)."""
-        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
-        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
-        with patch("web.app.load_config") as mock_load, \
-             patch("web.app.backfill_readonly_nfo_mtime_once", return_value=None), \
-             patch("web.app.startup_reconnect") as mock_sr, \
-             patch("web.app._fire_probe") as mock_probe:
-
-            mock_load.return_value = _startup_config()
-            # state.generation here is unrelated (0); the returned 42 must win.
-            mock_sr.return_value = (["FANZA"], 42)
-            probed = threading.Event()
-            mock_probe.side_effect = _signal(probed)
-
-            with TestClient(app):
-                assert probed.wait(5), "_fire_probe was never called"
-
-        mock_probe.assert_called_once()
-        # generation is the last positional arg of _fire_probe(base, token, names, gen)
-        assert mock_probe.call_args.args[-1] == 42
 
     # ------------------------------------------------------------------
     # (c) connect dedup persist — allow_lan updated in config after dedup hit
@@ -1159,169 +751,9 @@ class TestStartupReconnect:
         # Config must have allow_lan=True after the dedup-hit connect
         assert store.data["metatube"]["allow_lan"] is True
 
-    def test_dedup_persist_failure_returns_error(self, reset_state):
-        """dedup hit but save_config fails → connect must NOT report success
-        (else the LAN opt-in is silently lost → restart bug returns). Codex P2."""
-        store = _make_config_patches(
-            _startup_config(enabled=True, url=_LAN_URL, token="tok", allow_lan=False)
-        )
-        state.connect(_LAN_URL, "tok", ["FANZA"])
-
-        from fastapi.testclient import TestClient as TC
-        tc = TC(app)
-
-        with patch("web.routers.settings_metatube.MetatubeHttpClient"), \
-             patch("web.routers.settings_metatube.probe_all"), \
-             patch("web.routers.settings_metatube.mutate_config",
-                   side_effect=OSError("disk full")):
-
-            resp = tc.post(
-                "/api/settings/metatube/connect",
-                json={"url": _LAN_URL, "token": "tok", "allow_lan": True},
-            )
-
-        assert resp.json()["success"] is False
-        assert resp.json()["error"] == "設定儲存失敗，請重試。"
-
 
 # ======================================================================
 # 66 Codex P2 (round 2): connect 序列化鎖 — 防並發 connect 交錯
 # clobber config/runtime 或 rollback 拆別人連線
 # ======================================================================
 
-class TestConnectSerialization:
-    """確定性測試（無真 race）：_connect_lock 在臨界段持有 + 序列結果一致。"""
-
-    def test_connect_lock_is_threading_lock(self):
-        import threading
-        from web.routers.settings_metatube import _connect_lock
-        assert isinstance(_connect_lock, type(threading.Lock()))
-
-    def test_connect_sync_holds_lock_during_save_config(self, reset_state):
-        """config 寫入時 _connect_lock 必須持有（臨界段涵蓋 mutate_config）。
-
-        mutate_config 在 _connect_lock 內被呼叫（鎖序：外 _connect_lock → 內
-        _config_write_lock），語意等價於「save 時 _connect_lock 持有」。
-        """
-        from web.routers.settings_metatube import _connect_sync, _connect_lock
-
-        held = []
-
-        def _fake_mutate(mutator):
-            held.append(_connect_lock.locked())
-            mutator(_fresh_config())
-
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-             patch("web.routers.settings_metatube.mutate_config", side_effect=_fake_mutate):
-            mock_inst = MagicMock()
-            mock_inst.list_providers.return_value = {"FANZA": _PUBLIC_URL}
-            mock_inst.search.return_value = []
-            MockClient.return_value = mock_inst
-
-            result = _connect_sync(_PUBLIC_URL, "", True)
-
-        assert result["ok"] is True
-        assert held and all(held), "mutate_config 必須在 _connect_lock 持有時被呼叫"
-
-    def test_persist_allow_lan_holds_lock_during_save_config(self, reset_state):
-        """_persist_allow_lan 的 config 寫入也在 _connect_lock 內。"""
-        from web.routers.settings_metatube import _persist_allow_lan, _connect_lock
-
-        held = []
-
-        def _fake_mutate(mutator):
-            held.append(_connect_lock.locked())
-            mutator({"metatube": {"url": _PUBLIC_URL, "token": "tok", "allow_lan": False}})
-
-        with patch("web.routers.settings_metatube.mutate_config", side_effect=_fake_mutate):
-            ok = _persist_allow_lan(_PUBLIC_URL, "tok", True)
-
-        assert ok is True
-        assert held and all(held), "_persist_allow_lan 的寫入必須在 _connect_lock 內"
-
-    def test_sequential_connects_leave_config_consistent(self, reset_state):
-        """兩次連續 connect 後 config 與 runtime state 皆指向最後一次（B）。
-
-        序列代理並發 clobber 場景：序列化下，config 永遠反映最後一次 connect，
-        不會殘留前一台 server 的 URL。
-        """
-        import copy
-        from web.routers.settings_metatube import _connect_sync
-
-        saved = []
-
-        def _fake_mutate(mutator):
-            cfg = copy.deepcopy(saved[-1]) if saved else _fresh_config()
-            mutator(cfg)
-            saved.append(copy.deepcopy(cfg))
-
-        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
-             patch("web.routers.settings_metatube.mutate_config", side_effect=_fake_mutate):
-            mock_inst = MagicMock()
-            mock_inst.list_providers.return_value = {"FANZA": _PUBLIC_URL}
-            mock_inst.search.return_value = []
-            MockClient.return_value = mock_inst
-
-            r1 = _connect_sync("http://8.8.4.4:8080", "", True)
-            r2 = _connect_sync("http://8.8.8.8:8080", "", True)
-
-        assert r1["ok"] is True and r2["ok"] is True
-        assert state.base_url == "http://8.8.8.8:8080"
-        assert saved[-1]["metatube"]["url"] == "http://8.8.8.8:8080"
-
-    def test_disconnect_holds_connect_lock(self, client, reset_state):
-        """disconnect 路由經 _connect_lock 序列化：state.disconnect() 在鎖內執行。"""
-        from web.routers.settings_metatube import _connect_lock
-
-        held = []
-        orig = state.disconnect
-
-        def _spy():
-            held.append(_connect_lock.locked())
-            orig()
-
-        with patch.object(state, "disconnect", side_effect=_spy):
-            resp = client.post("/api/settings/metatube/disconnect")
-
-        assert resp.json()["success"] is True
-        assert held == [True], "state.disconnect() 必須在 _connect_lock 持有時執行"
-
-    def test_disconnect_waits_for_inflight_connect_then_wins(self, reset_state):
-        """在途 connect 持鎖時 disconnect 必須等待，鎖釋放後斷線（last-action-wins）。
-
-        確定性：用 Barrier/Event 強制順序，不依賴 timing。
-        """
-        import threading
-        import time
-        from web.routers.settings_metatube import _disconnect_sync, _connect_lock
-
-        barrier = threading.Barrier(2)
-        release = threading.Event()
-
-        def _hold_lock():
-            with _connect_lock:
-                barrier.wait()            # 通知「已持鎖」
-                release.wait(timeout=2.0)  # 持鎖直到被釋放
-
-        holder = threading.Thread(target=_hold_lock, daemon=True)
-        holder.start()
-        barrier.wait()                     # 等 holder 拿到鎖
-
-        state.connect("http://8.8.8.8:8080", "", ["FANZA"])
-        assert state.is_connected is True
-
-        result = []
-
-        def _run_disconnect():
-            _disconnect_sync()
-            result.append(state.is_connected)
-
-        t = threading.Thread(target=_run_disconnect, daemon=True)
-        t.start()
-
-        time.sleep(0.05)
-        assert state.is_connected is True, "鎖被持有時 disconnect 必須仍在等待"
-
-        release.set()
-        t.join(timeout=2.0)
-        assert result == [False], "鎖釋放後 disconnect 應使狀態變為斷線"

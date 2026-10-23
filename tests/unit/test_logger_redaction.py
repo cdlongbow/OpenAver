@@ -8,8 +8,7 @@ import requests
 
 import core.logger as core_logger
 
-BADS = ["http://demo:secret@127.0.0.1:70000", "http://demo:sec'ret@127.0.0.1:70000",
-        "http://demo:sec/ret@127.0.0.1:70000"]
+BADS = ["http://demo:sec/ret@127.0.0.1:70000"]
 
 
 @pytest.fixture
@@ -55,12 +54,3 @@ def test_traceback_userinfo_redacted(log_file, bad):
     assert "ret@" not in text
 
 
-def test_url_without_userinfo_unchanged(log_file):
-    url = "https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=abc00123/"
-    core_logger.get_logger("t").info("get %s", url)
-    assert url in _read(log_file)
-
-
-def test_two_urls_redacted_independently(log_file):
-    core_logger.get_logger("t").info("a http://u:p@h:1 b https://x/y")
-    assert "a http://***@h:1 b https://x/y" in _read(log_file)

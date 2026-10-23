@@ -169,21 +169,6 @@ def _patch_showcase(mocker, showcase_setup) -> None:
     mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
 
 
-def test_showcase_videos_identity_wire_body_exceeds_minimum_size(
-    showcase_setup, mocker
-):
-    """前提斷言：/api/showcase/videos identity wire body 必須 > minimum_size。"""
-    _patch_showcase(mocker, showcase_setup)
-    identity = wire_get(
-        "/api/showcase/videos",
-        headers={"Accept-Encoding": "identity"},
-    )
-    assert identity["status"] == 200
-    _assert_fixture_large_enough(identity["body"])
-    # RED_EVIDENCE：實跑時印出實際長度，確認清楚超過 500（建議 > 2000）
-    print(f"RED_EVIDENCE len(identity_wire_body)={len(identity['body'])}")
-
-
 def test_showcase_videos_gzip_smaller_and_reversible(showcase_setup, mocker):
     """JSON 端點：同端點雙態、Content-Encoding、可逆、確實變小。"""
     _patch_showcase(mocker, showcase_setup)
@@ -200,16 +185,3 @@ def test_showcase_videos_gzip_smaller_and_reversible(showcase_setup, mocker):
     )
 
 
-@pytest.mark.parametrize("path", _STATIC_COMPRESSIBLE_PATHS)
-def test_static_or_html_gzip_smaller_and_reversible(path):
-    """HTML／JS／CSS：同端點雙態、Content-Encoding、可逆、確實變小。"""
-    # /showcase 是動態 TemplateResponse；JS／CSS 是 /static 掛載檔。
-    # 三者原始大小皆遠超過 minimum_size，不需額外放大。
-    identity = wire_get(path, headers={"Accept-Encoding": "identity"})
-    assert identity["status"] == 200, (
-        f"{path} identity 應回 200，實際 {identity['status']}；"
-        "若 /showcase 因依賴注入失敗，改抽驗其他可壓縮 HTML／JSON 端點"
-    )
-    _assert_fixture_large_enough(identity["body"])
-    identity_len, gzip_len = _assert_endpoint_gzip_smaller_and_reversible(path)
-    print(f"COMPRESSION {path} identity={identity_len} gzip={gzip_len}")

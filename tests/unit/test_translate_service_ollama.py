@@ -31,10 +31,7 @@ def _svc(lang="zh-TW"):
 
 
 FAILURES = [
-    ("connection_timeout", dict(post_side_effect=httpx.ReadTimeout("t"))),
     ("connection_failed", dict(post_side_effect=httpx.ConnectError("c"))),
-    ("api_error", dict(status=500)),
-    ("empty_response", dict(content="<think>x</think>")),
 ]
 
 

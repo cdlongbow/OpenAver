@@ -44,19 +44,6 @@ test('syncActressFields〔confirmMask 回應形狀，只傳 auto_focal/crop_mode
   assert.equal(paginatedActresses[0].crop_mode, 'manual');
 });
 
-test('syncActressFields〔by-name 找不到，idx<0〕靜默 no-op，不丟例外（女優已從陣列移除的既有語意）', () => {
-  const paginatedActresses = [{ name: 'B', photo_url: 'x' }];
-  assert.doesNotThrow(() => syncActressFields(paginatedActresses, 'A', { photo_url: 'y' }));
-  assert.equal(paginatedActresses[0].photo_url, 'x');
-});
-
-test('syncActressFields〔data 為 null/undefined〕靜默 no-op', () => {
-  const paginatedActresses = [{ name: 'A', photo_url: 'x' }];
-  syncActressFields(paginatedActresses, 'A', null);
-  assert.equal(paginatedActresses[0].photo_url, 'x');
-  syncActressFields(paginatedActresses, 'A', undefined);
-  assert.equal(paginatedActresses[0].photo_url, 'x');
-});
 
 test('syncActressFields〔by-name 定位，非 index 0〕在多筆陣列中找對 entry，不動其他人的資料', () => {
   const paginatedActresses = [

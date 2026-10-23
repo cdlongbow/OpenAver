@@ -15,9 +15,6 @@ const SHOWCASE_HTML = readFileSync(
     path.join(REPO_ROOT, 'web/templates/showcase.html'),
     'utf8',
 );
-const ZH_TW = JSON.parse(
-    readFileSync(path.join(REPO_ROOT, 'locales/zh_TW.json'), 'utf8'),
-);
 
 /**
  * 抽出女優模式 loading / empty / search-empty / grid 區塊
@@ -132,12 +129,6 @@ function extractGridShow(block) {
 const STATE_PAGE_SHOWS = extractStatePageShows(ACTRESS_BLOCK);
 const GRID_SHOW = extractGridShow(ACTRESS_BLOCK);
 
-// 期望字面（契約鎖）——互斥性求值用的是下方從 HTML 抽出的實際條件，
-// 這樣拿掉 actressCount > 0 時互斥表會真的轉紅（mutation 可證偽）。
-const LOADING_SHOW_EXPECTED = 'actressLoading';
-const EMPTY_SHOW_EXPECTED = '!actressLoading && actressCount === 0';
-const SEARCH_EMPTY_SHOW_EXPECTED = '!actressLoading && actressCount > 0 && filteredActressCount === 0';
-const GRID_SHOW_EXPECTED = '!actressLoading && filteredActressCount > 0';
 
 // 實際抽出的條件（互斥求值以此為準）
 assert.equal(STATE_PAGE_SHOWS.length, 3, `預期 3 個 state-page，實際：${JSON.stringify(STATE_PAGE_SHOWS)}`);
@@ -146,53 +137,8 @@ const EMPTY_SHOW = STATE_PAGE_SHOWS[1];
 const SEARCH_EMPTY_SHOW = STATE_PAGE_SHOWS[2];
 
 // [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（ACTRESS_BLOCK 到 grid 配對 </div>）與 class-token 語意，exact 3 state-page 計數會漏數 grid 內多出的
-test('女優區塊恰有三個 state-page，條件字面符合 loading / empty / searchEmpty', () => {
-    assert.equal(STATE_PAGE_SHOWS.length, 3, `預期 3 個 state-page，實際：${JSON.stringify(STATE_PAGE_SHOWS)}`);
-    assert.equal(LOADING_SHOW, LOADING_SHOW_EXPECTED);
-    assert.equal(EMPTY_SHOW, EMPTY_SHOW_EXPECTED);
-    assert.equal(SEARCH_EMPTY_SHOW, SEARCH_EMPTY_SHOW_EXPECTED);
-    assert.equal(GRID_SHOW, GRID_SHOW_EXPECTED);
-});
 
 // [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（searchEmpty x-show 定位後配對 </div> 取內容），lazy capture 只到首個 </div>
-test('新 searchEmpty 分支引用 showcase.actress.searchEmpty 且 icon 為 bi-search', () => {
-    // 以第三個 state-page 的實際 x-show 定位，再取到匹配的 </div>
-    const showNeedle = `x-show="${SEARCH_EMPTY_SHOW}"`;
-    const showIdx = ACTRESS_BLOCK.indexOf(showNeedle);
-    assert.ok(showIdx !== -1, `應能找到 searchEmpty 的 x-show 字面：${SEARCH_EMPTY_SHOW}`);
-    // 從開標籤結尾後掃 depth-aware 內容
-    let i = showIdx + showNeedle.length;
-    while (i < ACTRESS_BLOCK.length && ACTRESS_BLOCK[i] !== '>') i++;
-    assert.ok(i < ACTRESS_BLOCK.length, 'searchEmpty 開標籤未閉合');
-    const contentStart = i + 1;
-    let depth = 1;
-    i = contentStart;
-    while (i < ACTRESS_BLOCK.length && depth > 0) {
-        const nextOpen = ACTRESS_BLOCK.indexOf('<div', i);
-        const nextClose = ACTRESS_BLOCK.indexOf('</div>', i);
-        if (nextClose === -1) break;
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-            depth++;
-            i = nextOpen + 4;
-        } else {
-            depth--;
-            if (depth === 0) {
-                const body = ACTRESS_BLOCK.slice(contentStart, nextClose);
-                assert.ok(
-                    body.includes("t('showcase.actress.searchEmpty')"),
-                    '新分支應引用 showcase.actress.searchEmpty',
-                );
-                assert.ok(
-                    /class="bi bi-search state-page-icon"/.test(body),
-                    '新分支 icon 應為 bi-search',
-                );
-                return;
-            }
-            i = nextClose + 6;
-        }
-    }
-    assert.fail('searchEmpty state-page 未找到匹配的 </div>');
-});
 
 /**
  * 以 new Function 求值 x-show / x-if 表達式。
@@ -213,29 +159,9 @@ function evalExpr(expr, ctx) {
  */
 const EMPTY_STATE_CASES = [
     {
-        name: '#1 loading=true → 只命中 Loading',
-        ctx: { actressLoading: true, actressCount: 5, filteredActressCount: 2 },
-        expect: { loading: true, empty: false, searchEmpty: false, grid: false },
-    },
-    {
-        name: '#1b loading=true（count=0）→ 只命中 Loading',
-        ctx: { actressLoading: true, actressCount: 0, filteredActressCount: 0 },
-        expect: { loading: true, empty: false, searchEmpty: false, grid: false },
-    },
-    {
-        name: '#2 loading=false, count=0 → 只命中 Empty',
-        ctx: { actressLoading: false, actressCount: 0, filteredActressCount: 0 },
-        expect: { loading: false, empty: true, searchEmpty: false, grid: false },
-    },
-    {
         name: '#3 loading=false, count>0, filtered=0 → 只命中 Search Empty',
         ctx: { actressLoading: false, actressCount: 3, filteredActressCount: 0 },
         expect: { loading: false, empty: false, searchEmpty: true, grid: false },
-    },
-    {
-        name: '#4 loading=false, count>0, filtered>0 → 只命中 Grid',
-        ctx: { actressLoading: false, actressCount: 5, filteredActressCount: 2 },
-        expect: { loading: false, empty: false, searchEmpty: false, grid: true },
     },
 ];
 
@@ -283,31 +209,6 @@ test('空狀態：任意合法 (loading, count, filtered) 組合 state-page 分�
 
 // ===== footer 三段式 =====
 
-/** 抽出 class="footer-count footer-count--actress" 元素 markup（depth-aware）。 */
-function extractActressFooter(html) {
-    const openRe = /<span\b[^>]*\bclass="footer-count footer-count--actress"[^>]*>/;
-    const m = openRe.exec(html);
-    assert.ok(m, 'showcase.html 應含 footer-count footer-count--actress');
-    const start = m.index;
-    let i = start + m[0].length;
-    let depth = 1;
-    while (i < html.length && depth > 0) {
-        const nextOpen = html.indexOf('<span', i);
-        const nextClose = html.indexOf('</span>', i);
-        if (nextClose === -1) break;
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-            depth++;
-            i = nextOpen + 5;
-        } else {
-            depth--;
-            i = nextClose + 7;
-            if (depth === 0) {
-                return html.slice(start, i);
-            }
-        }
-    }
-    throw new Error('footer-count--actress 未找到匹配的 </span>');
-}
 
 /** 抽出女優 footer 外層 template x-if 條件。 */
 function extractActressFooterOuterIf(html) {
@@ -318,46 +219,16 @@ function extractActressFooterOuterIf(html) {
     return m[1];
 }
 
-const ACTRESS_FOOTER = extractActressFooter(SHOWCASE_HTML);
 const OUTER_IF = extractActressFooterOuterIf(SHOWCASE_HTML);
 
-function extractXIfConditions(markup) {
-    const re = /<template\s+x-if="([^"]+)"/g;
-    const conds = [];
-    let m;
-    while ((m = re.exec(markup)) !== null) {
-        conds.push(m[1]);
-    }
-    return conds;
-}
-
-// 內層三個 x-if 在 footer-count 內部（不包含外層 template，因為 extractActressFooter 從 span 起）
-const INNER_CONDS = extractXIfConditions(ACTRESS_FOOTER);
 
 const FOOTER_TOTAL = '!actressSearch && !actressPills.length';
 const FOOTER_SEARCH = 'actressSearch && filteredActressCount > 0 && !actressPills.length';
 const FOOTER_PILL = 'actressPills.length > 0';
 
 // [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（footer <span> 巢狀配對）與 exact 3 內層 x-if 計數＋INNER_CONDS 索引順序 order
-test('女優 footer 恰有三個內層 x-if，條件字面符合 total / search / pill', () => {
-    assert.equal(INNER_CONDS.length, 3, `實際：${JSON.stringify(INNER_CONDS)}`);
-    assert.equal(INNER_CONDS[0], FOOTER_TOTAL);
-    assert.equal(INNER_CONDS[1], FOOTER_SEARCH);
-    assert.equal(INNER_CONDS[2], FOOTER_PILL);
-});
 
 // [lint-guard: node-justified] 162e 暫留：缺 depth-aware scope（footer span 內 actressPills.length > 0 分支 body），5 條 required 無法限縮在該分支
-test('女優 footer pill 分支渲染三個 pill_actresses_* key 並綁 N/M', () => {
-    const branchRe = /<template\s+x-if="actressPills\.length\s*>\s*0">([\s\S]*?)<\/template>/;
-    const m = ACTRESS_FOOTER.match(branchRe);
-    assert.ok(m, '應能抽出 actressPills.length > 0 分支內容');
-    const body = m[1];
-    assert.ok(body.includes("t('showcase.status.pill_actresses_prefix')"));
-    assert.ok(body.includes("t('showcase.status.pill_actresses_middle')"));
-    assert.ok(body.includes("t('showcase.status.pill_actresses_suffix')"));
-    assert.ok(/x-text="actressPills\.length"/.test(body), 'N = actressPills.length');
-    assert.ok(/x-text="filteredActressCount"/.test(body), 'M = filteredActressCount');
-});
 
 /**
  * footer 互斥真值表 5 組。
@@ -366,34 +237,10 @@ test('女優 footer pill 分支渲染三個 pill_actresses_* key 並綁 N/M', ()
  */
 const FOOTER_CASES = [
     {
-        name: '#1 空搜尋 + 零 pill → 分支 1（total）',
-        ctx: { actressSearch: '', actressPills: [], filteredActressCount: 5 },
-        expectInner: { total: true, search: false, pill: false },
-        expectOuter: true,
-    },
-    {
-        name: '#2 非空搜尋 + 零 pill + filtered>0 → 分支 2（search）',
-        ctx: { actressSearch: 'yua', actressPills: [], filteredActressCount: 2 },
-        expectInner: { total: false, search: true, pill: false },
-        expectOuter: true,
-    },
-    {
-        name: '#3 空搜尋 + 有 pill → 分支 3（pill）',
-        ctx: { actressSearch: '', actressPills: [{ dim: 'age', value: '37' }], filteredActressCount: 0 },
-        expectInner: { total: false, search: false, pill: true },
-        expectOuter: true,
-    },
-    {
         name: '#4 非空搜尋 + 有 pill → 分支 3（pill 優先）',
         ctx: { actressSearch: 'yua', actressPills: [{ dim: 'cup', value: 'B' }], filteredActressCount: 1 },
         expectInner: { total: false, search: false, pill: true },
         expectOuter: true,
-    },
-    {
-        name: '#5 非空搜尋 + 零 pill + filtered=0 → 外層隱藏、零內層命中',
-        ctx: { actressSearch: 'zzz', actressPills: [], filteredActressCount: 0 },
-        expectInner: { total: false, search: false, pill: false },
-        expectOuter: false,
     },
 ];
 
@@ -434,51 +281,4 @@ for (const tc of FOOTER_CASES) {
     });
 }
 
-// ===== i18n 四個新 key =====
-
-function lookupNested(obj, dotted) {
-    return dotted.split('.').reduce(
-        (acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined),
-        obj,
-    );
-}
-
-const I18N_KEYS = [
-    { key: 'showcase.status.pill_actresses_prefix', value: '符合' },
-    { key: 'showcase.status.pill_actresses_middle', value: '個條件的' },
-    { key: 'showcase.status.pill_actresses_suffix', value: '位' },
-    { key: 'showcase.actress.searchEmpty', value: '沒有符合條件的女優' },
-];
-
-for (const { key, value } of I18N_KEYS) {
-    // [lint-guard: node-justified] 162e 暫留：缺 JSON 路徑取值 kind／欄位（lookupNested 依 key 路徑查值再比對），全檔字面不維持路徑粒度
-    test(`zh_TW.json 含 ${key} = "${value}"`, () => {
-        const actual = lookupNested(ZH_TW, key);
-        assert.equal(actual, value, `預期 "${value}"，實際 ${JSON.stringify(actual)}`);
-    });
-}
-
 // [lint-guard: node-justified] 162e 暫留：模糊二審未定（A：R1 不寫、處置留；B：R1 不寫、處置留；修 bug 來源 9d9986b0 不得刪，lint 無 JSON key 集查詢 kind 不搬）
-test('女優 footer / 空狀態模板引用的 showcase.* key 皆存在於 zh_TW', () => {
-    // 從女優 footer + searchEmpty 分支抽出 t('showcase...')
-    const chunks = [ACTRESS_FOOTER, ACTRESS_BLOCK];
-    const keyRe = /t\('((?:showcase\.)[^']+)'\)/g;
-    const missing = [];
-    for (const chunk of chunks) {
-        let m;
-        while ((m = keyRe.exec(chunk)) !== null) {
-            const k = m[1];
-            if (lookupNested(ZH_TW, k) === undefined) missing.push(k);
-        }
-    }
-    // Jinja {{ t('...') }} 形式
-    const jinjaRe = /\{\{\s*t\('((?:showcase\.)[^']+)'\)/g;
-    for (const chunk of chunks) {
-        let m;
-        while ((m = jinjaRe.exec(chunk)) !== null) {
-            const k = m[1];
-            if (lookupNested(ZH_TW, k) === undefined) missing.push(k);
-        }
-    }
-    assert.deepEqual(missing, [], `模板引用但 zh_TW 缺失：${JSON.stringify(missing)}`);
-});

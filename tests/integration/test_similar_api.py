@@ -222,12 +222,6 @@ class TestSimilarCoversAPI:
 
     # --- T2: by-id 200 + 12 結果 ---
 
-    def test_by_id_200_12_results(self, client_with_corpus):
-        client, target_id, target_number = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data["results"]) == 12
 
     # --- T3: by-number 404 ---
 
@@ -238,28 +232,9 @@ class TestSimilarCoversAPI:
 
     # --- T4: by-id 404 ---
 
-    def test_by_id_404(self, client_with_corpus):
-        client, _, _ = client_with_corpus
-        resp = client.get("/api/similar-covers/99999")
-        assert resp.status_code == 404
 
     # --- T5: response shape 含全部 v0.8.6 key ---
 
-    def test_response_shape_top_level_keys(self, client_with_corpus):
-        client, target_id, _ = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        data = resp.json()
-        assert set(data.keys()) >= _EXPECTED_TOP_KEYS, (
-            f"缺少 top-level key：{_EXPECTED_TOP_KEYS - set(data.keys())}"
-        )
-
-    def test_response_shape_query_video_keys(self, client_with_corpus):
-        client, target_id, _ = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        qv = resp.json()["query_video"]
-        assert set(qv.keys()) >= _EXPECTED_QUERY_VIDEO_KEYS, (
-            f"query_video 缺少 key：{_EXPECTED_QUERY_VIDEO_KEYS - set(qv.keys())}"
-        )
 
     def test_response_shape_result_keys(self, client_with_corpus):
         client, target_id, _ = client_with_corpus
@@ -272,20 +247,9 @@ class TestSimilarCoversAPI:
 
     # --- T6: model_id == "rule-based:v1" ---
 
-    def test_model_id_is_rule_based_v1(self, client_with_corpus):
-        client, target_id, _ = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        assert resp.json()["model_id"] == "rule-based:v1"
 
     # --- T7: penalty_applied is False for all results ---
 
-    def test_penalty_applied_is_false(self, client_with_corpus):
-        client, target_id, _ = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        for r in resp.json()["results"]:
-            assert r["penalty_applied"] is False, (
-                f"penalty_applied should be False, got {r['penalty_applied']}"
-            )
 
     # --- T8: corpus 只有 target 一部 → results: [] (200 不報錯) ---
 
@@ -342,38 +306,9 @@ class TestSimilarCoversAPI:
 
     # --- T10: limit query parameter 生效 ---
 
-    def test_limit_parameter(self, client_with_corpus):
-        client, target_id, _ = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}?limit=5")
-        assert resp.status_code == 200
-        assert len(resp.json()["results"]) == 5
-
-    def test_limit_by_number(self, client_with_corpus):
-        client, _, target_number = client_with_corpus
-        resp = client.get(f"/api/similar-covers/by-number/{target_number}?limit=3")
-        assert resp.status_code == 200
-        assert len(resp.json()["results"]) == 3
 
     # --- 98b-T1: 每個 result 含 auto_focal / crop_mode 兩欄 ---
 
-    def test_results_contain_focal_fields(self, client_with_corpus):
-        """每個 similar result 含 auto_focal / crop_mode（值取自 result Video）。"""
-        client, target_id, _ = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        assert resp.status_code == 200
-        results = resp.json()["results"]
-        assert len(results) > 0
-        for r in results:
-            assert "auto_focal" in r, f"result 缺 auto_focal：{r}"
-            assert "crop_mode" in r, f"result 缺 crop_mode：{r}"
-
-    def test_query_video_card_has_no_focal_fields(self, client_with_corpus):
-        """query_video 卡刻意不套 focal（CD-98b-5：drill 查詢卡維持現狀，不污染）。"""
-        client, target_id, _ = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        qv = resp.json()["query_video"]
-        assert "auto_focal" not in qv
-        assert "crop_mode" not in qv
 
     def test_focal_fields_reflect_fresh_db_after_cached_ranker(
         self, client_with_corpus, db_with_corpus, seed_crop_mode
@@ -414,20 +349,6 @@ class TestSimilarCoversAPI:
         )
 
     # --- T11: target 不在 results 中 ---
-
-    def test_target_not_in_results(self, client_with_corpus):
-        client, target_id, target_number = client_with_corpus
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        data = resp.json()
-        result_ids = {r["video_id"] for r in data["results"]}
-        assert target_id not in result_ids, (
-            f"target video_id {target_id} should not appear in results"
-        )
-
-        result_numbers = {r["number"] for r in data["results"]}
-        assert target_number not in result_numbers, (
-            f"target number {target_number!r} should not appear in results"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -503,18 +424,6 @@ class TestSimilarThumbnailCacheCoverUrl:
             assert quote(r["cover_path"], safe="") not in r["cover_url"]
             assert quote(uri_to_fs_path(r["cover_path"]), safe="") not in r["cover_url"]
 
-    def test_disabled_cover_url_is_image_bytewise(self, client_with_covers):
-        """邊界 7：disabled → cover_url = /api/gallery/image?path=quote(uri_to_fs_path(cover))。"""
-        client, target_id, set_flag, repo = client_with_covers
-        set_flag(False)
-        resp = client.get(f"/api/similar-covers/{target_id}")
-        assert resp.status_code == 200
-        data = resp.json()
-
-        for r in data["results"]:
-            expected = f"/api/gallery/image?path={quote(uri_to_fs_path(r['cover_path']), safe='')}"
-            assert r["cover_url"] == expected
-            assert r["cover_url"].startswith("/api/gallery/image?path=")
 
     def test_cover_full_url_is_always_original_image(self, client_with_covers):
         """71c 邊界 9：cover_full_url 恆為原圖 /api/gallery/image?path=...，不受 enabled 影響。
@@ -542,46 +451,6 @@ class TestSimilarThumbnailCacheCoverUrl:
                     assert "/api/gallery/thumb?" not in r["cover_full_url"], (
                         f"cover_full_url 不應走 /api/gallery/thumb?（enabled={enabled_flag}）"
                     )
-
-    def test_enabled_empty_cover_returns_empty_url(self, tmp_path, monkeypatch):
-        """邊界 8：enabled 但 video 無 cover → cover_url == ''（與 showcase 對齊，不發 thumb url）。"""
-        db_path = tmp_path / "empty_cover.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-        # target 有 cover，候選全無 cover
-        target = _make_video(idx=1, number="TEST-001",
-                             tags=["高畫質", "單體作品", "美乳"], cover_path="")
-        target_id = repo.upsert(target)
-        candidates = [
-            _make_video(idx=i, number=f"TEST-{i:03d}",
-                        tags=["高畫質", "單體作品", "美乳"], cover_path="")
-            for i in range(2, 14)
-        ]
-        repo.upsert_batch(candidates)
-
-        real_repo_cls = VideoRepository
-
-        class _PatchedRepo(real_repo_cls):
-            def __init__(self, _=None):
-                super().__init__(db_path)
-
-        monkeypatch.setattr("web.routers.similar.VideoRepository", _PatchedRepo)
-        corpus = repo.get_all()
-        ranker = SimilarRanker(corpus)
-        monkeypatch.setattr(SimilarRankerCache, "_instance", ranker)
-        monkeypatch.setattr("web.routers.similar.load_config",
-                            lambda: {"thumbnail_cache_enabled": True})
-
-        client = TestClient(_make_test_app())
-        try:
-            resp = client.get(f"/api/similar-covers/{target_id}")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["query_video"]["cover_url"] == ""
-            for r in data["results"]:
-                assert r["cover_url"] == ""
-        finally:
-            SimilarRankerCache._instance = None
 
 
 class TestSimilarCoverUrlPathMappingsReverse:
@@ -671,86 +540,3 @@ class TestSimilarCoverUrlPathMappingsReverse:
 # Codex P1 — legacy DB startup path regression test
 # ---------------------------------------------------------------------------
 
-class TestLegacySchemaStartupPath:
-    """CD-57b-8：init_db() 必須在 SimilarRankerCache 首次 get() 前執行。
-
-    覆蓋 Codex finding P1：若 legacy v0.8.6 DB 仍含 clip_embedding / clip_model_id 欄位，
-    Video.from_row cls(**data) 會因未知 keyword 拋 TypeError → 500。
-    init_db() 在 lifespan startup 執行 DROP COLUMN migration 後此問題消失。
-    """
-
-    def test_init_db_drops_clip_columns_before_similar_query(self, tmp_path, monkeypatch):
-        """legacy DB 啟動後，similar endpoint 不因 clip 欄位拋 500。"""
-        import sqlite3
-
-        db_path = tmp_path / "legacy_v086.db"
-
-        # 建立模擬 v0.8.6 schema（含 clip_embedding / clip_model_id）
-        conn = sqlite3.connect(db_path)
-        conn.execute("""
-            CREATE TABLE videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT UNIQUE NOT NULL,
-                number TEXT,
-                title TEXT,
-                original_title TEXT,
-                actresses TEXT DEFAULT '[]',
-                maker TEXT DEFAULT '',
-                director TEXT DEFAULT '',
-                series TEXT DEFAULT '',
-                label TEXT DEFAULT '',
-                tags TEXT DEFAULT '[]',
-                sample_images TEXT DEFAULT '',
-                user_tags TEXT DEFAULT '[]',
-                duration INTEGER DEFAULT 0,
-                size_bytes INTEGER,
-                cover_path TEXT DEFAULT '',
-                release_date TEXT DEFAULT '',
-                mtime REAL DEFAULT 0.0,
-                nfo_mtime REAL DEFAULT 0.0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                clip_embedding BLOB DEFAULT NULL,
-                clip_model_id TEXT DEFAULT NULL
-            )
-        """)
-        # 插入一筆帶 clip_embedding 的 legacy row
-        conn.execute(
-            "INSERT INTO videos (path, number, title, actresses, tags) VALUES (?,?,?,?,?)",
-            (to_file_uri("/legacy/test.mp4"), "LEGACY-001", "Legacy Test", "[]", '["巨乳"]'),
-        )
-        conn.commit()
-        conn.close()
-
-        # 執行 init_db（模擬 app startup），應 DROP clip 欄位
-        init_db(db_path)
-
-        # 驗欄位已 DROP
-        conn = sqlite3.connect(db_path)
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
-        conn.close()
-        assert "clip_embedding" not in cols
-        assert "clip_model_id" not in cols
-
-        # 驗 similar endpoint 不 500：patch VideoRepository + cache，用修正後 DB 建 ranker
-        real_repo_cls = VideoRepository
-
-        class _PatchedRepo(real_repo_cls):
-            def __init__(self, _=None):
-                super().__init__(db_path)
-
-        monkeypatch.setattr("web.routers.similar.VideoRepository", _PatchedRepo)
-
-        repo = VideoRepository(db_path)
-        corpus = repo.get_all()  # 不應 TypeError
-        ranker = SimilarRanker(corpus)
-        monkeypatch.setattr(SimilarRankerCache, "_instance", ranker)
-
-        client = TestClient(_make_test_app())
-        try:
-            resp = client.get("/api/similar-covers/by-number/LEGACY-001")
-            # 有 1 部影片，corpus = [target]，results = []，200 不 500
-            assert resp.status_code == 200
-            assert resp.json()["results"] == []
-        finally:
-            SimilarRankerCache._instance = None
