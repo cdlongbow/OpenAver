@@ -46,11 +46,14 @@ def test_auto_fanout_and_legacy_dict():
 
 # ========== 2. 女優搜尋 ==========
 
-def test_actress_search():
+def test_actress_search(monkeypatch, tmp_path):
     """search_actress 連通性：回傳 list 含至少 1 筆結果且有番號
 
     源自：TestActressSearch::test_actress_search_connectivity（test_scraper_live.py:45）
+    女優模式會唯讀載入本機別名組（core/search_providers/actor_names.py），
+    DB 路徑導到不存在的暫存檔 ⇒ 不碰真實 output/openaver.db（repo_write_guard row06）。
     """
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "absent.db")
     results = search_actress("三上悠亞", limit=5)
     if not results:
         pytest.skip("女優搜尋無法連線（可能被網站封鎖）")
