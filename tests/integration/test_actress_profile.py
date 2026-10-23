@@ -154,6 +154,24 @@ def test_analyze_top_actor_mixed_below_threshold():
     assert top_actor is None  # 3/5 = 60% < 80%
 
 
+_TIE_RESULTS = [{'actors': ['瀬戸環奈', '三上悠亜', '另一人']} for _ in range(3)]
+
+
+def test_analyze_top_actor_query_wins_over_tie():
+    """搜 三上悠亜、同批三位並列 100% → 資料卡是她本人，不是插入順序第一位"""
+    from web.routers.search import _analyze_top_actor
+
+    assert _analyze_top_actor(_TIE_RESULTS, query='三上悠亜') == '三上悠亜'
+
+
+def test_analyze_top_actor_tie_without_query_returns_none():
+    """並列且查詢對不上任何人（或沒給）→ 不顯示資料卡，而不是猜錯的人"""
+    from web.routers.search import _analyze_top_actor
+
+    assert _analyze_top_actor(_TIE_RESULTS, query='三上悠亞') is None
+    assert _analyze_top_actor(_TIE_RESULTS) is None
+
+
 # ============================================================================
 # API 整合測試（Mock search 結果 + mock actress profile）
 # ============================================================================
@@ -209,6 +227,22 @@ def test_search_api_actress_with_profile(
         assert data['actress_profile'] is not None
         assert data['actress_profile']['name'] == '桜空もも'
         assert 'graphis.ne.jp' in data['actress_profile']['img']
+
+
+def test_search_api_actress_query_wins_tie(client, tmp_path):
+    """REST 真的把 q 傳進去：並列 100% 時資料卡是搜尋的那位"""
+    from core.scrapers.actress.orchestrator import ProfileResult
+
+    with patch('web.routers.search.search_actress', return_value=_TIE_RESULTS), \
+         patch('core.scrapers.actress.orchestrator.get_actress_profile',
+               side_effect=lambda name, **kw: ProfileResult(data={'name': name}, timed_out=False)), \
+         patch('core.database.ActressRepository.get_by_name', return_value=None), \
+         patch('core.database.AliasRepository.resolve', side_effect=lambda n: {n}), \
+         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
+
+        data = client.get("/api/search?q=三上悠亜&mode=actress").json()
+
+        assert data['actress_profile']['name'] == '三上悠亜'
 
 
 def test_sse_includes_actress_profile(

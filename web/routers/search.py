@@ -480,7 +480,7 @@ def search(
         # discovery 模式不觸發 actress_profile / consistency check
         actress_profile = None
         if not use_discovery and detected_mode in ('actress', 'prefix'):
-            top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
+            top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3, query=q)
             if top_actor:
                 logger.info(f"[Actress Profile] Fetching profile for: {top_actor}")
                 actress_profile = _fetch_actress_profile_with_db(top_actor, _extract_top_makers(results))
@@ -552,7 +552,8 @@ def _normalize_actress_name(name: str) -> str:
     return name
 
 
-def _analyze_top_actor(results: List[Dict], threshold: float = 0.8, min_samples: int = 3) -> Optional[str]:
+def _analyze_top_actor(results: List[Dict], threshold: float = 0.8, min_samples: int = 3,
+                       query: Optional[str] = None) -> Optional[str]:
     """
     分析搜尋結果中的主要演員（consistency check）
 
@@ -560,6 +561,7 @@ def _analyze_top_actor(results: List[Dict], threshold: float = 0.8, min_samples:
         results: 搜尋結果列表
         threshold: 演員佔比閾值（預設 80%）
         min_samples: 最小樣本數（少於此數不觸發）
+        query: 使用者輸入的查詢字串（None 略過查詢優先層）
 
     Returns:
         主要演員名稱，未通過檢查返回 None
@@ -567,8 +569,9 @@ def _analyze_top_actor(results: List[Dict], threshold: float = 0.8, min_samples:
     邏輯：
     1. 結果數 < min_samples → 跳過
     2. 統計有 actors 欄位的結果中各女優出現次數
-    3. 最多者佔比 >= threshold → 通過
-    4. 名稱正規化：strip + 全形→半形 + 統一空白
+    3. 查詢的那位在名單內且佔比 >= threshold → 選她；否則最高次數並列 → None（不猜）
+    4. 否則最多者佔比 >= threshold → 通過
+    5. 名稱正規化：strip + 全形→半形 + 統一空白（查詢字串同一套）
     """
     from collections import Counter
 
@@ -610,6 +613,17 @@ def _analyze_top_actor(results: List[Dict], threshold: float = 0.8, min_samples:
 
     # 找出出現最多的演員
     top_actor, top_count = actor_counter.most_common(1)[0]
+
+    # 第 1 層：使用者查詢的那位在名單內且佔比通過 → 以查詢為準（並列時不被插入順序帶偏）
+    q_norm = _normalize_actress_name(query) if query else None
+    if q_norm and q_norm in actor_counter:
+        if actor_counter.get(q_norm, 0) / valid_results_count >= threshold:
+            return q_norm
+
+    # 第 2 層：最高次數並列 → 不猜，不顯示資料卡
+    if sum(1 for c in actor_counter.values() if c == top_count) > 1:
+        logger.info("[Consistency] Top actor tie, skip actress_profile")
+        return None
 
     # 計算佔比（分母 = 有 actors 的結果數）
     ratio = top_count / valid_results_count
@@ -858,7 +872,7 @@ async def search_stream(
                 # Consistency check（與 REST 相同邏輯）
                 actress_profile = None
                 if mode in ('actress', 'prefix'):
-                    top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
+                    top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3, query=q)
                     if top_actor:
                         logger.info(f"[Actress Profile] Fetching profile for: {top_actor}")
                         # 66 Codex P1：event_generator 是 async generator、跑在 event loop 上，
