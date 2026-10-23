@@ -1,5 +1,5 @@
 /**
- * binding-scope.mjs — SPIKE（plan-179 T1，CD-179-3／-6／-8）
+ * binding-scope.mjs（plan-179 CD-179-3／-6／-8）
  * parse5 樹走訪＋scope 棧；對每個綁定算自由識別字並分類到 spec §3 類別。
  */
 import * as parse5 from 'parse5';
@@ -7,23 +7,7 @@ import { parse as espreeParse } from 'espree';
 import {
   classifyAttr, parseExpr, freeIds, splitFor, forLoopVars,
 } from './binding-expr.mjs';
-
-export const MAGICS = new Set([
-  '$el', '$refs', '$store', '$watch', '$dispatch', '$nextTick', '$event', '$root', '$data', '$id',
-  '$persist', '$focus', '$anchor',
-]);
-
-/** 策展瀏覽器全域（候選集合；T1 從全樹反推實際用到者）。刻意不收 close open stop focus print name status find top parent length */
-export const BROWSER_CANDIDATES = new Set([
-  'window', 'document', 'console', 'event', 'location', 'navigator', 'history', 'localStorage', 'sessionStorage',
-  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame',
-  'fetch', 'Math', 'JSON', 'Date', 'Number', 'String', 'Boolean', 'Array', 'Object', 'Promise', 'parseInt',
-  'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
-  'Intl', 'RegExp', 'Set', 'Map', 'Symbol', 'Error', 'URL', 'URLSearchParams', 'undefined', 'NaN', 'Infinity',
-  'alert', 'confirm', 'prompt', 'CSS', 'getComputedStyle', 'matchMedia', 'screen', 'performance', 'structuredClone',
-  'Event', 'CustomEvent', 'AbortController', 'FormData', 'Blob', 'File', 'FileReader', 'Image', 'Audio', 'crypto',
-  'queueMicrotask', 'atob', 'btoa', 'Reflect', 'Proxy', 'BigInt', 'WeakMap', 'WeakSet', 'globalThis',
-]);
+import { MAGIC_NAMES, BROWSER_GLOBALS } from './binding-guard-config.mjs';
 
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const OPTIONAL_END = new Set([
@@ -125,9 +109,9 @@ export function walkEntry(doc, opts) {
     for (let i = stack.length - 1; i >= 0; i--) {
       if (stack[i].keys.has(name)) return { cat: stack[i].cat, scope: stack[i] };
     }
-    if (MAGICS.has(name)) return { cat: 7, scope: { label: 'magic' } };
+    if (Object.hasOwn(MAGIC_NAMES, name)) return { cat: 7, scope: { label: 'magic' } };
     if (opts.appGlobals.has(name)) return { cat: 6, scope: { label: 'app-global' } };
-    if (BROWSER_CANDIDATES.has(name)) return { cat: 8, scope: { label: 'browser-global' } };
+    if (Object.hasOwn(BROWSER_GLOBALS, name)) return { cat: 8, scope: { label: 'browser-global' } };
     return null;
   }
 

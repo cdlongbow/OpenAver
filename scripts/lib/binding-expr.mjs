@@ -1,22 +1,13 @@
 /**
- * binding-expr.mjs — SPIKE（plan-179 T1，CD-179-4／-5）
+ * binding-expr.mjs — 指令分類、兩段式 espree、eslint-scope 自由識別字（plan-179 CD-179-4／-5）
  * 指令分類、兩段式 espree、eslint-scope 自由識別字。
  * 所有送進 eslint-scope 的 AST 一律 range:true（handoff §3）。
  */
 import { parse } from 'espree';
 import * as eslintScope from 'eslint-scope';
+import { EXPR_DIRECTIVES, NOEXPR_DIRECTIVES } from './binding-guard-config.mjs';
 
 const analyze = eslintScope.analyze;
-
-/** 值是運算式（含 x-data／x-for 兩個特殊） */
-export const EXPR_DIRECTIVES = new Set([
-  'on', 'bind', 'text', 'html', 'show', 'if', 'model', 'modelable', 'init', 'effect', 'id',
-  'trap', 'anchor', 'intersect', 'data', 'for',
-]);
-/** 值不是運算式 */
-export const NOEXPR_DIRECTIVES = new Set([
-  'ref', 'cloak', 'ignore', 'teleport', 'transition', 'collapse',
-]);
 
 /**
  * 回 {kind:'plain'|'expr'|'noexpr'|'unknown', dir, arg}
@@ -41,11 +32,12 @@ export function classifyAttr(rawName) {
   return { kind: 'unknown', dir, arg, name };
 }
 
+/** stmts 包裝用的函式名；包裝本身不是作者寫的名字 */
+const WRAPPER_NAME = '__b';
 const OPTS = { ecmaVersion: 2024, sourceType: 'script', loc: true, range: true };
 
 /** 兩段式解析；皆失敗 → 回 {fail:[err1, err2]} */
 const parseCache = new Map();
-export const _parseCache = parseCache; // SPIKE 統計用
 export function parseExpr(value) {
   if (parseCache.has(value)) return parseCache.get(value);
   let res;
@@ -54,8 +46,8 @@ export function parseExpr(value) {
     res = { ast, wrap: 'expr', colOffset: 1 };
   } catch (e1) {
     try {
-      const ast = parse(`async function __b(){${value}\n}`, OPTS);
-      res = { ast, wrap: 'stmts', colOffset: 'async function __b(){'.length };
+      const ast = parse(`async function ${WRAPPER_NAME}(){${value}\n}`, OPTS);
+      res = { ast, wrap: 'stmts', colOffset: `async function ${WRAPPER_NAME}(){`.length };
     } catch (e2) {
       res = { fail: [e1.message, e2.message] };
     }

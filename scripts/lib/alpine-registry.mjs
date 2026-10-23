@@ -1,81 +1,27 @@
 /**
- * alpine-registry.mjs — SPIKE（plan-179 T1，CD-179-7）
+ * alpine-registry.mjs — `Alpine.data('<字面名>', …)` 註冊表（plan-179 CD-179-7）
  *
- * `Alpine.data('<字面名>', …)` 註冊表：名稱 → { file, kind, keys:Set }。
- * 重用 alpine-state.mjs 既有匯出（collectPages / findMergeStateCalls /
- * findMergeStateLocalNames / loadImportMap / findNamedFactory / walk / AlpineStateError）。
- * 未匯出者以 SPIKE-COPY 暫代（T2 需匯出的清單見 findings）：
- *   parseModule、relPosix、resolveSpecifier、buildImportBindings、topLevelReturnObject、collectKeys
- * spread 只在本模組處理；alpine-state.mjs 一個字都沒動。
+ * 名稱 → { file, kind, keys:Set }。解析工具一律由 alpine-state.mjs 匯入；
+ * 本模組只多做兩件事：相對路徑 import 的 wrapper（alpine-state 只認 importmap 別名）、
+ * 工廠 return 物件內 `...factory()` 的 spread 展開。不支援的 spread 形狀與 computed key → 工具錯誤。
  */
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { join, relative, resolve, sep, dirname } from 'node:path';
-import { parse } from 'espree';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
 import {
-  collectPages, findMergeStateCalls, findMergeStateLocalNames, loadImportMap,
+  collectPages, findMergeStateLocalNames, loadImportMap,
   findNamedFactory, walk, AlpineStateError,
+  parseModule, relPosix, resolveSpecifier as resolveAlias, buildImportBindings, topLevelReturnObject, collectKeys,
 } from './alpine-state.mjs';
 
-/* ── SPIKE-COPY ─────────────────────────────────────────────── */
-const PARSE_OPTS = { ecmaVersion: 2024, sourceType: 'module', loc: true };
-function relPosix(root, abs) { return relative(root, abs).split(sep).join('/'); } // SPIKE-COPY
-function parseModule(code, label) { // SPIKE-COPY
-  try { return parse(code, PARSE_OPTS); } catch (err) {
-    throw new AlpineStateError(7, `espree failed to parse ${label}: ${err.message}`);
-  }
-}
-function resolveSpecifier(root, imports, specifier, fromEntry, fromAbs = null) { // SPIKE-COPY（＋相對路徑：alpine-state.mjs 沒有，新模組自己補）
+/** 相對路徑在此解；其餘（importmap 別名）委派 alpine-state.mjs 的 resolveSpecifier */
+function resolveSpecifier(root, imports, specifier, fromEntry, fromAbs) {
   if (specifier.startsWith('.') && fromAbs) {
     const abs = resolve(dirname(fromAbs), specifier);
     if (!existsSync(abs)) throw new AlpineStateError(6, `${fromEntry}: ${specifier} → missing ${relPosix(root, abs)}`);
     return abs;
   }
-  const aliases = Object.keys(imports).sort((a, b) => b.length - a.length);
-  for (const alias of aliases) {
-    if (!specifier.startsWith(alias)) continue;
-    const abs = resolve(root, join('web', imports[alias].slice(1), specifier.slice(alias.length)));
-    if (!existsSync(abs)) throw new AlpineStateError(6, `${fromEntry}: ${specifier} → missing ${relPosix(root, abs)}`);
-    return abs;
-  }
-  throw new AlpineStateError(6, `${fromEntry}: specifier ${specifier} not matched by importmap alias`);
+  return resolveAlias(root, imports, specifier, fromEntry);
 }
-function buildImportBindings(ast) { // SPIKE-COPY
-  const map = new Map();
-  for (const node of ast.body) {
-    if (node.type !== 'ImportDeclaration' || typeof node.source.value !== 'string') continue;
-    for (const spec of node.specifiers) {
-      if (spec.type !== 'ImportSpecifier') continue;
-      const imported = spec.imported.type === 'Identifier' ? spec.imported.name : String(spec.imported.value);
-      map.set(spec.local.name, { importedName: imported, specifier: node.source.value });
-    }
-  }
-  return map;
-}
-function topLevelReturnObject(fn, label) { // SPIKE-COPY
-  if (fn.type === 'ArrowFunctionExpression' && fn.body.type === 'ObjectExpression') return fn.body;
-  if (fn.body.type !== 'BlockStatement') throw new AlpineStateError(7, `${label}: factory body is not Block/Object`);
-  for (const stmt of fn.body.body) {
-    if (stmt.type !== 'ReturnStatement') continue;
-    if (!stmt.argument || stmt.argument.type !== 'ObjectExpression') {
-      throw new AlpineStateError(7, `${label}: top-level return is not an ObjectExpression`);
-    }
-    return stmt.argument;
-  }
-  throw new AlpineStateError(7, `${label}: no top-level return ObjectExpression`);
-}
-function collectKeys(obj, label) { // SPIKE-COPY（spread 已由呼叫端拆掉；computed 仍 throw）
-  const keys = new Set();
-  for (const prop of obj.properties) {
-    if (prop.type === 'SpreadElement') throw new AlpineStateError(8, `${label}: SpreadElement reached collectKeys`);
-    if (prop.type !== 'Property') throw new AlpineStateError(8, `${label}: unexpected property type ${prop.type}`);
-    if (prop.computed) throw new AlpineStateError(8, `${label}: computed key`);
-    if (prop.key.type === 'Identifier') keys.add(prop.key.name);
-    else if (prop.key.type === 'Literal' && typeof prop.key.value === 'string') keys.add(prop.key.value);
-    else throw new AlpineStateError(8, `${label}: unsupported key node ${prop.key.type}`);
-  }
-  return keys;
-}
-/* ──────────────────────────────────────────────────────────── */
 
 function listJs(dir, out = []) {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
@@ -145,7 +91,7 @@ export function buildRegistry(root) {
   function keysOfFactoryFn(fn, ast, abs, label, notes) {
     const obj = topLevelReturnObject(fn, label);
     const plain = { ...obj, properties: obj.properties.filter((p) => p.type !== 'SpreadElement') };
-    const keys = collectKeys(plain, label);
+    const keys = new Set(collectKeys(plain, label).keys());
     const bindings = buildImportBindings(ast);
     for (const p of obj.properties) {
       if (p.type !== 'SpreadElement') continue;

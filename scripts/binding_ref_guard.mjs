@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 /**
- * binding_ref_guard.mjs — SPIKE（plan-179 T1）。非產品碼；GO 後由 T2/T3 整理。
+ * binding_ref_guard.mjs — 模板綁定守衛 CLI（plan-179；輸出格式定稿屬 T3）
  * 用法：node scripts/binding_ref_guard.mjs [root]
- * SPIKE_DUMP=<path> 另輸出完整 JSON（量測用；計時時不設）。
+ * exit 0＝乾淨；1＝有 finding；2＝工具讀不懂（未登記指令／運算式解析失敗／過期表項／未覆蓋模板）
  */
 import { readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Expander, ToolError } from './lib/jinja-lite.mjs';
-import { _parseCache } from './lib/binding-expr.mjs';
 import { buildRegistry } from './lib/alpine-registry.mjs';
-import {
-  parseHtml, measureImbalance, deriveAppGlobals, walkEntry, BROWSER_CANDIDATES, MAGICS,
-} from './lib/binding-scope.mjs';
+import { AlpineStateError } from './lib/alpine-state.mjs';
+import { parseHtml, measureImbalance, deriveAppGlobals, walkEntry } from './lib/binding-scope.mjs';
+import { EXTRA_WINDOW_GLOBALS, findStaleEntries } from './lib/binding-guard-config.mjs';
 
 const t0 = performance.now();
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,12 +37,14 @@ entries.sort((a, b) => (a === 'base.html' ? -1 : b === 'base.html' ? 1 : a.local
 const fragments = allTpl.filter((r) => (r.includes('/') || r.startsWith('_')) && !isExcluded(r));
 
 const toolErrors = [];
-// CD-179-8(3ii) 具名補充表：模板裸名使用「JS 模組／頁面 script 指定到 window」的東西。每項附理由與指定檔；過期偵測＝檔內仍有 `window.X =`
-const EXTRA_WINDOW_GLOBALS = {
-  GhostFly: { file: 'web/static/js/shared/ghost-fly.js', why: 'base.html:867 module 載入；search.html:1000／showcase.html:500 以 `window.GhostFly && GhostFly.floatingHearts($el)` 裸用' },
-  toggleThemeWithTransition: { file: 'web/static/js/pages/settings/theme-transition.js', why: 'settings.html:1728 classic script 載入；settings.html:183 @click 裸用' },
-};
-const registry = buildRegistry(root);
+let registry;
+try {
+  registry = buildRegistry(root);
+} catch (e) {
+  if (!(e instanceof AlpineStateError)) throw e;
+  console.log(`工具錯誤: registry: ${e.message}`);
+  process.exit(2);
+}
 registry.toolErrors.forEach((e) => toolErrors.push(`registry: ${e}`));
 
 const exp = new Expander(tplRoot);
@@ -87,11 +88,7 @@ for (const entry of entries) {
   if (entry === 'base.html') {
     const g = deriveAppGlobals(doc);
     appGlobals = g.names;
-    for (const [n, x] of Object.entries(EXTRA_WINDOW_GLOBALS)) {
-      const src = readFileSync(join(root, x.file), 'utf8');
-      if (!new RegExp(`window\\.${n}\\s*=`).test(src)) toolErrors.push(`stale EXTRA_WINDOW_GLOBALS entry ${n} (${x.file})`);
-      appGlobals.set(n, `EXTRA ${x.file}`);
-    }
+    for (const [n, x] of Object.entries(EXTRA_WINDOW_GLOBALS)) appGlobals.set(n, `EXTRA ${x.file}`);
     appGlobalErrors = g.errors;
   }
   perEntryBindingCount[entry] = 0;
@@ -140,54 +137,23 @@ for (const b of physBindings.values()) {
   const key = b.dir === 'bind' ? ':attr' : b.dir === 'on' ? '@event' : `x-${b.dir}`;
   physDir[key] = (physDir[key] || 0) + 1;
 }
+// 讀不懂 ＝ 工具錯誤（exit 2），不是 finding
+for (const f of failures.values()) toolErrors.push(`${f.origin.file}:${f.origin.line}: 運算式解析失敗 ${f.attr.slice(0, 80)}`);
+for (const u of unknownDirs.values()) toolErrors.push(`${u.origin.file}:${u.origin.line}: 未登記指令 ${u.name}`);
+for (const e of appGlobalErrors) toolErrors.push(`base.html 內嵌 script 解析失敗: ${e}`);
+// typeof 豁免只影響「算不算懸空」；被豁免的名字仍算「有被引用」
+const usedBrowser = new Set([...uniqRefs.values()].filter((r) => r.cat === 8).map((r) => r.name).concat(typeofUses.map((t) => t.name)));
+for (const m of findStaleEntries(usedBrowser, root)) toolErrors.push(m);
 const ms = performance.now() - t0;
 
 const lines = [];
-lines.push(`binding_ref_guard SPIKE: entries=${entries.length} (${entries.join(', ')})`);
+lines.push(`binding_ref_guard: entries=${entries.length} (${entries.join(', ')})`);
 lines.push(`unique bindings=${uniqBindings.size} refs=${uniqRefs.size} unresolved=${unresolved.length} findings(x-data)=${findings.size} K1 failures=${failures.size} unknown-directives=${unknownDirs.size} toolErrors=${toolErrors.length}`);
 lines.push(`uncovered templates=${uncovered.length} orphan fragments=${orphanFragments.length} ${(ms / 1000).toFixed(2)}s`);
 console.log(lines.join('\n'));
 
-if (process.env.SPIKE_DUMP) {
-  const catByName = new Map();
-  for (const r of uniqRefs.values()) {
-    if (!catByName.has(r.name)) catByName.set(r.name, { cats: {}, locs: [] });
-    const e = catByName.get(r.name);
-    const c = r.cat === null ? 'UNRESOLVED' : r.cat;
-    e.cats[c] = (e.cats[c] || 0) + 1;
-    if (e.locs.length < 200) {
-      e.locs.push({
-        cat: c, file: r.origin.file, line: r.origin.line, via: r.origin.via ? `${r.origin.via.kind}@${r.origin.via.file}:${r.origin.via.line}` : null,
-        attr: r.attrName, value: r.attrValue.length > 160 ? `${r.attrValue.slice(0, 160)}…` : r.attrValue, entries: [...r.entries],
-      });
-    }
-  }
-  const regInfo = {};
-  for (const [name, reg] of registry.regs) {
-    let keys = null; let err = null;
-    try { keys = [...registry.resolveReg(reg)]; } catch (e) { err = e.message; }
-    regInfo[name] = { file: reg.file, line: reg.line, source: reg.source, keys: keys ? keys.length : null, err, notes: reg.notes || [], pageName: reg.pageName };
-  }
-  writeFileSync(process.env.SPIKE_DUMP, JSON.stringify({
-    entries, fragments, allTpl, scanned: entries, excluded: allTpl.filter(isExcluded),
-    expandedFragments: [...exp.expandedFragments], uncovered, orphanFragments,
-    macroCalls: [...exp.macroCalls], expStats: exp.stats,
-    dirCount, physDir, physTotal: physBindings.size, perEntryBindingCount, uniqueBindings: uniqBindings.size, expandedByEntry,
-    failures: [...failures.values()].map((f) => ({ file: f.origin.file, line: f.origin.line, attr: f.attr.slice(0, 300), errs: f.errs })),
-    unknownDirs: [...unknownDirs.values()].map((u) => ({ name: u.name, file: u.origin.file, line: u.origin.line })),
-    findingsX: [...findings.values()].map((f) => ({ name: f.name, file: f.origin.file, line: f.origin.line, attr: f.attr, entry: f.entry })),
-    unresolved: unresolved.map((r) => ({
-      name: r.name, file: r.origin.file, line: r.origin.line, via: r.origin.via ? `${r.origin.via.kind}@${r.origin.via.file}:${r.origin.via.line}` : null,
-      attr: r.attrName, value: r.attrValue.length > 300 ? `${r.attrValue.slice(0, 300)}…` : r.attrValue, write: r.write, entries: [...r.entries], tag: r.tag,
-    })),
-    byName: Object.fromEntries([...catByName.entries()].sort()),
-    typeofUses, emptyAttrs, imbalance, parseErrCodes, toolErrors, appGlobals: [...appGlobals.entries()], appGlobalErrors,
-    regInfo, regUse: [...regUse.entries()], pages: registry.pages.map((p) => ({ page: p.page, contributors: p.contributors.length, keys: p.contributors.reduce((n, c) => n + c.keys.size, 0) })),
-    browserCandidates: [...BROWSER_CANDIDATES], magics: [...MAGICS],
-    plainAttrNames: [...plainAttrNames.entries()].filter(([n]) => /expanded|^data-x|^x-/.test(n)),
-    parseStages: { expr: [..._parseCache.values()].filter((v) => v.wrap === 'expr').length, stmts: [..._parseCache.values()].filter((v) => v.wrap === 'stmts').length, fail: [..._parseCache.values()].filter((v) => v.fail).length },
-    ms,
-  }, null, 1));
-}
+for (const t of toolErrors) console.log(`工具錯誤: ${t}`);
+for (const u of unresolved) console.log(`✗ ${u.origin.file}:${u.origin.line}  ${u.name}`);
+for (const f of findings.values()) console.log(`✗ ${f.origin.file}:${f.origin.line}  ${f.name}`);
 
 process.exit(toolErrors.length || uncovered.length ? 2 : unresolved.length || findings.size ? 1 : 0);
