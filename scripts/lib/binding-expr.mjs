@@ -1,6 +1,5 @@
 /**
  * binding-expr.mjs — 指令分類、兩段式 espree、eslint-scope 自由識別字（plan-179 CD-179-4／-5）
- * 指令分類、兩段式 espree、eslint-scope 自由識別字。
  * 所有送進 eslint-scope 的 AST 一律 range:true（handoff §3）。
  */
 import { parse } from 'espree';

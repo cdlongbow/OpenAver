@@ -61,6 +61,8 @@ test('legal bindings pass', () => {
   <i x-ref="foo" x-text="$refs.foo"></i></div>
   <div x-data="{ open: false }" @click="open = !open" x-show="open && a"></div></div>`);
   assert.equal(r.status, 0, r.output);
+  const optFn = run(`<div x-data="demoPage"><b @click="typeof optFn === 'function' && optFn()"></b></div>`);
+  assert.equal(optFn.status, 0, optFn.output);
   const onlyTypeof = run('', {}, { Number: "typeof Number === 'function' && Number(1)" });
   assert.equal(onlyTypeof.status, 0, onlyTypeof.output);
 });
@@ -73,11 +75,13 @@ test('dangling names fail', () => {
     ['foo', '<div x-data="demoPage"><i x-ref="foo"></i><i x-text="foo"></i></div>'],
     ['__b', '<div x-data="demoPage"><b @click="__b()"></b></div>'],
     ['nowhere', '<div x-data="nowhere"></div>'],
+    ['fooQ', '<div x-data="{ fooQ: 1 }"><span x-text="fooQ"></span></div><span x-text="fooQ"></span>'],
+    ['$event', '<div x-data="demoPage"><i x-text="$event.type" @click="go($event)"></i></div>'],
   ];
   for (const [name, html] of cases) {
     const r = run(html);
     assert.equal(r.status, 1, r.output);
-    assert.match(r.output, new RegExp(`p\\.html:\\d+[^\\n]*\\n\\s+${name} 不在`));
+    assert.match(r.output, new RegExp(`p\\.html:\\d+[^\\n]*\\n\\s+${name.replace('$', '\\$')} 不在`));
   }
 });
 
@@ -88,6 +92,8 @@ test('unreadable input exits 2', () => {
     ['shardA.js', '', { 'web/static/js/pages/demo/shardA.js': 'export function shardA() {\n  return { a: 1, ...someObj };\n}\n' }],
     ['未登記指令', '<div x-foo="1"></div>', {}],
     ['過期', '', { 'web/static/js/shared/ghost-fly.js': 'export const x = 1;\n' }],
+    ['_macros/m.html:2', "{% from '_macros/m.html' import m %}{{ m() }}", { 'web/templates/_macros/m.html': "{% macro m() %}\n{% include '_inc.html' %}\n{% endmacro %}\n", 'web/templates/_inc.html': '<b></b>\n' }],
+    ['_macros/m.html:2', "{% from '_macros/m.html' import m %}{{ m() }}", { 'web/templates/_macros/m.html': "{% macro m() %}\n{% from '_macros/n.html' import n %}\n{% endmacro %}\n", 'web/templates/_macros/n.html': '{% macro n() %}{% endmacro %}\n' }],
   ];
   for (const [kw, html, js] of bad) {
     const r = run(html, js);

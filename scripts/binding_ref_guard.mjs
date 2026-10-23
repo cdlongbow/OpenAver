@@ -4,7 +4,7 @@
  * 用法：node scripts/binding_ref_guard.mjs [root]
  * exit 0＝乾淨；1＝有 finding；2＝工具讀不懂（未登記指令／運算式解析失敗／標籤不平衡／過期表項／未覆蓋模板）
  */
-import { readdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Expander, ToolError } from './lib/jinja-lite.mjs';
@@ -86,7 +86,8 @@ for (const entry of entries) {
     registry,
     appGlobals: new Set(appGlobals.keys()),
     record(r) {
-      const k = `${siteKey(r.origin)}:${r.name}:${r.attrName}`;
+      // 已解析與懸空分開去重：同一行同名的懸空不能被前一筆已解析的蓋掉
+      const k = `${siteKey(r.origin)}:${r.name}:${r.attrName}:${r.cat === null ? 'U' : 'R'}`;
       if (!uniqRefs.has(k)) uniqRefs.set(k, { ...r, entries: new Set([entry]) });
       else uniqRefs.get(k).entries.add(entry);
     },

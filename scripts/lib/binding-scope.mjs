@@ -105,11 +105,12 @@ export function walkEntry(doc, opts) {
   const { origins, registry } = opts;
   const originOf = (line) => origins[line - 1] || { file: '?', line };
 
-  function lookup(name, stack) {
+  function lookup(name, stack, inHandler = false) {
     for (let i = stack.length - 1; i >= 0; i--) {
       if (stack[i].keys.has(name)) return { cat: stack[i].cat, scope: stack[i] };
     }
-    if (Object.hasOwn(MAGIC_NAMES, name)) return { cat: 7, scope: { label: 'magic' } };
+    // $event 只有 x-on 處理器內 Alpine 才會注入
+    if (Object.hasOwn(MAGIC_NAMES, name) && (name !== '$event' || inHandler)) return { cat: 7, scope: { label: 'magic' } };
     if (opts.appGlobals.has(name)) return { cat: 6, scope: { label: 'app-global' } };
     if (Object.hasOwn(BROWSER_GLOBALS, name)) return { cat: 8, scope: { label: 'browser-global' } };
     return null;
@@ -126,11 +127,12 @@ export function walkEntry(doc, opts) {
       return null;
     }
     const { ids, typeofNames } = freeIds(parsed, value);
+    const inHandler = classifyAttr(attr.name).dir === 'on';
     const results = [];
     for (const id of ids) {
       if (extra.skipStart !== undefined && id.start === extra.skipStart && id.name === extra.skipName) continue;
       if (typeofNames.has(id.name)) { opts.onTypeof && opts.onTypeof({ origin: o, name: id.name, attr: attr.name }); continue; }
-      const res = lookup(id.name, stack);
+      const res = lookup(id.name, stack, inHandler);
       const refOrigin = originOf(attr.line + id.line - 1);
       const rec = {
         name: id.name,
@@ -193,7 +195,6 @@ export function walkEntry(doc, opts) {
     let cat;
     if (reg.source === 'mergeState') cat = hasComponentAncestor ? 4 : 1;
     else cat = hasComponentAncestor ? 4 : 2;
-    opts.onRegUse && opts.onRegUse(reg, cat);
     return mk(keys, cat, `Alpine.data('${calleeName}')`, { component: true });
   }
 
@@ -242,17 +243,14 @@ export function walkEntry(doc, opts) {
     for (const a of attrs) {
       if (a.name === 'x-data' || a.name === 'x-for') continue;
       const cls = classifyAttr(a.name);
-      if (cls.kind === 'plain') {
-        opts.onPlainAttr && opts.onPlainAttr({ name: a.name, origin: originOf(a.line), entry: opts.entry });
-        continue;
-      }
+      if (cls.kind === 'plain') continue;
       if (cls.kind === 'unknown') {
         opts.onUnknown({ name: a.name, dir: cls.dir, origin: originOf(a.line), entry: opts.entry });
         continue;
       }
       if (cls.kind === 'noexpr') continue;
       opts.onBinding({ dir: cls.dir, name: a.name, origin: originOf(a.line), entry: opts.entry });
-      if (a.value.trim() === '') { opts.onEmpty && opts.onEmpty({ name: a.name, origin: originOf(a.line) }); continue; }
+      if (a.value.trim() === '') continue;
       const useStack = (xf && a.name === ':key') || (xf && a.name === 'x-bind:key') ? childStack : st;
       checkAttrExpr(a.value, node, a, useStack);
     }

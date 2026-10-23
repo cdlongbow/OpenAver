@@ -235,6 +235,12 @@ export class Expander {
       if (n.t === 'extends') tpl.extends = n.path;
     }
     for (const [k, m] of tpl.macros) tpl.env.set(k, { macro: m, tpl });
+    // macro 本體內的 include／from 不支援（參數與環境傳不進去）→ 讀不懂就停
+    for (const m of tpl.macros.values()) {
+      for (const n of eachNode(m.children, true)) {
+        if (n.t === 'include' || n.t === 'from') throw new ToolError('unsupported', `macro ${m.name} 內的 {% ${n.t === 'from' ? 'from…import' : 'include'} %} 不支援`, rel, n.line);
+      }
+    }
     for (const n of eachNode(tree.children, false)) {
       if (n.t === 'from') {
         const other = this.load(n.path, rel, n.line);
