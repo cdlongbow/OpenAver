@@ -10,3 +10,20 @@
 export function isFileSearching(activePaths, path) {
     return Array.isArray(activePaths) && activePaths.includes(path);
 }
+
+/**
+ * isDetailEmpty(file) → boolean
+ * 詳細區是否沒東西可看：沒有該片、沒有番號、或沒有任何搜尋結果（含尚未搜、查無）。
+ */
+export function isDetailEmpty(file) {
+    return !file || !file.number || !(file.searchResults && file.searchResults.length > 0);
+}
+
+/**
+ * shouldAutoJump({ armed, anchorPath, currentPath }) → boolean
+ * 批次搜尋是否該自動帶使用者去第一個有結果的片：開始時詳細區空白（armed），
+ * 且使用者仍停在按下時那片。比 path 字串不比物件身分（FE-ALPINE-14）。
+ */
+export function shouldAutoJump({ armed, anchorPath, currentPath }) {
+    return armed && currentPath === anchorPath;
+}

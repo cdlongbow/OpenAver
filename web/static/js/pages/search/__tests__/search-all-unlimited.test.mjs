@@ -76,3 +76,33 @@ test('searchAll: 搜尋中轉圈名單只含正在搜的片，搜完或中斷後
   await assert.rejects(() => c.searchAll());
   assert.equal(c.batchState.activePaths.length, 0, '例外後清空');
 });
+
+// 搜尋中不拉走使用者正在看的片（R1）。stub 同步，不可掛起。
+const hit = (f) => { f.searched = true; f.searchResults = [{}]; };
+const miss = (f) => { f.searched = true; f.searchResults = []; };
+const mkJump = (n, first, searchFn) => {
+  const s = mkSpinState(n, (f) => searchFn(s, f));
+  first(s.fileList[0]);
+  s.calls = [];
+  s.switchToFile = (idx) => { s.calls.push({ idx, processed: s.batchState.processed }); };
+  return s;
+};
+
+test('searchAll: 搜尋中不把使用者正在看的片拉走（開始時有結果，或第一次跳之前被切走）', async () => {
+  const a = mkJump(50, hit, (s, f) => hit(f));
+  await a.searchAll();
+  assert.equal(a.calls.length, 0, '(i) 按下時目前片有結果 → 整批不切片');
+
+  let first = true;
+  const b = mkJump(12, miss, (s, f) => { if (first) { first = false; s.currentFileIndex = 5; } hit(f); });
+  await b.searchAll();
+  assert.equal(b.calls.length, 0, '(ii) 第一次跳之前使用者切走 → 不拉回');
+});
+
+test('searchAll: 一開始詳細區空白時只在第一個有結果的那一輪跳一次', async () => {
+  const s = mkJump(12, miss, (st, f) => { const i = st.fileList.indexOf(f); (i === 1 || i === 2 ? miss : hit)(f); });
+  await s.searchAll();
+  assert.equal(s.calls.length, 1, '只跳一次');
+  assert.equal(s.calls[0].processed, 4, '第二輪搜完才跳');
+  assert.equal(s.calls[0].idx, 3, '取該輪列表順序最前的有結果片');
+});
