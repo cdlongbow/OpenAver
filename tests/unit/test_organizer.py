@@ -1699,6 +1699,75 @@ class TestWindowsFolderNameSanitize:
             assert os.path.basename(result["new_filename"]) == f"SONE-205 {title if sub else 'T'}.mp4"
 
 
+# ============ Issue 181-T6 — 檔名／資料夾名位元組上限 255 ============
+
+def _nbytes(text):
+    return len(text.encode("utf-8"))
+
+
+def _cover_stub(url, save_path, referer="", **kwargs):
+    """不碰網路的 download_image：寫一張 JPEG；寫不出（檔名過長 OSError）回 False，同 _attempt_download_image"""
+    try:
+        Image.new("RGB", (800, 538), (200, 100, 50)).save(save_path, "JPEG")
+    except OSError:
+        return False
+    return True
+
+
+def _organize_bytes(tmp_path, filename, number, title, cover="", **overrides):
+    src = tmp_path / filename
+    src.write_bytes(b"x")
+    config = {**_make_config(tmp_path, ["-4k", "-c"]), "filename_format": "{num} {title}{suffix}", **overrides}
+    with patch("core.organizer.download_image", side_effect=_cover_stub):
+        return organize_file(str(src), {**_make_metadata(number, title), "cover": cover}, config)
+
+
+class TestUtf8ByteCap:
+    """181-T6：每一層資料夾名與檔名都不超過 255 bytes；今天本來就合法的名字逐字不變"""
+
+    @pytest.mark.parametrize("filename,fmt,tail", [
+        ("SONE-205.mp4", "{num} {title}", ""),
+        ("SONE-205-C_180_LR.mp4", "{num} {title}{suffix}", "-c_180_LR"),
+    ])
+    def test_long_cjk_names_fit_255_bytes(self, tmp_path, filename, fmt, tail):
+        title = "あ" * 110
+        shown = organizer.truncate_title(title, 100)
+        # 前置：進入最終一步前，資料夾名與 stem 都確實 > 255 bytes（否則假綠，BE-DATA-09）
+        assert _nbytes(truncate_to_chars(shown, 120)) > 255
+        assert _nbytes(truncate_to_chars(f"SONE-205 {shown}", 116 - len(tail)) + tail) > 255
+        result = _organize_bytes(tmp_path, filename, "SONE-205", title, create_folder=True, folder_layers=["{title}"],
+                                 filename_format=fmt, max_title_length=100, max_filename_length=120)
+        assert result["success"] is True, result["error"]
+        for name in (os.path.basename(result["new_folder"]), os.path.basename(result["new_filename"])):
+            assert _nbytes(name) <= 255
+            assert "\ufffd" not in os.fsencode(name).decode("utf-8")
+        assert Path(result["new_filename"]).is_file()
+
+    @pytest.mark.parametrize("filename,title,cfg,cover,expected,pre_stem_bytes", [
+        ("SONE-205.mp4", "x" * 108, {}, "", "SONE-205 " + "x" * 44 + "....mp4", None),
+        ("SONE-205.mp4", "あ" * 70, {}, "", "SONE-205 " + "あ" * 44 + "....mp4", None),
+        ("SONE-205.mp4", "😀" * 70, {}, "", "SONE-205 " + "😀" * 44 + "....mp4", None),
+        ("SONE-205.mp4", "あ" * 47, {}, "", "SONE-205 " + "あ" * 47 + ".mp4", None),
+        ("SONE-205-4K.mp4", "あ" * 70, {}, "", "SONE-205 " + "あ" * 41 + "...-4k.mp4", None),
+        ("SONE-205_180_LR.mp4", "あ" * 70, {}, "", "SONE-205 " + "あ" * 37 + "..._180_LR.mp4", None),
+        ("ABC-123.mp4", "あ" * 80, {"external_manager": "off"}, "", "ABC-123 " + "あ" * 80 + ".mp4", 248),
+        ("ABC-123.mp4", "あ" * 80, {"external_manager": "jellyfin"}, "", "ABC-123 " + "あ" * 80 + ".mp4", 248),
+        ("ABC-123.mp4", "あ" * 80, {"external_manager": "jellyfin"}, "http://fake/c.jpg", "ABC-123 " + "あ" * 80 + ".mp4", 248),
+        ("ABC-123-part1.mp4", "あ" * 79, {"external_manager": "jellyfin"}, "", "ABC-123 " + "あ" * 79 + "-part1.mp4", 251),
+    ])
+    def test_legal_names_unchanged_by_byte_cap(self, tmp_path, filename, title, cfg, cover, expected, pre_stem_bytes):
+        overrides = cfg
+        if pre_stem_bytes:  # 長名字組：進入最終一步前 stem 就是這個長度；251 組 part_tail 非空
+            overrides = {"max_title_length": 80 if pre_stem_bytes == 248 else 100, "max_filename_length": 120,
+                         "filename_format": "{num} {title}", "download_cover": True, "create_nfo": True, **cfg}
+            assert _nbytes(expected[:-4]) == pre_stem_bytes
+            assert ("-part1" in filename) == expected.endswith("-part1.mp4")
+        number = "ABC-123" if filename.startswith("ABC") else "SONE-205"
+        result = _organize_bytes(tmp_path, filename, number, title, cover, **overrides)
+        assert result["success"] is True, result["error"]
+        assert os.path.basename(result["new_filename"]) == expected
+
+
 # ============ _detect_vr_cluster() 測試 ============
 
 class TestDetectVrCluster:

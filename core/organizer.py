@@ -86,6 +86,16 @@ def truncate_to_chars(text: str, max_chars: int = 60) -> str:
     return _strip_windows_trailing(text[:max_chars - 3] + '...')
 
 
+def _fit_utf8_bytes(text: str, max_bytes: int) -> str:
+    """UTF-8 位元組上限（Linux／NAS 單一名稱 255 bytes）；放得下原樣回傳，否則往前截到連 '...' 放得下，不切半個字"""
+    if len(text.encode('utf-8')) <= max_bytes:
+        return text
+    head = text
+    while head and len(head.encode('utf-8')) + 3 > max_bytes:
+        head = head[:-1]
+    return head + '...'
+
+
 def clean_source_suffix(text: str) -> str:
     """清除無意義的來源後綴"""
     patterns = [
@@ -1307,7 +1317,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         path_parts = []
         for layer in layers[:3]:  # 限制最多 3 層
             if layer:
-                part = _strip_windows_trailing(truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_folder_chars))
+                part = _strip_windows_trailing(_fit_utf8_bytes(truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_folder_chars), 255))
                 if part:
                     path_parts.append(part)
 
@@ -1351,6 +1361,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
     # 正常/spec 情形 reserve 已預留 → base+vr_tail+part_tail == max_chars → 此為 no-op；
     # 僅 max_filename_length 被設到連 ext+VR cluster+part token 都裝不下時才作用。
     filename_base = truncate_to_chars(filename_base, max_chars)
+    filename_base = _fit_utf8_bytes(filename_base, 255 - len(original_ext.encode('utf-8')))
 
     new_filename = filename_base + original_ext
     target_path = os.path.join(target_dir, new_filename)

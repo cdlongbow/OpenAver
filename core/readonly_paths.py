@@ -21,6 +21,7 @@ from core.database import get_db_path
 from core.organizer import (
     _detect_suffixes,
     _detect_vr_cluster,
+    _fit_utf8_bytes,
     _strip_num_prefixes,
     _strip_windows_trailing,
     format_string,
@@ -219,7 +220,7 @@ def _folder_parts(format_data: dict, config: dict) -> list:
     max_chars = min(config.get('max_filename_length', 60), 120)
     parts = []
     for layer in layers[:3]:
-        part = _strip_windows_trailing(truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_chars))
+        part = _strip_windows_trailing(_fit_utf8_bytes(truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_chars), 255))
         if part:
             parts.append(part)
     return parts
@@ -265,7 +266,7 @@ def _build_basename(format_data: dict, source_fs_path: str, config: dict) -> str
 
     filename_base = filename_base + vr_tail
     filename_base = truncate_to_chars(filename_base, max_chars)
-    return filename_base
+    return _fit_utf8_bytes(filename_base, 255 - len(original_ext.encode('utf-8')))
 
 
 # ---------------------------------------------------------------------------
