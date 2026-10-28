@@ -14,7 +14,6 @@ function makeState(fileList, searchedFilesCollector = []) {
     batchState: {
       isProcessing: false,
       isPaused: false,
-      batchSize: 50,
       total: 0,
       processed: 0,
       success: 0,

@@ -216,7 +216,7 @@ export function searchStateBatch() {
             return;
         }
 
-        const currentBatch = targetFiles.slice(0, batch.batchSize);
+        const currentBatch = targetFiles;
 
         // 更新狀態
         batch.isProcessing = true;

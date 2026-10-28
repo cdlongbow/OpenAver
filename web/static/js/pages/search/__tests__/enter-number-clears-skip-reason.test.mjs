@@ -15,7 +15,7 @@ function makeState(fileList, searchedCollector = []) {
     fileList,
     listMode: 'file',
     currentFileIndex: 0,
-    batchState: { isProcessing: false, isPaused: false, batchSize: 50, total: 0, processed: 0, success: 0, failed: 0 },
+    batchState: { isProcessing: false, isPaused: false, total: 0, processed: 0, success: 0, failed: 0 },
     switchToFile() {},
     showToast() {},
     _searchFileBackground: async (f) => { searchedCollector.push(f); },

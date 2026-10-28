@@ -46,7 +46,6 @@ export function searchStateBase() {
 
         // ===== Batch State =====
         batchState: {
-            batchSize: 20,
             isProcessing: false,
             isPaused: false,
             total: 0,
@@ -296,7 +295,6 @@ export function searchStateBase() {
         searchAllButtonText() {
             const searchableFiles = this.fileList.filter(f => f.number && !f.searched && !f.has_nfo);
             const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0) && !f.has_nfo);
-            const totalWithNumber = this.fileList.filter(f => f.number).length;
             const batch = this.batchState;
 
             if (searchableFiles.length === 0 && failedFiles.length === 0) {
@@ -308,10 +306,7 @@ export function searchStateBase() {
             if (searchableFiles.length === 0 && failedFiles.length > 0) {
                 return window.t('search.button.retry_failed', { count: failedFiles.length });
             }
-            const searchedCount = totalWithNumber - searchableFiles.length;
-            const start = searchedCount + 1;
-            const end = Math.min(searchedCount + batch.batchSize, totalWithNumber);
-            return window.t('search.button.search_range', { start, end, total: totalWithNumber });
+            return window.t('search.button.search_all');
         },
 
         searchAllButtonIcon() {
