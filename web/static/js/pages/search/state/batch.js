@@ -226,6 +226,8 @@ export function searchStateBatch() {
         batch.success = 0;
         batch.failed = 0;
         batch.activePaths = [];
+        const myRun = ++batch.runId;
+        const superseded = () => myRun !== batch.runId;  // 較舊的迴圈看到號碼不同就退場，不碰 batchState
 
         // 182-T4: 只在按下時詳細區空白時，於第一個有結果的那一輪帶使用者過去一次
         const startFile = this.fileList[this.currentFileIndex];
@@ -248,6 +250,8 @@ export function searchStateBatch() {
                     }, 100);
                 });
             }
+            // 被新批次／清單重置取代 → 不再發新工作，也不碰共享的 batchState
+            if (superseded()) return;
             // cleanup 已設 isProcessing=false → 中斷 loop，不繼續發新工作
             if (!batch.isProcessing) { aborted = true; break; }
 
@@ -268,8 +272,10 @@ export function searchStateBatch() {
                     batch.activePaths.push(file.path);
                     await this._searchFileBackground(file);
                 } finally {
-                    batch.activePaths = batch.activePaths.filter(p => p !== file.path);
+                    if (!superseded()) batch.activePaths = batch.activePaths.filter(p => p !== file.path);
                 }
+
+                if (superseded()) return;
 
                 if (file.searched && file.searchResults && file.searchResults.length > 0) {
                     batch.success++;
@@ -280,6 +286,7 @@ export function searchStateBatch() {
             }));
 
             // cleanup 在 chunk 執行中發生 → SSE 被關掉，Promise.all resolve 後檢查
+            if (superseded()) return;
             if (!batch.isProcessing) { aborted = true; break; }
 
             // 182-T4: 只在一開始詳細區空白時跳一次（本 chunk 列表順序最前、有結果的片）；之後不再自動切片
@@ -289,6 +296,8 @@ export function searchStateBatch() {
                 await this.switchToFile(this.fileList.indexOf(jumpTarget), 'first', false);
             }
         }
+
+        if (superseded()) return;  // 最後一次 switchToFile 期間被取代
 
         // 批次處理完成
         this.isSearchingFile = false;

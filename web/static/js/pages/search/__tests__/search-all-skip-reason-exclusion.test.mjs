@@ -18,6 +18,7 @@ function makeState(fileList, searchedFilesCollector = []) {
       processed: 0,
       success: 0,
       failed: 0,
+      runId: 0,
     },
     fileList,
     listMode: 'file',

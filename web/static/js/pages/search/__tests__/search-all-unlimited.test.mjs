@@ -106,3 +106,23 @@ test('searchAll: 一開始詳細區空白時只在第一個有結果的那一輪
   assert.equal(s.calls[0].processed, 4, '第二輪搜完才跳');
   assert.equal(s.calls[0].idx, 3, '取該輪列表順序最前的有結果片');
 });
+
+test('searchAll: 搜到一半換了新清單，舊批次不再送搜尋、新批次搜完全部', async () => {
+  const mk = (tag, n) => Array.from({ length: n }, (_, i) => ({
+    path: `/x/${tag}${i}.mp4`, number: `${tag}-${i}`, searched: false, searchResults: [], has_nfo: false, skipReason: '',
+  }));
+  const sent = [];  // stub 以 setTimeout(0) settle，不會掛起，不需 flush()
+  const s = mkSpinState(1, (f) => new Promise(r => setTimeout(() => { sent.push(f.path); hit(f); r(); }, 0)));
+  s.fileList = mk('OLD', 10);
+  const oldRun = s.searchAll();  // 第一組 2 片已送出、尚未 settle
+  const b = s.batchState;        // 照 setFileList 的重置做法，再立刻重按批次搜尋
+  Object.assign(b, { isProcessing: false, isPaused: false, total: 0, processed: 0, success: 0, failed: 0, activePaths: [] });
+  b.runId++;
+  s.fileList = mk('NEW', 20);
+  s.currentFileIndex = 0;
+  await Promise.all([oldRun, s.searchAll()]);
+  assert.equal(sent.filter(p => p.includes('/NEW')).length, 20, '新的 20 片全被搜');
+  assert.ok(sent.filter(p => p.includes('/OLD')).length <= 2, '舊清單只容許取代當下 in-flight 的 ≤ 2 片');
+  assert.equal(b.isProcessing, false);
+  assert.equal(b.activePaths.length, 0);
+});

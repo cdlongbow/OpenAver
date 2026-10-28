@@ -477,6 +477,7 @@ export function searchStateFileList() {
             batch.success = 0;
             batch.failed = 0;
             batch.activePaths = [];
+            batch.runId++;  // 讓還在跑的舊 searchAll 迴圈退場（不得再搜舊清單）
 
             if (this.fileList.length > 0) {
                 if (this.fileList[0].number) {

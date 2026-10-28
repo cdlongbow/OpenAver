@@ -54,7 +54,8 @@ export function searchStateBase() {
             processed: 0,
             success: 0,
             failed: 0,
-            activePaths: []  // 正在搜尋中的 file.path（不持久化，見 CD-182-6）
+            activePaths: [],  // 正在搜尋中的 file.path（不持久化，見 CD-182-6）
+            runId: 0          // searchAll 世代號：新批次開始／setFileList 重置時遞增，舊迴圈比對後自行退場（不持久化）
         },
 
         // ===== Translate State =====
