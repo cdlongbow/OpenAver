@@ -1,7 +1,7 @@
 {
   "nav": {
     "search": "Search",
-    "scanner": "Scanner",
+    "scanner": "Library Manager",
     "showcase": "Showcase",
     "insights": "Library Insights",
     "help": "Help",
@@ -547,7 +547,7 @@
       "cancel": "Cancel",
       "confirm": "Switch and remove",
       "failed": "Failed to switch mode. Please try again later.",
-      "generate_in_progress": "Generation in progress. Please wait for it to finish before switching modes.",
+      "generate_in_progress": "Library update in progress. Please wait for it to finish before switching modes.",
       "mode_off": "Default mode",
       "mode_media": "Emby / Jellyfin / Kodi mode"
     },
@@ -801,11 +801,11 @@
     }
   },
   "scanner": {
-    "page_title": "Scanner",
+    "page_title": "Library Manager",
     "toast": {
       "folder_already_added": "This folder is already in the list",
       "copy_path_failed": "Copy failed: {path}",
-      "generate_error": "Generation failed. Check the log for details.",
+      "generate_error": "Update failed. Check the log for details.",
       "nfo_update_error": "NFO update failed. Check the log for details.",
       "jellyfin_update_error": "Jellyfin image update failed. Check the log for details.",
       "config_saved": "Settings saved",
@@ -823,10 +823,10 @@
       "partial_count": "{count} sources partially failed",
       "no_output_count": "{count} without output folder set",
       "done_with_warnings": "Completed {count}, but {parts}; see log for details",
-      "generate_success": "Generated list of {count} videos",
+      "generate_success": "Library updated: {count} videos",
       "long_paths_warning": "This scan found {count} paths over 260 characters that may be unreadable; see debug.log for the full list",
       "no_nfo_update_needed": "No videos need updating",
-      "nfo_update_done": "Update complete! Regenerate the list to refresh",
+      "nfo_update_done": "Update complete! Click \"Update Library\" to refresh",
       "no_jellyfin_update_needed": "No videos need updating",
       "jellyfin_update_done": "Update complete!",
       "path_copied": "Copied: {path}",
@@ -851,9 +851,9 @@
       "readonly_label": "Read-only",
       "output_path_label": "Output to",
       "output_path_placeholder": "A writable output folder on this machine (for Emby / Jellyfin / Kodi to scan; can be on a NAS)...",
-      "output_prefix": "Output:",
+      "output_prefix": "Offline page:",
       "settings_link": "Settings",
-      "copy_path": "Copy Path",
+      "copy_path": "Copy offline page path",
       "cross_machine_hint": "(Unrelated to the \"Output to\" folder above) The strm file contains the read-only source's video path as seen on this machine. If the Emby / Jellyfin / Kodi that plays it runs on another machine and sees a different path, set a path-mapping rule on the Settings page.",
       "cross_machine_settings_link": "Set path mapping"
     },
@@ -880,8 +880,8 @@
       "jellyfin_update_title": "Generate Jellyfin poster + fanart",
       "last_run_prefix": "Last run: ",
       "last_added": "({count} added)",
-      "generate_idle": "Generate",
-      "generate_loading": "Generating...",
+      "generate_idle": "Update Library",
+      "generate_loading": "Updating...",
       "nfo_idle": "Fill Fields",
       "nfo_loading": "Filling...",
       "jellyfin_help_line1": "Jellyfin / Emby media servers require additional cover formats:",
@@ -928,7 +928,7 @@
       "missing_enrich_confirm_body_suffix": " minutes. Continue?",
       "missing_enrich_confirm_cancel": "Cancel",
       "missing_enrich_confirm_confirm": "Confirm",
-      "log_interrupted": "⚠ Generation interrupted (left the page)",
+      "log_interrupted": "⚠ Update interrupted (left the page)",
       "status_preparing": "Preparing...",
       "status_done_count": "Done! {count} videos",
       "status_done": "Done",
@@ -1019,7 +1019,7 @@
     },
     "dirty_modal": {
       "title": "Unsaved Changes",
-      "body": "You have modified the folder list but haven't generated the page yet. What would you like to do?",
+      "body": "You have modified the folder list but haven't clicked \"Update Library\" yet. What would you like to do?",
       "cancel": "Cancel",
       "discard": "Discard Changes",
       "save": "Save and Leave"
@@ -1041,7 +1041,7 @@
       "confirm": "Delete"
     },
     "leave_warning": {
-      "generating": "Generation is in progress — leaving will abort it!",
+      "generating": "Update is in progress — leaving will abort it!",
       "image_check": "Image check is in progress — leaving will interrupt it!",
       "folder_dirty": "You have unsaved folder changes",
       "confirm": "{message} Leave anyway?"
@@ -1092,8 +1092,8 @@
     "page_title": "Browse",
     "state": {
       "loading": "Loading video list...",
-      "empty": "No video list generated yet",
-      "generate_action": "Generate list",
+      "empty": "No videos in your library yet",
+      "generate_action": "Go to Library Manager",
       "retry": "Retry"
     },
     "error": {
@@ -1307,7 +1307,7 @@
       "mask_save_failed": "Failed to save crop settings. Please try again later.",
       "mask_cover_changed": "Cover has changed. Please reopen the crop tool and try again.",
       "cover_unavailable": "This cover can’t be loaded right now — the file location may be unreachable, or the cover file may be missing",
-      "cover_escape_hint": "Cover not found. You can name an image after the video's filename and place it next to the video (e.g. `ABC-123.mp4` → `ABC-123.jpg`), then go back to the Scanner page and click \"Generate\" once to pick it up — or click ⚙ to manually specify the ID and re-scrape.",
+      "cover_escape_hint": "Cover not found. You can name an image after the video's filename and place it next to the video (e.g. `ABC-123.mp4` → `ABC-123.jpg`), then go back to the Library Manager page and click \"Update Library\" once to pick it up — or click ⚙ to manually specify the ID and re-scrape.",
       "mask_confirm": "Confirm crop position",
       "mask_cancel": "Cancel crop adjustment"
     },
@@ -1448,7 +1448,7 @@
       "subtitle": "From adding your folder to filling metadata — three steps to get started",
       "step1_title": "Add Your Library Folder",
       "step1_desc": "Track your AV video folder in Scanner",
-      "step2_title": "Generate Page",
+      "step2_title": "Update Library",
       "step2_desc": "Scan and build a browsable collection page in one click",
       "step3_title": "NFO Fill",
       "step3_desc": "Missing covers or metadata? Fetch them from the web in one click",
@@ -1505,7 +1505,7 @@
       "h6_pause": "Pause & Resume",
       "h6_generate_all": "Batch Organize",
       "h6_badge": "Version Tag Preservation",
-      "add_folder": "<strong>Drop Folder</strong>: Only reads videos at this level, not subfolders; for your whole library, add it under \"Scan Folders\" on the Scanner page",
+      "add_folder": "<strong>Drop Folder</strong>: Only reads videos at this level, not subfolders; for your whole library, add it under \"Scan Folders\" on the Library Manager page",
       "add_filter": "<strong>Auto Filter</strong>: Excludes non-video files and files below the size threshold",
       "add_batch": "<strong>Batch Search</strong>: 20 files per batch, 2 concurrent requests",
       "add_progress": "<strong>Progress Display</strong>: Real-time progress (e.g. Processing 15/100)",
@@ -1568,7 +1568,7 @@
       "manage_photo_path": "Favorited actress photos are stored in the output/Gfriends/ directory; when changing a profile photo, all alias names are automatically expanded for local candidate lookup"
     },
     "scanner": {
-      "title": "Video List Generator (Scanner)",
+      "title": "Library Manager",
       "h6_features": "Features",
       "h6_output": "Output Files",
       "h6_subtitle": "Subtitle Auto-detection",
@@ -1632,7 +1632,7 @@
       "beta_compilation": "More complete tags (series / maker / cast) means better accuracy; videos with few tags should have their NFO filled in first",
       "h6_manage": "Tips",
       "manage_enable": "No configuration needed — works out of the box",
-      "manage_scanner": "After adding videos, the index updates automatically when Scanner generates the webpage — no manual steps needed"
+      "manage_scanner": "After adding videos, the index updates automatically when you click \"Update Library\" on the Library Manager page — no manual steps needed"
     },
     "shortcuts": {
       "title": "Keyboard Shortcuts",
@@ -1818,7 +1818,7 @@
     "done": "Done 🎉",
     "step1_title": "📂 Add Your Library Folder",
     "step1_content": "Add the folder path where your AV videos are stored<br>OpenAver will scan all videos and build a browsable page",
-    "step2_title": "▶ Generate Page",
+    "step2_title": "▶ Update Library",
     "step2_content": "Click this button to scan and build your private collection page<br>Takes just a few seconds",
     "step3_title": "🌐 NFO Fill Entry Point",
     "step3_content": "After scanning, return to the Scanner page<br>The NFO fill button appears automatically — fetch missing covers or metadata from the web in one click",

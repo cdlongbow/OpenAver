@@ -1,7 +1,7 @@
 {
   "nav": {
     "search": "搜索",
-    "scanner": "列表生成",
+    "scanner": "片库管理",
     "showcase": "浏览",
     "insights": "片库分析",
     "help": "说明",
@@ -547,7 +547,7 @@
       "cancel": "取消",
       "confirm": "确认切换并移除",
       "failed": "切换模式失败，请稍后再试。",
-      "generate_in_progress": "生成进行中，请等生成完成后再切换模式。",
+      "generate_in_progress": "更新片库进行中，请等更新完成后再切换模式。",
       "mode_off": "默认模式",
       "mode_media": "Emby·Jellyfin·Kodi 模式"
     },
@@ -801,11 +801,11 @@
     }
   },
   "scanner": {
-    "page_title": "列表生成",
+    "page_title": "片库管理",
     "toast": {
       "folder_already_added": "此文件夹已在列表中",
       "copy_path_failed": "复制失败，路径：{path}",
-      "generate_error": "生成失败，请查看日志",
+      "generate_error": "更新失败，请查看日志",
       "nfo_update_error": "NFO 补齐失败，请查看日志",
       "jellyfin_update_error": "Jellyfin 图片补齐失败，请查看日志",
       "config_saved": "设置已保存",
@@ -823,10 +823,10 @@
       "partial_count": "{count} 个来源部分读取失败",
       "no_output_count": "{count} 个未设输出文件夹",
       "done_with_warnings": "完成 {count} 部，但 {parts}，详细见日志",
-      "generate_success": "成功生成 {count} 部视频列表",
+      "generate_success": "片库已更新：{count} 部",
       "long_paths_warning": "本次扫描发现 {count} 个路径超过 260 字符，可能无法读取，详细清单见 debug.log",
       "no_nfo_update_needed": "没有需要更新的视频",
-      "nfo_update_done": "补全完成！请重新生成列表以更新",
+      "nfo_update_done": "补全完成！请按「更新片库」刷新",
       "no_jellyfin_update_needed": "没有需要补齐的视频",
       "jellyfin_update_done": "补齐完成！",
       "path_copied": "已复制: {path}",
@@ -851,9 +851,9 @@
       "readonly_label": "只读",
       "output_path_label": "输出到",
       "output_path_placeholder": "这台能写入的输出夹（给 Emby／Jellyfin／Kodi 扫描，可放 NAS）...",
-      "output_prefix": "输出:",
+      "output_prefix": "离线网页：",
       "settings_link": "设定",
-      "copy_path": "复制路径",
+      "copy_path": "复制离线网页路径",
       "cross_machine_hint": "（与上面「输出到」文件夹无关）strm 文件里写的是这台看到的只读来源视频路径。若播放的 Emby／Jellyfin／Kodi 在别台机器、看到的路径不同，请到设置页设路径替换规则。",
       "cross_machine_settings_link": "设置路径替换"
     },
@@ -880,8 +880,8 @@
       "jellyfin_update_title": "补齐 Jellyfin poster + fanart",
       "last_run_prefix": "上次执行: ",
       "last_added": "(新增 {count} 部)",
-      "generate_idle": "生成网页",
-      "generate_loading": "生成中...",
+      "generate_idle": "更新片库",
+      "generate_loading": "更新中...",
       "nfo_idle": "补齐字段",
       "nfo_loading": "补齐中...",
       "jellyfin_help_line1": "Jellyfin / Emby 等媒体服务器需要额外封面格式：",
@@ -928,7 +928,7 @@
       "missing_enrich_confirm_body_suffix": " 分钟，是否继续？",
       "missing_enrich_confirm_cancel": "取消",
       "missing_enrich_confirm_confirm": "确认补全",
-      "log_interrupted": "⚠ 生成被中断（离开页面）",
+      "log_interrupted": "⚠ 更新被中断（离开页面）",
       "status_preparing": "准备中...",
       "status_done_count": "完成！{count} 部视频",
       "status_done": "完成",
@@ -1019,7 +1019,7 @@
     },
     "dirty_modal": {
       "title": "尚未保存的更改",
-      "body": "您修改了文件夹列表但尚未生成网页，要如何处理？",
+      "body": "您修改了文件夹列表但还没按「更新片库」，要如何处理？",
       "cancel": "取消",
       "discard": "放弃更改",
       "save": "保存并离开"
@@ -1041,7 +1041,7 @@
       "confirm": "确认删除"
     },
     "leave_warning": {
-      "generating": "生成正在进行中，离开将会中断操作！",
+      "generating": "更新正在进行中，离开将会中断操作！",
       "image_check": "图片检查进行中，离开将会中断！",
       "folder_dirty": "您有未保存的文件夹变更",
       "confirm": "{message}确定要离开吗？"
@@ -1092,8 +1092,8 @@
     "page_title": "视频浏览",
     "state": {
       "loading": "加载视频列表中...",
-      "empty": "尚未生成视频列表",
-      "generate_action": "生成列表",
+      "empty": "片库还没有视频",
+      "generate_action": "前往片库管理",
       "retry": "重试"
     },
     "error": {
@@ -1307,7 +1307,7 @@
       "mask_save_failed": "裁切设置保存失败，请稍后再试",
       "mask_cover_changed": "封面已变更，请重新打开裁切工具再试一次",
       "cover_unavailable": "这部视频的封面现在读不到——可能是文件位置目前无法访问，或者封面文件本身不见了",
-      "cover_escape_hint": "找不到封面。可以把图片用视频文件名命名放在视频旁边（例：`ABC-123.mp4` → `ABC-123.jpg`），回 Scanner 页面按一次「生成网页」就会收进来；或按 ⚙ 手动指定番号重新刮。",
+      "cover_escape_hint": "找不到封面。可以把图片用视频文件名命名放在视频旁边（例：`ABC-123.mp4` → `ABC-123.jpg`），回片库管理页按一次「更新片库」就会收进来；或按 ⚙ 手动指定番号重新刮。",
       "mask_confirm": "确认裁切位置",
       "mask_cancel": "取消裁切调整"
     },
@@ -1448,7 +1448,7 @@
       "subtitle": "从加入文件夹到补全资料，三步上手",
       "step1_title": "加入片库文件夹",
       "step1_desc": "在 Scanner 追踪你的 AV 视频文件夹",
-      "step2_title": "生成网页",
+      "step2_title": "更新片库",
       "step2_desc": "一键扫描并建立可浏览的收藏页",
       "step3_title": "NFO 补全",
       "step3_desc": "缺封面或资料？点一下从网络自动补齐",
@@ -1505,7 +1505,7 @@
       "h6_pause": "暂停与继续",
       "h6_generate_all": "批量整理",
       "h6_badge": "版本标记保留",
-      "add_folder": "<strong>拖入文件夹</strong>：只读这一层的视频，不往子文件夹找；整座片库请到「列表生成」页的「扫描文件夹」加入",
+      "add_folder": "<strong>拖入文件夹</strong>：只读这一层的视频，不往子文件夹找；整座片库请到「片库管理」页的「扫描文件夹」加入",
       "add_filter": "<strong>自动过滤</strong>：排除非视频文件与小于设定大小的文件",
       "add_batch": "<strong>批次搜索</strong>：每批 20 个文件，并发 2 个请求",
       "add_progress": "<strong>进度显示</strong>：即时显示搜索进度（如：处理 15/100）",
@@ -1568,7 +1568,7 @@
       "manage_photo_path": "收藏女优的照片存放于 output/Gfriends/ 目录下，换头像时会自动展开女优的所有 alias 名做本地候选查询"
     },
     "scanner": {
-      "title": "视频列表生成 (Scanner)",
+      "title": "片库管理",
       "h6_features": "功能说明",
       "h6_output": "输出文件",
       "h6_subtitle": "字幕文件自动检测",
@@ -1632,7 +1632,7 @@
       "beta_compilation": "tag 越完整（系列 / 片商 / cast）相似度越准；tag 很少的视频建议先补完 NFO",
       "h6_manage": "使用提示",
       "manage_enable": "无需设置，开箱即用",
-      "manage_scanner": "新增视频后 Scanner「产生网页」时自动更新索引，无需手动操作"
+      "manage_scanner": "新增视频后在片库管理页按「更新片库」时自动更新索引，无需手动操作"
     },
     "shortcuts": {
       "title": "快捷键",
@@ -1818,7 +1818,7 @@
     "done": "完成 🎉",
     "step1_title": "📂 加入片库文件夹",
     "step1_content": "把放 AV 视频的文件夹路径加进来<br>OpenAver 会扫出所有视频并建立浏览页",
-    "step2_title": "▶ 生成网页",
+    "step2_title": "▶ 更新片库",
     "step2_content": "按下这个按钮，扫描 + 建立你的私人收藏页<br>几秒就好",
     "step3_title": "🌐 NFO 补全入口",
     "step3_content": "扫完后，回到 Scanner 页面<br>NFO 补全按钮会自动出现，缺封面或资料一键从网络补齐",

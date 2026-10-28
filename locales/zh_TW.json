@@ -1,7 +1,7 @@
 {
   "nav": {
     "search": "搜尋",
-    "scanner": "列表生成",
+    "scanner": "片庫管理",
     "showcase": "瀏覽",
     "insights": "片庫分析",
     "help": "說明",
@@ -547,7 +547,7 @@
       "cancel": "取消",
       "confirm": "確認切換並移除",
       "failed": "切換模式失敗，請稍後再試。",
-      "generate_in_progress": "產生進行中，請等產生完成後再切換模式。",
+      "generate_in_progress": "更新片庫進行中，請等更新完成後再切換模式。",
       "mode_off": "預設模式",
       "mode_media": "Emby·Jellyfin·Kodi 模式"
     },
@@ -801,11 +801,11 @@
     }
   },
   "scanner": {
-    "page_title": "列表生成",
+    "page_title": "片庫管理",
     "toast": {
       "folder_already_added": "此資料夾已在列表中",
       "copy_path_failed": "複製失敗，路徑：{path}",
-      "generate_error": "產生失敗，請查看日誌",
+      "generate_error": "更新失敗，請查看日誌",
       "nfo_update_error": "NFO 補齊失敗，請查看日誌",
       "jellyfin_update_error": "圖片補齊失敗，請查看日誌",
       "config_saved": "設定已儲存",
@@ -823,10 +823,10 @@
       "partial_count": "{count} 個來源部分讀取失敗",
       "no_output_count": "{count} 個未設輸出夾",
       "done_with_warnings": "完成 {count} 部，但 {parts}，詳細見日誌",
-      "generate_success": "成功產生 {count} 部影片列表",
+      "generate_success": "片庫已更新：{count} 部",
       "long_paths_warning": "本次掃描發現 {count} 個路徑超過 260 字元，可能無法讀取，詳細清單見 debug.log",
       "no_nfo_update_needed": "沒有需要更新的影片",
-      "nfo_update_done": "補全完成！請重新產生列表以更新",
+      "nfo_update_done": "補全完成！請按「更新片庫」重新整理",
       "no_jellyfin_update_needed": "沒有需要補齊的影片",
       "jellyfin_update_done": "補齊完成！",
       "path_copied": "已複製: {path}",
@@ -851,9 +851,9 @@
       "readonly_label": "唯讀",
       "output_path_label": "輸出到",
       "output_path_placeholder": "這台能寫入的輸出夾（給 Emby／Jellyfin／Kodi 掃描，可放 NAS）...",
-      "output_prefix": "輸出:",
+      "output_prefix": "離線網頁：",
       "settings_link": "設定",
-      "copy_path": "複製路徑",
+      "copy_path": "複製離線網頁路徑",
       "cross_machine_hint": "（與上面「輸出到」資料夾無關）strm 檔裡寫的是這台看到的唯讀來源影片路徑。若播放的 Emby／Jellyfin／Kodi 在別台機器、看到的路徑不同，請到設定頁設路徑替換規則。",
       "cross_machine_settings_link": "設定路徑替換"
     },
@@ -880,8 +880,8 @@
       "jellyfin_update_title": "補齊 poster + fanart",
       "last_run_prefix": "上次執行: ",
       "last_added": "(新增 {count} 部)",
-      "generate_idle": "產生網頁",
-      "generate_loading": "產生中...",
+      "generate_idle": "更新片庫",
+      "generate_loading": "更新中...",
       "nfo_idle": "補齊欄位",
       "nfo_loading": "補齊中...",
       "jellyfin_help_line1": "Jellyfin / Emby / Kodi 等媒體伺服器需要額外封面格式：",
@@ -928,7 +928,7 @@
       "missing_enrich_confirm_body_suffix": " 分鐘，是否繼續？",
       "missing_enrich_confirm_cancel": "取消",
       "missing_enrich_confirm_confirm": "確認補完",
-      "log_interrupted": "⚠ 生成被中斷（離開頁面）",
+      "log_interrupted": "⚠ 更新被中斷（離開頁面）",
       "status_preparing": "準備中...",
       "status_done_count": "完成！{count} 部影片",
       "status_done": "完成",
@@ -1019,7 +1019,7 @@
     },
     "dirty_modal": {
       "title": "尚未儲存的變更",
-      "body": "您有修改資料夾清單但未產生網頁，要如何處理？",
+      "body": "您有修改資料夾清單但還沒按「更新片庫」，要如何處理？",
       "cancel": "取消",
       "discard": "放棄變更",
       "save": "儲存並離開"
@@ -1041,7 +1041,7 @@
       "confirm": "確認刪除"
     },
     "leave_warning": {
-      "generating": "生成正在進行中，離開將會中斷操作！",
+      "generating": "更新正在進行中，離開將會中斷操作！",
       "image_check": "圖片檢查進行中，離開將會中斷！",
       "folder_dirty": "您有未儲存的資料夾變更",
       "confirm": "{message}確定要離開嗎？"
@@ -1092,8 +1092,8 @@
     "page_title": "影片瀏覽",
     "state": {
       "loading": "載入影片列表中...",
-      "empty": "尚未產生影片列表",
-      "generate_action": "產生列表",
+      "empty": "片庫還沒有影片",
+      "generate_action": "前往片庫管理",
       "retry": "重試"
     },
     "error": {
@@ -1307,7 +1307,7 @@
       "mask_save_failed": "裁切設定儲存失敗，請稍後再試",
       "mask_cover_changed": "封面已變更，請重新開啟裁切工具再試一次",
       "cover_unavailable": "這部片的封面現在讀不到——可能是檔案位置目前無法存取，或者封面檔本身不見了",
-      "cover_escape_hint": "找不到封面。可以把圖片用影片檔名命名放在影片旁邊（例：`ABC-123.mp4` → `ABC-123.jpg`），回掃描頁按一次「產生網頁」就會收進來；或按 ⚙ 手動指定番號重新刮。",
+      "cover_escape_hint": "找不到封面。可以把圖片用影片檔名命名放在影片旁邊（例：`ABC-123.mp4` → `ABC-123.jpg`），回片庫管理頁按一次「更新片庫」就會收進來；或按 ⚙ 手動指定番號重新刮。",
       "mask_confirm": "確認裁切位置",
       "mask_cancel": "取消裁切調整"
     },
@@ -1448,7 +1448,7 @@
       "subtitle": "從加入資料夾到補全資料，三步上手",
       "step1_title": "加入片庫資料夾",
       "step1_desc": "在 Scanner 追蹤你的 AV 影片資料夾",
-      "step2_title": "產生網頁",
+      "step2_title": "更新片庫",
       "step2_desc": "一鍵掃描並建立可瀏覽的收藏頁",
       "step3_title": "NFO 補全",
       "step3_desc": "缺封面或資料？點一下從網路自動補齊",
@@ -1505,7 +1505,7 @@
       "h6_pause": "暫停與繼續",
       "h6_generate_all": "批次整理",
       "h6_badge": "版本標記保留",
-      "add_folder": "<strong>拖入資料夾</strong>：只讀這一層的影片，不往子資料夾找；整座片庫請到「列表生成」頁的「掃描資料夾」加入",
+      "add_folder": "<strong>拖入資料夾</strong>：只讀這一層的影片，不往子資料夾找；整座片庫請到「片庫管理」頁的「掃描資料夾」加入",
       "add_filter": "<strong>自動過濾</strong>：排除非影片檔與小於設定大小的檔案",
       "add_batch": "<strong>批次搜尋</strong>：每批 20 個檔案，並發 2 個請求",
       "add_progress": "<strong>進度顯示</strong>：即時顯示搜尋進度（如：處理 15/100）",
@@ -1568,7 +1568,7 @@
       "manage_photo_path": "收藏女優的照片存放於 output/Gfriends/ 目錄下，換頭像時會自動展開女優的所有 alias 名做本地候選查詢"
     },
     "scanner": {
-      "title": "影片列表生成 (Scanner)",
+      "title": "片庫管理",
       "h6_features": "功能說明",
       "h6_output": "輸出檔案",
       "h6_subtitle": "字幕檔自動偵測",
@@ -1632,7 +1632,7 @@
       "beta_compilation": "tag 越完整（系列 / 片商 / cast）相似度越準；tag 很少的影片建議先補完 NFO",
       "h6_manage": "使用提示",
       "manage_enable": "無需設定，開箱即用",
-      "manage_scanner": "新增影片後 Scanner「產生網頁」時自動更新索引，無需手動操作"
+      "manage_scanner": "新增影片後在片庫管理頁按「更新片庫」時自動更新索引，無需手動操作"
     },
     "shortcuts": {
       "title": "快捷鍵",
@@ -1818,7 +1818,7 @@
     "done": "完成 🎉",
     "step1_title": "📂 加入片庫資料夾",
     "step1_content": "把放影片的資料夾加進來，也可以直接把資料夾拖進這個視窗<br>OpenAver 會掃出所有影片並建立瀏覽頁",
-    "step2_title": "▶ 產生網頁",
+    "step2_title": "▶ 更新片庫",
     "step2_content": "按下這顆按鈕，掃描 + 建立你的私人收藏頁<br>幾秒就好",
     "step3_title": "🌐 已整理過的直接匯入，缺的一鍵補",
     "step3_content": "已經用其他工具整理過的片會直接匯入，不重刮。<br>缺資料的片會像這樣列出來，按橘色按鈕就從網路一次補齊：",
