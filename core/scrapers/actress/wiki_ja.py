@@ -96,6 +96,12 @@ def _alias_cell_names(td) -> list:
     return _split_alias_text(_flatten(td.get_text(" | ", strip=True)))
 
 
+def _is_av_page(soup) -> bool:
+    """頁面文字含「AV女優」或「アダルトビデオ」才算 AV 女優頁（同名他業者頁 → 查無）。"""
+    text = soup.get_text()
+    return "AV女優" in text or "アダルトビデオ" in text
+
+
 def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
     """
     Parse Wikipedia JP HTML and extract infobox fields.
@@ -111,8 +117,8 @@ def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
         return None
 
     infobox = soup.find("table", class_=re.compile(r"infobox"))
-    if not infobox:
-        logger.debug(f"[wiki_ja] no infobox for {name}")
+    if not infobox or not _is_av_page(soup):
+        logger.debug(f"[wiki_ja] no infobox / not AV page for {name}")
         return None
 
     result: Dict = {
