@@ -444,6 +444,12 @@ export function searchStateBase() {
             return Math.round((batch.processed / batch.total) * 100);
         },
 
+        batchProgressText() {
+            const batch = this.batchState;
+            const key = batch.isPaused ? 'search.filelist.paused_prefix' : 'search.filelist.processing_prefix';
+            return window.t(key) + ' ' + batch.processed + '/' + batch.total;
+        },
+
         // ===== T2b: Scrape Progress Computed =====
         scrapePercent() {
             const sp = this.scrapeProgress;

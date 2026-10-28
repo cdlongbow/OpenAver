@@ -295,6 +295,7 @@
       "scrape_all_title": "整理所有已搜尋的檔案（重命名 + 建資料夾 + NFO）",
       "scrape_all": "批次整理",
       "processing_prefix": "處理中",
+      "paused_prefix": "已暫停",
       "organizing_prefix": "整理中",
       "remove_file": "移除此檔案",
       "scrape_nfo": "整理此片",
