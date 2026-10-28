@@ -556,10 +556,10 @@
       "system": "System Settings"
     },
     "favorite_folder": {
-      "pick_from_scanner": "Pick from Scanner folders",
-      "no_directories": "No Scanner folders configured",
-      "linked_text": "✓ Linked to Scanner",
-      "not_linked_text": "⚠ Not linked to Scanner"
+      "pick_from_scanner": "Pick from Library Manager folders",
+      "no_directories": "No Library Manager folders configured",
+      "linked_text": "✓ Linked to Library Manager",
+      "not_linked_text": "⚠ Not linked to Library Manager"
     },
     "search": {
       "uncensored_mode": "Uncensored Mode",
@@ -697,7 +697,7 @@
         "4k": "4K",
         "vr": "VR"
       },
-      "export_section": "Offline HTML export (for local viewing on Windows)",
+      "export_section": "Offline page export (for local viewing on Windows)",
       "export_notice": "This export file is designed for local double-click viewing on Windows; on macOS / Linux, use the app’s Showcase page instead. (Reason: covers are embedded via <code>file://</code>, which Mac browsers block for local cross-directory files.)",
       "mode_export_only_note": "Affects only this export file (not the app’s Showcase)"
     },
@@ -1297,7 +1297,7 @@
       "translate_no_nfo": "This title has no NFO yet. Enrich it first, then translate the title",
       "user_tags_label": "Custom Tags",
       "alias_label": "Aliases",
-      "alias_source_hint": "Synced from Scanner",
+      "alias_source_hint": "Synced from Library Manager",
       "mask_toggle": "Cover crop preview",
       "mask_detect_failed": "Focal detection failed. Please try again later.",
       "mask_focal_too_slow_auto_disabled": "Detecting the face on this cover took longer than 5 seconds, so we've turned off Auto Face Focus for you. Just drag to adjust the position directly — you can turn it back on anytime in Settings.",
@@ -1446,7 +1446,7 @@
       "title": "First time? Follow these 3 steps",
       "subtitle": "From adding your folder to filling metadata — three steps to get started",
       "step1_title": "Add Your Library Folder",
-      "step1_desc": "Track your AV video folder in Scanner",
+      "step1_desc": "Track your AV video folder in Library Manager",
       "step2_title": "Update Library",
       "step2_desc": "Scan and build a browsable collection page in one click",
       "step3_title": "NFO Fill",
@@ -1463,7 +1463,7 @@
     "tag_alias": {
       "title": "Tag Alias Management",
       "intro": "Manage Chinese/Japanese/English synonyms in one place so the search box, chip filters, and fuzzy exploration all speak the same language.",
-      "h6_scanner": "Create alias groups in Scanner",
+      "h6_scanner": "Create alias groups in Library Manager",
       "scanner_chipwall": "The chip wall lists all tag alias groups. Click \"+\" to add an alias; the primary name is shown in pink, aliases in grey.",
       "scanner_ai_hint": "Click \"?\" to open the AI suggestion panel: describe your tag needs to the AI and it returns suggested alias groups for direct import.",
       "h6_showcase": "Auto-expand in Showcase",
@@ -1562,17 +1562,17 @@
       "h6_manage": "Favorites Management",
       "manage_add": "Add favorites from Search or Showcase; profile photo is downloaded locally automatically",
       "manage_library": "The <strong>+</strong> next to the search bar opens an \"Add from library\" list: actresses already in your library sorted by title count, with aliases merged into a single person — tap the heart on any row to favorite her",
-      "manage_alias": "Alias management: add and edit actress aliases on the Scanner page; all known aliases are expanded automatically during search",
+      "manage_alias": "Alias management: add and edit actress aliases on the Library Manager page; all known aliases are expanded automatically during search",
       "manage_enrich": "Click 🔄 in lightbox to replace actress photo with cloud or local-video-cover candidates",
       "manage_photo_path": "Favorited actress photos are stored in the output/Gfriends/ directory; when changing a profile photo, all alias names are automatically expanded for local candidate lookup"
     },
     "scanner": {
       "title": "Library Manager",
       "h6_features": "Features",
-      "h6_output": "Output Files",
+      "h6_output": "Offline Page",
       "h6_subtitle": "Subtitle Auto-detection",
       "h6_jellyfin": "Jellyfin Image Mode",
-      "feat_scan": "Scans local video folders and generates a beautiful HTML showcase page",
+      "feat_scan": "Scans local video folders, updates your library, and can also produce an offline page",
       "feat_nfo": "Automatically reads NFO files and displays metadata",
       "feat_nfo_fill": "Supports 'NFO Fill': automatically searches for missing NFO files",
       "feat_terminal": "Built-in Mini Terminal shows real-time processing progress",
@@ -1586,7 +1586,7 @@
       "jellyfin_canonical": "With a media-manager mode selected, OpenAver <strong>no longer writes a same-name cover file</strong> — Jellyfin / Emby prefer that file, which is what puts landscape images on the poster wall. Existing titles keep whatever cover location they already have (so manual focal crops are not wiped); to fix one, delete its same-name cover yourself and regenerate.",
       "jellyfin_showcase": "After scanning, browse results on the <code>/showcase</code> page",
       "h6_strm_deploy": "Read-only source + letting Emby / Jellyfin / Kodi find your titles (cross-machine setup)",
-      "strm_deploy_step1": "After mounting the read-only cloud drive / NAS share on the OpenAver machine, check that folder as \"Read-only\" in the Scanner — OpenAver won't touch any file inside (no moving, renaming, or writing).",
+      "strm_deploy_step1": "After mounting the read-only cloud drive / NAS share on the OpenAver machine, check that folder as \"Read-only\" in the Library Manager — OpenAver won't touch any file inside (no moving, renaming, or writing).",
       "strm_deploy_step2": "Under \"Output to,\" specify a folder <strong>this machine can write to</strong> (which can be a writable NAS share mounted on this machine) — the generated <code>.strm</code> + NFO + covers go here, and you point Emby / Jellyfin / Kodi at it to build the library. This output folder is not the read-only source itself.",
       "strm_deploy_step4": "If you later change the mapping rules, the existing <code>.strm</code> files are rewritten automatically in one pass — no need to rebuild the whole library.",
       "h6_multiversion": "Multi-version manual merge (native Emby / Jellyfin feature)",
@@ -1600,7 +1600,7 @@
       "h6_modes": "Display Modes",
       "h6_sort": "Sort & Search",
       "h6_other": "Other Features",
-      "intro": "After Scanner finishes, browse your video library at the <code>/showcase</code> page.",
+      "intro": "After Library Manager finishes, browse your video library at the <code>/showcase</code> page.",
       "mode_grid": "<strong>Full Cover</strong>: cover wall showing the whole cover image; click to open the Lightbox (default)",
       "mode_poster": "<strong>Poster</strong>: shows only the right half of the cover (the front), so cards are narrower and more fit per row; phones and narrow windows always use this layout",
       "mode_list": "<strong>List Mode</strong>: Compact list, ideal for quick browsing",
@@ -1820,7 +1820,7 @@
     "step2_title": "▶ Update Library",
     "step2_content": "Click this button to scan and build your private collection page<br>Takes just a few seconds",
     "step3_title": "🌐 NFO Fill Entry Point",
-    "step3_content": "After scanning, return to the Scanner page<br>The NFO fill button appears automatically — fetch missing covers or metadata from the web in one click",
+    "step3_content": "After scanning, return to the Library Manager page<br>The NFO fill button appears automatically — fetch missing covers or metadata from the web in one click",
     "step4_title": "🎬 Browse Your Collection",
     "step4_content": "Open Showcase when done<br>The lightbox has a wand button to fuzzy-explore similar videos",
     "step5_title": "🔍 Advanced — Per-title Scraping",

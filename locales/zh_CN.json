@@ -332,8 +332,8 @@
       "no_valid_files": "无有效视频文件（无法识别番号）",
       "load_failed": "加载失败，请重试",
       "translate_failed": "翻译失败，请重试",
-      "db_not_synced": "未联动 — 整理完成后不会出现在 Showcase",
-      "db_sync_failed": "DB 同步失败（文件已整理但未出现在 Showcase）",
+      "db_not_synced": "未联动 — 整理完成后不会出现在浏览页",
+      "db_sync_failed": "DB 同步失败（文件已整理但未出现在浏览页）",
       "db_synced_mobile": "已入库",
       "browser_opened": "已打开浏览器",
       "no_translatable_titles": "没有需要翻译的标题",
@@ -556,10 +556,10 @@
       "system": "系统设置"
     },
     "favorite_folder": {
-      "pick_from_scanner": "从 Scanner 文件夹选取",
-      "no_directories": "尚未设置 Scanner 文件夹",
-      "linked_text": "✓ 已联动 Scanner",
-      "not_linked_text": "⚠ 未联动 Scanner"
+      "pick_from_scanner": "从片库管理文件夹选取",
+      "no_directories": "尚未设置片库管理文件夹",
+      "linked_text": "✓ 已联动片库管理",
+      "not_linked_text": "⚠ 未联动片库管理"
     },
     "search": {
       "uncensored_mode": "无码模式",
@@ -682,7 +682,7 @@
       "min_size_label": "最小视频尺寸",
       "min_size_hint": "0 = 不过滤",
       "tier_display": "列表显示默认",
-      "also_showcase_note": "也是你浏览页（Showcase）的默认",
+      "also_showcase_note": "也是你浏览页的默认",
       "cover_badges_label": "封面属性标签",
       "cover_badges_note": "在封面左上角显示中文字幕／无码／4K 等标签（只影响显示，不改标签本身）",
       "cover_badges_legend": "＊AI：无码破解（AI 算法去码），LEAK：无码流出（母带外流）",
@@ -697,9 +697,9 @@
         "4k": "4K",
         "vr": "VR"
       },
-      "export_section": "离线 HTML 导出（Windows 本机查看用）",
+      "export_section": "离线网页导出（Windows 本机查看用）",
       "export_notice": "此导出文件为 Windows 本机双击查看设计；macOS / Linux 请改用 app 浏览页。（成因：封面以 <code>file://</code> 嵌入，Mac 浏览器会拦截本机跨目录文件）",
-      "mode_export_only_note": "仅影响此导出文件（不影响 app Showcase）"
+      "mode_export_only_note": "仅影响此导出文件（不影响浏览页）"
     },
     "system": {
       "default_page_label": "启动时打开页面",
@@ -1297,7 +1297,7 @@
       "translate_no_nfo": "这部影片还没有 NFO，请先补全再翻译标题",
       "user_tags_label": "自定义标签",
       "alias_label": "别名",
-      "alias_source_hint": "由 Scanner 同步",
+      "alias_source_hint": "由片库管理同步",
       "mask_toggle": "封面裁切预览",
       "mask_detect_failed": "焦点检测失败，请稍后再试",
       "mask_focal_too_slow_auto_disabled": "这张封面找脸花了超过 5 秒，已经先帮你关掉自动对焦。想调整位置直接拖就可以，随时能到设置开回来。",
@@ -1446,7 +1446,7 @@
       "title": "第一次使用？先看这 3 步",
       "subtitle": "从加入文件夹到补全资料，三步上手",
       "step1_title": "加入片库文件夹",
-      "step1_desc": "在 Scanner 追踪你的 AV 视频文件夹",
+      "step1_desc": "在片库管理追踪你的 AV 视频文件夹",
       "step2_title": "更新片库",
       "step2_desc": "一键扫描并建立可浏览的收藏页",
       "step3_title": "NFO 补全",
@@ -1458,15 +1458,15 @@
     },
     "power_user": {
       "title": "想要更多控制？",
-      "intro": "喜欢自己掌握每个细节？OpenAver 给你完整的进阶入口 — 一片一片精准刮削、自定义命名规则、管理跨语言别名，详见下方 Search、Settings、Tag 别名管理段落。"
+      "intro": "喜欢自己掌握每个细节？OpenAver 给你完整的进阶入口 — 一片一片精准刮削、自定义命名规则、管理跨语言别名，详见下方搜索页、设置页、Tag 别名管理段落。"
     },
     "tag_alias": {
       "title": "Tag 别名管理",
       "intro": "中日英同义词集中管理，让搜索框、chip 筛选、模糊探索全部说同一种语言。",
-      "h6_scanner": "在 Scanner 建立别名组",
+      "h6_scanner": "在片库管理建立别名组",
       "scanner_chipwall": "chip 墙列出所有 Tag 别名组。点「+」新增 alias，主名（primary）以粉红色显示，别名以灰色显示。",
       "scanner_ai_hint": "点「?」开启 AI 建议框：把你的 tag 需求描述给 AI，它会回传建议的别名组供你直接汇入。",
-      "h6_showcase": "Showcase 自动展开",
+      "h6_showcase": "浏览页自动展开",
       "showcase_expand": "搜索框输入或 chip 点击时，自动展开同义词过滤，与女优别名行为对齐。",
       "showcase_click": "点任一 tag chip → 筛出所有同义 tag 的视频，不需要知道正确日文写法。",
       "h6_tips": "进阶提示",
@@ -1492,10 +1492,10 @@
       "grid_gallery": "点击「剧照」按钮可开启剧照浏览，支持键盘 <kbd class=\"kbd kbd-sm\">←</kbd> <kbd class=\"kbd kbd-sm\">→</kbd> 切换和触控滑动",
       "badge_keywords": "文件名含 <code>-4k</code>、<code>-uc</code> 等关键字时，结果卡片自动显示彩色 badge",
       "h6_advanced_picker": "高级搜索 Picker（Beta）",
-      "picker_longpress": "① 长按搜索按钮可挑选单一来源搜索（Beta，需在 Settings › 高级开启）",
+      "picker_longpress": "① 长按搜索按钮可挑选单一来源搜索（Beta，需在设置 › 高级开启）",
       "picker_panel_switch": "② 结果面板中 🔄 长按可切换来源",
-      "picker_showcase_enrich": "③④ 在 Showcase 封面墙或灯箱中，长按补缺按钮（🔍）→ 重新刮削现有片并指定来源。",
-      "picker_lightbox_gear": "⑤ 在 Showcase 灯箱中，点番号旁 ⚙ → 高级重刮现有片（单击即开，非长按）。"
+      "picker_showcase_enrich": "③④ 在浏览页封面墙或灯箱中，长按补缺按钮（🔍）→ 重新刮削现有片并指定来源。",
+      "picker_lightbox_gear": "⑤ 在浏览页灯箱中，点番号旁 ⚙ → 高级重刮现有片（单击即开，非长按）。"
     },
     "batch": {
       "title": "批次文件搜索",
@@ -1562,17 +1562,17 @@
       "h6_manage": "收藏管理",
       "manage_add": "从搜索页或浏览页加入收藏，照片自动下载至本地",
       "manage_library": "搜索栏旁的 <strong>+</strong> 可打开「从片库加入女优」列表：库内女优按片数由多到少排序，别名自动合并成同一人，逐行点爱心即可加入收藏",
-      "manage_alias": "别名管理：Scanner 页面可新增、编辑女优别名，搜索时自动展开所有已知名称",
+      "manage_alias": "别名管理：片库管理页面可新增、编辑女优别名，搜索时自动展开所有已知名称",
       "manage_enrich": "灯箱右上 🔄 可替换女优照片，候选来源含云端与本机视频封面",
       "manage_photo_path": "收藏女优的照片存放于 output/Gfriends/ 目录下，换头像时会自动展开女优的所有 alias 名做本地候选查询"
     },
     "scanner": {
       "title": "片库管理",
       "h6_features": "功能说明",
-      "h6_output": "输出文件",
+      "h6_output": "离线网页",
       "h6_subtitle": "字幕文件自动检测",
       "h6_jellyfin": "Jellyfin 图片模式",
-      "feat_scan": "扫描本地视频文件夹，生成精美的 HTML 展示页",
+      "feat_scan": "扫描本地视频文件夹并更新片库，同时可生成一份离线网页",
       "feat_nfo": "自动读取 NFO 文件并显示元数据",
       "feat_nfo_fill": "支持「NFO 补全」：自动搜索缺失的 NFO 文件",
       "feat_terminal": "内建 Mini Terminal 显示即时处理进度",
@@ -1586,7 +1586,7 @@
       "jellyfin_canonical": "选了媒体管理器模式后<strong>不再另外生成同名封面</strong>——那张图会被 Jellyfin／Emby 优先读取，导致封面墙出现横版图。既有的片维持原本的封面位置（以免清掉你已调整过的对焦），要修正请自行删掉该片的同名封面后重新生成。",
       "jellyfin_showcase": "扫描完成后可至 <code>/showcase</code> 页面浏览生成结果",
       "h6_strm_deploy": "只读来源 + 让 Emby／Jellyfin／Kodi 扫到片（跨机器部署）",
-      "strm_deploy_step1": "把只读网盘／NAS 共享挂到 OpenAver 这台后，在 Scanner 把该文件夹勾成「只读」——OpenAver 不会动里面任何文件（不搬移、不改名、不写入）。",
+      "strm_deploy_step1": "把只读网盘／NAS 共享挂到 OpenAver 这台后，在片库管理把该文件夹勾成「只读」——OpenAver 不会动里面任何文件（不搬移、不改名、不写入）。",
       "strm_deploy_step2": "在「输出到」指定一个<strong>这台能写入</strong>的文件夹（可以是挂载到这台的 NAS 可写共享）——生成的 <code>.strm</code>＋NFO＋封面会放这里，再让 Emby／Jellyfin／Kodi 指向它建媒体库。这个输出夹不是只读来源本身。",
       "strm_deploy_step4": "之后改了映射规则，既有的 <code>.strm</code> 会自动一次改写，不用重建整个媒体库。",
       "h6_multiversion": "同片多版本（流出 / 4K / 中文字幕）怎么在 Emby/Jellyfin 合并？",
@@ -1596,11 +1596,11 @@
       "strm_deploy_step3": "若播放的那台机器看到的只读来源路径跟 OpenAver 看到的不一样（例如 OpenAver 上是 <code>Z:\\115</code>、NAS 上是 <code>/volume1/115</code>），到<strong>设置页</strong>的「播放端路径替换」加一条对应规则，否则 <code>.strm</code> 会指向播放端找不到的路径。Jellyfin 10.11.7 起 <code>.strm</code> 只能指向网址（http／https／rtsp／rtp），写硬盘路径的 <code>.strm</code> 一律不播——不管硬盘在哪台机器；Emby、Kodi 不受影响。若你的云盘本来就通过 Alist／OpenList 等以 HTTP 提供，把「播放端路径替换」的播放端填成那个网址前缀即可（例：<code>/volume1/cloud</code> → <code>http://nas:5244/d/115</code>）。"
     },
     "showcase": {
-      "title": "视频浏览 (Showcase)",
+      "title": "视频浏览",
       "h6_modes": "显示模式",
       "h6_sort": "排序与搜索",
       "h6_other": "其他功能",
-      "intro": "Scanner 扫描完成后，可至 <code>/showcase</code> 页面浏览视频库。",
+      "intro": "片库管理扫描完成后，可至 <code>/showcase</code> 页面浏览视频库。",
       "mode_grid": "<strong>完整封面</strong>：整张封面的封面墙，点击开启 Lightbox（默认）",
       "mode_poster": "<strong>竖版海报</strong>：只显示封面右半（正面），卡片变窄、一行放得更多；手机／窄窗口一律使用此排版",
       "mode_list": "<strong>文字模式（List）</strong>：精简列表，适合快速浏览",
@@ -1623,7 +1623,7 @@
       "what_crop": "系列完全相符时额外加成，让同系列视频优先浮上来。",
       "what_diversity": "MMR diversity rerank（λ=0.7）让最终 12 颗结果兼顾相似度与多样性。",
       "h6_use": "使用方式",
-      "use_lightbox": "在 Showcase 视频模式打开 Lightbox → 左上角魔杖按钮 <i class=\"bi bi-magic\"></i> → 进入星空模式",
+      "use_lightbox": "在浏览页视频模式打开 Lightbox → 左上角魔杖按钮 <i class=\"bi bi-magic\"></i> → 进入星空模式",
       "use_constellation": "12 颗星辰绕中央主图排列；点任一颗即「钻入」变成新主图，无止境探索",
       "use_mobile": "手机（&lt; 768px）降级为主图下方 grid 显示前 4 张，不做星空动画",
       "h6_beta": "使用限制",
@@ -1636,7 +1636,7 @@
     "shortcuts": {
       "title": "快捷键",
       "h6_search": "搜索页",
-      "h6_showcase": "浏览页 (Showcase)",
+      "h6_showcase": "浏览页",
       "search_hint": "搜索框聚焦时所有快捷键停用，避免干扰输入。",
       "col_key": "按键",
       "col_context": "情境",
@@ -1719,7 +1719,7 @@
       "h6_what": "metatube 是什么",
       "what_desc": "metatube 是自建 HTTP server，连接后可一次解锁 30+ 上游 provider（适合 power user / docker 环境）",
       "h6_enable": "启用步骤",
-      "enable_gate": "Settings ›「搜索与刮削」开启 Metatube gate toggle → 连接区展开",
+      "enable_gate": "设置 ›「搜索与刮削」开启 Metatube gate toggle → 连接区展开",
       "enable_url": "填入 Server URL（如 http://你的-metatube:8080）+ 可选 Bearer token → 点 [连接]",
       "h6_sources": "来源管理",
       "sources_promote": "30+ provider 落入 Parts Bin，手动 promote 想要的进主力集（上限 10 个）",
@@ -1820,15 +1820,15 @@
     "step2_title": "▶ 更新片库",
     "step2_content": "按下这个按钮，扫描 + 建立你的私人收藏页<br>几秒就好",
     "step3_title": "🌐 NFO 补全入口",
-    "step3_content": "扫完后，回到 Scanner 页面<br>NFO 补全按钮会自动出现，缺封面或资料一键从网络补齐",
+    "step3_content": "扫完后，回到片库管理页面<br>NFO 补全按钮会自动出现，缺封面或资料一键从网络补齐",
     "step4_title": "🎬 浏览你的收藏",
-    "step4_content": "完成后从这里进 Showcase<br>灯箱里有魔杖按钮可以模糊探索类似片",
+    "step4_content": "完成后从这里进浏览页<br>灯箱里有魔杖按钮可以模糊探索类似片",
     "step5_title": "🔍 进阶 — 逐片刮削",
-    "step5_content": "想精准掌控每片的资料？<br>Search 让你一片一片手动处理",
+    "step5_content": "想精准掌控每片的资料？<br>搜索页让你一片一片手动处理",
     "step6_title": "⚙️ 进阶 — 自定义规则",
-    "step6_content": "命名格式、AI 翻译、视觉策略都在 Settings 里<br>玩透了再来",
+    "step6_content": "命名格式、AI 翻译、视觉策略都在设置页里<br>玩透了再来",
     "step7_title": "📖 说明手册",
-    "step7_content": "随时回来重看就好<br>Help 页也有功能详解与 AI agent 指令"
+    "step7_content": "随时回来重看就好<br>说明页也有功能详解与 AI agent 指令"
   },
   "updater": {
     "page_title": "更新器",

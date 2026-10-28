@@ -332,8 +332,8 @@
       "no_valid_files": "有効な動画ファイルがありません（番号を識別できません）",
       "load_failed": "読み込みに失敗しました。もう一度お試しください",
       "translate_failed": "翻訳に失敗しました。もう一度お試しください",
-      "db_not_synced": "未同期 — 整理完了後も Showcase に表示されません",
-      "db_sync_failed": "DB 同期失敗（ファイルは整理済みですが Showcase に表示されません）",
+      "db_not_synced": "未同期 — 整理完了後もブラウズに表示されません",
+      "db_sync_failed": "DB 同期失敗（ファイルは整理済みですがブラウズに表示されません）",
       "db_synced_mobile": "保存しました",
       "browser_opened": "ブラウザを開きました",
       "no_translatable_titles": "翻訳が必要なタイトルはありません",
@@ -556,10 +556,10 @@
       "system": "システム設定"
     },
     "favorite_folder": {
-      "pick_from_scanner": "Scanner のフォルダから選択",
-      "no_directories": "Scanner のフォルダが未設定です",
-      "linked_text": "✓ Scanner と連動済み",
-      "not_linked_text": "⚠ Scanner と未連動"
+      "pick_from_scanner": "ライブラリ管理のフォルダから選択",
+      "no_directories": "ライブラリ管理のフォルダが未設定です",
+      "linked_text": "✓ ライブラリ管理と連動済み",
+      "not_linked_text": "⚠ ライブラリ管理と未連動"
     },
     "search": {
       "uncensored_mode": "無修正モード",
@@ -682,7 +682,7 @@
       "min_size_label": "最小動画サイズ",
       "min_size_hint": "0 = フィルタなし",
       "tier_display": "リスト表示のデフォルト",
-      "also_showcase_note": "ブラウズ（Showcase）のデフォルトにもなります",
+      "also_showcase_note": "ブラウズのデフォルトにもなります",
       "cover_badges_label": "カバーの属性バッジ",
       "cover_badges_note": "カバーの左上に「字幕」「無修正」「4K」などのバッジを表示します（表示のみ。タグ自体は変更しません）",
       "cover_badges_legend": "＊AI：AI による無修正化、LEAK：無修正マスターの流出",
@@ -697,9 +697,9 @@
         "4k": "4K",
         "vr": "VR"
       },
-      "export_section": "オフライン HTML エクスポート（Windows ローカル閲覧用）",
+      "export_section": "オフラインページのエクスポート（Windows ローカル閲覧用）",
       "export_notice": "このエクスポートファイルは Windows でのローカル閲覧（ダブルクリック）向けです。macOS / Linux ではアプリのブラウズページをご利用ください。（理由：カバーが <code>file://</code> で埋め込まれており、Mac のブラウザはローカルの別ディレクトリのファイルをブロックします）",
-      "mode_export_only_note": "このエクスポートファイルのみに影響します（アプリの Showcase には影響しません）"
+      "mode_export_only_note": "このエクスポートファイルのみに影響します（アプリのブラウズには影響しません）"
     },
     "system": {
       "default_page_label": "起動時に開くページ",
@@ -1297,7 +1297,7 @@
       "translate_no_nfo": "この作品にはまだ NFO がありません。先に補完してから翻訳してください",
       "user_tags_label": "カスタムタグ",
       "alias_label": "別名",
-      "alias_source_hint": "Scanner から同期",
+      "alias_source_hint": "ライブラリ管理から同期",
       "mask_toggle": "カバーの切り抜きプレビュー",
       "mask_detect_failed": "焦点の検出に失敗しました。しばらくしてからもう一度お試しください。",
       "mask_focal_too_slow_auto_disabled": "このカバーの顔検出に5秒以上かかったため、自動フォーカスを先にオフにしました。位置を調整したい場合は直接ドラッグしてください。いつでも設定から再度オンにできます。",
@@ -1446,7 +1446,7 @@
       "title": "初めてですか？3ステップで始めましょう",
       "subtitle": "フォルダ追加からメタデータ補完まで、3ステップで始める",
       "step1_title": "ライブラリフォルダを追加",
-      "step1_desc": "Scanner で AV 動画フォルダをトラッキング",
+      "step1_desc": "ライブラリ管理で AV 動画フォルダをトラッキング",
       "step2_title": "ライブラリを更新",
       "step2_desc": "ワンクリックでスキャンして閲覧可能なコレクションページを作成",
       "step3_title": "NFO 補完",
@@ -1458,15 +1458,15 @@
     },
     "power_user": {
       "title": "もっと細かく制御したい方へ",
-      "intro": "細部まで自分で押さえたい方へ。OpenAver には本格的な詳細設定が揃っています — 1本ずつ精密にスクレイプ、命名規則のカスタマイズ、複数言語の別名管理など、下の Search・Settings・Tag エイリアス管理セクションをご覧ください。"
+      "intro": "細部まで自分で押さえたい方へ。OpenAver には本格的な詳細設定が揃っています — 1本ずつ精密にスクレイプ、命名規則のカスタマイズ、複数言語の別名管理など、下の検索・設定・Tag エイリアス管理セクションをご覧ください。"
     },
     "tag_alias": {
       "title": "Tag エイリアス管理",
       "intro": "中日英の同義語を一元管理することで、検索ボックス・chip フィルター・あいまい探索がすべて同じ言語で動きます。",
-      "h6_scanner": "Scanner でエイリアスグループを作成",
+      "h6_scanner": "ライブラリ管理でエイリアスグループを作成",
       "scanner_chipwall": "chip ウォールにすべての Tag エイリアスグループが表示されます。「+」をクリックして alias を追加。プライマリ名はピンク、エイリアスはグレーで表示されます。",
       "scanner_ai_hint": "「?」をクリックすると AI 提案パネルが開きます。tag の要件を AI に説明すると、提案エイリアスグループをそのままインポートできます。",
-      "h6_showcase": "Showcase で自動展開",
+      "h6_showcase": "ブラウズで自動展開",
       "showcase_expand": "検索ボックスに入力するか chip をクリックすると、同義語フィルターが自動展開されます。女優エイリアスと同じ動作です。",
       "showcase_click": "任意の tag chip をクリック → 同義語を持つすべての動画を絞り込み。正しい日本語表記を知らなくても大丈夫。",
       "h6_tips": "応用ヒント",
@@ -1492,10 +1492,10 @@
       "grid_gallery": "「サンプル」ボタンでサンプル画像ギャラリーを開く。キーボード <kbd class=\"kbd kbd-sm\">←</kbd> <kbd class=\"kbd kbd-sm\">→</kbd> とスワイプに対応",
       "badge_keywords": "ファイル名に <code>-4k</code> や <code>-uc</code> などのキーワードが含まれると、結果カードにカラーバッジが表示される",
       "h6_advanced_picker": "高度な検索 Picker（Beta）",
-      "picker_longpress": "① 検索ボタンを長押しすると単一ソースを選んで検索できます（Beta、Settings › 高度な設定で有効化が必要）",
+      "picker_longpress": "① 検索ボタンを長押しすると単一ソースを選んで検索できます（Beta、設定 › 高度な設定で有効化が必要）",
       "picker_panel_switch": "② 結果パネルの 🔄 を長押しするとソースを切り替えられます",
-      "picker_showcase_enrich": "③④ Showcase のカバーウォールまたはライトボックスで補完ボタン（🔍）を長押し → 既存作品を再スクレイプしてソースを指定。",
-      "picker_lightbox_gear": "⑤ Showcase のライトボックスで番号の横の ⚙ をクリック → 既存作品の高度な再スクレイプ（長押し不要、クリックで開く）。"
+      "picker_showcase_enrich": "③④ ブラウズのカバーウォールまたはライトボックスで補完ボタン（🔍）を長押し → 既存作品を再スクレイプしてソースを指定。",
+      "picker_lightbox_gear": "⑤ ブラウズのライトボックスで番号の横の ⚙ をクリック → 既存作品の高度な再スクレイプ（長押し不要、クリックで開く）。"
     },
     "batch": {
       "title": "バッチファイル検索",
@@ -1562,17 +1562,17 @@
       "h6_manage": "お気に入り管理",
       "manage_add": "検索ページまたはショーケースページからお気に入りに追加。プロフィール写真は自動でローカルに保存",
       "manage_library": "検索バー横の <strong>+</strong> で「ライブラリから女優を追加」一覧を開けます。ライブラリ内の女優が作品数の多い順に並び、別名は同一人物としてまとめられます。行のハートをタップすればお気に入りに追加されます",
-      "manage_alias": "別名管理：Scanner ページで女優の別名を追加・編集。検索時にすべての既知の別名が自動展開される",
+      "manage_alias": "別名管理：ライブラリ管理ページで女優の別名を追加・編集。検索時にすべての既知の別名が自動展開される",
       "manage_enrich": "ライトボックス右上の🔄で女優写真を変更（クラウドまたはローカル動画カバーから候補取得）",
       "manage_photo_path": "お気に入り女優の写真は output/Gfriends/ ディレクトリに保存されます。プロフィール写真を変更する際は、女優のすべての alias 名が自動展開されてローカル候補検索に使用されます"
     },
     "scanner": {
       "title": "ライブラリ管理",
       "h6_features": "機能",
-      "h6_output": "出力ファイル",
+      "h6_output": "オフラインページ",
       "h6_subtitle": "字幕自動検出",
       "h6_jellyfin": "Jellyfin 画像モード",
-      "feat_scan": "ローカル動画フォルダをスキャンして美しい HTML 展示ページを生成",
+      "feat_scan": "ローカル動画フォルダをスキャンしてライブラリを更新し、オフラインページも作成できます",
       "feat_nfo": "NFO ファイルを自動で読み込みメタデータを表示",
       "feat_nfo_fill": "「NFO 補完」に対応：欠損した NFO ファイルを自動検索",
       "feat_terminal": "内蔵 Mini Terminal でリアルタイム処理進捗を表示",
@@ -1586,7 +1586,7 @@
       "jellyfin_canonical": "メディアマネージャーモードを選ぶと<strong>同名のカバー画像は生成されなくなります</strong>——そのファイルは Jellyfin／Emby が優先的に読み込むため、ポスターウォールに横長画像が並ぶ原因になります。既存の作品はカバーの場所をそのまま維持します（手動で調整したフォーカス位置を消さないため）。修正したい場合は該当作品の同名カバーを削除してから再生成してください。",
       "jellyfin_showcase": "スキャン完了後、<code>/showcase</code> ページで生成結果を閲覧可能",
       "h6_strm_deploy": "読み取り専用ソース + Emby／Jellyfin／Kodi に作品をスキャンさせる（マシンをまたぐ配置）",
-      "strm_deploy_step1": "読み取り専用のオンラインストレージ／NAS 共有を OpenAver のマシンにマウントしたら、Scanner でそのフォルダーを「読み取り専用」にチェックします——OpenAver は中のファイルを一切変更しません（移動・リネーム・書き込みなし）。",
+      "strm_deploy_step1": "読み取り専用のオンラインストレージ／NAS 共有を OpenAver のマシンにマウントしたら、ライブラリ管理でそのフォルダーを「読み取り専用」にチェックします——OpenAver は中のファイルを一切変更しません（移動・リネーム・書き込みなし）。",
       "strm_deploy_step2": "「出力先」に<strong>このマシンで書き込める</strong>フォルダー（このマシンにマウントした NAS の書き込み可能な共有でも可）を指定します——生成される <code>.strm</code>＋NFO＋表紙がここに置かれ、それを Emby／Jellyfin／Kodi に指定してライブラリを作らせます。この出力フォルダーは読み取り専用ソースそのものではありません。",
       "strm_deploy_step4": "その後マッピングルールを変更すると、既存の <code>.strm</code> が一括で自動的に書き換えられ、ライブラリ全体を作り直す必要はありません。",
       "h6_multiversion": "同一作品の複数版（流出 / 4K / 字幕）を Emby/Jellyfin で結合するには？",
@@ -1596,11 +1596,11 @@
       "strm_deploy_step3": "再生するマシンから見える読み取り専用ソースのパスが OpenAver から見えるパスと異なる場合（例：OpenAver 上では <code>Z:\\115</code>、NAS 上では <code>/volume1/115</code>）、<strong>設定ページ</strong>の「再生側パスの置換」に対応ルールを追加してください。追加しないと、<code>.strm</code> が再生側で見つからないパスを指してしまいます。Jellyfin 10.11.7 以降、<code>.strm</code> が指せるのは URL（http／https／rtsp／rtp）のみで、ディスクのパスを書いた <code>.strm</code> はディスクがどのマシンにあっても再生されません。Emby と Kodi は影響を受けません。クラウドドライブが Alist／OpenList などで HTTP 提供されている場合は、「再生側パスの置換」の再生側にその URL 接頭辞を入力してください（例：<code>/volume1/cloud</code> → <code>http://nas:5244/d/115</code>）。"
     },
     "showcase": {
-      "title": "動画ブラウザ（Showcase）",
+      "title": "動画ブラウザ",
       "h6_modes": "表示モード",
       "h6_sort": "ソートと検索",
       "h6_other": "その他の機能",
-      "intro": "Scanner 完了後、<code>/showcase</code> ページで動画ライブラリを閲覧できます。",
+      "intro": "ライブラリ管理でスキャン完了後、<code>/showcase</code> ページで動画ライブラリを閲覧できます。",
       "mode_grid": "<strong>カバー全体</strong>：ジャケット全体を並べるカバーウォール。クリックで Lightbox を開きます（既定）",
       "mode_poster": "<strong>縦型ポスター</strong>：ジャケットの右半分（表面）だけを表示。カードが細くなり 1 行に多く並びます。スマホ／狭いウィンドウでは常にこのレイアウトです",
       "mode_list": "<strong>リストモード</strong>：コンパクトなリスト、素早い閲覧に最適",
@@ -1623,7 +1623,7 @@
       "what_crop": "シリーズが完全一致の場合はボーナスが加算され、同シリーズの動画が優先表示される。",
       "what_diversity": "MMR diversity rerank（λ=0.7）により、最終 12 個の結果は類似度と多様性を両立する。",
       "h6_use": "使い方",
-      "use_lightbox": "Showcase の動画モードで Lightbox を開く → 左上の魔法杖ボタン <i class=\"bi bi-magic\"></i> → 星空モードへ",
+      "use_lightbox": "ブラウズの動画モードで Lightbox を開く → 左上の魔法杖ボタン <i class=\"bi bi-magic\"></i> → 星空モードへ",
       "use_constellation": "12 個の星が中央の主画像を囲む；どれかをクリックすると「潜り込んで」新しい主画像になり、無限に探索できる",
       "use_mobile": "スマートフォン（&lt; 768px）ではアニメーションなしで主画像下の grid に上位 4 枚を表示",
       "h6_beta": "制限事項",
@@ -1636,7 +1636,7 @@
     "shortcuts": {
       "title": "キーボードショートカット",
       "h6_search": "検索ページ",
-      "h6_showcase": "ブラウズページ（Showcase）",
+      "h6_showcase": "ブラウズページ",
       "search_hint": "検索ボックスにフォーカスがある間はすべてのショートカットが無効になります。",
       "col_key": "キー",
       "col_context": "状況",
@@ -1719,7 +1719,7 @@
       "h6_what": "metatube とは",
       "what_desc": "metatube は自己ホスト型 HTTP サーバーです。接続すると 30 以上のアップストリーム provider を一度に解放できます（power user / Docker 環境向け）",
       "h6_enable": "有効化の手順",
-      "enable_gate": "Settings ›「検索・スクレイプ」で Metatube の gate トグルをオン → 接続エリアが展開されます",
+      "enable_gate": "設定 ›「検索・スクレイプ」で Metatube の gate トグルをオン → 接続エリアが展開されます",
       "enable_url": "Server URL（例：http://あなたの-metatube:8080）と任意の Bearer token を入力 → [接続] をクリック",
       "h6_sources": "ソース管理",
       "sources_promote": "30 以上の provider が Parts Bin に入り、使いたいものを手動で主力集に promote します（上限 10 個）",
@@ -1820,15 +1820,15 @@
     "step2_title": "▶ ライブラリを更新",
     "step2_content": "このボタンを押してスキャン + プライベートコレクションページを作成<br>数秒で完了します",
     "step3_title": "🌐 NFO 補完の入口",
-    "step3_content": "スキャン後、Scanner ページに戻ってください<br>NFO 補完ボタンが自動的に表示されます。カバーやデータが不足していればワンクリックでネットから補完",
+    "step3_content": "スキャン後、ライブラリ管理ページに戻ってください<br>NFO 補完ボタンが自動的に表示されます。カバーやデータが不足していればワンクリックでネットから補完",
     "step4_title": "🎬 コレクションを閲覧",
-    "step4_content": "完了後は Showcase へ<br>ライトボックスに魔法杖ボタンがあり、類似作品をあいまい探索できます",
+    "step4_content": "完了後はブラウズへ<br>ライトボックスに魔法杖ボタンがあり、類似作品をあいまい探索できます",
     "step5_title": "🔍 上級者向け — 1本ずつスクレイプ",
-    "step5_content": "各タイトルのデータを精密に管理したい方は？<br>Search で1本ずつ手動処理できます",
+    "step5_content": "各タイトルのデータを精密に管理したい方は？<br>検索で1本ずつ手動処理できます",
     "step6_title": "⚙️ 上級者向け — カスタムルール",
-    "step6_content": "命名形式・AI翻訳・表示設定はすべて Settings にあります<br>慣れてから試してみてください",
+    "step6_content": "命名形式・AI翻訳・表示設定はすべて設定にあります<br>慣れてから試してみてください",
     "step7_title": "📖 使い方ガイド",
-    "step7_content": "いつでも戻って見直してください<br>Help ページには機能詳解と AI agent コマンドもあります"
+    "step7_content": "いつでも戻って見直してください<br>ヘルプページには機能詳解と AI agent コマンドもあります"
   },
   "updater": {
     "page_title": "アップデーター",

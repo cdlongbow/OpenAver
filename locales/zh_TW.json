@@ -332,8 +332,8 @@
       "no_valid_files": "無有效影片檔案（無法識別番號）",
       "load_failed": "載入失敗，請重試",
       "translate_failed": "翻譯失敗，請重試",
-      "db_not_synced": "未連動 — 整理完成後不會出現在 Showcase",
-      "db_sync_failed": "DB 同步失敗（檔案已整理但未出現在 Showcase）",
+      "db_not_synced": "未連動 — 整理完成後不會出現在瀏覽頁",
+      "db_sync_failed": "DB 同步失敗（檔案已整理但未出現在瀏覽頁）",
       "db_synced_mobile": "已入庫",
       "browser_opened": "已開啟瀏覽器",
       "no_translatable_titles": "沒有需要翻譯的標題",
@@ -556,10 +556,10 @@
       "system": "系統設定"
     },
     "favorite_folder": {
-      "pick_from_scanner": "從 Scanner 資料夾選取",
-      "no_directories": "尚未設定 Scanner 資料夾",
-      "linked_text": "✓ 已連動 Scanner",
-      "not_linked_text": "⚠ 未連動 Scanner"
+      "pick_from_scanner": "從片庫管理資料夾選取",
+      "no_directories": "尚未設定片庫管理資料夾",
+      "linked_text": "✓ 已連動片庫管理",
+      "not_linked_text": "⚠ 未連動片庫管理"
     },
     "search": {
       "uncensored_mode": "無碼模式",
@@ -682,7 +682,7 @@
       "min_size_label": "最小影片尺寸",
       "min_size_hint": "掃描 / 入庫閾值 — 0 = 不過濾；小於此不入庫（決定你看得到哪些片）",
       "tier_display": "列表顯示預設",
-      "also_showcase_note": "也是你瀏覽頁（Showcase）的預設",
+      "also_showcase_note": "也是你瀏覽頁的預設",
       "cover_badges_label": "封面屬性標籤",
       "cover_badges_note": "在封面左上角顯示中文字幕／無碼／4K 等標籤（只影響顯示，不改標籤本身）",
       "cover_badges_legend": "＊AI：無碼破解（AI 演算法去碼），LEAK：無碼流出（母帶外流）",
@@ -697,9 +697,9 @@
         "4k": "4K",
         "vr": "VR"
       },
-      "export_section": "離線 HTML 匯出（Windows 本機檢視用）",
+      "export_section": "離線網頁匯出（Windows 本機檢視用）",
       "export_notice": "此匯出檔為 Windows 本機雙擊檢視設計；macOS / Linux 請改用 app 瀏覽頁。（成因：封面以 <code>file://</code> 嵌入，Mac 瀏覽器會封鎖本機跨目錄檔）",
-      "mode_export_only_note": "僅影響此匯出檔（不影響 app Showcase）"
+      "mode_export_only_note": "僅影響此匯出檔（不影響瀏覽頁）"
     },
     "system": {
       "default_page_label": "啟動時開啟頁面",
@@ -1297,7 +1297,7 @@
       "translate_no_nfo": "這部片還沒有 NFO，請先補完再翻譯標題",
       "user_tags_label": "自訂標籤",
       "alias_label": "別名",
-      "alias_source_hint": "由 Scanner 同步",
+      "alias_source_hint": "由片庫管理同步",
       "mask_toggle": "封面裁切預覽",
       "mask_detect_failed": "焦點偵測失敗，請稍後再試",
       "mask_focal_too_slow_auto_disabled": "這張封面找臉花了超過 5 秒，已經先幫你關掉自動對焦。想調整位置直接拖就可以，隨時能到設定開回來。",
@@ -1446,7 +1446,7 @@
       "title": "第一次使用？先看這 3 步",
       "subtitle": "從加入資料夾到補全資料，三步上手",
       "step1_title": "加入片庫資料夾",
-      "step1_desc": "在 Scanner 追蹤你的 AV 影片資料夾",
+      "step1_desc": "在片庫管理追蹤你的 AV 影片資料夾",
       "step2_title": "更新片庫",
       "step2_desc": "一鍵掃描並建立可瀏覽的收藏頁",
       "step3_title": "NFO 補全",
@@ -1458,15 +1458,15 @@
     },
     "power_user": {
       "title": "想要更多控制？",
-      "intro": "想要更細的控制？OpenAver 提供完整入口 — 一片一片刮削、自訂命名規則、管理跨語言別名，詳見下方 Search、Settings、Tag 別名管理段落。"
+      "intro": "想要更細的控制？OpenAver 提供完整入口 — 一片一片刮削、自訂命名規則、管理跨語言別名，詳見下方搜尋頁、設定頁、Tag 別名管理段落。"
     },
     "tag_alias": {
       "title": "Tag 別名管理",
       "intro": "中日英同義詞集中管理，讓搜尋框、chip 篩選、模糊探索全部說同一種語言。",
-      "h6_scanner": "在 Scanner 建立別名組",
+      "h6_scanner": "在片庫管理建立別名組",
       "scanner_chipwall": "chip 牆列出所有 Tag 別名組。點「+」新增 alias，主名（primary）以粉紅色顯示，別名以灰色顯示。",
       "scanner_ai_hint": "點「?」開啟 AI 建議框：把你的 tag 需求描述給 AI，它會回傳建議的別名組供你直接匯入。",
-      "h6_showcase": "Showcase 自動展開",
+      "h6_showcase": "瀏覽頁自動展開",
       "showcase_expand": "搜尋框輸入或 chip 點擊時，自動展開同義詞過濾，與女優別名行為對齊。",
       "showcase_click": "點任一 tag chip → 篩出所有同義 tag 的影片，不需要知道正確日文寫法。",
       "h6_tips": "進階提示",
@@ -1494,8 +1494,8 @@
       "h6_advanced_picker": "進階搜尋 Picker",
       "picker_longpress": "① 搜尋列輸入番號後，點「自動」膠囊可挑選單一來源搜尋",
       "picker_panel_switch": "② 結果面板點目前來源膠囊可換來源（picker 內「自動」＝循環下一個來源）",
-      "picker_showcase_enrich": "③④ 在 Showcase 封面牆或燈箱中，點補資料鈕（🔍）即自動補缺",
-      "picker_lightbox_gear": "⑤ 在 Showcase 燈箱中，點番號旁 ⚙ 可進階重刮並指定來源"
+      "picker_showcase_enrich": "③④ 在瀏覽頁封面牆或燈箱中，點補資料鈕（🔍）即自動補缺",
+      "picker_lightbox_gear": "⑤ 在瀏覽頁燈箱中，點番號旁 ⚙ 可進階重刮並指定來源"
     },
     "batch": {
       "title": "批次檔案搜尋",
@@ -1562,17 +1562,17 @@
       "h6_manage": "收藏管理",
       "manage_add": "從搜尋頁或瀏覽頁加入收藏，照片自動下載至本地",
       "manage_library": "搜尋列旁的 <strong>+</strong> 可開啟「從片庫加入女優」清單：庫內女優依片數由多到少排序，別名自動合併成同一人，逐列點愛心即可加入收藏",
-      "manage_alias": "別名管理：Scanner 頁面可新增、編輯女優別名，搜尋時自動展開所有已知名稱",
+      "manage_alias": "別名管理：片庫管理頁面可新增、編輯女優別名，搜尋時自動展開所有已知名稱",
       "manage_enrich": "燈箱右上 🔄 可替換女優照片（候選含雲端與本機影片封面，也可上傳自己的照片）；按人像框圖示可調整照片的對焦裁切位置",
       "manage_photo_path": "收藏女優的照片存放於 output/Gfriends/ 目錄下，換頭像時會自動展開女優的所有 alias 名做本地候選查詢"
     },
     "scanner": {
       "title": "片庫管理",
       "h6_features": "功能說明",
-      "h6_output": "輸出檔案",
+      "h6_output": "離線網頁",
       "h6_subtitle": "字幕檔自動偵測",
       "h6_jellyfin": "外部媒體管理器模式",
-      "feat_scan": "掃描本地影片資料夾，生成精美的 HTML 展示頁",
+      "feat_scan": "掃描本地影片資料夾並更新片庫，同時可產生一份離線網頁",
       "feat_nfo": "自動讀取 NFO 檔案並顯示元數據",
       "feat_nfo_fill": "「就地補資料」：原地補缺失的 NFO + 封面，不改名、不搬位 — 適合唯讀網盤、已有自己的資料夾結構，或只想瀏覽不被改檔案",
       "feat_terminal": "內建 Mini Terminal 顯示即時處理進度",
@@ -1586,7 +1586,7 @@
       "jellyfin_canonical": "選了媒體管理器模式後<strong>不再另外產生同名封面</strong>——那張圖會被 Jellyfin／Emby 優先讀取，造成封面牆出現橫式圖。既有的片維持原本的封面位置（以免清掉你已調整過的對焦），要修正請自行刪掉該片的同名封面後重新產生。",
       "jellyfin_showcase": "掃描完成後可至 <code>/showcase</code> 頁面瀏覽生成結果",
       "h6_strm_deploy": "唯讀來源 + 讓 Emby／Jellyfin／Kodi 掃到片（跨機器部署）",
-      "strm_deploy_step1": "把唯讀網盤／NAS 分享掛到 OpenAver 這台後，在 Scanner 把該資料夾勾成「唯讀」——OpenAver 不會動裡面任何檔案（不搬移、不改名、不寫入）。",
+      "strm_deploy_step1": "把唯讀網盤／NAS 分享掛到 OpenAver 這台後，在片庫管理把該資料夾勾成「唯讀」——OpenAver 不會動裡面任何檔案（不搬移、不改名、不寫入）。",
       "strm_deploy_step2": "在「輸出到」指定一個<strong>這台能寫入</strong>的資料夾（可以是掛載到這台的 NAS 可寫共享）——生成的 <code>.strm</code>＋NFO＋封面會放這裡，再讓 Emby／Jellyfin／Kodi 指向它建媒體庫。這個輸出夾不是唯讀來源本身。",
       "strm_deploy_step3": "若播放的那台機器看到的唯讀來源路徑跟 OpenAver 看到的不一樣（例如 OpenAver 上是 <code>Z:\\115</code>、NAS 上是 <code>/volume1/115</code>），到<strong>設定頁</strong>的「播放端路徑替換」加一條對應規則，否則 <code>.strm</code> 會指向播放端找不到的路徑。Jellyfin 10.11.7 起 <code>.strm</code> 只能指向網址（http／https／rtsp／rtp），寫硬碟路徑的 <code>.strm</code> 一律不播——不管硬碟在哪台機器；Emby、Kodi 不受影響。若你的雲端硬碟本來就透過 Alist／OpenList 等以 HTTP 提供，把「播放端路徑替換」的播放端填成那個網址前綴即可（例：<code>/volume1/cloud</code> → <code>http://nas:5244/d/115</code>）。",
       "strm_deploy_step4": "之後改了映射規則，既有的 <code>.strm</code> 會自動一次改寫，不用重建整個媒體庫。",
@@ -1596,11 +1596,11 @@
       "multiversion_rule2": "多版本與 cd1/cd2 多段<strong>不能同時用於同一部片</strong>（媒體伺服器官方限制）"
     },
     "showcase": {
-      "title": "影片瀏覽 (Showcase)",
+      "title": "影片瀏覽",
       "h6_modes": "顯示模式",
       "h6_sort": "排序與搜尋",
       "h6_other": "其他功能",
-      "intro": "Scanner 掃描完成後，可至 <code>/showcase</code> 頁面瀏覽影片庫。",
+      "intro": "片庫管理掃描完成後，可至 <code>/showcase</code> 頁面瀏覽影片庫。",
       "mode_grid": "<strong>完整封面</strong>：整張封面的封面牆，點擊開啟 Lightbox（預設）",
       "mode_poster": "<strong>直式海報</strong>：只顯示封面右半（正面），卡片變窄、一列放得更多；手機／窄視窗一律使用此排版",
       "mode_list": "<strong>文字模式（List）</strong>：精簡列表，適合快速瀏覽（預設不顯示；可至「設定」→「列表顯示預設」開啟「顯示表格與清單」）",
@@ -1623,7 +1623,7 @@
       "what_crop": "系列完全相符時額外加成，讓同系列影片優先浮上來。",
       "what_diversity": "MMR diversity rerank（λ=0.7）讓最終 12 顆結果兼顧相似度與多樣性。",
       "h6_use": "使用方式",
-      "use_lightbox": "在 Showcase 影片模式打開 Lightbox → 左上角魔杖按鈕 <i class=\"bi bi-magic\"></i> → 進入星空模式",
+      "use_lightbox": "在瀏覽頁影片模式打開 Lightbox → 左上角魔杖按鈕 <i class=\"bi bi-magic\"></i> → 進入星空模式",
       "use_constellation": "12 顆星辰繞中央主圖排列；點任一顆即「鑽入」變成新主圖，無止境探索",
       "use_mobile": "手機（&lt; 768px）降級為主圖下方 grid 顯示前 4 張，不做星空動畫",
       "h6_beta": "使用限制",
@@ -1636,7 +1636,7 @@
     "shortcuts": {
       "title": "快捷鍵",
       "h6_search": "搜尋頁",
-      "h6_showcase": "瀏覽頁 (Showcase)",
+      "h6_showcase": "瀏覽頁",
       "search_hint": "搜尋框聚焦時所有快捷鍵停用，避免干擾輸入。",
       "col_key": "按鍵",
       "col_context": "情境",
@@ -1719,7 +1719,7 @@
       "h6_what": "metatube 是什麼",
       "what_desc": "metatube 是自架 HTTP server，連接後可一次解鎖 30+ 上游 provider（適合 power user / docker 環境）",
       "h6_enable": "啟用步驟",
-      "enable_gate": "Settings ›「搜尋與刮削」開啟 Metatube gate toggle → 連線區展開",
+      "enable_gate": "設定 ›「搜尋與刮削」開啟 Metatube gate toggle → 連線區展開",
       "enable_url": "填入 Server URL（如 http://你的-metatube:8080）+ 可選 Bearer token → 點 [連線]",
       "h6_sources": "來源管理",
       "sources_promote": "30+ provider 落入 Parts Bin，手動 promote 想要的進主力集（上限 10 個）",
@@ -1822,13 +1822,13 @@
     "step3_title": "🌐 已整理過的直接匯入，缺的一鍵補",
     "step3_content": "已經用其他工具整理過的片會直接匯入，不重刮。<br>缺資料的片會像這樣列出來，按橘色按鈕就從網路一次補齊：",
     "step4_title": "🎬 瀏覽你的收藏",
-    "step4_content": "完成後從這裡進 Showcase<br>燈箱裡有魔杖按鈕可以模糊探索類似片",
+    "step4_content": "完成後從這裡進瀏覽頁<br>燈箱裡有魔杖按鈕可以模糊探索類似片",
     "step5_title": "🔍 進階 — 逐片刮削",
-    "step5_content": "想精準掌控每片的資料？<br>Search 讓你一片一片手動處理",
+    "step5_content": "想精準掌控每片的資料？<br>搜尋頁讓你一片一片手動處理",
     "step6_title": "⚙️ 進階 — 自訂規則",
-    "step6_content": "命名格式、AI 翻譯、視覺策略都在 Settings 裡<br>玩透了再來",
+    "step6_content": "命名格式、AI 翻譯、視覺策略都在設定頁裡<br>玩透了再來",
     "step7_title": "📖 說明手冊",
-    "step7_content": "隨時回來重看就好<br>Help 頁也有功能詳解與 AI agent 指令"
+    "step7_content": "隨時回來重看就好<br>說明頁也有功能詳解與 AI agent 指令"
   },
   "updater": {
     "page_title": "更新器",
