@@ -479,7 +479,7 @@
 }
 
 /* 146a-T4: explainer 行首 icon —— 與上方對應按鈕的圖示同一個 glyph（spec §6.4）。
-   星＝btnFavorite（btn-warning，恆為琥珀）故用 warning；
+   收件匣＝btnFavorite（btn-warning，恆為琥珀）故用 warning；
    時鐘＝btnAutoOrganize，該鈕預設狀態是 btn-outline（中性），
    故不覆寫顏色、沿用說明行本身的 muted 色，維持整區克制。 */
 .empty-explainer-line .explainer-icon {

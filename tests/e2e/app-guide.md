@@ -13,7 +13,7 @@ python -m web.app  # http://localhost:8000
 
 ### Sidebar 導航
 - 點擊左上 hamburger button 開啟
-- 5 個連結：搜尋(/search)、列表生成(/scanner)、瀏覽(/showcase)、說明(/help)、設定(/settings)
+- 5 個連結：搜尋(/search)、片庫管理(/scanner)、瀏覽(/showcase)、說明(/help)、設定(/settings)
 
 ### Alpine State 存取
 ```javascript
@@ -121,7 +121,7 @@ document.querySelectorAll('.info-row').forEach(row => {
 - 女優畫廊模式（Beta toggle）
 - 無碼模式（toggle）
 - Proxy 位址 + 範圍（僅 DMM｜所有來源）
-- 我的最愛資料夾路徑
+- 待整理資料夾路徑
 - 啟用標題翻譯（toggle）
 
 ---
@@ -134,10 +134,10 @@ document.querySelectorAll('.info-row').forEach(row => {
 
 ---
 
-## Scanner 頁 (/scanner)
+## 片庫管理頁 (/scanner)
 
 - 掃描資料夾列表（已設定的路徑）
-- 「產生網頁」按鈕觸發掃描 + HTML 生成
+- 「更新片庫」按鈕觸發掃描 + HTML 生成
 - 快取影片數顯示
 - **加入資料夾需要 PyWebView file dialog，Playwright MCP 無法觸發**
 

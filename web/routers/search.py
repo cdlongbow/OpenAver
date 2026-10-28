@@ -983,7 +983,7 @@ def get_favorite_files() -> dict:
         logger.error("路徑轉換失敗: %s", e)
         return {
             "success": False,
-            "error": "路徑轉換失敗，請檢查我的最愛資料夾設定",
+            "error": "路徑轉換失敗，請檢查待整理資料夾設定",
             "folder": original_folder
         }
 

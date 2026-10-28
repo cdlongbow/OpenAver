@@ -106,7 +106,7 @@ Download from [GitHub Releases](https://github.com/slive777/OpenAver/releases/la
 
 > ⚠️ The manual ZIP needs one extra step to clear security restrictions — see the included document. macOS is Apple Silicon only.
 
-The first time you open it, an onboarding tour walks you through picking a folder and pressing "Generate" — no need to read the docs first.
+The first time you open it, an onboarding tour walks you through picking a folder and pressing "Update Library" — no need to read the docs first.
 
 > 🐧 **Linux**: No official installer, but you can set it up yourself as a LAN server and use it from a browser — see [`docs/linux-server.md`](docs/linux-server.md).
 
@@ -116,7 +116,7 @@ The first time you open it, an onboarding tour walks you through picking a folde
 
 ## Core Features
 
-### 📋 Scanner: Bring your existing collection in first
+### 📋 Library Manager: Bring your existing collection in first
 
 - **Recognizes what others already organized**: reads a `.nfo`'s title, actress, tags, maker, series, and date, plus covers with common names (`-poster`, `fanart`, `folder`…) and `extrafanart/`.
 - **Fills only what's missing**: titles missing an NFO or cover are listed, one click fills them in from the web; only empty fields are filled, existing data is never overwritten.
@@ -137,18 +137,18 @@ The first time you open it, an onboarding tour walks you through picking a folde
 - **Similar exploration**: tap the wand and similar titles circle the main cover; works offline.
 - **Shows up right after organizing**: a title organized on the Search page flies straight into Showcase; if your library location can't be reached, the status bar names which one.
 - **Browse on phone or tablet too**: flip to "Server" in Settings and same-Wi-Fi devices can browse in a browser; flip back to "Standalone" to close access. The interface is redone for touch.
-- **Browse offline too**: one click in Settings exports a standalone HTML file you can open without the app.
+- **Browse offline too**: one click in Settings exports an offline page you can open without the app.
 
 ### 🔍 Search: where new titles come in
 
 - **Queries all 8 sources at once**: matched against your library, collected titles are flagged; JavDB goes through its official app's data channel, so it still works even when blocked, and covers come back without a watermark.
 - **Drag in files or a folder**: IDs are recognized automatically, metadata is looked up in batch, and covers and stills are pulled in. UC/LEAK/4K in a filename becomes a tag.
-- **Dropping a folder reads only that top level, not subfolders**: for your whole library, add it with "Scan Folders" on the Scanner page.
+- **Dropping a folder reads only that top level, not subfolders**: for your whole library, add it with "Scan Folders" on the Library Manager page.
 - **Fuzzy search relays across three sources**: type an actress, series, director, maker, or ID prefix and it lists their titles. JavBus, DMM, and JavDB take turns in your order; DMM includes pre-orders.
 - **Latest works from makers**: before you search, the makers you've collected from most recently are listed under the search box; click one to see what it released lately.
 - **Look before you organize**: check the cover, cast, and tags in the detail view first; only when you press "Organize" does it rename, create the folder, write the NFO, and download the cover.
 - **Wishlist**: save a title you want but don't own yet. Its cover is stored locally so it won't break if the source site goes down, and it disappears once the title is collected.
-- **Scheduled Organize**: a toggle next to "Favorites" (your finished-downloads folder) looks up and organizes that folder every 12 hours; you can also run it right away.
+- **Scheduled Organize**: a toggle next to "Inbox" (your finished-downloads folder) looks up and organizes that folder every 12 hours; you can also run it right away.
 - **Re-scrape titles already in your library**: change the ID or pick a source, preview, then decide whether to overwrite; your current title is kept by default, and the NFO title format is customizable.
 
 ### 📊 Library Insights: turn your whole library into charts
