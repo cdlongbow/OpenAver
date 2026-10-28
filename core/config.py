@@ -95,7 +95,7 @@ class AutoOrganizeConfig(BaseModel):
 class SearchConfig(BaseModel):
     search_filter: str = ""
     uncensored_mode_enabled: bool = False  # deprecated: read via core.source_settings.is_uncensored_mode_effective()
-    favorite_folder: str = ""  # 我的最愛資料夾 - 空字串 = 使用系統下載資料夾
+    favorite_folder: str = ""  # 待整理資料夾（UI 名稱；設定鍵沿用 favorite_folder，spec-180 §4）- 空字串 = 使用系統下載資料夾
     proxy_url: str = ""
     proxy_scope: Literal['dmm', 'all'] = 'dmm'  # Proxy 套用範圍；鍵存在即「已遷移」標記（feature/163a）
     auto_organize: AutoOrganizeConfig = AutoOrganizeConfig()

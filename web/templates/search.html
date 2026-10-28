@@ -490,8 +490,8 @@
                 <button class="btn btn-sm btn-outline btn-primary" id="btnAddFolder" @click="addFolder()">
                     <i class="bi bi-folder-plus"></i> {{ t('search.action.add_folder') }}
                 </button>
-                <button class="btn btn-sm btn-outline btn-warning" id="btnFavorite" @click="loadFavorite()" :disabled="isLoadingFavorite" title="{{ t('search.empty.favorite_note') }}">
-                    <template x-if="!isLoadingFavorite"><i class="bi bi-star-fill"></i></template>
+                <button class="btn btn-sm btn-outline btn-warning" id="btnFavorite" @click="loadFavorite()" :disabled="isLoadingFavorite">
+                    <template x-if="!isLoadingFavorite"><i class="bi bi-inbox-fill"></i></template>
                     <span x-show="isLoadingFavorite" class="loading loading-spinner loading-sm"></span>
                     <span x-text="isLoadingFavorite ? '' : t('search.action.favorite')">{{ t('search.action.favorite') }}</span>
                 </button>
@@ -561,11 +561,11 @@
                    （＝這一幀通常不會被畫出來），但那是本機的餘裕；NAS ＋ 靜態資源已快取時
                    兩者的先後會反過來。代價只是慢載時那一列晚一幀出現，不會顯示錯的指示。 #}
                 <p class="empty-explainer-line" x-show="appConfig !== null && !favoriteConfigured()">
-                    <i class="bi bi-star-fill explainer-icon explainer-icon-favorite" aria-hidden="true"></i>
+                    <i class="bi bi-inbox-fill explainer-icon explainer-icon-favorite" aria-hidden="true"></i>
                     {{ t('search.empty.explain_favorite_unset') }}
                 </p>
                 <p class="empty-explainer-line" x-show="favoriteConfigured()">
-                    <i class="bi bi-star-fill explainer-icon explainer-icon-favorite" aria-hidden="true"></i>
+                    <i class="bi bi-inbox-fill explainer-icon explainer-icon-favorite" aria-hidden="true"></i>
                     {{ t('search.empty.explain_favorite_set_prefix') }}<code x-text="favoritePathDisplay()"></code>{{ t('search.empty.explain_favorite_set_suffix') }}
                     <span class="text-warning" x-show="favoriteScannerLinked === false">{{ t('search.empty.explain_favorite_untracked') }}</span>
                 </p>
