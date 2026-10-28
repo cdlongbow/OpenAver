@@ -99,6 +99,9 @@ export function searchStateSearchFlow() {
         this.searchQuery = '';  // 清空搜尋框
         this.currentOffset = 0;
         this.hasMoreResults = false;
+        // 182: 清空清單時讓進行中的批次搜尋停下（runId++ 讓舊迴圈退場；欄位對齊 setFileList 的重置段）
+        Object.assign(this.batchState, { isProcessing: false, isPaused: false, total: 0, processed: 0, success: 0, failed: 0, activePaths: [] });
+        this.batchState.runId++;
         this.fileList = [];
         this.currentFileIndex = 0;
         this.listMode = null;
@@ -184,6 +187,9 @@ export function searchStateSearchFlow() {
         this._resetCoverState();
         this.searchResults = [];
         this.currentIndex = 0;
+        // 182: 清空清單時讓進行中的批次搜尋停下（runId++ 讓舊迴圈退場；欄位對齊 setFileList 的重置段）
+        Object.assign(this.batchState, { isProcessing: false, isPaused: false, total: 0, processed: 0, success: 0, failed: 0, activePaths: [] });
+        this.batchState.runId++;
         this.fileList = [];
         this.currentFileIndex = 0;
         this.listMode = null;
