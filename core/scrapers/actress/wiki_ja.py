@@ -99,6 +99,8 @@ def _alias_cell_names(td) -> list:
 def _is_av_page(soup) -> bool:
     """頁面文字含「AV女優」或「アダルトビデオ」才算 AV 女優頁（同名他業者頁 → 查無）。"""
     text = soup.get_text()
+    for note in soup.select(".hatnote"):  # 頁首「同名のAV女優については…」不算（不改 soup）
+        text = text.replace(note.get_text(), "")
     return "AV女優" in text or "アダルトビデオ" in text
 
 
