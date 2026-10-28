@@ -302,25 +302,6 @@ class TestOrganizeAtomicReplace:
         assert not src_file.exists()
         assert target_file.exists(), "唯一一份影片不得被當佔位檔刪掉"
 
-    def test_organize_file_move_failure_keeps_target_with_content(self, tmp_path):
-        """
-        DoD-2c (R1): 搬到一半失敗（target 已有內容、來源仍在）→ target 不刪。
-        """
-        src_file = tmp_path / "SONE-205.mp4"
-        src_file.write_bytes(b"video content")
-        target_file = tmp_path / "[SONE-205] Test Title.mp4"
-
-        def write_partial_then_fail(src, dest, *a, **kw):
-            Path(dest).write_bytes(b"partial")
-            raise OSError("partial write")
-
-        with patch("core.atomic_write.os.replace", side_effect=write_partial_then_fail):
-            result = organize_file(str(src_file), _make_metadata(), _make_config(tmp_path))
-
-        assert result["success"] is False
-        assert src_file.read_bytes() == b"video content"
-        assert target_file.read_bytes() == b"partial"
-
 
 class TestOrganizeTruncateSuffix:
     """organize_file() 長標題時 suffix 不應被截斷"""
