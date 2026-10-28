@@ -1203,6 +1203,7 @@
                             <!-- 狀態圖示 -->
                             <span :class="fileStatusClass(file)"
                                   x-text="fileStatusIcon(file)"></span>
+                            <span x-show="isFileSearching(file)" class="loading loading-spinner loading-sm"></span>
 
                             <!-- 動作按鈕：產生 NFO -->
                             <button x-show="canScrapeFile(file) && !file.isScraping && file.scrapeStatus !== 'done'"

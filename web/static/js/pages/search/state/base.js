@@ -2,6 +2,8 @@
  * SearchState - Base Mixin
  * 包含：data 初始值、constants、computed methods、file list helpers
  */
+import { isFileSearching as isPathSearching } from '../batch-search-rules.js';
+
 export function searchStateBase() {
     return {
         // ===== Page State =====
@@ -51,7 +53,8 @@ export function searchStateBase() {
             total: 0,
             processed: 0,
             success: 0,
-            failed: 0
+            failed: 0,
+            activePaths: []  // 正在搜尋中的 file.path（不持久化，見 CD-182-6）
         },
 
         // ===== Translate State =====
@@ -465,6 +468,10 @@ export function searchStateBase() {
                 return (file.searchResults && file.searchResults.length > 0) ? '✓' : '✗';
             }
             return '';
+        },
+
+        isFileSearching(file) {
+            return isPathSearching(this.batchState.activePaths, file.path);
         },
 
         fileStatusClass(file) {

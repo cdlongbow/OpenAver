@@ -224,6 +224,7 @@ export function searchStateBatch() {
         batch.processed = 0;
         batch.success = 0;
         batch.failed = 0;
+        batch.activePaths = [];
 
         // 並行處理，一次 2 個
         const concurrency = 2;
@@ -257,7 +258,12 @@ export function searchStateBatch() {
 
             // U10b: 背景搜尋（不碰共享 UI 狀態）
             await Promise.all(chunk.map(async (file) => {
-                await this._searchFileBackground(file);
+                try {
+                    batch.activePaths.push(file.path);
+                    await this._searchFileBackground(file);
+                } finally {
+                    batch.activePaths = batch.activePaths.filter(p => p !== file.path);
+                }
 
                 if (file.searched && file.searchResults && file.searchResults.length > 0) {
                     batch.success++;
