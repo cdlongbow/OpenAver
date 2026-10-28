@@ -152,6 +152,7 @@ def atomic_move(src: Union[Path, str], dest: Union[Path, str]) -> None:
     看得見、刪得掉，遠比一次看不見、救不回的覆蓋好（CD-144-15、spec-144 §5）。
     `BE-ENV-01`（Windows 防毒／檔案總管持有 handle 讓 `os.replace` 拋
     `PermissionError`）走的也是這條路：原樣往外拋，由呼叫端的既有 except 處理。
+    佔位檔的回收由呼叫端負責（來源仍在且 target 為 0 bytes 才刪），見 CD-181-3。
     """
     try:
         os.replace(src, dest)

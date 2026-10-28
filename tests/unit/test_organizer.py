@@ -235,8 +235,9 @@ class TestOrganizeAtomicReplace:
 
     def test_organize_file_replace_permission_error_falls_to_outer_except(self, tmp_path):
         """
-        DoD-5 (BE-ENV-01): mock os.replace 拋 PermissionError
-        落既有 except 分支，不新增任何清理邏輯、不刪佔位檔。
+        DoD-1 (BE-ENV-01 / CD-181-3): os.replace 拋 PermissionError（Windows 影片被占用）
+        → 整理失敗、落既有外層 except；本次自己佔下的 0 KB 佔位檔被收回，
+        關掉播放器再整理一次就成功（不再永遠「目標已存在」）。
         """
         src_file = tmp_path / "SONE-205.mp4"
         src_file.write_bytes(b"video content")
@@ -251,10 +252,73 @@ class TestOrganizeAtomicReplace:
 
         assert result["success"] is False
         assert result["error"] == "檔案整理失敗，請查看日誌"
-        assert src_file.exists(), "來源檔案應原封不動"
+        assert src_file.read_bytes() == b"video content", "來源檔案應原封不動"
         expected_target = tmp_path / "[SONE-205] Test Title.mp4"
-        assert expected_target.exists(), "佔位檔不應被清理"
-        assert expected_target.stat().st_size == 0
+        assert not expected_target.exists(), "本次自建的 0 KB 佔位檔應被收回"
+
+        # 取消注入（with 區塊外）再整理一次 → 成功
+        retry = organize_file(str(src_file), metadata, config)
+        assert retry["success"] is True
+        assert expected_target.read_bytes() == b"video content"
+
+    @pytest.mark.parametrize("existing", [b"", b"old residue"], ids=["zero_bytes", "with_content"])
+    def test_organize_file_duplicate_keeps_preexisting_target(self, tmp_path, existing):
+        """
+        DoD-2 (R1): 目標夾裡原有的檔（含 0 bytes 舊殘留）→ duplicate，
+        根本沒建佔位檔，存在性與 bytes 都不得被整理動作改動。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"video content")
+        target_file = tmp_path / "[SONE-205] Test Title.mp4"
+        target_file.write_bytes(existing)
+        baseline = target_file.read_bytes()
+
+        result = organize_file(str(src_file), _make_metadata(), _make_config(tmp_path))
+
+        assert result.get("duplicate") is True
+        assert target_file.exists()
+        assert target_file.read_bytes() == baseline
+        assert src_file.read_bytes() == b"video content"
+
+    def test_organize_file_move_failure_after_source_gone_keeps_target(self, tmp_path):
+        """
+        DoD-2b (R1): 影片已搬到 target 之後才拋例外、且影片是 0 KB
+        → target 是唯一一份，不得刪（來源已不在原路徑）。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"")
+        target_file = tmp_path / "[SONE-205] Test Title.mp4"
+        real_replace = os.replace
+
+        def replace_then_fail(src, dest, *a, **kw):
+            real_replace(src, dest, *a, **kw)
+            raise OSError("late failure after move")
+
+        with patch("core.atomic_write.os.replace", side_effect=replace_then_fail):
+            result = organize_file(str(src_file), _make_metadata(), _make_config(tmp_path))
+
+        assert result["success"] is False
+        assert not src_file.exists()
+        assert target_file.exists(), "唯一一份影片不得被當佔位檔刪掉"
+
+    def test_organize_file_move_failure_keeps_target_with_content(self, tmp_path):
+        """
+        DoD-2c (R1): 搬到一半失敗（target 已有內容、來源仍在）→ target 不刪。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"video content")
+        target_file = tmp_path / "[SONE-205] Test Title.mp4"
+
+        def write_partial_then_fail(src, dest, *a, **kw):
+            Path(dest).write_bytes(b"partial")
+            raise OSError("partial write")
+
+        with patch("core.atomic_write.os.replace", side_effect=write_partial_then_fail):
+            result = organize_file(str(src_file), _make_metadata(), _make_config(tmp_path))
+
+        assert result["success"] is False
+        assert src_file.read_bytes() == b"video content"
+        assert target_file.read_bytes() == b"partial"
 
 
 class TestOrganizeTruncateSuffix:

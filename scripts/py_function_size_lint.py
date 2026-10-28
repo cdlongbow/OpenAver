@@ -137,7 +137,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "各存一份同名 helper，比 inline 更糟。",
     ),
     ("core/organizer.py", "organize_file"): (
-        369,
+        373,
         "整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，"
         "不得讓本函式本身更複雜（見 plan-110b，與既有 C901 noqa 理由一致）。"
         " ── 359→366（v0.14.6 / TASK-126-T4b，owner 2026-08-23 裁決把 organize 路徑納入）："
@@ -156,7 +156,9 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "隱含約定，正是那條 CD 要消滅的「只有一個人在操作時永遠看不見」的縫。"
         "反之 `os.replace` ＋ EXDEV fallback **已經抽進 `core/atomic_write.py::atomic_move()`**"
         "（那是全庫唯一准許出現裸 `os.replace` 的地方，見 test_atomic_write_boundary_guard），"
-        "所以本條的增量只有佔位那三行。",
+        "所以本條的增量只有佔位那三行。"
+        " ── 369→373（v0.18.2 / TASK-181-T4）：搬移失敗回收 0 KB 佔位檔，"
+        "`atomic_move` 外包 try/except 呼叫 `_reclaim_placeholder`（回收條件本身在 helper 內）。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
         344,
