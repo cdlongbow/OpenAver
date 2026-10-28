@@ -302,7 +302,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
         cache_path = output_path / output_filename.replace('.html', '_cache.json')
         db_path = get_db_path()
 
-        yield _sse_event({"type": "log", "level": "info", "message": f"輸出路徑: {html_path}"})
+        yield _sse_event({"type": "log", "level": "info", "message": f"離線網頁: {html_path}"})
 
         # 檢查是否需要遷移 JSON cache 到 SQLite
         if cache_path.exists() and not db_path.exists():
@@ -627,7 +627,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
             # 產生 HTML
             yield _sse_event({
                 "type": "progress",
-                "status": "產生網頁...",
+                "status": "產生離線網頁...",
                 "current": total_dirs,
                 "total": total_dirs + 1
             })
@@ -636,7 +636,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
             generator.generate(
                 all_videos,
                 str(html_path),
-                title="OpenAver Scanner",
+                title="OpenAver 離線網頁",
                 mode=default_mode,
                 sort=default_sort,
                 order=default_order,
@@ -775,7 +775,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
             message="掃描中斷，請查閱日誌",
             task_type="scanner_generate",
         )
-        yield _sse_event({"type": "error", "message": "產生影片列表失敗"})
+        yield _sse_event({"type": "error", "message": "更新片庫失敗"})
 
 
 # TASK-90b-T2: 斷線偵測輪詢間隔（秒）。定案依據見 plan-90b.md CD-90b-5/6：
@@ -804,7 +804,7 @@ async def generate(request: Request):
     # producer 讀到舊唯讀來源、把剛被 purge 的卡 _upsert 補回（切模式後殭屍卡）。
     if not try_mark_generate_active(cancel_event):
         async def _refuse_switching():
-            yield f"data: {json.dumps({'type': 'error', 'message': '設定切換中，請稍後再產生列表。'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': '設定切換中，請稍後再按「更新片庫」。'})}\n\n"
         return StreamingResponse(
             _refuse_switching(),
             media_type="text/event-stream",
@@ -1060,7 +1060,7 @@ def generate_nfo_update() -> Generator[str, None, None]:
         db_path = get_db_path()
 
         if not db_path.exists():
-            yield _sse_event({"type": "error", "message": "資料庫不存在，請先產生列表"})
+            yield _sse_event({"type": "error", "message": "資料庫不存在，請先按「更新片庫」"})
             return
 
         repo = VideoRepository(db_path)
@@ -1097,7 +1097,7 @@ def generate_nfo_update() -> Generator[str, None, None]:
 
         yield _sse_event({
             "type": "done",
-            "message": "更新完成，建議重新產生網頁以更新資料庫",
+            "message": "更新完成，建議再按一次「更新片庫」以更新資料庫",
         })
 
     except Exception as e:
@@ -1131,7 +1131,7 @@ def view_list():
 
         if not html_path.exists():
             return HTMLResponse(
-                content="<html><body><h1>列表尚未產生</h1><p>請先到「列表生成」頁面產生列表。</p></body></html>",
+                content="<html><body><h1>離線網頁尚未產生</h1><p>請先到「片庫管理」頁按「更新片庫」。</p></body></html>",
                 status_code=404
             )
 
@@ -1234,7 +1234,7 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
         db_path = get_db_path()
 
         if not db_path.exists():
-            yield _sse_event({"type": "error", "message": "資料庫不存在，請先產生列表"})
+            yield _sse_event({"type": "error", "message": "資料庫不存在，請先按「更新片庫」"})
             return
 
         repo = VideoRepository(db_path)

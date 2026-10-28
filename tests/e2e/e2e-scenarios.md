@@ -66,7 +66,7 @@ source venv/bin/activate && uvicorn web.app:app --host 127.0.0.1 --port 8000
    - `#btnSelectFolder` 在頁面上（spotlight 模式靠 CSS box-shadow punch-out 命中此元素）
    - `#tutorialProgress` 文字含 `1 / 7`
 4. `browser_click` → `#tutorialNext`；`browser_wait_for` `#tutorialProgress` text contains `2 / 7`
-5. `browser_snapshot` 驗 `#btnGenerate` 在 viewport 內（step 2 spotlight 命中產生網頁按鈕）
+5. `browser_snapshot` 驗 `#btnGenerate` 在 viewport 內（step 2 spotlight 命中更新片庫按鈕）
 6. `browser_click` → `#tutorialNext`；驗進度 `3 / 7`（**v0.15.15 起 step 3 改指向 `#btnGenerate` 本身**，不再指 sidebar Scanner 連結）：
    - `browser_snapshot` 驗 `#btnGenerate` 仍在 spotlight 命中範圍（與 step 2 同一顆按鈕）
    - **驗**：提示卡內含 `.tutorial-mock-card`，其中 `.nfo-badge` 文字同時含 `13` 與 `11`（固定假數字，見 `tutorial-step3-card.js` CD-146a-3：不讀真實片庫）
@@ -441,7 +441,7 @@ N/A — Tag alias UI / chip 互動 完全 browser-only。
 
 ### PyWebView 例外
 
-N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-only。Settings 頁最愛資料夾 picker 為 PyWebView-only，本 US 不涉及。
+N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-only。Settings 頁待整理資料夾 picker 為 PyWebView-only，本 US 不涉及。
 
 ### Regression 偵測點
 
@@ -532,7 +532,7 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
 
 ### PyWebView 例外
 
-- Settings 頁「最愛資料夾」picker（`selectFavoriteFolder()`）為 PyWebView-only；本 US 不點 picker，只改命名格式與翻譯開關等文字設定，無影響。
+- Settings 頁「待整理資料夾」picker（`selectFavoriteFolder()`）為 PyWebView-only；本 US 不點 picker，只改命名格式與翻譯開關等文字設定，無影響。
 - step 3 整理（scrape）流程若依賴 PyWebView picker 選檔 → 用 Setup 預先放好的 tracked fixture 繞過；不點 `#btnSelectFolder`。
 
 ### Regression 偵測點
@@ -943,7 +943,7 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
    - **驗**：按鈕 icon 與 `title` 同步切換（`bi-person-badge` ↔ `bi-person-vcard`，`title` 讀出目前模式）
    - **驗**：切換是原地變形不是整面淡出淡入（`.av-card-preview` 在切換期間 `opacity` 全程 ≥ 0.95，複用 US9 的驗法）
    - 再點一次切回完整封面，**驗**牆面與按鈕 icon 都還原
-3. **[MCP] 設定頁開關（不儲存）**：`/settings` → 捲到「列表生成」卡片 → 找到「顯示表格與清單」那一列的 checkbox（`x-model="form.showTableList"`）
+3. **[MCP] 設定頁開關（不儲存）**：`/settings` → 捲到「片庫管理」卡片 → 找到「顯示表格與清單」那一列的 checkbox（`x-model="form.showTableList"`）
    - **驗**：checkbox 目前狀態與 `GET /api/config` 的 `gallery.show_table_list` 一致（預設應為未勾）
    - `browser_click` 勾選 → **驗**：checkbox 變勾選（純前端 `x-model`，此時尚未送出）
    - 旁邊 `?` 說明鈕（`.help-popover-btn`）點開 → **驗**：`.help-popover` 顯示說明文字
@@ -964,21 +964,21 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 
 ---
 
-## US16: 搜尋頁空狀態命名範例 ＋ 定時整理面板 ＋ 最愛未追蹤提醒（v0.15.13 / v0.15.15 新增）
+## US16: 搜尋頁空狀態命名範例 ＋ 定時整理面板 ＋ 待整理未追蹤提醒（v0.15.13 / v0.15.15 新增）
 
-**故事**：主人第一次看到搜尋頁空狀態，四顆按鈕各自被一行文字解釋：加檔案／加資料夾先查資料不動檔案；★ 我的最愛告訴你它指哪個資料夾、會列出裡面全部影片；🕘 定時整理每 12 小時自動處理那個資料夾；最後一行用**主人自己當下的命名設定**算出一個範例，告訴他按下「整理」之後檔案會變成什麼樣子。點開「定時整理」面板可以看目前有沒有開、上次執行結果，還能立刻手動跑一次。如果主人的最愛資料夾根本沒被 Scanner 追蹤，這裡會先用琥珀色小字提醒，而不是等整理完才發現瀏覽頁找不到那些片。
+**故事**：主人第一次看到搜尋頁空狀態，四顆按鈕各自被一行文字解釋：加檔案／加資料夾先查資料不動檔案；待整理告訴你它指哪個資料夾、會列出裡面全部影片；🕘 定時整理每 12 小時自動處理那個資料夾；最後一行用**主人自己當下的命名設定**算出一個範例，告訴他按下「整理」之後檔案會變成什麼樣子。點開「定時整理」面板可以看目前有沒有開、上次執行結果，還能立刻手動跑一次。如果主人的待整理資料夾根本沒被 片庫管理追蹤，這裡會先用琥珀色小字提醒，而不是等整理完才發現瀏覽頁找不到那些片。
 
 ### Setup
 
 - Dev server 已啟動；`/search` 清空搜尋狀態回到 `#emptyState`（`browser_click` `#btnClear` 或 `clearAll()`）。
 - **定時整理開關屬於「切換再還原」允許範圍**（面板的 enable checkbox 點擊即時 POST `/api/search/auto-organize/config`，非經「儲存」按鈕）：可以開了再關回去，**但絕不按「立即執行」**（`runNow()` 會真的觸發掃描整理，搬動 dev DB 對應資料夾裡的檔案）。
-- 目前 dev 環境 `general.favorite_folder` 為空字串（未設定）——步驟 3 的「已設定」分支與「未被追蹤」警示在本環境**驗不到**，用 [人工] 標注，需要換一個「已設定最愛資料夾但該資料夾不在 Scanner tracked directories」的環境才能重現。
+- 目前 dev 環境 `general.favorite_folder` 為空字串（未設定）——步驟 3 的「已設定」分支與「未被追蹤」警示在本環境**驗不到**，用 [人工] 標注，需要換一個「已設定待整理資料夾但該資料夾不在 片庫管理 tracked directories」的環境才能重現。
 
 ### Steps
 
 1. **[MCP] 空狀態四行說明**：`browser_snapshot` `#emptyState .empty-explainer`
    - **驗**：第一行讀 `search.empty.explain_add`（加入／拖入先查資料）
-   - **驗**：`favoriteConfigured()` 為 false 時（本環境現況）顯示「★ 我的最愛」未設定那一行（`search.empty.explain_favorite_unset`），**不**顯示已設定那一行
+   - **驗**：`favoriteConfigured()` 為 false 時（本環境現況）顯示「待整理」未設定那一行（`search.empty.explain_favorite_unset`），**不**顯示已設定那一行
    - **驗**：🕘 定時整理那一行（`search.empty.explain_auto_organize`）恆顯示，不看設定狀態
    - **驗**：`namingPreviewReady()` 為 true 時，最後一行 `<code>` 內容是**真實算出來的檔名範例**（非空字串、非原樣未替換的 `{}` token），並帶「改規則 → 設定」連結（`href="/settings#filenameFormat"`）
 2. **[MCP] 命名範例與設定頁「同一份算法」**：記錄 step 1 的 `<code>` 文字 → `browser_navigate` `/settings#filenameFormat` → 找 `.folder-preview.naming-preview .preview-text`（設定頁「預覽」列）
@@ -988,13 +988,13 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 3. **[MCP] 定時整理面板開合**：回 `/search` 空狀態 → `browser_click` `#btnAutoOrganize`
    - **驗**：`.auto-organize-panel` 展開，欄位：啟用開關（checkbox）、「立即執行」按鈕（`:disabled` 在 `!folderIsSet`）、目前解析路徑（`.auto-organize-panel__path`）、警語（`.auto-organize-panel__warning`）
    - **驗**：面板開啟只發一個 `/api/search/auto-organize/status` 請求（`browser_network_requests` 確認未重複打）
-4. **[MCP][切換再還原，需先設好最愛資料夾] 啟用開關**：⚠️ **實測訂正**——checkbox 的 `:disabled` 綁的是 `loading || (!folderIsSet && !enabled)`：本機 dev 環境 `search.favorite_folder` 是空字串（`folderIsSet === false`）且目前 `enabled === false`，兩個條件同時成立 ⇒ checkbox **一開始就是 disabled**，點擊沒有任何反應、也不會發任何 `POST` 請求（實測 `browser_network_requests` 在點擊前後完全相同，只有 step 3 那筆 `status`）。這一步**只有在已經設定最愛資料夾（`folderIsSet === true`）的環境才能做**：
+4. **[MCP][切換再還原，需先設好待整理資料夾] 啟用開關**：⚠️ **實測訂正**——checkbox 的 `:disabled` 綁的是 `loading || (!folderIsSet && !enabled)`：本機 dev 環境 `search.favorite_folder` 是空字串（`folderIsSet === false`）且目前 `enabled === false`，兩個條件同時成立 ⇒ checkbox **一開始就是 disabled**，點擊沒有任何反應、也不會發任何 `POST` 請求（實測 `browser_network_requests` 在點擊前後完全相同，只有 step 3 那筆 `status`）。這一步**只有在已經設定待整理資料夾（`folderIsSet === true`）的環境才能做**：
    - 記錄目前 `enabled` 狀態 → `browser_click` 勾選 checkbox
    - **驗**：checkbox 變勾選、按鈕 `:class` 從 `btn-outline` 變 `btn-accent`（`#btnAutoOrganize` 本身）
    - `browser_network_requests` 驗有一筆 `POST /api/search/auto-organize/config` body `{"enabled":true}` 且回應 `success`
    - **還原**：再點一次 checkbox 關閉，驗證恢復 `btn-outline` 且再打一次 POST `{"enabled":false}` 成功；`GET /api/config` 確認 `auto_organize.enabled` 回到 `false`
-   - 本輪 dev 環境無最愛資料夾 → **SKIPPED**（checkbox disabled，無法點擊；不是 bug，是設計行為：沒有資料夾就不該能開定時整理）
-5. **[人工]** 最愛資料夾**已設定但不在 Scanner 追蹤清單**時的琥珀色提醒：需要先把 `general.favorite_folder` 設成一個不在 `scanner.directories` 內的路徑（真的寫 config，本輪不做）→ 驗空狀態「★ 我的最愛」那行後面多一句 `search.empty.explain_favorite_untracked`（琥珀色）；再把該路徑加進 Scanner 追蹤清單 → 驗那句提醒消失
+   - 本輪 dev 環境無待整理資料夾 → **SKIPPED**（checkbox disabled，無法點擊；不是 bug，是設計行為：沒有資料夾就不該能開定時整理）
+5. **[人工]** 待整理資料夾**已設定但不在片庫管理追蹤清單**時的琥珀色提醒：需要先把 `general.favorite_folder` 設成一個不在 `scanner.directories` 內的路徑（真的寫 config，本輪不做）→ 驗空狀態「待整理」那行後面多一句 `search.empty.explain_favorite_untracked`（琥珀色）；再把該路徑加進片庫管理追蹤清單 → 驗那句提醒消失
 6. **[人工][寫檔]** 「立即執行」定時整理：按 `.auto-organize-panel` 的「立即執行」鈕會真的觸發掃描與搬檔，需要 disposable fixture 目錄才能安全驗證，本輪不做
 
 ### 完成後 state
@@ -1094,7 +1094,7 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 ### Setup
 
 - Dev server 已啟動，片庫非空（`GET /api/showcase/videos` 的 `total > 0`）。
-- 全程唯讀：不點「產生網頁」／整理／收藏／重刮送出／存檔／語系切換。
+- 全程唯讀：不點「更新片庫」／整理／收藏／重刮送出／存檔／語系切換。
 - 片庫分析頁與發行時年齡都依賴「收藏女優有生日 + 照片」與「片有完整發行日」，dev DB
   資料可能不齊；缺前提時該步驟回報 `N/A(precondition)` 並寫明缺什麼，不算 FAIL。
 
@@ -1345,7 +1345,7 @@ curl -s -X POST http://localhost:8000/api/gallery/generate-from-ids \
 ### Scanner
 
 - ~~**N1. 頁面載入**~~ → 併入 US1 step 1（tutorial 觸發前導覽至 Scanner 頁）
-- ~~**N2. 掃描 + 產生網頁**~~ → **deprecated**（PyWebView-only：Scanner 加資料夾依賴原生 picker，瀏覽器無法穩定驅動；scan trigger button 可由實作者選做 atomic check）
+- ~~**N2. 掃描 + 更新片庫**~~ → **deprecated**（PyWebView-only：片庫管理加資料夾依賴原生 picker，瀏覽器無法穩定驅動；scan trigger button 可由實作者選做 atomic check）
 
 ### 跨頁面
 
