@@ -6,6 +6,7 @@ import errno
 import io
 import json
 import os
+import re
 import shutil
 import xml.etree.ElementTree as ET
 import pytest
@@ -235,8 +236,9 @@ class TestOrganizeAtomicReplace:
 
     def test_organize_file_replace_permission_error_falls_to_outer_except(self, tmp_path):
         """
-        DoD-5 (BE-ENV-01): mock os.replace 拋 PermissionError
-        落既有 except 分支，不新增任何清理邏輯、不刪佔位檔。
+        DoD-1 (BE-ENV-01 / CD-181-3): os.replace 拋 PermissionError（Windows 影片被占用）
+        → 整理失敗、落既有外層 except；本次自己佔下的 0 KB 佔位檔被收回，
+        關掉播放器再整理一次就成功（不再永遠「目標已存在」）。
         """
         src_file = tmp_path / "SONE-205.mp4"
         src_file.write_bytes(b"video content")
@@ -251,10 +253,54 @@ class TestOrganizeAtomicReplace:
 
         assert result["success"] is False
         assert result["error"] == "檔案整理失敗，請查看日誌"
-        assert src_file.exists(), "來源檔案應原封不動"
+        assert src_file.read_bytes() == b"video content", "來源檔案應原封不動"
         expected_target = tmp_path / "[SONE-205] Test Title.mp4"
-        assert expected_target.exists(), "佔位檔不應被清理"
-        assert expected_target.stat().st_size == 0
+        assert not expected_target.exists(), "本次自建的 0 KB 佔位檔應被收回"
+
+        # 取消注入（with 區塊外）再整理一次 → 成功
+        retry = organize_file(str(src_file), metadata, config)
+        assert retry["success"] is True
+        assert expected_target.read_bytes() == b"video content"
+
+    @pytest.mark.parametrize("existing", [b"", b"old residue"], ids=["zero_bytes", "with_content"])
+    def test_organize_file_duplicate_keeps_preexisting_target(self, tmp_path, existing):
+        """
+        DoD-2 (R1): 目標夾裡原有的檔（含 0 bytes 舊殘留）→ duplicate，
+        根本沒建佔位檔，存在性與 bytes 都不得被整理動作改動。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"video content")
+        target_file = tmp_path / "[SONE-205] Test Title.mp4"
+        target_file.write_bytes(existing)
+        baseline = target_file.read_bytes()
+
+        result = organize_file(str(src_file), _make_metadata(), _make_config(tmp_path))
+
+        assert result.get("duplicate") is True
+        assert target_file.exists()
+        assert target_file.read_bytes() == baseline
+        assert src_file.read_bytes() == b"video content"
+
+    def test_organize_file_move_failure_after_source_gone_keeps_target(self, tmp_path):
+        """
+        DoD-2b (R1): 影片已搬到 target 之後才拋例外、且影片是 0 KB
+        → target 是唯一一份，不得刪（來源已不在原路徑）。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"")
+        target_file = tmp_path / "[SONE-205] Test Title.mp4"
+        real_replace = os.replace
+
+        def replace_then_fail(src, dest, *a, **kw):
+            real_replace(src, dest, *a, **kw)
+            raise OSError("late failure after move")
+
+        with patch("core.atomic_write.os.replace", side_effect=replace_then_fail):
+            result = organize_file(str(src_file), _make_metadata(), _make_config(tmp_path))
+
+        assert result["success"] is False
+        assert not src_file.exists()
+        assert target_file.exists(), "唯一一份影片不得被當佔位檔刪掉"
 
 
 class TestOrganizeTruncateSuffix:
@@ -1582,6 +1628,125 @@ class TestTruncateWindowsTrailingDot:
         result = truncate_to_chars("僕が不在の5日間、彼女が他の男と朝から晩までヤリまくっていた胸糞映像 吉高寧々", 40)
         assert not result.endswith('.'), f"Windows: 截斷結果不應以 . 結尾, got {result!r}"
         assert not result.endswith(' '), f"Windows: 截斷結果不應以空格結尾, got {result!r}"
+
+
+# ============ Issue 181-T5 — Windows 資料夾名段尾句點／控制字元 ============
+
+def _organize_one(tmp_path, maker, title, layers):
+    """真檔案系統跑一次 organize_file（create_folder，標題上限放大避免 truncate_title 先動手）"""
+    src = tmp_path / "SONE-205.mp4"
+    src.write_bytes(b"x")
+    config = {**_make_config(tmp_path), "create_folder": True, "folder_layers": layers,
+              "filename_format": "{num} {title}", "max_title_length": 100}
+    metadata = {**_make_metadata(title=title), "maker": maker}
+    return organize_file(str(src), metadata, config)
+
+
+class TestWindowsFolderNameSanitize:
+    """181-T5：Windows 上資料夾名與記錄的路徑要一致；非 Windows 逐字不變"""
+
+    @pytest.mark.parametrize("maker,title,layers,expected", [
+        ("Mrs.", "T", ["{maker}"], "Mrs"),
+        ("S1", "Hello world...", ["{title}"], "Hello world"),
+    ])
+    def test_windows_folder_layer_strips_trailing_dot(self, monkeypatch, tmp_path, maker, title, layers, expected):
+        monkeypatch.setattr('core.organizer.sys.platform', 'win32')
+        result = _organize_one(tmp_path, maker, title, layers)
+        assert result["success"] is True, result["error"]
+        assert os.path.basename(result["new_folder"]) == expected
+        assert Path(result["new_folder"]).is_dir()
+
+    @pytest.mark.parametrize("title,expected", [("A\x07B", "AB"), ("A\tB", "A B")])
+    def test_windows_control_chars_removed(self, monkeypatch, tmp_path, title, expected):
+        monkeypatch.setattr('core.organizer.sys.platform', 'win32')
+        result = _organize_one(tmp_path, "S1", title, ["{title}"])
+        assert result["success"] is True, result["error"]
+        assert os.path.basename(result["new_folder"]) == expected
+        for path in (result["new_folder"], result["new_filename"]):
+            assert not re.search(r'[\x00-\x08\x0e-\x1b]', os.path.basename(path))
+
+    def test_non_windows_names_unchanged(self, tmp_path):
+        for sub, (maker, title, layers) in enumerate([
+            ("Mrs.", "T", ["{maker}"]),
+            ("S1", "Hello world...", ["{title}"]),
+            ("S1", "A\x07B", ["{title}"]),
+        ]):
+            work = tmp_path / str(sub)
+            work.mkdir()
+            result = _organize_one(work, maker, title, layers)
+            assert result["success"] is True, result["error"]
+            expected_folder = {0: "Mrs.", 1: "Hello world...", 2: "A\x07B"}[sub]
+            assert os.path.basename(result["new_folder"]) == expected_folder
+            assert os.path.basename(result["new_filename"]) == f"SONE-205 {title if sub else 'T'}.mp4"
+
+
+# ============ Issue 181-T6 — 檔名／資料夾名位元組上限 255 ============
+
+def _nbytes(text):
+    return len(text.encode("utf-8"))
+
+
+def _cover_stub(url, save_path, referer="", **kwargs):
+    """不碰網路的 download_image：寫一張 JPEG；寫不出（檔名過長 OSError）回 False，同 _attempt_download_image"""
+    try:
+        Image.new("RGB", (800, 538), (200, 100, 50)).save(save_path, "JPEG")
+    except OSError:
+        return False
+    return True
+
+
+def _organize_bytes(tmp_path, filename, number, title, cover="", **overrides):
+    src = tmp_path / filename
+    src.write_bytes(b"x")
+    config = {**_make_config(tmp_path, ["-4k", "-c"]), "filename_format": "{num} {title}{suffix}", **overrides}
+    with patch("core.organizer.download_image", side_effect=_cover_stub):
+        return organize_file(str(src), {**_make_metadata(number, title), "cover": cover}, config)
+
+
+class TestUtf8ByteCap:
+    """181-T6：每一層資料夾名與檔名都不超過 255 bytes；今天本來就合法的名字逐字不變"""
+
+    @pytest.mark.parametrize("filename,fmt,tail", [
+        ("SONE-205.mp4", "{num} {title}", ""),
+        ("SONE-205-C_180_LR.mp4", "{num} {title}{suffix}", "-c_180_LR"),
+    ])
+    def test_long_cjk_names_fit_255_bytes(self, tmp_path, filename, fmt, tail):
+        title = "あ" * 110
+        shown = organizer.truncate_title(title, 100)
+        # 前置：進入最終一步前，資料夾名與 stem 都確實 > 255 bytes（否則假綠，BE-DATA-09）
+        assert _nbytes(truncate_to_chars(shown, 120)) > 255
+        assert _nbytes(truncate_to_chars(f"SONE-205 {shown}", 116 - len(tail)) + tail) > 255
+        result = _organize_bytes(tmp_path, filename, "SONE-205", title, create_folder=True, folder_layers=["{title}"],
+                                 filename_format=fmt, max_title_length=100, max_filename_length=120)
+        assert result["success"] is True, result["error"]
+        for name in (os.path.basename(result["new_folder"]), os.path.basename(result["new_filename"])):
+            assert _nbytes(name) <= 255
+            assert "\ufffd" not in os.fsencode(name).decode("utf-8")
+        assert Path(result["new_filename"]).is_file()
+
+    @pytest.mark.parametrize("filename,title,cfg,cover,expected,pre_stem_bytes", [
+        ("SONE-205.mp4", "x" * 108, {}, "", "SONE-205 " + "x" * 44 + "....mp4", None),
+        ("SONE-205.mp4", "あ" * 70, {}, "", "SONE-205 " + "あ" * 44 + "....mp4", None),
+        ("SONE-205.mp4", "😀" * 70, {}, "", "SONE-205 " + "😀" * 44 + "....mp4", None),
+        ("SONE-205.mp4", "あ" * 47, {}, "", "SONE-205 " + "あ" * 47 + ".mp4", None),
+        ("SONE-205-4K.mp4", "あ" * 70, {}, "", "SONE-205 " + "あ" * 41 + "...-4k.mp4", None),
+        ("SONE-205_180_LR.mp4", "あ" * 70, {}, "", "SONE-205 " + "あ" * 37 + "..._180_LR.mp4", None),
+        ("ABC-123.mp4", "あ" * 80, {"external_manager": "off"}, "", "ABC-123 " + "あ" * 80 + ".mp4", 248),
+        ("ABC-123.mp4", "あ" * 80, {"external_manager": "jellyfin"}, "", "ABC-123 " + "あ" * 80 + ".mp4", 248),
+        ("ABC-123.mp4", "あ" * 80, {"external_manager": "jellyfin"}, "http://fake/c.jpg", "ABC-123 " + "あ" * 80 + ".mp4", 248),
+        ("ABC-123-part1.mp4", "あ" * 79, {"external_manager": "jellyfin"}, "", "ABC-123 " + "あ" * 79 + "-part1.mp4", 251),
+    ])
+    def test_legal_names_unchanged_by_byte_cap(self, tmp_path, filename, title, cfg, cover, expected, pre_stem_bytes):
+        overrides = cfg
+        if pre_stem_bytes:  # 長名字組：進入最終一步前 stem 就是這個長度；251 組 part_tail 非空
+            overrides = {"max_title_length": 80 if pre_stem_bytes == 248 else 100, "max_filename_length": 120,
+                         "filename_format": "{num} {title}", "download_cover": True, "create_nfo": True, **cfg}
+            assert _nbytes(expected[:-4]) == pre_stem_bytes
+            assert ("-part1" in filename) == expected.endswith("-part1.mp4")
+        number = "ABC-123" if filename.startswith("ABC") else "SONE-205"
+        result = _organize_bytes(tmp_path, filename, number, title, cover, **overrides)
+        assert result["success"] is True, result["error"]
+        assert os.path.basename(result["new_filename"]) == expected
 
 
 # ============ _detect_vr_cluster() 測試 ============

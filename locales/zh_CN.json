@@ -626,7 +626,7 @@
       "path_length_help_line1": "Windows 默认路径上限为 260 字符（适用 Windows 10 1607+ / Windows 11）。",
       "path_length_help_line2": "若需更长文件名，以<strong>管理员身份</strong>打开 PowerShell 执行：",
       "path_length_help_line3": "重启后生效。",
-      "path_length_help_line4": "macOS / Linux 不受此限制，但从 macOS/Linux 生成的长文件名移至未启用 LongPathsEnabled 的 Windows 仍可能失败。",
+      "path_length_help_line4": "从 macOS/Linux 生成的长文件名移至未启用 LongPathsEnabled 的 Windows 仍可能失败。",
       "video_extensions_label": "视频扩展名",
       "video_extensions_hint": "以逗号分隔",
       "focal_pill_label": "人脸自动对焦",

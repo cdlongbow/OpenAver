@@ -1,5 +1,5 @@
 import pytest
-from core.scrapers.actress.wiki_ja import _commons_thumb_to_raw
+from core.scrapers.actress.wiki_ja import _commons_thumb_to_raw, _split_alias_text
 
 
 @pytest.mark.parametrize("raw_url,expected", [
@@ -15,3 +15,13 @@ def test_commons_thumb_to_raw_matches(raw_url, expected):
     assert _commons_thumb_to_raw(raw_url) == expected
 
 
+
+
+@pytest.mark.parametrize("text,expected", [
+    # 多名字 + 殘留註腳 → 乾淨 list
+    ("花沢 ひまり、川口 彩夏[ 要出典 ]", ["花沢 ひまり", "川口 彩夏"]),
+    # 合法單名（含半形空白）不被誤切
+    ("花沢 ひまり", ["花沢 ひまり"]),
+])
+def test_split_alias_text(text, expected):
+    assert _split_alias_text(text) == expected

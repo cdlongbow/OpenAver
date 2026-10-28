@@ -70,6 +70,40 @@ def _cell_text(td) -> str:
     return re.sub(r"\s{2,}", " ", _FOOTNOTE_RE.sub("", text)).strip()
 
 
+_ALIAS_BRACKET_RE = re.compile(r"\[[^\]]*\]")
+
+
+def _split_alias_text(value: str) -> list:
+    """別名欄文字 → 一元素一個名字的 list。
+
+    先剝掉所有 [ … ] 括號段（[2]、[注 3]、[ 要出典 ]），再以 、，, 切分。
+    不清洗 (中華圏名) 括號說明 — Phase 43 alias pipeline 責任。
+    """
+    value = _ALIAS_BRACKET_RE.sub("", value)
+    return [s.strip() for s in re.split(r"[\u3001\uFF0C,]", value) if s.strip()]
+
+
+def _alias_cell_names(td) -> list:
+    """別名格 → 名字 list。
+
+    別名格以 <br> 分行、尾巴可能帶 <sup>（含「要出典」）：
+    先移除所有 sup，再把 <br> 換成「、」，重算文字後交 _split_alias_text。
+    """
+    for sup in td.select("sup"):
+        sup.decompose()
+    for br in td.find_all("br"):
+        br.replace_with("、")
+    return _split_alias_text(_flatten(td.get_text(" | ", strip=True)))
+
+
+def _is_av_page(soup) -> bool:
+    """頁面文字含「AV女優」或「アダルトビデオ」才算 AV 女優頁（同名他業者頁 → 查無）。"""
+    text = soup.get_text()
+    for note in soup.select(".hatnote"):  # 頁首「同名のAV女優については…」不算（不改 soup）
+        text = text.replace(note.get_text(), "")
+    return "AV女優" in text or "アダルトビデオ" in text
+
+
 def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
     """
     Parse Wikipedia JP HTML and extract infobox fields.
@@ -85,8 +119,8 @@ def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
         return None
 
     infobox = soup.find("table", class_=re.compile(r"infobox"))
-    if not infobox:
-        logger.debug(f"[wiki_ja] no infobox for {name}")
+    if not infobox or not _is_av_page(soup):
+        logger.debug(f"[wiki_ja] no infobox / not AV page for {name}")
         return None
 
     result: Dict = {
@@ -120,10 +154,7 @@ def _parse_wiki_ja_html(html: str, name: str) -> Optional[Dict]:
             result["nickname"] = value
 
         elif "別名" in label:
-            # Split by Japanese/Chinese/ASCII commas.
-            # 不清洗 (中華圏名) 括號說明 — Phase 43 alias pipeline 責任
-            raw = re.split(r"[\u3001\uFF0C,]", value)
-            result["other_names"] = [s.strip() for s in raw if s.strip()]
+            result["other_names"] = _alias_cell_names(td)
 
         elif "生年月日" in label or "誕生" in label:
             m = re.search(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日", value)

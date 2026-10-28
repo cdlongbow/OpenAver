@@ -626,7 +626,7 @@
       "path_length_help_line1": "Windows のデフォルトパス上限は 260 文字です（Windows 10 1607+ / Windows 11 対応）。",
       "path_length_help_line2": "長いファイル名が必要な場合は、<strong>管理者として</strong> PowerShell を開いて実行：",
       "path_length_help_line3": "再起動後に有効になります。",
-      "path_length_help_line4": "macOS / Linux にはこの制限はありませんが、macOS/Linux で生成した長いファイル名を LongPathsEnabled が無効な Windows に移動すると失敗する場合があります。",
+      "path_length_help_line4": "macOS/Linux で生成した長いファイル名を LongPathsEnabled が無効な Windows に移動すると失敗する場合があります。",
       "video_extensions_label": "動画拡張子",
       "video_extensions_hint": "カンマ区切り",
       "focal_pill_label": "顔の自動フォーカス",

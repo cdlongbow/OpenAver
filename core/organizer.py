@@ -52,6 +52,8 @@ def sanitize_filename(name: str) -> str:
     illegal_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
     for char in illegal_chars:
         name = name.replace(char, ' ')
+    if sys.platform == 'win32':  # 控制字元只在 Windows 清（CD-181-2）
+        name = re.sub(r'[\x00-\x08\x0e-\x1b]', '', name)
     name = re.sub(r'\s+', ' ', name).strip()
     return name
 
@@ -82,6 +84,16 @@ def truncate_to_chars(text: str, max_chars: int = 60) -> str:
     if len(text) <= max_chars:
         return text
     return _strip_windows_trailing(text[:max_chars - 3] + '...')
+
+
+def _fit_utf8_bytes(text: str, max_bytes: int) -> str:
+    """UTF-8 位元組上限（Linux／NAS 單一名稱 255 bytes）；放得下原樣回傳，否則往前截到連 '...' 放得下，不切半個字"""
+    if len(text.encode('utf-8')) <= max_bytes:
+        return text
+    head = text
+    while head and len(head.encode('utf-8')) + 3 > max_bytes:
+        head = head[:-1]
+    return head + '...'
 
 
 def clean_source_suffix(text: str) -> str:
@@ -1107,6 +1119,22 @@ def _containment_error(candidate_fs_path: str, root_fs_path: str) -> Optional[st
     return '目標路徑超出允許範圍，請確認命名格式設定'
 
 
+def _reclaim_placeholder(file_path: str, target_path: str) -> None:
+    """
+    搬移失敗時收回這次自己用 O_CREAT|O_EXCL 佔下的 0 KB 佔位檔（CD-181-3）。
+
+    條件（兩個都成立才 unlink，寧可留空檔也不能刪錯）：來源影片仍在原路徑
+    （還在 ＝ 沒搬走，target 不可能是唯一一份）、且 target 現為 0 bytes。
+    回收自己的失敗一律吞掉，呼叫端會原樣重拋原本的搬移例外。
+    """
+    try:
+        if os.path.exists(file_path):
+            if os.path.getsize(target_path) == 0:
+                os.unlink(target_path)
+    except OSError:
+        pass
+
+
 def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，不得讓本函式本身更複雜（見 plan-110b）
     file_path: str,
     metadata: Dict[str, Any],
@@ -1289,7 +1317,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         path_parts = []
         for layer in layers[:3]:  # 限制最多 3 層
             if layer:
-                part = truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_folder_chars)
+                part = _strip_windows_trailing(_fit_utf8_bytes(truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_folder_chars), 255))
                 if part:
                     path_parts.append(part)
 
@@ -1333,6 +1361,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
     # 正常/spec 情形 reserve 已預留 → base+vr_tail+part_tail == max_chars → 此為 no-op；
     # 僅 max_filename_length 被設到連 ext+VR cluster+part token 都裝不下時才作用。
     filename_base = truncate_to_chars(filename_base, max_chars)
+    filename_base = _fit_utf8_bytes(filename_base, 255 - len(original_ext.encode('utf-8')))
 
     new_filename = filename_base + original_ext
     target_path = os.path.join(target_dir, new_filename)
@@ -1365,7 +1394,11 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
                 result['duplicate_target'] = os.path.basename(target_path)
                 return result
             os.close(fd)
-            atomic_move(file_path, target_path)
+            try:
+                atomic_move(file_path, target_path)
+            except Exception:
+                _reclaim_placeholder(file_path, target_path)
+                raise
 
             # 搬移字幕檔（影片有搬移時才執行）
             subs_to_move = subtitle_files
