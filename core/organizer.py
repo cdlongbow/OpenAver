@@ -52,6 +52,8 @@ def sanitize_filename(name: str) -> str:
     illegal_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
     for char in illegal_chars:
         name = name.replace(char, ' ')
+    if sys.platform == 'win32':  # 控制字元只在 Windows 清（CD-181-2）
+        name = re.sub(r'[\x00-\x08\x0e-\x1b]', '', name)
     name = re.sub(r'\s+', ' ', name).strip()
     return name
 
@@ -1305,7 +1307,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         path_parts = []
         for layer in layers[:3]:  # 限制最多 3 層
             if layer:
-                part = truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_folder_chars)
+                part = _strip_windows_trailing(truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_folder_chars))
                 if part:
                     path_parts.append(part)
 

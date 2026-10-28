@@ -22,6 +22,7 @@ from core.organizer import (
     _detect_suffixes,
     _detect_vr_cluster,
     _strip_num_prefixes,
+    _strip_windows_trailing,
     format_string,
     sanitize_filename,
     truncate_title,
@@ -218,7 +219,7 @@ def _folder_parts(format_data: dict, config: dict) -> list:
     max_chars = min(config.get('max_filename_length', 60), 120)
     parts = []
     for layer in layers[:3]:
-        part = truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_chars)
+        part = _strip_windows_trailing(truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_chars))
         if part:
             parts.append(part)
     return parts

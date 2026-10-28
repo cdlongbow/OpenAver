@@ -6,6 +6,7 @@ import errno
 import io
 import json
 import os
+import re
 import shutil
 import xml.etree.ElementTree as ET
 import pytest
@@ -1646,6 +1647,56 @@ class TestTruncateWindowsTrailingDot:
         result = truncate_to_chars("僕が不在の5日間、彼女が他の男と朝から晩までヤリまくっていた胸糞映像 吉高寧々", 40)
         assert not result.endswith('.'), f"Windows: 截斷結果不應以 . 結尾, got {result!r}"
         assert not result.endswith(' '), f"Windows: 截斷結果不應以空格結尾, got {result!r}"
+
+
+# ============ Issue 181-T5 — Windows 資料夾名段尾句點／控制字元 ============
+
+def _organize_one(tmp_path, maker, title, layers):
+    """真檔案系統跑一次 organize_file（create_folder，標題上限放大避免 truncate_title 先動手）"""
+    src = tmp_path / "SONE-205.mp4"
+    src.write_bytes(b"x")
+    config = {**_make_config(tmp_path), "create_folder": True, "folder_layers": layers,
+              "filename_format": "{num} {title}", "max_title_length": 100}
+    metadata = {**_make_metadata(title=title), "maker": maker}
+    return organize_file(str(src), metadata, config)
+
+
+class TestWindowsFolderNameSanitize:
+    """181-T5：Windows 上資料夾名與記錄的路徑要一致；非 Windows 逐字不變"""
+
+    @pytest.mark.parametrize("maker,title,layers,expected", [
+        ("Mrs.", "T", ["{maker}"], "Mrs"),
+        ("S1", "Hello world...", ["{title}"], "Hello world"),
+    ])
+    def test_windows_folder_layer_strips_trailing_dot(self, monkeypatch, tmp_path, maker, title, layers, expected):
+        monkeypatch.setattr('core.organizer.sys.platform', 'win32')
+        result = _organize_one(tmp_path, maker, title, layers)
+        assert result["success"] is True, result["error"]
+        assert os.path.basename(result["new_folder"]) == expected
+        assert Path(result["new_folder"]).is_dir()
+
+    @pytest.mark.parametrize("title,expected", [("A\x07B", "AB"), ("A\tB", "A B")])
+    def test_windows_control_chars_removed(self, monkeypatch, tmp_path, title, expected):
+        monkeypatch.setattr('core.organizer.sys.platform', 'win32')
+        result = _organize_one(tmp_path, "S1", title, ["{title}"])
+        assert result["success"] is True, result["error"]
+        assert os.path.basename(result["new_folder"]) == expected
+        for path in (result["new_folder"], result["new_filename"]):
+            assert not re.search(r'[\x00-\x08\x0e-\x1b]', os.path.basename(path))
+
+    def test_non_windows_names_unchanged(self, tmp_path):
+        for sub, (maker, title, layers) in enumerate([
+            ("Mrs.", "T", ["{maker}"]),
+            ("S1", "Hello world...", ["{title}"]),
+            ("S1", "A\x07B", ["{title}"]),
+        ]):
+            work = tmp_path / str(sub)
+            work.mkdir()
+            result = _organize_one(work, maker, title, layers)
+            assert result["success"] is True, result["error"]
+            expected_folder = {0: "Mrs.", 1: "Hello world...", 2: "A\x07B"}[sub]
+            assert os.path.basename(result["new_folder"]) == expected_folder
+            assert os.path.basename(result["new_filename"]) == f"SONE-205 {title if sub else 'T'}.mp4"
 
 
 # ============ _detect_vr_cluster() 測試 ============
